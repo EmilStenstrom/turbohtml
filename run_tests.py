@@ -36,7 +36,7 @@ def parse_dat_file(content):
 def compare_outputs(expected, actual):
     return expected.strip() == actual.strip()
 
-def run_tests(test_dir, fail_fast=False, keyword=None, test_indices=None):
+def run_tests(test_dir, fail_fast=False, keyword=None, test_indices=None, verbose=False):
     passed = 0
     failed = 0
 
@@ -49,25 +49,28 @@ def run_tests(test_dir, fail_fast=False, keyword=None, test_indices=None):
                 tests = parse_dat_file(content)
                 for i, test in enumerate(tests):
                     if test_indices is not None and i not in test_indices:
-                        continue  # Skip tests not in the specified indices
+                        continue
 
                     html_input = test['data']
                     errors = test['errors']
                     expected_output = test['document']
+
+                    should_print_heading = verbose or fail_fast or (test_indices is not None and i in test_indices)
+                    if should_print_heading:
+                        print(f'Test {file} #{i}: {html_input}')
+
                     parser = TurboHTML(html_input)
                     actual_output = parser.root.to_test_format()
                     test_passed = compare_outputs(expected_output, actual_output)
-                    verbose = (fail_fast and not test_passed) or (test_indices is not None and i in test_indices) 
+                    should_print_details = verbose or (fail_fast and not test_passed) or (test_indices is not None and i in test_indices)
 
-                    if verbose:
-                        # Print detailed information for specified indices
-                        print(f'\nTest {file} #{i} {"passed" if test_passed else "failed"}:')
-                        print(f'HTML input: {html_input}')
-                        if test_passed:
+                    if should_print_details:
+                        print(f'{"PASSED" if test_passed else "FAILED"}:')
+                        if errors:
                             print(f"Errors: {errors}")
                         print(f'Expected:\n{expected_output}')
                         print(f'Actual:\n{actual_output}')
-                    else:
+                    elif not should_print_heading:
                         print("x" if not test_passed else ".", end="", flush=True)
 
                     if not test_passed:
@@ -76,11 +79,11 @@ def run_tests(test_dir, fail_fast=False, keyword=None, test_indices=None):
                             return passed, failed
                     else:
                         passed += 1
-        
-        return passed, failed
+    
+    return passed, failed
 
-def main(test_dir, fail_fast=False, keyword=None, test_indices=None):
-    passed, failed = run_tests(test_dir, fail_fast, keyword, test_indices)
+def main(test_dir, fail_fast=False, keyword=None, test_indices=None, verbose=False):
+    passed, failed = run_tests(test_dir, fail_fast, keyword, test_indices, verbose)
     total = passed + failed
     print(f'\nTests passed: {passed}/{total} ({round(passed*100/total) if total else 0}%)')
 
@@ -93,9 +96,10 @@ if __name__ == '__main__':
                        help='Only run tests from files containing the keyword')
     parser.add_argument('-t', '--test-indices', type=str, default=None,
                        help='Comma-separated list of test indices to run')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                       help='Print detailed information for all tests')
     args = parser.parse_args()
     
-    # Convert the comma-separated string of indices into a list of integers
     test_indices = list(map(int, args.test_indices.split(','))) if args.test_indices else None
     
-    main('../html5lib-tests/tree-construction', args.fail_fast, args.keyword, test_indices)
+    main('../html5lib-tests/tree-construction', args.fail_fast, args.keyword, test_indices, args.verbose)
