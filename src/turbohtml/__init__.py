@@ -1,1 +1,1 @@
-from parser import TubroHTML  # noqa
+from turbohtml.parser import TurboHTML  # noqa

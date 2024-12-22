@@ -1,4 +1,4 @@
-from parser import TurboHTML
+from turbohtml import TurboHTML
 import os
 import argparse
 
