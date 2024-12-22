@@ -78,6 +78,7 @@ class TurboHTML:
                 
                 # Handle comments based on state
                 if self.state == 'after_head':
+                    # Comments in after_head state go directly under html node
                     body_index = self.html_node.children.index(self.body_node)
                     self.html_node.children.insert(body_index, comment_node)
                     comment_node.parent = self.html_node
@@ -104,6 +105,11 @@ class TurboHTML:
             if start_idx > index:
                 # Handle text between tags
                 text = self.html[index:start_idx]
+                if text.strip():  # Only handle non-whitespace text
+                    if self.state == 'after_head':
+                        self.state = 'in_body'
+                        current_parent = self.body_node
+
                 if self.foreign_handler and current_parent.tag_name == 'math annotation-xml':
                     node = self.foreign_handler.handle_text(text, current_parent)
                     if node:
@@ -117,13 +123,16 @@ class TurboHTML:
                         current_parent = self.body_node
                 index = start_idx  # Update index to avoid processing the same text twice
 
-            # Update state based on tags
-            if tag_open_match.group(2) == '/' and tag_open_match.group(3).lower() == 'head':
-                self.state = 'after_head'
-
             # Process the tag
             start_tag_idx, end_tag_idx, tag_info = self._extract_tag_info(tag_open_match)
-            
+
+            # Update state based on tags - move this AFTER we get tag_info
+            if tag_info.is_closing and tag_info.tag_name.lower() == 'head':
+                self.state = 'after_head'
+                current_parent = self.html_node  # Set parent to html for comments
+                index = end_tag_idx
+                continue
+
             if tag_info.is_closing:
                 current_parent, current_context = self._handle_closing_tag(
                     tag_info.tag_name, current_parent, current_context
@@ -157,9 +166,11 @@ class TurboHTML:
         if tag_name == 'head':
             return self.head_node, current_context
 
-        # Move certain elements to head ONLY if we're not in a special context
+        # Move certain elements to head ONLY if we're not in body mode
         if tag_name in HEAD_ELEMENTS and self.head_node:
-            if current_parent != self.head_node and current_context is None:
+            if (current_parent != self.head_node and 
+                current_context is None and 
+                self.state != 'in_body'):
                 new_node = self._create_node(tag_name, attributes, self.head_node, None)
                 self.head_node.append_child(new_node)
                 return current_parent, current_context
