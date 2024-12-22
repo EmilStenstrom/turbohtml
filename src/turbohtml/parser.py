@@ -8,299 +8,16 @@
 import re
 from typing import List, Optional, Dict, Tuple, Set, TYPE_CHECKING
 
+from .foreign import ForeignContentHandler
+from .node import Node
+from .constants import (
+    VOID_ELEMENTS, HTML_ELEMENTS, SPECIAL_ELEMENTS, BLOCK_ELEMENTS,
+    TABLE_CONTAINING_ELEMENTS, RAWTEXT_ELEMENTS, HEAD_ELEMENTS,
+    TAG_OPEN_RE, ATTR_RE, COMMENT_RE
+)
+
 if TYPE_CHECKING:
     from .node import Node
-
-# Simple regular expressions for tokenization
-TAG_OPEN_RE = re.compile(r'<(!?)(/)?([a-zA-Z0-9][-a-zA-Z0-9:]*)(.*?)>')
-ATTR_RE = re.compile(r'([a-zA-Z_:][-a-zA-Z0-9_:.]*)(?:\s*=\s*"([^"]*)"|\s*=\s*\'([^\']*)\'|\s*=\s*([^>\s]+)|)(?=\s|$)')
-COMMENT_RE = re.compile(r'<!--(.*?)-->', re.DOTALL)
-
-class ForeignContentHandler:
-    """Handles SVG and other foreign element contexts."""
-    def __init__(self):
-        self.HTML_ELEMENTS = {
-            'b', 'big', 'blockquote', 'body', 'br', 'center', 'code',
-            'dd', 'div', 'dl', 'dt', 'em', 'embed', 'h1', 'h2', 'h3', 'h4',
-            'h5', 'h6', 'head', 'hr', 'i', 'img', 'li', 'listing',
-            'menu', 'meta', 'nobr', 'ol', 'p', 'pre', 's', 'small',
-            'span', 'strong', 'strike', 'sub', 'sup', 'table', 'tt',
-            'u', 'ul', 'var'
-        }
-        # Elements that can be both HTML and SVG/MathML
-        self.DUAL_NAMESPACE_ELEMENTS = {'main', 'title'}
-
-        # Update SVG_CASE_SENSITIVE_ELEMENTS to be a mapping of lowercase to correct case
-        self.SVG_CASE_SENSITIVE_ELEMENTS = {
-            'foreignobject': 'foreignObject',
-            'animatemotion': 'animateMotion',
-            'animatetransform': 'animateTransform',
-            'clippath': 'clipPath',
-            'feblend': 'feBlend',
-            'fecolormatrix': 'feColorMatrix',
-            'fecomponenttransfer': 'feComponentTransfer',
-            'fecomposite': 'feComposite',
-            'feconvolvematrix': 'feConvolveMatrix',
-            'fediffuselight': 'feDiffuseLighting',
-            'fedisplacementmap': 'feDisplacementMap',
-            'fedistantlight': 'feDistantLight',
-            'fedropshadow': 'feDropShadow',
-            'feflood': 'feFlood',
-            'fefunca': 'feFuncA',
-            'fefuncb': 'feFuncB',
-            'fefuncg': 'feFuncG',
-            'fefuncr': 'feFuncR',
-            'fegaussianblur': 'feGaussianBlur',
-            'feimage': 'feImage',
-            'femergenode': 'feMergeNode',
-            'femorphology': 'feMorphology',
-            'feoffset': 'feOffset',
-            'fepointlight': 'fePointLight',
-            'fespecularlighting': 'feSpecularLighting',
-            'fespotlight': 'feSpotLight',
-            'fetile': 'feTile',
-            'feturbulence': 'feTurbulence',
-            'lineargradient': 'linearGradient',
-            'radialgradient': 'radialGradient',
-            'textpath': 'textPath'
-        }
-
-    def create_node(self, tag_name: str, attributes: dict, 
-                   current_parent: 'Node', context: Optional[str]) -> 'Node':
-        """Create a node with proper namespace handling."""
-        tag_name_lower = tag_name.lower()
-        
-        if context == 'math':
-            # Handle MathML elements
-            if tag_name_lower == 'annotation-xml':
-                return Node('math annotation-xml', attributes)
-            
-            # Handle HTML elements inside annotation-xml
-            if current_parent.tag_name == 'math annotation-xml':
-                encoding = current_parent.attributes.get('encoding', '').lower()
-                if encoding in ('application/xhtml+xml', 'text/html'):
-                    # Keep HTML elements nested for these encodings
-                    return Node(tag_name_lower, attributes)
-                if tag_name_lower in self.HTML_ELEMENTS:
-                    return Node(tag_name_lower, attributes)
-            
-            return Node(f'math {tag_name}', attributes)
-        elif context == 'svg':
-            # Handle case-sensitive SVG elements
-            if tag_name_lower in self.SVG_CASE_SENSITIVE_ELEMENTS:
-                correct_case = self.SVG_CASE_SENSITIVE_ELEMENTS[tag_name_lower]
-                node = Node(f'svg {correct_case}', attributes)
-                # Special handling for foreignObject
-                if tag_name_lower == 'foreignobject':
-                    return node
-            # Handle HTML elements inside foreignObject
-            elif tag_name_lower in self.HTML_ELEMENTS:
-                temp_parent = current_parent
-                while temp_parent:
-                    if temp_parent.tag_name == 'svg foreignObject':
-                        return Node(tag_name_lower, attributes)
-                    temp_parent = temp_parent.parent
-            return Node(f'svg {tag_name_lower}', attributes)
-        
-        return Node(tag_name_lower, attributes)
-
-    def handle_context(self, tag_name: str, current_parent: 'Node', 
-                      context: Optional[str]) -> Tuple['Node', Optional[str]]:
-        """Handle foreign element context changes."""
-        tag_name_lower = tag_name.lower()
-        
-        # Handle HTML elements inside annotation-xml
-        if current_parent.tag_name == 'math annotation-xml':
-            encoding = current_parent.attributes.get('encoding', '').lower()
-            if encoding in ('application/xhtml+xml', 'text/html'):
-                # Keep the context for these encodings
-                return current_parent, context
-            if tag_name_lower in self.HTML_ELEMENTS:
-                return self.find_html_ancestor(current_parent), None
-            
-        # Enter MathML context
-        if tag_name_lower == 'math':
-            return current_parent, 'math'
-            
-        # Existing SVG handling...
-        if context == 'svg':
-            if tag_name_lower in self.HTML_ELEMENTS:
-                temp_parent = current_parent
-                while temp_parent:
-                    if temp_parent.tag_name == 'svg foreignObject':
-                        return current_parent, context
-                    temp_parent = temp_parent.parent
-                return self.find_html_ancestor(current_parent), None
-                
-        if tag_name_lower == 'svg':
-            return current_parent, 'svg'
-
-        return current_parent, context
-
-    def handle_foreign_end_tag(self, tag_name: str, current_parent: 'Node', 
-                             context: Optional[str]) -> Tuple['Node', Optional[str]]:
-        """Handle closing tags in foreign element contexts."""
-        tag_name_lower = tag_name.lower()
-        
-        if context == 'math' and tag_name_lower == 'math':
-            return current_parent.parent, None
-        elif context == 'svg' and tag_name_lower == 'svg':
-            return current_parent.parent, None
-        
-        return current_parent, context
-
-    def find_html_ancestor(self, node: 'Node') -> 'Node':
-        """Find the nearest HTML ancestor node."""
-        temp_parent = node
-        while temp_parent:
-            if not temp_parent.tag_name.startswith(('svg ', 'math ')):
-                return temp_parent
-            if temp_parent.parent:
-                temp_parent = temp_parent.parent
-            else:
-                break
-        return node  # Fallback to current node if no HTML ancestor found
-
-    def handle_text(self, text: str, current_parent: 'Node') -> Optional['Node']:
-        """Handle text nodes in foreign content contexts."""
-        if current_parent.tag_name == 'math annotation-xml':
-            # Only create text node if we're directly in annotation-xml
-            text_node = Node('#text')
-            text_node.text_content = text
-            return text_node
-        return None
-
-    def handle_comment(self, comment_text: str, current_parent: 'Node') -> Optional['Node']:
-        """Handle comments in foreign content contexts."""
-        if current_parent.tag_name == 'math annotation-xml':
-            comment_node = Node('#comment')
-            comment_node.text_content = comment_text.strip()
-            return comment_node
-        return None
-
-
-class Node:
-    """
-    Represents a DOM-like node.
-    - tag_name: e.g., 'div', 'p', etc. Use '#text' for text nodes.
-    - attributes: dict of tag attributes
-    - children: list of child Nodes
-    - parent: reference to parent Node (or None for root)
-    """
-    __slots__ = ('tag_name', 'attributes', 'children', 'parent', 'text_content')
-
-    def __init__(self, tag_name: str, attributes: Optional[Dict[str, str]] = None):
-        self.tag_name = tag_name
-        self.attributes = attributes or {}
-        self.children: List['Node'] = []
-        self.parent: Optional['Node'] = None
-        self.text_content = ""  # For text nodes or concatenated text in element nodes
-
-    def __getitem__(self, key: str) -> Optional[str]:
-        """Allows dict-like attribute access, e.g., node['href']."""
-        return self.attributes.get(key)
-
-    def append_child(self, child: 'Node'):
-        self.children.append(child)
-        child.parent = self
-
-    @property
-    def text(self) -> str:
-        """
-        Recursively gather text from this node and its children.
-        For an element node, text is concatenated from all text children.
-        For a #text node, text_content holds the raw text.
-        """
-        if self.tag_name == '#text':
-            return self.text_content
-        return "".join(child.text if child.tag_name == '#text' else child.text
-                       for child in self.children)
-
-    def query(self, selector: str) -> Optional['Node']:
-        """
-        Return the *first* node matching a basic CSS selector:
-          - #id
-          - .class
-          - tag
-        """
-        results = self._match_selector(selector, first_only=True)
-        return results[0] if results else None
-
-    def query_all(self, selector: str) -> List['Node']:
-        """
-        Return all nodes matching a basic CSS selector:
-          - #id
-          - .class
-          - tag
-        """
-        return self._match_selector(selector, first_only=False)
-
-    def _match_selector(self, selector: str, first_only: bool) -> List['Node']:
-        matched = []
-
-        # If selector is #id
-        if selector.startswith('#'):
-            needed_id = selector[1:]
-            self._dfs_find(lambda n: n.attributes.get('id') == needed_id, matched, first_only)
-        # If selector is .class
-        elif selector.startswith('.'):
-            needed_class = selector[1:]
-            self._dfs_find(
-                lambda n: 'class' in n.attributes and needed_class in n.attributes['class'].split(),
-                matched, first_only
-            )
-        else:
-            # Assume it's a tag selector
-            needed_tag = selector.lower()
-            self._dfs_find(lambda n: n.tag_name.lower() == needed_tag, matched, first_only)
-
-        return matched
-
-    def _dfs_find(self, predicate, found_list, first_only):
-        """
-        Depth-first search for nodes that match a given predicate.
-        """
-        if predicate(self):
-            found_list.append(self)
-            if first_only:
-                return
-        for child in self.children:
-            if first_only and found_list:
-                # Already found
-                return
-            child._dfs_find(predicate, found_list, first_only)
-
-    def __repr__(self):
-        if self.tag_name == '#text':
-            return f"Node(#text='{self.text_content[:30]}')"
-        return f"Node(<{self.tag_name}>, children={len(self.children)})"
-
-    def to_test_format(self, indent=0):
-        if self.tag_name == 'document':
-            result = []
-            for child in self.children:
-                result.append(child.to_test_format(0))
-            return '\n'.join(result)
-        if self.tag_name == '#text':
-            return f'| {" " * indent}"{self.text_content}"'
-        if self.tag_name == '#comment':
-            return f'| {" " * indent}<!-- {self.text_content} -->'
-        if self.tag_name == '!doctype':
-            return '| <!DOCTYPE html>'
-
-        # Start with the tag name
-        result = f'| {" " * indent}<{self.tag_name}>'
-
-        # Add attributes on their own line if present
-        if self.attributes:
-            for key, value in self.attributes.items():
-                result += f'\n| {" " * (indent+2)}{key}="{value}"'
-
-        # Add children
-        for child in self.children:
-            result += '\n' + child.to_test_format(indent + 2)
-        return result
-
 
 class TurboHTML:
     """
@@ -308,70 +25,6 @@ class TurboHTML:
     - Instantiation with HTML string automatically triggers parsing.
     - Provides a root Node that represents the DOM tree.
     """
-    # Constants and sets
-    VOID_ELEMENTS: Set[str] = {
-        'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
-        'link', 'meta', 'param', 'source', 'track', 'wbr'
-    }
-
-    FORMATTING_ELEMENTS: Set[str] = {
-        'a', 'b', 'big', 'code', 'em', 'font', 'i', 'nobr', 'p', 's',
-        'small', 'strike', 'strong', 'tt', 'u'
-    }
-
-    BOUNDARY_ELEMENTS: Set[str] = {
-        'applet', 'button', 'marquee', 'object', 'table', 'td', 'th'
-    }
-
-    HTML_ELEMENTS: Set[str] = {
-        'b', 'big', 'blockquote', 'body', 'br', 'center', 'code',
-        'dd', 'div', 'dl', 'dt', 'em', 'embed', 'h1', 'h2', 'h3', 'h4',
-        'h5', 'h6', 'head', 'hr', 'i', 'img', 'li', 'listing',
-        'menu', 'meta', 'nobr', 'ol', 'p', 'pre', 's', 'small',
-        'span', 'strong', 'strike', 'sub', 'sup', 'table', 'tt',
-        'u', 'ul', 'var'
-    }
-
-    # Elements that can contain tables according to HTML5 spec
-    TABLE_CONTAINING_ELEMENTS: Set[str] = {
-        'button', 'ruby', 'math', 'svg'
-    }
-
-    # Update our element categories according to spec
-    SPECIAL_ELEMENTS: Set[str] = {
-        'address', 'applet', 'area', 'article', 'aside', 'base', 'basefont',
-        'bgsound', 'blockquote', 'body', 'br', 'button', 'caption', 'center',
-        'col', 'colgroup', 'dd', 'details', 'dir', 'div', 'dl', 'dt', 'embed',
-        'fieldset', 'figcaption', 'figure', 'footer', 'form', 'frame', 'frameset',
-        'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'head', 'header', 'hgroup', 'hr',
-        'html', 'iframe', 'img', 'input', 'keygen', 'li', 'link', 'listing',
-        'main', 'marquee', 'menu', 'meta', 'nav', 'noembed', 'noframes',
-        'noscript', 'object', 'ol', 'p', 'param', 'plaintext', 'pre', 'script',
-        'section', 'select', 'source', 'style', 'summary', 'table', 'tbody',
-        'td', 'template', 'textarea', 'tfoot', 'th', 'thead', 'title', 'tr',
-        'track', 'ul', 'wbr', 'xmp'
-    }
-
-    # Elements that can contain tables (from foster parenting rules)
-    FOSTER_PARENT_ELEMENTS: Set[str] = {
-        'table', 'tbody', 'tfoot', 'thead', 'tr'
-    }
-
-    # Elements that can properly contain tables
-    TABLE_CONTAINING_ELEMENTS: Set[str] = {
-        'html', 'body', 'div', 'form', 'button', 'ruby', 'td', 'th'
-    }
-
-    BLOCK_ELEMENTS = {
-        'address', 'article', 'aside', 'blockquote', 'details', 'dialog', 'dd', 'div',
-        'dl', 'dt', 'fieldset', 'figcaption', 'figure', 'footer', 'form', 'h1', 'h2',
-        'h3', 'h4', 'h5', 'h6', 'header', 'hgroup', 'hr', 'li', 'main', 'nav', 'ol',
-        'p', 'pre', 'section', 'table', 'ul', 'summary'
-    }
-
-    RAW_TEXT_ELEMENTS = {'script', 'style', 'textarea', 'title', 'plaintext'}
-    HEAD_ELEMENTS = {'base', 'basefont', 'bgsound', 'link', 'meta', 'title', 'script', 'style', 'template'}
-
     def __init__(self, html: str, handle_foreign_elements: bool = True):
         """Initialize the HTML parser.
         
@@ -382,6 +35,7 @@ class TurboHTML:
         self.html = html
         self.foreign_handler = ForeignContentHandler() if handle_foreign_elements else None
         self.has_doctype = False
+        self.state = 'initial'  # Add parser state
 
         # Create basic HTML structure
         self.root = Node('document')
@@ -395,11 +49,6 @@ class TurboHTML:
         
         self.current_parent = self.body_node
         self._parse()
-
-        # Elements that can contain tables
-        self.table_containing_elements = {
-            'button', 'ruby', 'math', 'svg'
-        }
 
     # Public methods
     def query_all(self, selector: str) -> List[Node]:
@@ -417,16 +66,24 @@ class TurboHTML:
         current_parent = self.current_parent
         current_context = None
         has_form = False
+        self.state = 'initial'  # Track parser state
 
         while index < length:
             # Look for comments first
             comment_match = COMMENT_RE.search(self.html, index)
-            if comment_match and not self.html[index:comment_match.start()].strip():
-                # Only handle comment if there's no non-whitespace text before it
-                if self.foreign_handler:
-                    node = self.foreign_handler.handle_comment(comment_match.group(1), current_parent)
-                    if node:
-                        current_parent.append_child(node)
+            if comment_match and comment_match.start() == index:
+                comment_text = comment_match.group(1)
+                comment_node = Node('#comment')
+                comment_node.text_content = comment_text
+                
+                # Handle comments based on state
+                if self.state == 'after_head':
+                    body_index = self.html_node.children.index(self.body_node)
+                    self.html_node.children.insert(body_index, comment_node)
+                    comment_node.parent = self.html_node
+                else:
+                    current_parent.append_child(comment_node)
+                
                 index = comment_match.end()
                 continue
 
@@ -436,7 +93,11 @@ class TurboHTML:
                 # Handle remaining text
                 if index < length:
                     text = self.html[index:]
-                    self._handle_text_between_tags(text, current_parent)
+                    if text.strip():  # Only handle non-whitespace text
+                        if self.state == 'after_head':
+                            self.state = 'in_body'
+                            current_parent = self.body_node
+                        self._handle_text_between_tags(text, current_parent)
                 break
 
             start_idx = tag_open_match.start()
@@ -449,7 +110,18 @@ class TurboHTML:
                         current_parent.append_child(node)
                 else:
                     self._handle_text_between_tags(text, current_parent)
+                    
+                if text.strip():  # Only handle non-whitespace text
+                    if self.state == 'after_head' and text.strip():
+                        self.state = 'in_body'
+                        current_parent = self.body_node
+                index = start_idx  # Update index to avoid processing the same text twice
 
+            # Update state based on tags
+            if tag_open_match.group(2) == '/' and tag_open_match.group(3).lower() == 'head':
+                self.state = 'after_head'
+
+            # Process the tag
             start_tag_idx, end_tag_idx, tag_info = self._extract_tag_info(tag_open_match)
             
             if tag_info.is_closing:
@@ -486,14 +158,14 @@ class TurboHTML:
             return self.head_node, current_context
 
         # Move certain elements to head ONLY if we're not in a special context
-        if tag_name in self.HEAD_ELEMENTS and self.head_node:
+        if tag_name in HEAD_ELEMENTS and self.head_node:
             if current_parent != self.head_node and current_context is None:
                 new_node = self._create_node(tag_name, attributes, self.head_node, None)
                 self.head_node.append_child(new_node)
                 return current_parent, current_context
 
         # Handle raw text elements
-        if tag_name in self.RAW_TEXT_ELEMENTS:
+        if tag_name in RAWTEXT_ELEMENTS:
             new_node = self._create_node(tag_name, attributes, current_parent, current_context)
             current_parent.append_child(new_node)
             return new_node, 'rawtext'
@@ -542,7 +214,7 @@ class TurboHTML:
         current_parent.append_child(new_node)
 
         # For non-void elements, make the new node the current parent
-        if tag_name not in self.VOID_ELEMENTS:
+        if tag_name not in VOID_ELEMENTS:
             current_parent = new_node
 
         return current_parent, current_context
@@ -553,83 +225,6 @@ class TurboHTML:
         if self.foreign_handler:
             return self.foreign_handler.create_node(tag_name, attributes, current_parent, current_context)
         return Node(tag_name.lower(), attributes)
-
-    # Foreign element handling
-    def _handle_foreign_elements(self, tag_name: str, current_parent: Node,
-                               current_context: Optional[str]) -> Tuple[Node, Optional[str]]:
-        """Handle SVG and other foreign element contexts."""
-        tag_name_lower = tag_name.lower()
-        
-        # Check if we need to break out of SVG context
-        if current_context == 'svg':
-            # Break out of SVG context for HTML elements, except inside foreignObject
-            if tag_name_lower in self.HTML_ELEMENTS:
-                # Check if we're inside a foreignObject
-                temp_parent = current_parent
-                while temp_parent:
-                    if temp_parent.tag_name == 'svg foreignObject':
-                        # Keep HTML elements inside foreignObject
-                        return current_parent, current_context
-                    if temp_parent.tag_name == 'body':
-                        break
-                    temp_parent = temp_parent.parent
-                
-                # If not in foreignObject, break out to body
-                temp_parent = current_parent
-                while temp_parent and temp_parent.tag_name.lower() != 'body':
-                    temp_parent = temp_parent.parent
-                if temp_parent:
-                    return temp_parent, None
-        
-        # Check if we're entering SVG context
-        if tag_name_lower == 'svg':
-            return current_parent, 'svg'
-
-        # Stay in SVG context
-        if current_context == 'svg':
-            return current_parent, current_context
-
-        return current_parent, current_context
-
-    # Table handling
-    def _handle_table_tag(self, tag_info, current_parent):
-        """Handle table tags according to HTML5 foster parenting rules"""
-        tag_name = tag_info.tag_name
-        attributes = self._parse_attributes(tag_info.attr_string)
-
-        # Special handling for p tags
-        if current_parent.tag_name.lower() == 'p':
-            # Close the current <p> tag
-            original_p = current_parent
-            current_parent = current_parent.parent
-
-            # Create a new <p> inside the original <p>
-            new_p = Node('p')
-            original_p.append_child(new_p)
-
-            # Create the table inside the original <p>
-            new_table = Node(tag_name, attributes)
-            original_p.append_child(new_table)
-
-            # Return the original <p> as the current context
-            return original_p, None
-
-        # Normal table handling
-        new_table = Node(tag_name, attributes)
-        current_parent.append_child(new_table)
-        return new_table, 'table'
-
-    def _find_foster_parent(self, current_parent):
-        """Find the appropriate foster parent according to HTML5 spec"""
-        # Go up until we find an element that can properly contain a table
-        temp_parent = current_parent
-        while temp_parent:
-            if temp_parent.tag_name.lower() in self.TABLE_CONTAINING_ELEMENTS:
-                return temp_parent
-            if temp_parent.parent:
-                return temp_parent.parent
-            temp_parent = temp_parent.parent
-        return self.body_node  # Fallback to body if no suitable parent found
 
     def _handle_closing_tag(self, tag_name: str, current_parent: Node, 
                            current_context: Optional[str]) -> Tuple[Node, Optional[str]]:
@@ -690,7 +285,7 @@ class TurboHTML:
             return
 
         # Special handling for raw text elements
-        if current_parent.tag_name.lower() in self.RAW_TEXT_ELEMENTS:
+        if current_parent.tag_name.lower() in RAWTEXT_ELEMENTS:
             text_node = Node('#text')
             text_node.text_content = text
             current_parent.append_child(text_node)
@@ -708,23 +303,6 @@ class TurboHTML:
             text_node.text_content = text.strip()  # Only strip when setting content
             if text_node.text_content:  # Only append if there's content after stripping
                 current_parent.append_child(text_node)
-
-    def _handle_remaining_text(self, text: str, current_parent: Node) -> None:
-        """Handle any remaining text after the last tag."""
-        # For annotation-xml, preserve non-empty whitespace
-        if current_parent.tag_name == 'math annotation-xml':
-            if text:  # Only create text node if there's actual content
-                text_node = Node('#text')
-                text_node.text_content = text
-                current_parent.append_child(text_node)
-            return
-
-        # For other elements, strip whitespace as before
-        text = text.strip()
-        if text:
-            text_node = Node('#text')
-            text_node.text_content = text
-            current_parent.append_child(text_node)
 
     def _handle_doctype(self, tag_info: "TagInfo") -> None:
         """Handle DOCTYPE declaration."""
@@ -757,10 +335,6 @@ class TurboHTML:
     def query(self, selector: str) -> Optional[Node]:
         """Shortcut to query the root node."""
         return self.root.query(selector)
-
-    def _find_next_tag(self, html: str, start_index: int):
-        """Find the next HTML tag in the string."""
-        return TAG_OPEN_RE.search(html, start_index)
 
     def _extract_tag_info(self, match) -> tuple[int, int, "TagInfo"]:
         """Extract tag information from a regex match."""
@@ -818,79 +392,7 @@ class TurboHTML:
                 return option_ancestor.parent
 
         # Handle other auto-closing cases
-        if current_parent.tag_name.lower() == 'p' and tag_name_lower in self.BLOCK_ELEMENTS:
+        if current_parent.tag_name.lower() == 'p' and tag_name_lower in BLOCK_ELEMENTS:
             return current_parent.parent
 
         return current_parent
-
-    def handle_tag(self, tag_info, current_parent):
-        tag_name = tag_info.tag_name.lower()
-
-        if tag_name == 'summary':
-            return self._handle_summary_tag(tag_info, current_parent)
-
-        # Existing handling logic for other tags...
-
-    def _handle_summary_tag(self, tag_info, current_parent):
-        """Handle summary tags according to HTML5 rules"""
-        tag_name = tag_info.tag_name
-        attributes = self._parse_attributes(tag_info.attr_string)
-
-        # If the current parent is not a <details>, close the current parent
-        while current_parent and current_parent.tag_name.lower() != 'details':
-            current_parent = current_parent.parent
-
-        # If no <details> ancestor is found, use the body as the parent
-        if not current_parent:
-            current_parent = self.root
-
-        # Create the summary node
-        new_summary = Node(tag_name, attributes)
-        current_parent.append_child(new_summary)
-
-        return new_summary, None
-
-    def _find_descendants(self, node: Node, predicate) -> List[Node]:
-        """Find all descendants that match the predicate."""
-        results = []
-        def _recurse(current):
-            if predicate(current):
-                results.append(current)
-            for child in current.children:
-                _recurse(child)
-        _recurse(node)
-        return results
-
-    def _is_inside_table(self, node: Node) -> bool:
-        """Check if the current node is inside a table element."""
-        while node:
-            if node.tag_name.lower() == 'table':
-                return True
-            node = node.parent
-        return False
-
-
-# ------------------------------------------------------------------------
-# Usage Example (Uncomment and run to see it in action)
-# ------------------------------------------------------------------------
-if __name__ == "__main__":
-    sample_html = """
-    <!DOCTYPE html>
-    <html>
-      <head><title>Test Page</title></head>
-      <body>
-        <h1 id="main-title" class="title">Hello World</h1>
-        <p class="intro">Welcome to this test.</p>
-        <img src="image.png" />
-        <a href="https://example.com" class="link main-link">Click Here</a>
-      </body>
-    </html>
-    """
-
-    parser = TurboHTML(sample_html)
-    # print("Title text:", parser.query('title').text)
-    # print("H1 text:", parser.query('h1').text)
-    # print("Link href:", parser.query('.main-link')['href'])
-    all_links = parser.query_all('.link')
-    # print("All link nodes:", all_links)
-    # print("Root node representation:", parser.root)
