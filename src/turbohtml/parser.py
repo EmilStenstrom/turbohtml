@@ -28,7 +28,42 @@ class ForeignContentHandler:
             'u', 'ul', 'var'
         }
         # Elements that can be both HTML and SVG/MathML
-        self.DUAL_NAMESPACE_ELEMENTS = {'main'}
+        self.DUAL_NAMESPACE_ELEMENTS = {'main', 'title'}
+
+        # Update SVG_CASE_SENSITIVE_ELEMENTS to be a mapping of lowercase to correct case
+        self.SVG_CASE_SENSITIVE_ELEMENTS = {
+            'foreignobject': 'foreignObject',
+            'animatemotion': 'animateMotion',
+            'animatetransform': 'animateTransform',
+            'clippath': 'clipPath',
+            'feblend': 'feBlend',
+            'fecolormatrix': 'feColorMatrix',
+            'fecomponenttransfer': 'feComponentTransfer',
+            'fecomposite': 'feComposite',
+            'feconvolvematrix': 'feConvolveMatrix',
+            'fediffuselight': 'feDiffuseLighting',
+            'fedisplacementmap': 'feDisplacementMap',
+            'fedistantlight': 'feDistantLight',
+            'fedropshadow': 'feDropShadow',
+            'feflood': 'feFlood',
+            'fefunca': 'feFuncA',
+            'fefuncb': 'feFuncB',
+            'fefuncg': 'feFuncG',
+            'fefuncr': 'feFuncR',
+            'fegaussianblur': 'feGaussianBlur',
+            'feimage': 'feImage',
+            'femergenode': 'feMergeNode',
+            'femorphology': 'feMorphology',
+            'feoffset': 'feOffset',
+            'fepointlight': 'fePointLight',
+            'fespecularlighting': 'feSpecularLighting',
+            'fespotlight': 'feSpotLight',
+            'fetile': 'feTile',
+            'feturbulence': 'feTurbulence',
+            'lineargradient': 'linearGradient',
+            'radialgradient': 'radialGradient',
+            'textpath': 'textPath'
+        }
 
     def create_node(self, tag_name: str, attributes: dict, 
                    current_parent: 'Node', context: Optional[str]) -> 'Node':
@@ -51,15 +86,21 @@ class ForeignContentHandler:
             
             return Node(f'math {tag_name}', attributes)
         elif context == 'svg':
-            # Existing SVG handling...
-            if tag_name_lower in self.HTML_ELEMENTS:
+            # Handle case-sensitive SVG elements
+            if tag_name_lower in self.SVG_CASE_SENSITIVE_ELEMENTS:
+                correct_case = self.SVG_CASE_SENSITIVE_ELEMENTS[tag_name_lower]
+                node = Node(f'svg {correct_case}', attributes)
+                # Special handling for foreignObject
+                if tag_name_lower == 'foreignobject':
+                    return node
+            # Handle HTML elements inside foreignObject
+            elif tag_name_lower in self.HTML_ELEMENTS:
                 temp_parent = current_parent
                 while temp_parent:
                     if temp_parent.tag_name == 'svg foreignObject':
                         return Node(tag_name_lower, attributes)
                     temp_parent = temp_parent.parent
-                return Node(tag_name_lower, attributes)
-            return Node(f'svg {tag_name}', attributes)
+            return Node(f'svg {tag_name_lower}', attributes)
         
         return Node(tag_name_lower, attributes)
 
@@ -328,6 +369,9 @@ class TurboHTML:
         'p', 'pre', 'section', 'table', 'ul', 'summary'
     }
 
+    RAW_TEXT_ELEMENTS = {'script', 'style', 'textarea', 'title', 'plaintext'}
+    HEAD_ELEMENTS = {'base', 'basefont', 'bgsound', 'link', 'meta', 'title', 'script', 'style', 'template'}
+
     def __init__(self, html: str, handle_foreign_elements: bool = True):
         """Initialize the HTML parser.
         
@@ -433,9 +477,26 @@ class TurboHTML:
 
     def _handle_opening_tag(self, tag_info: "TagInfo", current_parent: Node, 
                             current_context: Optional[str]) -> Tuple[Node, Optional[str]]:
-        """Handle opening/self-closing tags with all special cases."""
-        tag_name = tag_info.tag_name
+        """Handle opening/self-closing tags with special cases."""
+        tag_name = tag_info.tag_name.lower()
         attributes = self._parse_attributes(tag_info.attr_string)
+
+        # Special handling for head tag - reuse existing head node
+        if tag_name == 'head':
+            return self.head_node, current_context
+
+        # Move certain elements to head ONLY if we're not in a special context
+        if tag_name in self.HEAD_ELEMENTS and self.head_node:
+            if current_parent != self.head_node and current_context is None:
+                new_node = self._create_node(tag_name, attributes, self.head_node, None)
+                self.head_node.append_child(new_node)
+                return current_parent, current_context
+
+        # Handle raw text elements
+        if tag_name in self.RAW_TEXT_ELEMENTS:
+            new_node = self._create_node(tag_name, attributes, current_parent, current_context)
+            current_parent.append_child(new_node)
+            return new_node, 'rawtext'
 
         # Special handling for option tags
         if tag_name == 'option':
@@ -456,7 +517,7 @@ class TurboHTML:
                 temp_parent = temp_parent.parent
 
         # Special handling for <table> inside <p>
-        if tag_name.lower() == 'table' and current_parent.tag_name.lower() == 'p':
+        if tag_name == 'table' and current_parent.tag_name.lower() == 'p':
             # Create a new <p> as a child of the original <p>
             new_p = Node('p')
             current_parent.append_child(new_p)
@@ -466,7 +527,7 @@ class TurboHTML:
             return new_node, current_context
 
         # Handle auto-closing first
-        current_parent = self._handle_auto_closing(tag_name.lower(), current_parent)
+        current_parent = self._handle_auto_closing(tag_name, current_parent)
 
         # Then handle foreign elements if enabled
         if self.foreign_handler:
@@ -481,7 +542,7 @@ class TurboHTML:
         current_parent.append_child(new_node)
 
         # For non-void elements, make the new node the current parent
-        if tag_name.lower() not in self.VOID_ELEMENTS:
+        if tag_name not in self.VOID_ELEMENTS:
             current_parent = new_node
 
         return current_parent, current_context
@@ -618,6 +679,23 @@ class TurboHTML:
     # Helper methods
     def _handle_text_between_tags(self, text: str, current_parent: Node) -> None:
         """Handle text found between tags."""
+        # Special handling for pre tags
+        if current_parent.tag_name.lower() == 'pre':
+            # Only strip the first newline after <pre>
+            if current_parent.children == [] and text.startswith('\n'):
+                text = text[1:]
+            text_node = Node('#text')
+            text_node.text_content = text
+            current_parent.append_child(text_node)
+            return
+
+        # Special handling for raw text elements
+        if current_parent.tag_name.lower() in self.RAW_TEXT_ELEMENTS:
+            text_node = Node('#text')
+            text_node.text_content = text
+            current_parent.append_child(text_node)
+            return
+
         if self.foreign_handler:
             node = self.foreign_handler.handle_text(text, current_parent)
             if node:
@@ -708,6 +786,16 @@ class TurboHTML:
     def _handle_auto_closing(self, tag_name: str, current_parent: Node) -> Node:
         """Handle tags that cause auto-closing of parent tags."""
         tag_name_lower = tag_name.lower()
+
+        # Handle nested nobr tags
+        if tag_name_lower == 'nobr':
+            nobr_ancestor = next(
+                (p for p in self._get_ancestors(current_parent)
+                 if p.tag_name.lower() == 'nobr'),
+                None
+            )
+            if nobr_ancestor:
+                return nobr_ancestor.parent
 
         # Special handling for button inside button
         if tag_name_lower == 'button':
