@@ -36,33 +36,45 @@ def parse_dat_file(content):
 def compare_outputs(expected, actual):
     return expected.strip() == actual.strip()
 
-def run_tests(test_dir, fail_fast=False, keyword=None, test_indices=None, verbose=False):
+def run_tests(test_dir, fail_fast=False, test_specs=None, verbose=False):
     passed = 0
     failed = 0
 
+    # Parse test specs into a dictionary if provided
+    spec_dict = {}
+    if test_specs:
+        for spec in test_specs:
+            filename, indices = spec.split(':')
+            spec_dict[filename] = [int(i) for i in indices.split(',')]
+
     for root, _, files in os.walk(test_dir):
         for file in files:
-            if file.endswith('.dat') and (keyword is None or keyword in file):
+            if file.endswith('.dat'):
+                # Skip files not in test_specs if test_specs is provided
+                if test_specs and file not in spec_dict:
+                    continue
+
                 file_path = os.path.join(root, file)
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
                 tests = parse_dat_file(content)
                 for i, test in enumerate(tests):
-                    if test_indices is not None and i not in test_indices:
+                    # Skip tests not in the specified indices for this file
+                    if test_specs and i not in spec_dict.get(file, []):
                         continue
 
                     html_input = test['data']
                     errors = test['errors']
                     expected_output = test['document']
 
-                    should_print_heading = verbose or fail_fast or (test_indices is not None and i in test_indices)
+                    should_print_heading = verbose or fail_fast or (test_specs and i in spec_dict.get(file, []))
                     if should_print_heading:
                         print(f'Test {file} #{i}: {html_input}')
 
                     parser = TurboHTML(html_input)
                     actual_output = parser.root.to_test_format()
                     test_passed = compare_outputs(expected_output, actual_output)
-                    should_print_details = verbose or (fail_fast and not test_passed) or (test_indices is not None and i in test_indices)
+                    should_print_details = verbose or (fail_fast and not test_passed) or (test_specs and i in spec_dict.get(file, []))
 
                     if should_print_details:
                         print(f'{"PASSED" if test_passed else "FAILED"}:')
@@ -82,8 +94,8 @@ def run_tests(test_dir, fail_fast=False, keyword=None, test_indices=None, verbos
     
     return passed, failed
 
-def main(test_dir, fail_fast=False, keyword=None, test_indices=None, verbose=False):
-    passed, failed = run_tests(test_dir, fail_fast, keyword, test_indices, verbose)
+def main(test_dir, fail_fast=False, test_specs=None, verbose=False):
+    passed, failed = run_tests(test_dir, fail_fast, test_specs, verbose)
     total = passed + failed
     print(f'\nTests passed: {passed}/{total} ({round(passed*100/total) if total else 0}%)')
 
@@ -92,14 +104,16 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-x', '--fail-fast', action='store_true',
                        help='Break on first test failure')
-    parser.add_argument('-k', '--keyword', type=str, default=None,
-                       help='Only run tests from files containing the keyword')
-    parser.add_argument('-t', '--test-indices', type=str, default=None,
-                       help='Comma-separated list of test indices to run')
+    parser.add_argument('--test-specs', type=str, nargs='+', default=None,
+                       help='Space-separated list of test specs in format: file:indices (e.g., test1.dat:0,1,2 test2.dat:5,6)')
     parser.add_argument('-v', '--verbose', action='store_true',
                        help='Print detailed information for all tests')
     args = parser.parse_args()
     
-    test_indices = list(map(int, args.test_indices.split(','))) if args.test_indices else None
+    # Split the test specs if they contain commas
+    test_specs = []
+    if args.test_specs:
+        for spec in args.test_specs:
+            test_specs.extend(spec.split(','))
     
-    main('../html5lib-tests/tree-construction', args.fail_fast, args.keyword, test_indices, args.verbose)
+    main('../html5lib-tests/tree-construction', args.fail_fast, test_specs, args.verbose)
