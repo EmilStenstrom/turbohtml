@@ -62,7 +62,7 @@ class TurboHTML:
         """Main parsing loop."""
         index = 0
         length = len(self.html)
-        current_parent = self.body_node  # Start with body as parent
+        current_parent = self.body_node
         current_context = None
         has_form = False
         self.state = 'initial'
@@ -87,7 +87,14 @@ class TurboHTML:
             # Look for next tag
             tag_open_match = TAG_OPEN_RE.search(self.html, index)
             if not tag_open_match:
-                self._handle_remaining_text(index, length, current_parent, in_rawtext, rawtext_start)
+                if in_rawtext:
+                    current_parent, in_rawtext, index = self._handle_rawtext_mode(
+                        None, current_parent, rawtext_start, length, length
+                    )
+                elif index < length:
+                    text = self.html[index:]
+                    if text:
+                        self._handle_text_between_tags(text, current_parent)
                 break
 
             start_idx = tag_open_match.start()
@@ -155,15 +162,31 @@ class TurboHTML:
                 tag_info.tag_name.lower() in RAWTEXT_ELEMENTS and 
                 (not current_context or current_context not in ('svg', 'mathml')))
 
-    def _handle_rawtext_mode(self, tag_info: "TagInfo", current_parent: Node, 
+    def _handle_rawtext_mode(self, tag_info: Optional["TagInfo"], current_parent: Node, 
                             rawtext_start: int, start_idx: int, end_tag_idx: int) -> Tuple[Node, bool, int]:
-        """Handle parsing while in rawtext mode."""
-        if (tag_info.is_closing and 
-            tag_info.tag_name.lower() == current_parent.tag_name.lower()):
-            text = self.html[rawtext_start:start_idx]
+        """Handle parsing while in rawtext mode.
+        
+        Args:
+            tag_info: The current tag info, or None if at EOF
+            current_parent: Current parent node
+            rawtext_start: Start index of rawtext content
+            start_idx: Start index of current tag
+            end_tag_idx: End index of current tag
+        
+        Returns:
+            Tuple of (new_parent, still_in_rawtext, new_index)
+        """
+        # Handle EOF or closing tag
+        if tag_info is None or (tag_info.is_closing and 
+                               tag_info.tag_name.lower() == current_parent.tag_name.lower()):
+            text = self.html[rawtext_start:start_idx if tag_info else None]
             if text:
                 self._handle_rawtext_content(text, current_parent)
-            return current_parent.parent, False, end_tag_idx
+            return (current_parent.parent if tag_info else current_parent, 
+                    False, 
+                    end_tag_idx if tag_info else start_idx)
+        
+        # Continue in rawtext mode
         return current_parent, True, end_tag_idx
 
     def _handle_rawtext_content(self, text: str, current_parent: Node) -> None:
