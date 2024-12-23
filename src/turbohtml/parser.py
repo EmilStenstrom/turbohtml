@@ -414,10 +414,6 @@ class TurboHTML:
         if text:
             self.text_handler.handle_rawtext_content(text, context.current_parent)
 
-    # ─────────────────────────────────────────────────────────────────────
-    #                        Tag & Element Handling
-    # ─────────────────────────────────────────────────────────────────────
-
     def _tag_requires_rawtext_mode(self, tag_info: TagInfo, current_context: Optional[str]) -> bool:
         """
         Check if this tag should trigger rawtext mode.
@@ -437,6 +433,13 @@ class TurboHTML:
         """
         tag_name = tag_info.tag_name.lower()
         attributes = self._parse_attributes(tag_info.attr_string)
+
+        # Handle head elements that appear before <head>
+        if (tag_name in HEAD_ELEMENTS 
+            and self.state == ParserState.INITIAL 
+            and current_parent == self.html_node):
+            self.head_node.append_child(self._create_node(tag_name, attributes, self.head_node, current_context))
+            return current_parent, current_context
 
         # Possibly handle <html>, <head>, <body>
         if result := self._handle_special_elements(tag_name, attributes):
