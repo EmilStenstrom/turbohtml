@@ -86,7 +86,7 @@ class TextHandler:
         """
         # If EOF or closing tag matches the current parent
         if tag_info is None or (
-            tag_info.is_closing and 
+            tag_info.is_closing and
             tag_info.tag_name.lower() == current_parent.tag_name.lower()
         ):
             text = self.parser.html[rawtext_start : (start_idx if tag_info else None)]
@@ -116,7 +116,7 @@ class TextHandler:
         if current_parent.tag_name.lower() == 'pre':
             decoded_text = self._decode_html_entities(text)
             # Append to existing text node if present
-            if (current_parent.children and 
+            if (current_parent.children and
                 current_parent.children[-1].tag_name == '#text'):
                 current_parent.children[-1].text_content += decoded_text
             else:
@@ -134,7 +134,7 @@ class TextHandler:
             return
 
         # Foreign content (MathML/SVG)
-        if (self.parser.foreign_handler and 
+        if (self.parser.foreign_handler and
             current_parent.tag_name == 'math annotation-xml'):
             node = self.parser.foreign_handler.handle_text(text, current_parent)
             if node:
@@ -184,7 +184,7 @@ class TurboHTML:
         self.html_node = Node('html')
         self.head_node = Node('head')
         self.body_node = Node('body')
-        
+
         self.root.append_child(self.html_node)
         self.html_node.append_child(self.head_node)
         self.html_node.append_child(self.body_node)
@@ -246,8 +246,8 @@ class TurboHTML:
         match = COMMENT_RE.search(self.html, index)
         if match and match.start() == index:
             # Decide comment parent
-            if (self.state == ParserState.AFTER_HEAD and 
-                self.state != ParserState.IN_BODY and 
+            if (self.state == ParserState.AFTER_HEAD and
+                self.state != ParserState.IN_BODY and
                 context.current_parent.tag_name != 'math annotation-xml'):
                 comment_parent = context.html_node
             else:
@@ -358,12 +358,12 @@ class TurboHTML:
         """
         text = self.html[start:end]
         new_state = None
-        
+
         if text.strip() and self.state == ParserState.AFTER_HEAD:
             new_state = 'in_body'  # We'll translate this to ParserState.IN_BODY later
             if current_parent.tag_name.lower() != 'pre':
                 current_parent = self.body_node
-        
+
         if text:
             if self.foreign_handler and current_parent.tag_name == 'math annotation-xml':
                 node = self.foreign_handler.handle_text(text, current_parent)
@@ -372,7 +372,7 @@ class TurboHTML:
             else:
                 # Delegate to TextHandler
                 self.text_handler.handle_text_between_tags(text, current_parent)
-            
+
         return current_parent, new_state
 
     def _handle_rawtext_eof(self, context: ParseContext) -> None:
@@ -429,7 +429,7 @@ class TurboHTML:
             and (not current_context or current_context not in ('svg', 'mathml'))
         )
 
-    def _handle_opening_tag(self, tag_info: TagInfo, current_parent: Node, 
+    def _handle_opening_tag(self, tag_info: TagInfo, current_parent: Node,
                             current_context: Optional[str]) -> Tuple[Node, Optional[str]]:
         """
         Handle an opening or self-closing tag, including special (html/head/body),
@@ -472,7 +472,7 @@ class TurboHTML:
 
         return current_parent, current_context
 
-    def _handle_closing_tag(self, tag_name: str, current_parent: Node, 
+    def _handle_closing_tag(self, tag_name: str, current_parent: Node,
                             current_context: Optional[str]) -> Tuple[Node, Optional[str]]:
         """
         Close the specified tag. Special logic includes:
@@ -512,7 +512,7 @@ class TurboHTML:
         temp_parent = current_parent
         while temp_parent and temp_parent.tag_name.lower() != tag_name_lower:
             temp_parent = temp_parent.parent
-        
+
         if temp_parent:
             return temp_parent.parent, current_context
         return current_parent, current_context
@@ -551,8 +551,8 @@ class TurboHTML:
         If it's a head element and we're not in body mode,
         insert it into the head node instead of the current parent.
         """
-        if (tag_name in HEAD_ELEMENTS 
-            and self.head_node 
+        if (tag_name in HEAD_ELEMENTS
+            and self.head_node
             and self.state != ParserState.IN_BODY
             and not (is_dual_context and is_dual_element)):
             new_node = self._create_node(tag_name, attributes, self.head_node, ParserState.RAWTEXT.value)
@@ -597,7 +597,7 @@ class TurboHTML:
             return self.head_node, None
         return None, None
 
-    def _create_node(self, tag_name: str, attributes: dict, 
+    def _create_node(self, tag_name: str, attributes: dict,
                      current_parent: Node, current_context: Optional[str]) -> Node:
         """
         Create a new node, potentially using the foreign handler if present.
