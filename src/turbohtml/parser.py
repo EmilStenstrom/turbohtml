@@ -226,89 +226,32 @@ class TurboHTML:
         tag_name = tag_info.tag_name.lower()
         attributes = self._parse_attributes(tag_info.attr_string)
 
-        # Special handling for html tag - reuse existing html node
-        if tag_name == 'html':
-            self.html_node.attributes.update(attributes)
-            return self.html_node, current_context
+        # Handle special elements
+        if result := self._handle_special_elements(tag_name, attributes):
+            if result[0]:  # If we got a node back
+                return result
 
-        # Special handling for body tag - reuse existing body node
-        if tag_name == 'body':
-            self.body_node.attributes.update(attributes)
-            return self.body_node, current_context
+        # Handle rawtext elements
+        if result := self._handle_rawtext_elements(tag_name, attributes, current_parent, current_context):
+            if result[0]:  # If we got a node back
+                return result
 
-        # Special handling for head tag - reuse existing head node
-        if tag_name == 'head':
-            return self.head_node, current_context
+        # Handle option tags
+        if result := self._handle_option_tag(tag_name, attributes, current_parent, current_context):
+            if result[0]:  # If we got a node back
+                return result
 
-        # Don't hoist if we're inside an SVG/MathML context and it's a dual element
-        is_dual_context = current_context in ('svg', 'mathml')
-        is_dual_element = tag_name in DUAL_NAMESPACE_ELEMENTS
-
-        # Handle raw text elements first
-        if tag_name in RAWTEXT_ELEMENTS:
-            # Only move to head if it's a head element, not in body mode, and not a dual element in svg/mathml
-            if (tag_name in HEAD_ELEMENTS and 
-                self.head_node and 
-                self.state != 'in_body' and 
-                not (is_dual_context and is_dual_element)):
-                new_node = self._create_node(tag_name, attributes, self.head_node, 'rawtext')
-                self.head_node.append_child(new_node)
-                return new_node, 'rawtext'
-            # Otherwise handle as normal rawtext, preserving the current context
-            new_node = self._create_node(tag_name, attributes, current_parent, current_context)
-            current_parent.append_child(new_node)
-            return new_node, current_context if is_dual_context else 'rawtext'
-
-        # Move other head elements to head ONLY if not in body mode and not a dual element in svg/mathml
-        if (tag_name in HEAD_ELEMENTS and 
-            self.head_node and 
-            not (is_dual_context and is_dual_element)):
-            if (current_parent != self.head_node and 
-                current_context is None and 
-                self.state != 'in_body'):
-                new_node = self._create_node(tag_name, attributes, self.head_node, None)
-                self.head_node.append_child(new_node)
-                return current_parent, current_context
-
-        # Special handling for option tags
-        if tag_name == 'option':
-            # Find the nearest option parent
-            temp_parent = current_parent
-            while temp_parent:
-                if temp_parent.tag_name.lower() == 'option':
-                    # If there are elements between options, nest it
-                    if any(child.tag_name.lower() != 'option' 
-                          for child in temp_parent.children):
-                        new_node = self._create_node(tag_name, attributes, current_parent, current_context)
-                        current_parent.append_child(new_node)
-                        return new_node, current_context
-                    # Otherwise make it a sibling
-                    new_node = self._create_node(tag_name, attributes, temp_parent.parent, current_context)
-                    temp_parent.parent.append_child(new_node)
-                    return new_node, current_context
-                temp_parent = temp_parent.parent
-
-        # Special handling for <table> inside <p>
-        if tag_name == 'table' and current_parent.tag_name.lower() == 'p':
-            # Create a new <p> as a child of the original <p>
-            new_p = Node('p')
-            current_parent.append_child(new_p)
-            # Create and append table to original <p>
-            new_node = self._create_node(tag_name, attributes, current_parent, current_context)
-            current_parent.append_child(new_node)
-            return new_node, current_context
-
-        # Then handle foreign elements if enabled
+        # Handle foreign elements if enabled
         if self.foreign_handler:
             current_parent, current_context = self.foreign_handler.handle_context(
                 tag_name, current_parent, current_context
             )
 
+        # Handle auto-closing first to get the correct parent
+        current_parent = self._handle_auto_closing(tag_name, current_parent)
+
         # Create node with proper namespace
         new_node = self._create_node(tag_name, attributes, current_parent, current_context)
-
-        # Handle auto-closing after creating the node
-        current_parent = self._handle_auto_closing(tag_name, current_parent)
 
         # Append the new node to current parent
         current_parent.append_child(new_node)
@@ -328,7 +271,7 @@ class TurboHTML:
 
     def _handle_closing_tag(self, tag_name: str, current_parent: Node, 
                            current_context: Optional[str]) -> Tuple[Node, Optional[str]]:
-        """Handle closing tags with special cases for table voodoo."""
+        """Handle closing tags with special cases for foster parenting."""
         tag_name_lower = tag_name.lower()
 
         # Handle foreign elements if enabled
@@ -514,7 +457,13 @@ class TurboHTML:
             button_ancestor = self._find_ancestor(current_parent, 'button')
             if not button_ancestor:  # Only close p if we're not inside a button
                 if p_ancestor := self._find_ancestor(current_parent, 'p'):
-                    return p_ancestor.parent
+                    # Create a new p inside the existing p for table voodoo
+                    if tag_name_lower == 'table':
+                        new_p = Node('p')
+                        p_ancestor.append_child(new_p)
+                        return p_ancestor  # Return the original p as parent for the table
+                                     # This makes the table a sibling of the new p
+                    return p_ancestor.parent  # For non-table block elements
 
         return current_parent
 
@@ -547,3 +496,59 @@ class TurboHTML:
             current_parent.append_child(comment_node)
         
         return match.end()
+
+    def _handle_special_elements(self, tag_name: str, attributes: dict) -> Tuple[Optional[Node], Optional[str]]:
+        """Handle special elements (html, head, body)."""
+        if tag_name == 'html':
+            self.html_node.attributes.update(attributes)
+            return self.html_node, None
+        if tag_name == 'body':
+            self.body_node.attributes.update(attributes)
+            return self.body_node, None
+        if tag_name == 'head':
+            return self.head_node, None
+        return None, None
+
+    def _handle_rawtext_elements(self, tag_name: str, attributes: dict, current_parent: Node,
+                               current_context: Optional[str]) -> Tuple[Optional[Node], Optional[str]]:
+        """Handle rawtext elements (script, style, etc)."""
+        is_dual_context = current_context in ('svg', 'mathml')
+        is_dual_element = tag_name in DUAL_NAMESPACE_ELEMENTS
+
+        if tag_name in RAWTEXT_ELEMENTS:
+            # Only move to head if it's a head element, not in body mode, and not a dual element in svg/mathml
+            if (tag_name in HEAD_ELEMENTS and 
+                self.head_node and 
+                self.state != 'in_body' and 
+                not (is_dual_context and is_dual_element)):
+                new_node = self._create_node(tag_name, attributes, self.head_node, 'rawtext')
+                self.head_node.append_child(new_node)
+                return new_node, 'rawtext'
+            # Otherwise handle as normal rawtext
+            new_node = self._create_node(tag_name, attributes, current_parent, current_context)
+            current_parent.append_child(new_node)
+            return new_node, current_context if is_dual_context else 'rawtext'
+        return None, None
+
+    def _handle_option_tag(self, tag_name: str, attributes: dict, current_parent: Node,
+                          current_context: Optional[str]) -> Tuple[Optional[Node], Optional[str]]:
+        """Handle special option tag nesting rules."""
+        if tag_name != 'option':
+            return None, None
+
+        # Find the nearest option parent
+        temp_parent = current_parent
+        while temp_parent:
+            if temp_parent.tag_name.lower() == 'option':
+                # If there are elements between options, nest it
+                if any(child.tag_name.lower() != 'option' 
+                      for child in temp_parent.children):
+                    new_node = self._create_node(tag_name, attributes, current_parent, current_context)
+                    current_parent.append_child(new_node)
+                    return new_node, current_context
+                # Otherwise make it a sibling
+                new_node = self._create_node(tag_name, attributes, temp_parent.parent, current_context)
+                temp_parent.parent.append_child(new_node)
+                return new_node, current_context
+            temp_parent = temp_parent.parent
+        return None, None
