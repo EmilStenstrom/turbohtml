@@ -50,7 +50,15 @@ HEAD_ELEMENTS = {
 
 # Raw text elements (content parsed as raw text)
 RAWTEXT_ELEMENTS = {
-    'script', 'style', 'textarea', 'title', 'plaintext', 'xmp'
+    'style',
+    'script',
+    'xmp',
+    'iframe',
+    'noembed',
+    'noframes',
+    'title',
+    'textarea',
+    'noscript'
 }
 
 # Elements that can contain both HTML and SVG/MathML content

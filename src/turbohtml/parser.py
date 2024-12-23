@@ -13,7 +13,7 @@ from .node import Node
 from .constants import (
     VOID_ELEMENTS, HTML_ELEMENTS, SPECIAL_ELEMENTS, BLOCK_ELEMENTS,
     TABLE_CONTAINING_ELEMENTS, RAWTEXT_ELEMENTS, HEAD_ELEMENTS,
-    TAG_OPEN_RE, ATTR_RE, COMMENT_RE
+    TAG_OPEN_RE, ATTR_RE, COMMENT_RE, DUAL_NAMESPACE_ELEMENTS
 )
 
 if TYPE_CHECKING:
@@ -66,12 +66,19 @@ class TurboHTML:
         current_parent = self.current_parent
         current_context = None
         has_form = False
-        self.state = 'initial'  # Track parser state
+        self.state = 'initial'
+        in_rawtext = False
+        rawtext_start = 0
 
         while index < length:
             # Look for comments first
             comment_match = COMMENT_RE.search(self.html, index)
             if comment_match and comment_match.start() == index:
+                # Skip comment handling if we're in rawtext
+                if in_rawtext:
+                    index = comment_match.end()
+                    continue
+                
                 comment_text = comment_match.group(1)
                 comment_node = Node('#comment')
                 comment_node.text_content = comment_text
@@ -94,16 +101,18 @@ class TurboHTML:
                 # Handle remaining text
                 if index < length:
                     text = self.html[index:]
-                    self._handle_text_between_tags(text, current_parent)  # Handle text first
-                    if text.strip():  # Then check for state changes
-                        if self.state == 'after_head':
-                            self.state = 'in_body'
-                            current_parent = self.body_node
+                    if not in_rawtext:
+                        self._handle_text_between_tags(text, current_parent)
+                        if text.strip():
+                            if self.state == 'after_head':
+                                self.state = 'in_body'
+                                current_parent = self.body_node
                 break
 
             start_idx = tag_open_match.start()
-            if start_idx > index:
-                # Handle text between tags
+            
+            # Handle text before tag
+            if start_idx > index and not in_rawtext:
                 text = self.html[index:start_idx]
                 
                 # Update parent to body if we have non-whitespace text after head
@@ -124,6 +133,52 @@ class TurboHTML:
 
             # Process the tag
             start_tag_idx, end_tag_idx, tag_info = self._extract_tag_info(tag_open_match)
+
+            # If we're in rawtext mode, only look for matching end tag
+            if in_rawtext:
+                if not tag_open_match:
+                    # No more tags - capture rest of content
+                    text = self.html[rawtext_start:]
+                    if text:
+                        # Strip first newline for textarea/pre
+                        if (current_parent.tag_name.lower() in ('textarea', 'pre') and 
+                            not current_parent.children and text.startswith('\n')):
+                            text = text[1:]
+                        if text:  # Check again after stripping
+                            text_node = Node('#text')
+                            text_node.text_content = text
+                            current_parent.append_child(text_node)
+                    break
+
+                if (tag_info.is_closing and 
+                    tag_info.tag_name.lower() == current_parent.tag_name.lower()):
+                    # Create text node with all content
+                    text = self.html[rawtext_start:start_idx]
+                    if text:
+                        # Strip first newline for textarea/pre
+                        if (current_parent.tag_name.lower() in ('textarea', 'pre') and 
+                            not current_parent.children and text.startswith('\n')):
+                            text = text[1:]
+                        if text:  # Check again after stripping
+                            text_node = Node('#text')
+                            text_node.text_content = text
+                            current_parent.append_child(text_node)
+                    in_rawtext = False
+                    current_parent = current_parent.parent
+                index = end_tag_idx
+                continue
+
+            # Start rawtext mode if entering a rawtext element (but not in SVG/MathML context)
+            if (not tag_info.is_closing and 
+                tag_info.tag_name.lower() in RAWTEXT_ELEMENTS and 
+                (not current_context or current_context not in ('svg', 'mathml'))):
+                current_parent, current_context = self._handle_opening_tag(
+                    tag_info, current_parent, current_context
+                )
+                in_rawtext = True
+                rawtext_start = end_tag_idx
+                index = end_tag_idx
+                continue
 
             # Update state based on tags - move this AFTER we get tag_info
             if tag_info.is_closing and tag_info.tag_name.lower() == 'head':
@@ -152,6 +207,19 @@ class TurboHTML:
             
             index = end_tag_idx
 
+        # Cleanup: handle any remaining rawtext content at EOF
+        if in_rawtext:
+            text = self.html[rawtext_start:]
+            if text:
+                # Strip first newline for textarea/pre
+                if (current_parent.tag_name.lower() in ('textarea', 'pre') and 
+                    not current_parent.children and text.startswith('\n')):
+                    text = text[1:]
+                if text:  # Check again after stripping
+                    text_node = Node('#text')
+                    text_node.text_content = text
+                    current_parent.append_child(text_node)
+
         # Update the current_parent for future reference
         self.current_parent = current_parent
 
@@ -163,13 +231,11 @@ class TurboHTML:
 
         # Special handling for html tag - reuse existing html node
         if tag_name == 'html':
-            # Merge any attributes into existing html node
             self.html_node.attributes.update(attributes)
             return self.html_node, current_context
 
         # Special handling for body tag - reuse existing body node
         if tag_name == 'body':
-            # Merge any attributes into existing body node
             self.body_node.attributes.update(attributes)
             return self.body_node, current_context
 
@@ -177,20 +243,35 @@ class TurboHTML:
         if tag_name == 'head':
             return self.head_node, current_context
 
-        # Move certain elements to head ONLY if we're not in body mode
-        if tag_name in HEAD_ELEMENTS and self.head_node:
+        # Don't hoist if we're inside an SVG/MathML context and it's a dual element
+        is_dual_context = current_context in ('svg', 'mathml')
+        is_dual_element = tag_name in DUAL_NAMESPACE_ELEMENTS
+
+        # Handle raw text elements first
+        if tag_name in RAWTEXT_ELEMENTS:
+            # Only move to head if it's a head element, not in body mode, and not a dual element in svg/mathml
+            if (tag_name in HEAD_ELEMENTS and 
+                self.head_node and 
+                self.state != 'in_body' and 
+                not (is_dual_context and is_dual_element)):
+                new_node = self._create_node(tag_name, attributes, self.head_node, 'rawtext')
+                self.head_node.append_child(new_node)
+                return new_node, 'rawtext'
+            # Otherwise handle as normal rawtext, preserving the current context
+            new_node = self._create_node(tag_name, attributes, current_parent, current_context)
+            current_parent.append_child(new_node)
+            return new_node, current_context if is_dual_context else 'rawtext'
+
+        # Move other head elements to head ONLY if not in body mode and not a dual element in svg/mathml
+        if (tag_name in HEAD_ELEMENTS and 
+            self.head_node and 
+            not (is_dual_context and is_dual_element)):
             if (current_parent != self.head_node and 
                 current_context is None and 
                 self.state != 'in_body'):
                 new_node = self._create_node(tag_name, attributes, self.head_node, None)
                 self.head_node.append_child(new_node)
                 return current_parent, current_context
-
-        # Handle raw text elements
-        if tag_name in RAWTEXT_ELEMENTS:
-            new_node = self._create_node(tag_name, attributes, current_parent, current_context)
-            current_parent.append_child(new_node)
-            return new_node, 'rawtext'
 
         # Special handling for option tags
         if tag_name == 'option':
@@ -293,32 +374,47 @@ class TurboHTML:
 
         return current_parent, current_context
 
+    def _decode_html_entities(self, text: str) -> str:
+        """Decode HTML entities in text."""
+        # Handle hex entities (&#x0a;)
+        text = re.sub(r'&#x([0-9a-fA-F]+);', 
+                    lambda m: chr(int(m.group(1), 16)), 
+                    text)
+        # Handle decimal entities (&#10;)
+        text = re.sub(r'&#([0-9]+);',
+                    lambda m: chr(int(m.group(1))),
+                    text)
+        return text
+
     # Helper methods
     def _handle_text_between_tags(self, text: str, current_parent: Node) -> None:
         """Handle text found between tags."""
         # Special handling for pre tags
         if current_parent.tag_name.lower() == 'pre':
+            # Decode entities first
+            decoded_text = self._decode_html_entities(text)
+            
             # For pre tags, combine all text into a single node
             if current_parent.children and current_parent.children[-1].tag_name == '#text':
                 # Append to existing text node
-                current_parent.children[-1].text_content += text
+                current_parent.children[-1].text_content += decoded_text
             else:
-                # Only create new text node if there's content after stripping first newline
-                if not current_parent.children and text.startswith('\n'):
-                    text = text[1:]
-                if text:  # Only create node if there's content
+                # Only strip first newline if this is the first text node
+                if not current_parent.children and decoded_text.startswith('\n'):
+                    decoded_text = decoded_text[1:]
+                if decoded_text:  # Only create node if there's content
                     text_node = Node('#text')
+                    text_node.text_content = decoded_text
                     text_node.parent = current_parent
-                    text_node.text_content = text  # Don't strip whitespace for pre tags
-                    current_parent.children.append(text_node)  # Directly append to children
+                    current_parent.children.append(text_node)
             return
 
         # Special handling for raw text elements
         if current_parent.tag_name.lower() in RAWTEXT_ELEMENTS:
-            text_node = Node('#text')
-            text_node.text_content = text
-            current_parent.append_child(text_node)
-            return
+            if text.strip():
+                text_node = Node('#text')
+                text_node.text_content = text
+                current_parent.append_child(text_node)
 
         if self.foreign_handler:
             node = self.foreign_handler.handle_text(text, current_parent)
@@ -326,12 +422,11 @@ class TurboHTML:
                 current_parent.append_child(node)
                 return
 
-        # Default text handling - preserve all whitespace
+        # Default text handling - preserve all whitespace for regular elements
         if text:
             text_node = Node('#text')
             text_node.text_content = text
-            if text_node.text_content:  # Only append if there's content after stripping
-                current_parent.append_child(text_node)
+            current_parent.append_child(text_node)
 
     def _handle_doctype(self, tag_info: "TagInfo") -> None:
         """Handle DOCTYPE declaration."""
