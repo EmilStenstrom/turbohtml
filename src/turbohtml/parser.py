@@ -20,6 +20,7 @@ from .constants import (
 if TYPE_CHECKING:
     from .node import Node
 
+
 class TurboHTML:
     """
     Main parser interface.
@@ -48,114 +49,218 @@ class TurboHTML:
         self.html_node.append_child(self.head_node)
         self.html_node.append_child(self.body_node)
         
+        # Trigger the parsing
         self._parse()
 
-    # Public methods
     def query_all(self, selector: str) -> List[Node]:
         """Query all nodes matching the selector."""
         return self.root.query_all(selector)
 
+    def query(self, selector: str) -> Optional[Node]:
+        """Shortcut to query the root node."""
+        return self.root.query(selector)
+
     def __repr__(self) -> str:
         return f"<TurboHTML root={self.root}>"
 
-    # Core parsing methods
+    # ─────────────────────────────────────────────────────────────────────
+    #           Refactored parsing below with smaller helper methods
+    # ─────────────────────────────────────────────────────────────────────
+
     def _parse(self) -> None:
-        """Main parsing loop."""
-        index = 0
-        length = len(self.html)
-        current_parent = self.body_node
-        current_context = None
-        has_form = False
-        self.state = 'initial'
-        in_rawtext = False
-        rawtext_start = 0
+        """
+        Main parsing loop, refactored for clarity.
+        """
+        context = self._initialize_parse_context()
 
-        while index < length:
-            # Look for comments first
-            comment_match = COMMENT_RE.search(self.html, index)
-            if comment_match and comment_match.start() == index:
-                # Use html node only if after head but not in body mode
-                # and not inside foreign content
-                if (self.state == 'after_head' and 
-                    self.state != 'in_body' and 
-                    current_parent.tag_name != 'math annotation-xml'):
-                    comment_parent = self.html_node
-                else:
-                    comment_parent = current_parent
-                index = self._handle_comment(comment_match, comment_parent, in_rawtext)
+        while context['index'] < context['length']:
+            # 1) Process comment first
+            if self._process_comment(context):
                 continue
 
-            # Look for next tag
-            tag_open_match = TAG_OPEN_RE.search(self.html, index)
-            if not tag_open_match:
-                if in_rawtext:
-                    current_parent, in_rawtext, index = self._handle_rawtext_mode(
-                        None, current_parent, rawtext_start, length, length
-                    )
-                elif index < length:
-                    text = self.html[index:]
-                    if text:
-                        self._handle_text_between_tags(text, current_parent)
-                break
-
-            start_idx = tag_open_match.start()
-            
-            # Handle text before tag
-            if start_idx > index and not in_rawtext:
-                current_parent, new_state = self._handle_text_before_tag(index, start_idx, current_parent)
-                if new_state:
-                    self.state = new_state
-                index = start_idx
-
-            # Process the tag
-            start_tag_idx, end_tag_idx, tag_info = self._extract_tag_info(tag_open_match)
-
-            # Handle rawtext mode
-            if in_rawtext:
-                current_parent, in_rawtext, index = self._handle_rawtext_mode(
-                    tag_info, current_parent, rawtext_start, start_idx, end_tag_idx
-                )
+            # 2) Process tag if found
+            if self._process_tag(context):
                 continue
 
-            # Start rawtext mode if needed
-            if self._should_enter_rawtext_mode(tag_info, current_context):
-                current_parent, current_context = self._handle_opening_tag(
-                    tag_info, current_parent, current_context
-                )
-                in_rawtext = True
-                rawtext_start = end_tag_idx
-                index = end_tag_idx
-                continue
-
-            # Update state based on tags
-            if tag_info.is_closing and tag_info.tag_name.lower() == 'head':
-                self.state = 'after_head'
-                current_parent = self.html_node
-                index = end_tag_idx
-                continue
-
-            # Handle regular tags
-            if tag_info.is_closing:
-                current_parent, current_context = self._handle_closing_tag(
-                    tag_info.tag_name, current_parent, current_context
-                )
-            elif tag_info.is_doctype:
-                self._handle_doctype(tag_info)
+            # 3) Handle leftover text or break out
+            if context['in_rawtext']:
+                self._handle_rawtext_eof(context)
             else:
-                if tag_info.tag_name.lower() == 'form':
-                    if has_form:
-                        index = end_tag_idx
-                        continue
-                    has_form = True
-                current_parent, current_context = self._handle_opening_tag(
-                    tag_info, current_parent, current_context
-                )
-            
-            index = end_tag_idx
+                self._handle_remaining_text(context)
+            break
 
-        # Cleanup any remaining rawtext content
-        if in_rawtext:
-            self._handle_rawtext_content(self.html[rawtext_start:], current_parent)
+        # If we ended while still in rawtext mode, finalize any leftover rawtext
+        if context['in_rawtext']:
+            self._cleanup_rawtext(context)
+
+    def _initialize_parse_context(self) -> dict:
+        """
+        Initialize a dictionary holding essential parser context variables.
+        """
+        return {
+            'index': 0,
+            'length': len(self.html),
+            'current_parent': self.body_node,
+            'current_context': None,
+            'has_form': False,
+            'in_rawtext': False,
+            'rawtext_start': 0
+        }
+
+    def _process_comment(self, context: dict) -> bool:
+        """
+        Check if the next token is a comment. If so, handle it and update
+        the parse context. Return True if processed, False otherwise.
+        """
+        index = context['index']
+        match = COMMENT_RE.search(self.html, index)
+        if match and match.start() == index:
+            # Decide comment parent
+            if (self.state == 'after_head' and 
+                self.state != 'in_body' and 
+                context['current_parent'].tag_name != 'math annotation-xml'):
+                comment_parent = self.html_node
+            else:
+                comment_parent = context['current_parent']
+
+            # Handle comment
+            new_index = self._handle_comment(match, comment_parent, context['in_rawtext'])
+            context['index'] = new_index
+            return True
+        return False
+
+    def _process_tag(self, context: dict) -> bool:
+        """
+        Check if the next token is a tag. If so, handle it and update
+        the parse context. Return True if processed, False otherwise.
+        """
+        index = context['index']
+        match = TAG_OPEN_RE.search(self.html, index)
+        if not match:
+            return False
+
+        start_idx = match.start()
+
+        # 1) If there's text before this tag, handle that first
+        if start_idx > index and not context['in_rawtext']:
+            context['current_parent'], new_state = self._handle_text_before_tag(
+                index, start_idx, context['current_parent']
+            )
+            if new_state:
+                self.state = new_state
+            context['index'] = start_idx
+
+        # 2) Extract tag info
+        start_tag_idx, end_tag_idx, tag_info = self._extract_tag_info(match)
+
+        # 3) If currently in rawtext, handle rawtext mode
+        if context['in_rawtext']:
+            (context['current_parent'],
+             context['in_rawtext'],
+             new_index) = self._handle_rawtext_mode(
+                 tag_info,
+                 context['current_parent'],
+                 context['rawtext_start'],
+                 start_idx,
+                 end_tag_idx
+             )
+            context['index'] = new_index
+            return True
+
+        # 4) Check if we should enter rawtext
+        if self._should_enter_rawtext_mode(tag_info, context['current_context']):
+            (context['current_parent'],
+             context['current_context']) = self._handle_opening_tag(
+                 tag_info,
+                 context['current_parent'],
+                 context['current_context']
+             )
+            context['in_rawtext'] = True
+            context['rawtext_start'] = end_tag_idx
+            context['index'] = end_tag_idx
+            return True
+
+        # 5) Otherwise handle doctype, closing, or opening tags
+        self._process_tag_basic(tag_info, context, end_tag_idx)
+        return True
+
+    def _process_tag_basic(self, tag_info: "TagInfo", context: dict, end_tag_idx: int) -> None:
+        """
+        Handle doctype, closing, or opening tags (excluding rawtext entry).
+        """
+        tag_name_lower = tag_info.tag_name.lower()
+
+        if tag_info.is_closing and tag_name_lower == 'head':
+            self.state = 'after_head'
+            context['current_parent'] = self.html_node
+            context['index'] = end_tag_idx
+            return
+
+        if tag_info.is_closing:
+            (context['current_parent'],
+             context['current_context']) = self._handle_closing_tag(
+                 tag_name_lower,
+                 context['current_parent'],
+                 context['current_context']
+             )
+        elif tag_info.is_doctype:
+            self._handle_doctype(tag_info)
+        else:
+            # Handle <form> limitations
+            if tag_name_lower == 'form':
+                if context['has_form']:
+                    context['index'] = end_tag_idx
+                    return
+                context['has_form'] = True
+            (context['current_parent'],
+             context['current_context']) = self._handle_opening_tag(
+                 tag_info,
+                 context['current_parent'],
+                 context['current_context']
+             )
+        context['index'] = end_tag_idx
+
+    def _handle_rawtext_eof(self, context: dict) -> None:
+        """
+        If in rawtext mode and we can't find more tags, handle the rawtext
+        from rawtext_start to the end of the string.
+        """
+        index = context['index']
+        length = context['length']
+        (context['current_parent'],
+         context['in_rawtext'],
+         new_index) = self._handle_rawtext_mode(
+             None,
+             context['current_parent'],
+             context['rawtext_start'],
+             index,
+             length
+         )
+        context['index'] = new_index
+
+    def _handle_remaining_text(self, context: dict) -> None:
+        """
+        If not in rawtext, any remaining text from index to end is appended.
+        """
+        index = context['index']
+        length = context['length']
+        if index < length:
+            text = self.html[index:]
+            if text:
+                self._handle_text_between_tags(text, context['current_parent'])
+        context['index'] = length
+
+    def _cleanup_rawtext(self, context: dict) -> None:
+        """
+        If parsing ended while in rawtext mode, finalize leftover rawtext.
+        """
+        text = self.html[context['rawtext_start']:]
+        if text:
+            self._handle_rawtext_content(text, context['current_parent'])
+
+    # ─────────────────────────────────────────────────────────────────────
+    #                     Original helper methods
+    # ─────────────────────────────────────────────────────────────────────
 
     def _should_enter_rawtext_mode(self, tag_info: "TagInfo", current_context: Optional[str]) -> bool:
         """Check if we should enter rawtext mode."""
@@ -164,49 +269,46 @@ class TurboHTML:
                 (not current_context or current_context not in ('svg', 'mathml')))
 
     def _handle_rawtext_mode(self, tag_info: Optional["TagInfo"], current_parent: Node, 
-                            rawtext_start: int, start_idx: int, end_tag_idx: int) -> Tuple[Node, bool, int]:
-        """Handle parsing while in rawtext mode.
-        
-        Args:
-            tag_info: The current tag info, or None if at EOF
-            current_parent: Current parent node
-            rawtext_start: Start index of rawtext content
-            start_idx: Start index of current tag
-            end_tag_idx: End index of current tag
-        
-        Returns:
-            Tuple of (new_parent, still_in_rawtext, new_index)
+                             rawtext_start: int, start_idx: int, end_tag_idx: int
+                            ) -> Tuple[Node, bool, int]:
+        """
+        Handle parsing while in rawtext mode.
         """
         # Handle EOF or closing tag
-        if tag_info is None or (tag_info.is_closing and 
-                               tag_info.tag_name.lower() == current_parent.tag_name.lower()):
-            text = self.html[rawtext_start:start_idx if tag_info else None]
+        if tag_info is None or (
+            tag_info.is_closing and 
+            tag_info.tag_name.lower() == current_parent.tag_name.lower()
+        ):
+            text = self.html[rawtext_start : (start_idx if tag_info else None)]
             if text:
                 self._handle_rawtext_content(text, current_parent)
-            return current_parent.parent, False, end_tag_idx
-        return current_parent, True, end_tag_idx
+            return (current_parent.parent, False, end_tag_idx)
+        return (current_parent, True, end_tag_idx)
 
     def _handle_rawtext_content(self, text: str, current_parent: Node) -> None:
-        """Handle content in rawtext elements."""
+        """
+        Handle content in rawtext elements (e.g. <script>, <style>, <textarea>).
+        """
         if text:
-            # Strip first newline for textarea/pre
             if (current_parent.tag_name.lower() in ('textarea', 'pre') and 
-                not current_parent.children and text.startswith('\n')):
+                not current_parent.children and 
+                text.startswith('\n')):
                 text = text[1:]
-            if text:  # Check again after stripping
+            if text:
                 text_node = Node('#text')
                 text_node.text_content = text
                 current_parent.append_child(text_node)
 
     def _handle_text_before_tag(self, start: int, end: int, current_parent: Node) -> Tuple[Node, Optional[str]]:
-        """Handle text found before a tag."""
+        """
+        Handle any text found before a tag.
+        """
         text = self.html[start:end]
         new_state = None
         
-        # Update parent to body if we have non-whitespace text after head
+        # If we have non-whitespace text after head, switch to in_body
         if text.strip() and self.state == 'after_head':
             new_state = 'in_body'
-            # Only update current_parent if we're not inside a pre tag
             if current_parent.tag_name.lower() != 'pre':
                 current_parent = self.body_node
         
@@ -222,59 +324,64 @@ class TurboHTML:
 
     def _handle_opening_tag(self, tag_info: "TagInfo", current_parent: Node, 
                             current_context: Optional[str]) -> Tuple[Node, Optional[str]]:
-        """Handle opening/self-closing tags with special cases."""
+        """
+        Handle an opening or self-closing tag, including special, rawtext,
+        or foreign elements.
+        """
         tag_name = tag_info.tag_name.lower()
         attributes = self._parse_attributes(tag_info.attr_string)
 
-        # Handle special elements
+        # Special elements (html, head, body)
         if result := self._handle_special_elements(tag_name, attributes):
-            if result[0]:  # If we got a node back
+            if result[0]:
                 return result
 
-        # Handle rawtext elements
+        # Rawtext elements
         if result := self._handle_rawtext_elements(tag_name, attributes, current_parent, current_context):
-            if result[0]:  # If we got a node back
+            if result[0]:
                 return result
 
-        # Handle option tags
+        # Option tag
         if result := self._handle_option_tag(tag_name, attributes, current_parent, current_context):
-            if result[0]:  # If we got a node back
+            if result[0]:
                 return result
 
-        # Handle foreign elements if enabled
+        # Foreign handling if present
         if self.foreign_handler:
-            current_parent, current_context = self.foreign_handler.handle_context(
+            (current_parent, current_context) = self.foreign_handler.handle_context(
                 tag_name, current_parent, current_context
             )
 
-        # Handle auto-closing first to get the correct parent
+        # Auto-closing for certain tags
         current_parent = self._handle_auto_closing(tag_name, current_parent)
 
-        # Create node with proper namespace
+        # Create the node
         new_node = self._create_node(tag_name, attributes, current_parent, current_context)
-
-        # Append the new node to current parent
         current_parent.append_child(new_node)
 
-        # For non-void elements, make the new node the current parent
+        # For non-void elements, the new node becomes the current parent
         if tag_name not in VOID_ELEMENTS:
             current_parent = new_node
 
-        return current_parent, current_context
+        return (current_parent, current_context)
 
     def _create_node(self, tag_name: str, attributes: dict, 
-                    current_parent: Node, current_context: Optional[str]) -> Node:
-        """Create a new node with proper namespace handling."""
+                     current_parent: Node, current_context: Optional[str]) -> Node:
+        """
+        Create a new node, potentially using the foreign handler if present.
+        """
         if self.foreign_handler:
             return self.foreign_handler.create_node(tag_name, attributes, current_parent, current_context)
         return Node(tag_name.lower(), attributes)
 
     def _handle_closing_tag(self, tag_name: str, current_parent: Node, 
-                           current_context: Optional[str]) -> Tuple[Node, Optional[str]]:
-        """Handle closing tags with special cases for foster parenting."""
+                            current_context: Optional[str]) -> Tuple[Node, Optional[str]]:
+        """
+        Handle a closing tag, including special logic for <p> and foreign elements.
+        """
         tag_name_lower = tag_name.lower()
 
-        # Handle foreign elements if enabled
+        # Foreign
         if self.foreign_handler:
             current_parent, current_context = self.foreign_handler.handle_foreign_end_tag(
                 tag_name, current_parent, current_context
@@ -282,7 +389,6 @@ class TurboHTML:
 
         # Special case for </p>
         if tag_name_lower == 'p':
-            # Find the original p tag
             original_p = None
             temp_parent = current_parent
             while temp_parent:
@@ -290,66 +396,52 @@ class TurboHTML:
                     original_p = temp_parent
                     break
                 temp_parent = temp_parent.parent
-
             if original_p:
+                # e.g. <p><button></p> or <p><table></p>
                 if current_parent.tag_name.lower() == 'button':
-                    # For <p><button></p> case - create new <p> inside button
                     new_p = Node('p')
                     current_parent.append_child(new_p)
                     return new_p, current_context
                 elif current_parent.tag_name.lower() == 'table':
-                    # For <p><table></p> case - don't create a new p
                     return original_p.parent, current_context
-                
-            # Normal </p> handling
-            return original_p.parent if original_p else current_parent, current_context
+            return (original_p.parent if original_p else current_parent, current_context)
 
-        # Normal closing tag handling
+        # Normal closing tags
         temp_parent = current_parent
         while temp_parent and temp_parent.tag_name.lower() != tag_name_lower:
             temp_parent = temp_parent.parent
         
         if temp_parent:
             return temp_parent.parent, current_context
-
         return current_parent, current_context
 
     def _decode_html_entities(self, text: str) -> str:
-        """Decode HTML entities in text."""
-        # Handle hex entities (&#x0a;)
-        text = re.sub(r'&#x([0-9a-fA-F]+);', 
-                    lambda m: chr(int(m.group(1), 16)), 
-                    text)
-        # Handle decimal entities (&#10;)
-        text = re.sub(r'&#([0-9]+);',
-                    lambda m: chr(int(m.group(1))),
-                    text)
+        """
+        Decode numeric HTML entities: both hex (&#x0a;) and decimal (&#10;).
+        """
+        text = re.sub(r'&#x([0-9a-fA-F]+);', lambda m: chr(int(m.group(1), 16)), text)
+        text = re.sub(r'&#([0-9]+);', lambda m: chr(int(m.group(1))), text)
         return text
 
-    # Helper methods
     def _handle_text_between_tags(self, text: str, current_parent: Node) -> None:
-        """Handle text found between tags."""
-        # Special handling for pre tags
+        """
+        Handle text nodes between tags, with special treatment for <pre> and rawtext elements.
+        """
         if current_parent.tag_name.lower() == 'pre':
-            # Decode entities first
             decoded_text = self._decode_html_entities(text)
-            
-            # For pre tags, combine all text into a single node
-            if current_parent.children and current_parent.children[-1].tag_name == '#text':
-                # Append to existing text node
+            if (current_parent.children and 
+                current_parent.children[-1].tag_name == '#text'):
                 current_parent.children[-1].text_content += decoded_text
             else:
-                # Only strip first newline if this is the first text node
                 if not current_parent.children and decoded_text.startswith('\n'):
                     decoded_text = decoded_text[1:]
-                if decoded_text:  # Only create node if there's content
+                if decoded_text:
                     text_node = Node('#text')
                     text_node.text_content = decoded_text
                     text_node.parent = current_parent
                     current_parent.children.append(text_node)
             return
 
-        # Special handling for raw text elements
         if current_parent.tag_name.lower() in RAWTEXT_ELEMENTS:
             if text.strip():
                 text_node = Node('#text')
@@ -362,20 +454,19 @@ class TurboHTML:
                 current_parent.append_child(node)
                 return
 
-        # Default text handling - preserve all whitespace for regular elements
         if text:
             text_node = Node('#text')
             text_node.text_content = text
             current_parent.append_child(text_node)
 
     def _handle_doctype(self, tag_info: "TagInfo") -> None:
-        """Handle DOCTYPE declaration."""
+        """Handle DOCTYPE declarations."""
         self.has_doctype = True
         doctype_node = Node('!doctype')
-        self.root.children.insert(0, doctype_node)  # Insert DOCTYPE as first child
+        self.root.children.insert(0, doctype_node)
 
-    def _get_ancestors(self, node: Node) -> list[Node]:
-        """Helper method to get all ancestors of a node."""
+    def _get_ancestors(self, node: Node) -> List[Node]:
+        """Return all ancestors of a node, including the node itself."""
         ancestors = []
         current = node
         while current:
@@ -391,17 +482,14 @@ class TurboHTML:
         matches = ATTR_RE.findall(attr_string)
         attributes = {}
         for attr_name, val1, val2, val3 in matches:
-            # Depending on which group matched, pick the correct value
             attr_value = val1 or val2 or val3 or ""
             attributes[attr_name] = attr_value
         return attributes
 
-    def query(self, selector: str) -> Optional[Node]:
-        """Shortcut to query the root node."""
-        return self.root.query(selector)
-
-    def _extract_tag_info(self, match) -> tuple[int, int, "TagInfo"]:
-        """Extract tag information from a regex match."""
+    def _extract_tag_info(self, match) -> Tuple[int, int, "TagInfo"]:
+        """
+        Extract tag information from a regex match.
+        """
         class TagInfo:
             def __init__(self, is_exclamation, is_closing, tag_name, attr_string):
                 self.is_exclamation = is_exclamation
@@ -438,51 +526,39 @@ class TurboHTML:
         )
 
     def _handle_auto_closing(self, tag_name: str, current_parent: Node) -> Node:
-        """Handle tags that cause auto-closing of parent tags."""
+        """
+        Handle auto-closing rules, e.g. some tags can't nest themselves
+        or must close upon encountering certain sibling elements.
+        """
         tag_name_lower = tag_name.lower()
 
-        # Handle elements that should close their previous siblings
+        # Close previous sibling if same
         if tag_name_lower in SIBLING_ELEMENTS:
             if ancestor := self._find_ancestor(current_parent, tag_name_lower):
                 return ancestor.parent
 
-        # Handle special elements that can't nest themselves
+        # Certain elements can't nest themselves
         if tag_name_lower in ('nobr', 'button', 'option'):
             if ancestor := self._find_ancestor(current_parent, tag_name_lower):
                 return ancestor.parent
 
-        # Handle p tags - they close on block elements ONLY if not inside a button
+        # p tags close on block elements if not inside a button
         if tag_name_lower in BLOCK_ELEMENTS:
-            # First check if we're inside a button
             button_ancestor = self._find_ancestor(current_parent, 'button')
-            if not button_ancestor:  # Only close p if we're not inside a button
+            if not button_ancestor:
                 if p_ancestor := self._find_ancestor(current_parent, 'p'):
-                    # Create a new p inside the existing p for table voodoo
                     if tag_name_lower == 'table':
                         new_p = Node('p')
                         p_ancestor.append_child(new_p)
-                        return p_ancestor  # Return the original p as parent for the table
-                                     # This makes the table a sibling of the new p
-                    return p_ancestor.parent  # For non-table block elements
+                        return p_ancestor
+                    return p_ancestor.parent
 
         return current_parent
 
-    def _handle_remaining_text(self, index: int, length: int, current_parent: Node, 
-                         in_rawtext: bool, rawtext_start: int) -> None:
-        """Handle any remaining text when no more tags are found."""
-        if in_rawtext:
-            # Handle remaining rawtext content
-            text = self.html[rawtext_start:]
-            if text:
-                self._handle_rawtext_content(text, current_parent)
-        elif index < length:
-            # Handle remaining regular text
-            text = self.html[index:]
-            if text:
-                self._handle_text_between_tags(text, current_parent)
-
     def _handle_comment(self, match: re.Match, current_parent: Node, in_rawtext: bool) -> int:
-        """Handle HTML comments."""
+        """
+        Insert an HTML comment node into the tree.
+        """
         comment_text = match.group(1)
         comment_node = Node('#comment')
         comment_node.text_content = comment_text
@@ -494,61 +570,64 @@ class TurboHTML:
             comment_node.parent = self.html_node
         else:
             current_parent.append_child(comment_node)
-        
         return match.end()
 
     def _handle_special_elements(self, tag_name: str, attributes: dict) -> Tuple[Optional[Node], Optional[str]]:
-        """Handle special elements (html, head, body)."""
+        """
+        Handle <html>, <head>, <body> if encountered again.
+        """
         if tag_name == 'html':
             self.html_node.attributes.update(attributes)
-            return self.html_node, None
+            return (self.html_node, None)
         if tag_name == 'body':
             self.body_node.attributes.update(attributes)
-            return self.body_node, None
+            return (self.body_node, None)
         if tag_name == 'head':
-            return self.head_node, None
-        return None, None
+            return (self.head_node, None)
+        return (None, None)
 
     def _handle_rawtext_elements(self, tag_name: str, attributes: dict, current_parent: Node,
-                               current_context: Optional[str]) -> Tuple[Optional[Node], Optional[str]]:
-        """Handle rawtext elements (script, style, etc)."""
+                                 current_context: Optional[str]) -> Tuple[Optional[Node], Optional[str]]:
+        """
+        Handle <script>, <style>, and other rawtext elements.
+        """
         is_dual_context = current_context in ('svg', 'mathml')
         is_dual_element = tag_name in DUAL_NAMESPACE_ELEMENTS
 
         if tag_name in RAWTEXT_ELEMENTS:
-            # Only move to head if it's a head element, not in body mode, and not a dual element in svg/mathml
+            # Possibly place in head if HEAD element, not in body mode, and not dual
             if (tag_name in HEAD_ELEMENTS and 
                 self.head_node and 
                 self.state != 'in_body' and 
                 not (is_dual_context and is_dual_element)):
                 new_node = self._create_node(tag_name, attributes, self.head_node, 'rawtext')
                 self.head_node.append_child(new_node)
-                return new_node, 'rawtext'
-            # Otherwise handle as normal rawtext
+                return (new_node, 'rawtext')
+            # Otherwise treat as normal rawtext
             new_node = self._create_node(tag_name, attributes, current_parent, current_context)
             current_parent.append_child(new_node)
-            return new_node, current_context if is_dual_context else 'rawtext'
-        return None, None
+            return (new_node, current_context if is_dual_context else 'rawtext')
+        return (None, None)
 
     def _handle_option_tag(self, tag_name: str, attributes: dict, current_parent: Node,
-                          current_context: Optional[str]) -> Tuple[Optional[Node], Optional[str]]:
-        """Handle special option tag nesting rules."""
+                           current_context: Optional[str]) -> Tuple[Optional[Node], Optional[str]]:
+        """
+        Handle special nesting rules for <option> tags.
+        """
         if tag_name != 'option':
-            return None, None
+            return (None, None)
 
-        # Find the nearest option parent
         temp_parent = current_parent
         while temp_parent:
             if temp_parent.tag_name.lower() == 'option':
-                # If there are elements between options, nest it
-                if any(child.tag_name.lower() != 'option' 
-                      for child in temp_parent.children):
+                # If there's something else inside the option
+                if any(child.tag_name.lower() != 'option' for child in temp_parent.children):
                     new_node = self._create_node(tag_name, attributes, current_parent, current_context)
                     current_parent.append_child(new_node)
-                    return new_node, current_context
-                # Otherwise make it a sibling
+                    return (new_node, current_context)
+                # Otherwise place it as a sibling
                 new_node = self._create_node(tag_name, attributes, temp_parent.parent, current_context)
                 temp_parent.parent.append_child(new_node)
-                return new_node, current_context
+                return (new_node, current_context)
             temp_parent = temp_parent.parent
-        return None, None
+        return (None, None)
