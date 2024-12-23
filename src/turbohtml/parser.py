@@ -13,7 +13,8 @@ from .node import Node
 from .constants import (
     VOID_ELEMENTS, HTML_ELEMENTS, SPECIAL_ELEMENTS, BLOCK_ELEMENTS,
     TABLE_CONTAINING_ELEMENTS, RAWTEXT_ELEMENTS, HEAD_ELEMENTS,
-    TAG_OPEN_RE, ATTR_RE, COMMENT_RE, DUAL_NAMESPACE_ELEMENTS
+    TAG_OPEN_RE, ATTR_RE, COMMENT_RE, DUAL_NAMESPACE_ELEMENTS,
+    SIBLING_ELEMENTS
 )
 
 if TYPE_CHECKING:
@@ -484,6 +485,18 @@ class TurboHTML:
     def _handle_auto_closing(self, tag_name: str, current_parent: Node) -> Node:
         """Handle tags that cause auto-closing of parent tags."""
         tag_name_lower = tag_name.lower()
+
+        # Handle elements that should close their previous siblings
+        # e.g., <li>, <dt>, <dd>, <tr>, <th>, <td>, <option>, etc.
+        if tag_name_lower in SIBLING_ELEMENTS:
+            # Find the nearest ancestor of the same type
+            ancestor = next(
+                (p for p in self._get_ancestors(current_parent)
+                 if p.tag_name.lower() == tag_name_lower),
+                None
+            )
+            if ancestor:
+                return ancestor.parent
 
         # Handle nested nobr tags
         if tag_name_lower == 'nobr':

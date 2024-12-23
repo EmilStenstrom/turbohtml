@@ -125,3 +125,14 @@ SVG_CASE_SENSITIVE_ELEMENTS = {
     'radialgradient': 'radialGradient',
     'textpath': 'textPath'
 }
+
+# Elements that auto-close their previous siblings
+SIBLING_ELEMENTS = {
+    'li',    # List items
+    'dt',    # Definition terms
+    'dd',    # Definition descriptions
+    'tr',    # Table rows
+    'th',    # Table headers
+    'td',    # Table cells
+    'option' # Select options
+}
