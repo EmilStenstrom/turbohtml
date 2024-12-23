@@ -478,10 +478,7 @@ class TurboHTML:
     def _handle_closing_tag(self, tag_name: str, current_parent: Node,
                             current_context: Optional[str]) -> Tuple[Node, Optional[str]]:
         """
-        Close the specified tag. Special logic includes:
-        - Handling foreign elements (SVG/MathML).
-        - Handling <p> logic when we see </p> (including nested scenarios).
-        - Searching up the tree for a matching ancestor if needed.
+        Close the specified tag, with special handling for </p> inside buttons.
         """
         tag_name_lower = tag_name.lower()
 
@@ -491,27 +488,16 @@ class TurboHTML:
                 tag_name, current_parent, current_context
             )
 
-        # Special case: </p> might need to close incorrectly nested tags
+        # Special case: </p> inside button creates a new paragraph
         if tag_name_lower == 'p':
-            original_p = None
-            temp_parent = current_parent
-            while temp_parent:
-                if temp_parent.tag_name.lower() == 'p':
-                    original_p = temp_parent
-                    break
-                temp_parent = temp_parent.parent
-
-            if original_p:
-                # e.g. <p><button></p> or <p><table></p>
+            if p_ancestor := self._find_ancestor(current_parent, 'p'):
                 if current_parent.tag_name.lower() == 'button':
                     new_p = Node('p')
                     current_parent.append_child(new_p)
                     return new_p, current_context
-                elif current_parent.tag_name.lower() == 'table':
-                    return original_p.parent, current_context
-            return (original_p.parent if original_p else current_parent, current_context)
+                return p_ancestor.parent, current_context
 
-        # Normal closing tag: climb the tree to find a matching tag
+        # Normal closing tag handling
         temp_parent = current_parent
         while temp_parent and temp_parent.tag_name.lower() != tag_name_lower:
             temp_parent = temp_parent.parent
@@ -611,8 +597,7 @@ class TurboHTML:
 
     def _handle_auto_closing(self, tag_name: str, current_parent: Node) -> Node:
         """
-        Handle auto-closing rules, e.g. some tags can't nest themselves
-        or must close upon encountering certain sibling elements.
+        Handle auto-closing rules for elements that can't be nested.
         """
         tag_name_lower = tag_name.lower()
 
@@ -621,29 +606,14 @@ class TurboHTML:
             if ancestor := self._find_ancestor(current_parent, tag_name_lower):
                 return ancestor.parent
 
-        # Certain elements can't nest themselves
-        if tag_name_lower in ('nobr', 'button', 'option'):
-            if ancestor := self._find_ancestor(current_parent, tag_name_lower):
-                return ancestor.parent
-
-        # <p> closes on block elements if not inside a button
+        # Block elements close paragraphs
         if tag_name_lower in BLOCK_ELEMENTS:
             button_ancestor = self._find_ancestor(current_parent, 'button')
             if not button_ancestor:
                 if p_ancestor := self._find_ancestor(current_parent, 'p'):
-                    # Special case: if it's a table, we create a sibling <p>
-                    if tag_name_lower == 'table':
-                        new_p = Node('p')
-                        p_ancestor.append_child(new_p)
-                        # The <table> will become a sibling of new_p
-                        return p_ancestor
                     return p_ancestor.parent
 
         return current_parent
-
-    # ─────────────────────────────────────────────────────────────────────
-    #                       Miscellaneous Helpers
-    # ─────────────────────────────────────────────────────────────────────
 
     def _extract_tag_info(self, match) -> Tuple[int, int, TagInfo]:
         """
