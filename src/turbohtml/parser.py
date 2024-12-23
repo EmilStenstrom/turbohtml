@@ -183,11 +183,7 @@ class TurboHTML:
             text = self.html[rawtext_start:start_idx if tag_info else None]
             if text:
                 self._handle_rawtext_content(text, current_parent)
-            return (current_parent.parent if tag_info else current_parent, 
-                    False, 
-                    end_tag_idx if tag_info else start_idx)
-        
-        # Continue in rawtext mode
+            return current_parent.parent, False, end_tag_idx
         return current_parent, True, end_tag_idx
 
     def _handle_rawtext_content(self, text: str, current_parent: Node) -> None:
@@ -302,9 +298,6 @@ class TurboHTML:
             current_parent.append_child(new_node)
             return new_node, current_context
 
-        # Handle auto-closing first
-        current_parent = self._handle_auto_closing(tag_name, current_parent)
-
         # Then handle foreign elements if enabled
         if self.foreign_handler:
             current_parent, current_context = self.foreign_handler.handle_context(
@@ -313,6 +306,9 @@ class TurboHTML:
 
         # Create node with proper namespace
         new_node = self._create_node(tag_name, attributes, current_parent, current_context)
+
+        # Handle auto-closing after creating the node
+        current_parent = self._handle_auto_closing(tag_name, current_parent)
 
         # Append the new node to current parent
         current_parent.append_child(new_node)
@@ -482,55 +478,43 @@ class TurboHTML:
             )
         )
 
+    def _find_ancestor(self, current_parent: Node, tag_name: str) -> Optional[Node]:
+        """Find the nearest ancestor with the given tag name."""
+        return next(
+            (p for p in self._get_ancestors(current_parent)
+             if p.tag_name.lower() == tag_name.lower()),
+            None
+        )
+
+    def _find_block_ancestor(self, current_parent: Node) -> Optional[Node]:
+        """Find the nearest block element ancestor."""
+        return next(
+            (p for p in self._get_ancestors(current_parent)
+             if p.tag_name.lower() in BLOCK_ELEMENTS),
+            None
+        )
+
     def _handle_auto_closing(self, tag_name: str, current_parent: Node) -> Node:
         """Handle tags that cause auto-closing of parent tags."""
         tag_name_lower = tag_name.lower()
 
         # Handle elements that should close their previous siblings
-        # e.g., <li>, <dt>, <dd>, <tr>, <th>, <td>, <option>, etc.
         if tag_name_lower in SIBLING_ELEMENTS:
-            # Find the nearest ancestor of the same type
-            ancestor = next(
-                (p for p in self._get_ancestors(current_parent)
-                 if p.tag_name.lower() == tag_name_lower),
-                None
-            )
-            if ancestor:
+            if ancestor := self._find_ancestor(current_parent, tag_name_lower):
                 return ancestor.parent
 
-        # Handle nested nobr tags
-        if tag_name_lower == 'nobr':
-            nobr_ancestor = next(
-                (p for p in self._get_ancestors(current_parent)
-                 if p.tag_name.lower() == 'nobr'),
-                None
-            )
-            if nobr_ancestor:
-                return nobr_ancestor.parent
+        # Handle special elements that can't nest themselves
+        if tag_name_lower in ('nobr', 'button', 'option'):
+            if ancestor := self._find_ancestor(current_parent, tag_name_lower):
+                return ancestor.parent
 
-        # Special handling for button inside button
-        if tag_name_lower == 'button':
-            button_ancestor = next(
-                (p for p in self._get_ancestors(current_parent)
-                 if p.tag_name.lower() == 'button'),
-                None
-            )
-            if button_ancestor:
-                return button_ancestor.parent
-
-        # Special handling for option inside option
-        if tag_name_lower == 'option':
-            option_ancestor = next(
-                (p for p in self._get_ancestors(current_parent)
-                 if p.tag_name.lower() == 'option'),
-                None
-            )
-            if option_ancestor:
-                return option_ancestor.parent
-
-        # Handle other auto-closing cases
-        if current_parent.tag_name.lower() == 'p' and tag_name_lower in BLOCK_ELEMENTS:
-            return current_parent.parent
+        # Handle p tags - they close on block elements ONLY if not inside a button
+        if tag_name_lower in BLOCK_ELEMENTS:
+            # First check if we're inside a button
+            button_ancestor = self._find_ancestor(current_parent, 'button')
+            if not button_ancestor:  # Only close p if we're not inside a button
+                if p_ancestor := self._find_ancestor(current_parent, 'p'):
+                    return p_ancestor.parent
 
         return current_parent
 

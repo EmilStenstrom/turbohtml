@@ -134,5 +134,7 @@ SIBLING_ELEMENTS = {
     'tr',    # Table rows
     'th',    # Table headers
     'td',    # Table cells
+    'nobr',  # No break
+    'button', # Button
     'option' # Select options
 }
