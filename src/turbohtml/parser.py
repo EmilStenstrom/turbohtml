@@ -47,7 +47,6 @@ class TurboHTML:
         self.html_node.append_child(self.head_node)
         self.html_node.append_child(self.body_node)
         
-        self.current_parent = self.body_node
         self._parse()
 
     # Public methods
@@ -63,7 +62,7 @@ class TurboHTML:
         """Main parsing loop."""
         index = 0
         length = len(self.html)
-        current_parent = self.current_parent
+        current_parent = self.body_node  # Start with body as parent
         current_context = None
         has_form = False
         self.state = 'initial'
@@ -74,104 +73,44 @@ class TurboHTML:
             # Look for comments first
             comment_match = COMMENT_RE.search(self.html, index)
             if comment_match and comment_match.start() == index:
-                # Skip comment handling if we're in rawtext
-                if in_rawtext:
-                    index = comment_match.end()
-                    continue
-                
-                comment_text = comment_match.group(1)
-                comment_node = Node('#comment')
-                comment_node.text_content = comment_text
-                
-                # Handle comments based on state
-                if self.state == 'after_head':
-                    # Comments in after_head state go directly under html node
-                    body_index = self.html_node.children.index(self.body_node)
-                    self.html_node.children.insert(body_index, comment_node)
-                    comment_node.parent = self.html_node
+                # Use html node only if after head but not in body mode
+                # and not inside foreign content
+                if (self.state == 'after_head' and 
+                    self.state != 'in_body' and 
+                    current_parent.tag_name != 'math annotation-xml'):
+                    comment_parent = self.html_node
                 else:
-                    current_parent.append_child(comment_node)
-                
-                index = comment_match.end()
+                    comment_parent = current_parent
+                index = self._handle_comment(comment_match, comment_parent, in_rawtext)
                 continue
 
             # Look for next tag
             tag_open_match = TAG_OPEN_RE.search(self.html, index)
             if not tag_open_match:
-                # Handle remaining text
-                if index < length:
-                    text = self.html[index:]
-                    if not in_rawtext:
-                        self._handle_text_between_tags(text, current_parent)
-                        if text.strip():
-                            if self.state == 'after_head':
-                                self.state = 'in_body'
-                                current_parent = self.body_node
+                self._handle_remaining_text(index, length, current_parent, in_rawtext, rawtext_start)
                 break
 
             start_idx = tag_open_match.start()
             
             # Handle text before tag
             if start_idx > index and not in_rawtext:
-                text = self.html[index:start_idx]
-                
-                # Update parent to body if we have non-whitespace text after head
-                if text.strip() and self.state == 'after_head':
-                    self.state = 'in_body'
-                    # Only update current_parent if we're not inside a pre tag
-                    if current_parent.tag_name.lower() != 'pre':
-                        current_parent = self.body_node
-                
-                if self.foreign_handler and current_parent.tag_name == 'math annotation-xml':
-                    node = self.foreign_handler.handle_text(text, current_parent)
-                    if node:
-                        current_parent.append_child(node)
-                else:
-                    self._handle_text_between_tags(text, current_parent)  # Handle text only once
-                
+                current_parent, new_state = self._handle_text_before_tag(index, start_idx, current_parent)
+                if new_state:
+                    self.state = new_state
                 index = start_idx
 
             # Process the tag
             start_tag_idx, end_tag_idx, tag_info = self._extract_tag_info(tag_open_match)
 
-            # If we're in rawtext mode, only look for matching end tag
+            # Handle rawtext mode
             if in_rawtext:
-                if not tag_open_match:
-                    # No more tags - capture rest of content
-                    text = self.html[rawtext_start:]
-                    if text:
-                        # Strip first newline for textarea/pre
-                        if (current_parent.tag_name.lower() in ('textarea', 'pre') and 
-                            not current_parent.children and text.startswith('\n')):
-                            text = text[1:]
-                        if text:  # Check again after stripping
-                            text_node = Node('#text')
-                            text_node.text_content = text
-                            current_parent.append_child(text_node)
-                    break
-
-                if (tag_info.is_closing and 
-                    tag_info.tag_name.lower() == current_parent.tag_name.lower()):
-                    # Create text node with all content
-                    text = self.html[rawtext_start:start_idx]
-                    if text:
-                        # Strip first newline for textarea/pre
-                        if (current_parent.tag_name.lower() in ('textarea', 'pre') and 
-                            not current_parent.children and text.startswith('\n')):
-                            text = text[1:]
-                        if text:  # Check again after stripping
-                            text_node = Node('#text')
-                            text_node.text_content = text
-                            current_parent.append_child(text_node)
-                    in_rawtext = False
-                    current_parent = current_parent.parent
-                index = end_tag_idx
+                current_parent, in_rawtext, index = self._handle_rawtext_mode(
+                    tag_info, current_parent, rawtext_start, start_idx, end_tag_idx
+                )
                 continue
 
-            # Start rawtext mode if entering a rawtext element (but not in SVG/MathML context)
-            if (not tag_info.is_closing and 
-                tag_info.tag_name.lower() in RAWTEXT_ELEMENTS and 
-                (not current_context or current_context not in ('svg', 'mathml'))):
+            # Start rawtext mode if needed
+            if self._should_enter_rawtext_mode(tag_info, current_context):
                 current_parent, current_context = self._handle_opening_tag(
                     tag_info, current_parent, current_context
                 )
@@ -180,13 +119,14 @@ class TurboHTML:
                 index = end_tag_idx
                 continue
 
-            # Update state based on tags - move this AFTER we get tag_info
+            # Update state based on tags
             if tag_info.is_closing and tag_info.tag_name.lower() == 'head':
                 self.state = 'after_head'
-                current_parent = self.html_node  # Set parent to html for comments
+                current_parent = self.html_node
                 index = end_tag_idx
                 continue
 
+            # Handle regular tags
             if tag_info.is_closing:
                 current_parent, current_context = self._handle_closing_tag(
                     tag_info.tag_name, current_parent, current_context
@@ -194,34 +134,71 @@ class TurboHTML:
             elif tag_info.is_doctype:
                 self._handle_doctype(tag_info)
             else:
-                # Skip nested form tags
                 if tag_info.tag_name.lower() == 'form':
                     if has_form:
                         index = end_tag_idx
                         continue
                     has_form = True
-                    
                 current_parent, current_context = self._handle_opening_tag(
                     tag_info, current_parent, current_context
                 )
             
             index = end_tag_idx
 
-        # Cleanup: handle any remaining rawtext content at EOF
+        # Cleanup any remaining rawtext content
         if in_rawtext:
-            text = self.html[rawtext_start:]
-            if text:
-                # Strip first newline for textarea/pre
-                if (current_parent.tag_name.lower() in ('textarea', 'pre') and 
-                    not current_parent.children and text.startswith('\n')):
-                    text = text[1:]
-                if text:  # Check again after stripping
-                    text_node = Node('#text')
-                    text_node.text_content = text
-                    current_parent.append_child(text_node)
+            self._handle_rawtext_content(self.html[rawtext_start:], current_parent)
 
-        # Update the current_parent for future reference
-        self.current_parent = current_parent
+    def _should_enter_rawtext_mode(self, tag_info: "TagInfo", current_context: Optional[str]) -> bool:
+        """Check if we should enter rawtext mode."""
+        return (not tag_info.is_closing and 
+                tag_info.tag_name.lower() in RAWTEXT_ELEMENTS and 
+                (not current_context or current_context not in ('svg', 'mathml')))
+
+    def _handle_rawtext_mode(self, tag_info: "TagInfo", current_parent: Node, 
+                            rawtext_start: int, start_idx: int, end_tag_idx: int) -> Tuple[Node, bool, int]:
+        """Handle parsing while in rawtext mode."""
+        if (tag_info.is_closing and 
+            tag_info.tag_name.lower() == current_parent.tag_name.lower()):
+            text = self.html[rawtext_start:start_idx]
+            if text:
+                self._handle_rawtext_content(text, current_parent)
+            return current_parent.parent, False, end_tag_idx
+        return current_parent, True, end_tag_idx
+
+    def _handle_rawtext_content(self, text: str, current_parent: Node) -> None:
+        """Handle content in rawtext elements."""
+        if text:
+            # Strip first newline for textarea/pre
+            if (current_parent.tag_name.lower() in ('textarea', 'pre') and 
+                not current_parent.children and text.startswith('\n')):
+                text = text[1:]
+            if text:  # Check again after stripping
+                text_node = Node('#text')
+                text_node.text_content = text
+                current_parent.append_child(text_node)
+
+    def _handle_text_before_tag(self, start: int, end: int, current_parent: Node) -> Tuple[Node, Optional[str]]:
+        """Handle text found before a tag."""
+        text = self.html[start:end]
+        new_state = None
+        
+        # Update parent to body if we have non-whitespace text after head
+        if text.strip() and self.state == 'after_head':
+            new_state = 'in_body'
+            # Only update current_parent if we're not inside a pre tag
+            if current_parent.tag_name.lower() != 'pre':
+                current_parent = self.body_node
+        
+        if text:
+            if self.foreign_handler and current_parent.tag_name == 'math annotation-xml':
+                node = self.foreign_handler.handle_text(text, current_parent)
+                if node:
+                    current_parent.append_child(node)
+            else:
+                self._handle_text_between_tags(text, current_parent)
+            
+        return current_parent, new_state
 
     def _handle_opening_tag(self, tag_info: "TagInfo", current_parent: Node, 
                             current_context: Optional[str]) -> Tuple[Node, Optional[str]]:
@@ -520,3 +497,33 @@ class TurboHTML:
             return current_parent.parent
 
         return current_parent
+
+    def _handle_remaining_text(self, index: int, length: int, current_parent: Node, 
+                         in_rawtext: bool, rawtext_start: int) -> None:
+        """Handle any remaining text when no more tags are found."""
+        if in_rawtext:
+            # Handle remaining rawtext content
+            text = self.html[rawtext_start:]
+            if text:
+                self._handle_rawtext_content(text, current_parent)
+        elif index < length:
+            # Handle remaining regular text
+            text = self.html[index:]
+            if text:
+                self._handle_text_between_tags(text, current_parent)
+
+    def _handle_comment(self, match: re.Match, current_parent: Node, in_rawtext: bool) -> int:
+        """Handle HTML comments."""
+        comment_text = match.group(1)
+        comment_node = Node('#comment')
+        comment_node.text_content = comment_text
+        
+        if current_parent == self.html_node:
+            # Insert comment after head but before body
+            head_index = self.html_node.children.index(self.head_node)
+            self.html_node.children.insert(head_index + 1, comment_node)
+            comment_node.parent = self.html_node
+        else:
+            current_parent.append_child(comment_node)
+        
+        return match.end()
