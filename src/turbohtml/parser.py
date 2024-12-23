@@ -326,10 +326,10 @@ class TurboHTML:
                 current_parent.append_child(node)
                 return
 
-        # Default text handling
-        if text:  # Remove the strip() to handle all text
+        # Default text handling - preserve all whitespace
+        if text:
             text_node = Node('#text')
-            text_node.text_content = text.strip()  # Only strip when setting content
+            text_node.text_content = text
             if text_node.text_content:  # Only append if there's content after stripping
                 current_parent.append_child(text_node)
 
