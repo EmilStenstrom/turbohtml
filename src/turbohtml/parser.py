@@ -94,34 +94,33 @@ class TurboHTML:
                 # Handle remaining text
                 if index < length:
                     text = self.html[index:]
-                    if text.strip():  # Only handle non-whitespace text
+                    self._handle_text_between_tags(text, current_parent)  # Handle text first
+                    if text.strip():  # Then check for state changes
                         if self.state == 'after_head':
                             self.state = 'in_body'
                             current_parent = self.body_node
-                        self._handle_text_between_tags(text, current_parent)
                 break
 
             start_idx = tag_open_match.start()
             if start_idx > index:
                 # Handle text between tags
                 text = self.html[index:start_idx]
-                if text.strip():  # Only handle non-whitespace text
-                    if self.state == 'after_head':
-                        self.state = 'in_body'
+                
+                # Update parent to body if we have non-whitespace text after head
+                if text.strip() and self.state == 'after_head':
+                    self.state = 'in_body'
+                    # Only update current_parent if we're not inside a pre tag
+                    if current_parent.tag_name.lower() != 'pre':
                         current_parent = self.body_node
-
+                
                 if self.foreign_handler and current_parent.tag_name == 'math annotation-xml':
                     node = self.foreign_handler.handle_text(text, current_parent)
                     if node:
                         current_parent.append_child(node)
                 else:
-                    self._handle_text_between_tags(text, current_parent)
-                    
-                if text.strip():  # Only handle non-whitespace text
-                    if self.state == 'after_head' and text.strip():
-                        self.state = 'in_body'
-                        current_parent = self.body_node
-                index = start_idx  # Update index to avoid processing the same text twice
+                    self._handle_text_between_tags(text, current_parent)  # Handle text only once
+                
+                index = start_idx
 
             # Process the tag
             start_tag_idx, end_tag_idx, tag_info = self._extract_tag_info(tag_open_match)
@@ -161,6 +160,18 @@ class TurboHTML:
         """Handle opening/self-closing tags with special cases."""
         tag_name = tag_info.tag_name.lower()
         attributes = self._parse_attributes(tag_info.attr_string)
+
+        # Special handling for html tag - reuse existing html node
+        if tag_name == 'html':
+            # Merge any attributes into existing html node
+            self.html_node.attributes.update(attributes)
+            return self.html_node, current_context
+
+        # Special handling for body tag - reuse existing body node
+        if tag_name == 'body':
+            # Merge any attributes into existing body node
+            self.body_node.attributes.update(attributes)
+            return self.body_node, current_context
 
         # Special handling for head tag - reuse existing head node
         if tag_name == 'head':
@@ -287,12 +298,19 @@ class TurboHTML:
         """Handle text found between tags."""
         # Special handling for pre tags
         if current_parent.tag_name.lower() == 'pre':
-            # Only strip the first newline after <pre>
-            if current_parent.children == [] and text.startswith('\n'):
-                text = text[1:]
-            text_node = Node('#text')
-            text_node.text_content = text
-            current_parent.append_child(text_node)
+            # For pre tags, combine all text into a single node
+            if current_parent.children and current_parent.children[-1].tag_name == '#text':
+                # Append to existing text node
+                current_parent.children[-1].text_content += text
+            else:
+                # Only create new text node if there's content after stripping first newline
+                if not current_parent.children and text.startswith('\n'):
+                    text = text[1:]
+                if text:  # Only create node if there's content
+                    text_node = Node('#text')
+                    text_node.parent = current_parent
+                    text_node.text_content = text  # Don't strip whitespace for pre tags
+                    current_parent.children.append(text_node)  # Directly append to children
             return
 
         # Special handling for raw text elements
