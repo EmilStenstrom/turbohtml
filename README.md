@@ -4,4 +4,4 @@ Current status on html5 treebuilder tests:
 
 ~/Projects/turbohtml$ python validate.py
 
-Tests passed: 493/1760 (28%)
+Tests passed: 484/1760 (28%)
