@@ -128,6 +128,9 @@ SVG_CASE_SENSITIVE_ELEMENTS = {
     'textpath': 'textPath'
 }
 
+# Header elements h1-h6
+HEADER_ELEMENTS = {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}
+
 # Elements that auto-close their previous siblings
 SIBLING_ELEMENTS = {
     'li',    # List items
@@ -138,5 +141,6 @@ SIBLING_ELEMENTS = {
     'td',    # Table cells
     'nobr',  # No break
     'button', # Button
-    'option' # Select options
+    'option', # Select options
+    *HEADER_ELEMENTS  # Headers
 }

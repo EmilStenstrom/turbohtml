@@ -16,7 +16,7 @@ from .constants import (
     VOID_ELEMENTS, HTML_ELEMENTS, SPECIAL_ELEMENTS, BLOCK_ELEMENTS,
     TABLE_CONTAINING_ELEMENTS, RAWTEXT_ELEMENTS, HEAD_ELEMENTS,
     TAG_OPEN_RE, ATTR_RE, COMMENT_RE, DUAL_NAMESPACE_ELEMENTS,
-    SIBLING_ELEMENTS, TABLE_ELEMENTS
+    SIBLING_ELEMENTS, TABLE_ELEMENTS, HEADER_ELEMENTS
 )
 
 if TYPE_CHECKING:
@@ -655,10 +655,18 @@ class TurboHTML:
         """
         tag_name_lower = tag_name.lower()
 
-        # Close previous sibling if it's the same
+        # Close previous sibling if it's the same or another header
         if tag_name_lower in SIBLING_ELEMENTS:
-            if ancestor := self._find_ancestor(current_parent, tag_name_lower):
-                return ancestor.parent
+            temp_parent = current_parent
+            while temp_parent:
+                parent_tag = temp_parent.tag_name.lower()
+                if parent_tag in SIBLING_ELEMENTS:
+                    # For headers, any header should close any other header
+                    if ((tag_name_lower in HEADER_ELEMENTS and 
+                         parent_tag in HEADER_ELEMENTS) or
+                        tag_name_lower == parent_tag):
+                        return temp_parent.parent
+                temp_parent = temp_parent.parent
 
         # Block elements close paragraphs
         if tag_name_lower in BLOCK_ELEMENTS:
@@ -667,7 +675,6 @@ class TurboHTML:
                 if p_ancestor := self._find_ancestor(current_parent, 'p'):
                     return p_ancestor.parent
 
-        # If no special handling needed, return the current parent
         return current_parent
 
     def _extract_tag_info(self, match) -> Tuple[int, int, TagInfo]:
