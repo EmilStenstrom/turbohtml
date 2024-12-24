@@ -754,7 +754,6 @@ class TurboHTML:
 
         # Handle td/th first as they're most common
         if tag_name in ('td', 'th'):
-            # Always try to find a table ancestor first
             table_parent = self._find_ancestor(current_parent, 'table')
             if table_parent:
                 tbody = self._ensure_tbody(table_parent)
@@ -763,7 +762,6 @@ class TurboHTML:
                 tr.append_child(new_node)
                 context.enter_table_mode(ParserState.IN_CELL)
                 return new_node, current_context
-            # If no table found, create the structure
             table = Node('table')
             current_parent.append_child(table)
             tbody = self._ensure_tbody(table)
@@ -800,28 +798,38 @@ class TurboHTML:
             context.enter_table_mode(ParserState.IN_TABLE)
             return new_node, current_context
 
-        # Handle caption (must be first child of table)
+        # Handle caption
         if tag_name == 'caption':
-            if context.table_state == ParserState.IN_TABLE:
-                new_node = self._create_node(tag_name, attributes, current_parent, current_context)
-                if not current_parent.children or current_parent.children[0].tag_name != 'caption':
-                    current_parent.children.insert(0, new_node)
+            table = self._find_ancestor(current_parent, 'table')
+            if table:
+                new_node = self._create_node(tag_name, attributes, table, current_context)
+                if not table.children or table.children[0].tag_name != 'caption':
+                    table.children.insert(0, new_node)
                 else:
-                    current_parent.append_child(new_node)
+                    table.append_child(new_node)
                 return new_node, current_context
+            return None
 
         # Handle colgroup and col
         if tag_name in ('colgroup', 'col'):
-            if context.table_state == ParserState.IN_TABLE:
+            table = self._find_ancestor(current_parent, 'table')
+            if table:
                 if tag_name == 'col':
-                    colgroup = self._ensure_colgroup(current_parent)
+                    # Always ensure colgroup exists
+                    colgroup = self._ensure_colgroup(table)
                     new_node = self._create_node(tag_name, attributes, colgroup, current_context)
                     colgroup.append_child(new_node)
                     return current_parent, current_context
                 else:
-                    new_node = self._create_node(tag_name, attributes, current_parent, current_context)
-                    current_parent.append_child(new_node)
+                    # Direct colgroup handling
+                    new_node = self._create_node(tag_name, attributes, table, current_context)
+                    # Insert after caption if it exists, otherwise at start
+                    if table.children and table.children[0].tag_name == 'caption':
+                        table.children.insert(1, new_node)
+                    else:
+                        table.children.insert(0, new_node)
                     return new_node, current_context
+            return None
 
         return None
 
