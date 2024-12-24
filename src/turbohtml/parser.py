@@ -478,7 +478,8 @@ class TurboHTML:
     def _handle_closing_tag(self, tag_name: str, current_parent: Node,
                             current_context: Optional[str]) -> Tuple[Node, Optional[str]]:
         """
-        Close the specified tag, with special handling for </p> inside buttons.
+        Close the specified tag, with special handling for </p> inside buttons
+        and adoption agency cases.
         """
         tag_name_lower = tag_name.lower()
 
@@ -488,14 +489,9 @@ class TurboHTML:
                 tag_name, current_parent, current_context
             )
 
-        # Special case: </p> inside button creates a new paragraph
-        if tag_name_lower == 'p':
-            if p_ancestor := self._find_ancestor(current_parent, 'p'):
-                if current_parent.tag_name.lower() == 'button':
-                    new_p = Node('p')
-                    current_parent.append_child(new_p)
-                    return new_p, current_context
-                return p_ancestor.parent, current_context
+        # Special case: </p> inside button
+        if result := self._handle_p_in_button(tag_name_lower, current_parent, current_context):
+            return result
 
         # Normal closing tag handling
         temp_parent = current_parent
@@ -505,6 +501,20 @@ class TurboHTML:
         if temp_parent:
             return temp_parent.parent, current_context
         return current_parent, current_context
+
+    def _handle_p_in_button(self, tag_name: str, current_parent: Node,
+                           current_context: Optional[str]) -> Optional[Tuple[Node, Optional[str]]]:
+        """Handle the special case of </p> inside a button."""
+        if tag_name != 'p':
+            return None
+
+        if p_ancestor := self._find_ancestor(current_parent, 'p'):
+            if current_parent.tag_name.lower() == 'button':
+                new_p = Node('p')
+                current_parent.append_child(new_p)
+                return new_p, current_context
+            return p_ancestor.parent, current_context
+        return None
 
     def _handle_rawtext_elements(self, tag_name: str, attributes: dict, current_parent: Node,
                                  current_context: Optional[str]) -> Tuple[Optional[Node], Optional[str]]:
