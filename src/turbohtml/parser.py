@@ -455,7 +455,7 @@ class TurboHTML:
         """
         tag_name = tag_info.tag_name.lower()
         attributes = self._parse_attributes(tag_info.attr_string)
-
+        
         # Check if we need to foster parent before handling table structure
         if self._needs_foster_parenting(tag_name, current_parent):
             foster_parent = self._get_foster_parent(current_parent)
@@ -532,12 +532,17 @@ class TurboHTML:
         if result := self._handle_p_in_button(tag_name_lower, current_parent, current_context):
             return result
 
-        # Normal closing tag handling
+        # Find the element to close
         temp_parent = current_parent
         while temp_parent and temp_parent.tag_name.lower() != tag_name_lower:
             temp_parent = temp_parent.parent
 
         if temp_parent:
+            # If we're in a table cell and not closing a table element,
+            # stay in the cell
+            if (tag_name_lower not in ('table', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th') and
+                (self._find_ancestor(current_parent, 'td') or self._find_ancestor(current_parent, 'th'))):
+                return current_parent, current_context
             return temp_parent.parent, current_context
         return current_parent, current_context
 
