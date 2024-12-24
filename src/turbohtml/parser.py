@@ -16,7 +16,7 @@ from .constants import (
     VOID_ELEMENTS, HTML_ELEMENTS, SPECIAL_ELEMENTS, BLOCK_ELEMENTS,
     TABLE_CONTAINING_ELEMENTS, RAWTEXT_ELEMENTS, HEAD_ELEMENTS,
     TAG_OPEN_RE, ATTR_RE, COMMENT_RE, DUAL_NAMESPACE_ELEMENTS,
-    SIBLING_ELEMENTS
+    SIBLING_ELEMENTS, TABLE_ELEMENTS
 )
 
 if TYPE_CHECKING:
@@ -30,6 +30,10 @@ class ParserState(Enum):
     INITIAL = "initial"
     AFTER_HEAD = "after_head"
     IN_BODY = "in_body"
+    IN_TABLE = "in_table"
+    IN_TABLE_BODY = "in_table_body"
+    IN_ROW = "in_row"
+    IN_CELL = "in_cell"
     RAWTEXT = "rawtext"
 
 
@@ -58,10 +62,19 @@ class ParseContext:
         self.in_rawtext = False
         self.rawtext_start = 0
         self.html_node = html_node
+        self.table_state = None  # Track table-specific state
 
     def at_end(self) -> bool:
         """Check if we've reached or passed the end of the HTML text."""
         return self.index >= self.length
+
+    def enter_table_mode(self, state: ParserState) -> None:
+        """Enter a table-specific parsing mode"""
+        self.table_state = state
+
+    def exit_table_mode(self) -> None:
+        """Exit table-specific parsing mode"""
+        self.table_state = None
 
 
 class TextHandler:
@@ -112,6 +125,13 @@ class TextHandler:
         """
         Handle text nodes between tags, with special handling for <pre> and rawtext elements.
         """
+        # Check if text needs foster parenting
+        if self.parser._needs_foster_parenting('#text', current_parent):
+            foster_parent = self.parser._get_foster_parent(current_parent)
+            if text.strip():  # Only foster parent non-whitespace text
+                self.handle_text_between_tags(text, foster_parent)
+            return
+
         # <pre> requires entity decoding and preserving line breaks
         if current_parent.tag_name.lower() == 'pre':
             decoded_text = self._decode_html_entities(text)
@@ -206,10 +226,6 @@ class TurboHTML:
         """Shortcut to query the root node."""
         return self.root.query(selector)
 
-    # ─────────────────────────────────────────────────────────────────────
-    #                     Main _parse Method
-    # ─────────────────────────────────────────────────────────────────────
-
     def _parse(self) -> None:
         """
         Main parsing loop using ParseContext. Delegates text logic to TextHandler.
@@ -235,10 +251,6 @@ class TurboHTML:
         # If we ended while still in rawtext mode, finalize leftover rawtext
         if context.in_rawtext:
             self._cleanup_rawtext(context)
-
-    # ─────────────────────────────────────────────────────────────────────
-    #                            Parser Steps
-    # ─────────────────────────────────────────────────────────────────────
 
     def _process_comment(self, context: ParseContext) -> bool:
         """Check if the next token is a comment. If so, handle it."""
@@ -301,7 +313,8 @@ class TurboHTML:
             context.current_parent, context.current_context = self._handle_opening_tag(
                 tag_info,
                 context.current_parent,
-                context.current_context
+                context.current_context,
+                context
             )
             context.in_rawtext = True
             context.rawtext_start = end_tag_idx
@@ -315,8 +328,6 @@ class TurboHTML:
     def _handle_regular_tag(self, tag_info: TagInfo, context: ParseContext, end_tag_idx: int) -> None:
         """
         Handle doctype, closing, or opening tags (excluding rawtext entry).
-        Renamed from '_process_tag_basic' to clarify that these are
-        tags not requiring rawtext mode.
         """
         tag_name_lower = tag_info.tag_name.lower()
 
@@ -329,6 +340,16 @@ class TurboHTML:
 
         # Closing tag
         if tag_info.is_closing:
+            # Update table state for closing tags
+            if tag_name_lower == 'table':
+                context.exit_table_mode()
+            elif tag_name_lower in ('thead', 'tbody', 'tfoot'):
+                context.table_state = ParserState.IN_TABLE
+            elif tag_name_lower == 'tr':
+                context.table_state = ParserState.IN_TABLE_BODY
+            elif tag_name_lower in ('td', 'th'):
+                context.table_state = ParserState.IN_ROW
+
             context.current_parent, context.current_context = self._handle_closing_tag(
                 tag_name_lower,
                 context.current_parent,
@@ -347,7 +368,8 @@ class TurboHTML:
             context.current_parent, context.current_context = self._handle_opening_tag(
                 tag_info,
                 context.current_parent,
-                context.current_context
+                context.current_context,
+                context
             )
         context.index = end_tag_idx
 
@@ -426,13 +448,30 @@ class TurboHTML:
         )
 
     def _handle_opening_tag(self, tag_info: TagInfo, current_parent: Node,
-                            current_context: Optional[str]) -> Tuple[Node, Optional[str]]:
+                            current_context: Optional[str], context: ParseContext) -> Tuple[Node, Optional[str]]:
         """
         Handle an opening or self-closing tag, including special (html/head/body),
         rawtext, and foreign elements.
         """
         tag_name = tag_info.tag_name.lower()
         attributes = self._parse_attributes(tag_info.attr_string)
+
+        # Check if we need to foster parent before handling table structure
+        if self._needs_foster_parenting(tag_name, current_parent):
+            foster_parent = self._get_foster_parent(current_parent)
+            new_node = self._create_node(tag_name, attributes, foster_parent, current_context)
+            foster_parent.append_child(new_node)
+            if tag_name not in VOID_ELEMENTS:
+                return new_node, current_context
+            return foster_parent, current_context
+
+        # Handle table structure before other special elements
+        if result := self._handle_table_structure(tag_name, attributes, current_parent, current_context, context):
+            return result
+
+        # If we don't have a valid parent, use body node
+        if not current_parent:
+            current_parent = self.body_node
 
         # Handle head elements that appear before <head>
         if (tag_name in HEAD_ELEMENTS 
@@ -623,6 +662,7 @@ class TurboHTML:
                 if p_ancestor := self._find_ancestor(current_parent, 'p'):
                     return p_ancestor.parent
 
+        # If no special handling needed, return the current parent
         return current_parent
 
     def _extract_tag_info(self, match) -> Tuple[int, int, TagInfo]:
@@ -702,3 +742,175 @@ class TurboHTML:
             ancestors.append(current)
             current = current.parent
         return ancestors
+
+    def _handle_table_structure(self, tag_name: str, attributes: dict, 
+                              current_parent: Node, current_context: Optional[str],
+                              context: ParseContext) -> Optional[Tuple[Node, Optional[str]]]:
+        """Handle table structure elements according to HTML5 spec"""
+        tag_name = tag_name.lower()
+        
+        if not current_parent:
+            current_parent = self.body_node
+
+        # Handle td/th first as they're most common
+        if tag_name in ('td', 'th'):
+            # Always try to find a table ancestor first
+            table_parent = self._find_ancestor(current_parent, 'table')
+            if table_parent:
+                tbody = self._ensure_tbody(table_parent)
+                tr = self._ensure_tr(tbody)
+                new_node = self._create_node(tag_name, attributes, tr, current_context)
+                tr.append_child(new_node)
+                context.enter_table_mode(ParserState.IN_CELL)
+                return new_node, current_context
+            # If no table found, create the structure
+            table = Node('table')
+            current_parent.append_child(table)
+            tbody = self._ensure_tbody(table)
+            tr = self._ensure_tr(tbody)
+            new_node = self._create_node(tag_name, attributes, tr, current_context)
+            tr.append_child(new_node)
+            context.enter_table_mode(ParserState.IN_CELL)
+            return new_node, current_context
+
+        # Handle tr
+        if tag_name == 'tr':
+            section_parent = self._find_nearest_table_section(current_parent)
+            if section_parent:
+                new_node = self._create_node(tag_name, attributes, section_parent, current_context)
+                section_parent.append_child(new_node)
+                context.enter_table_mode(ParserState.IN_ROW)
+                return new_node, current_context
+            return None
+
+        # Handle thead/tbody/tfoot
+        if tag_name in ('thead', 'tbody', 'tfoot'):
+            table = self._find_ancestor(current_parent, 'table')
+            if table:
+                new_node = self._create_node(tag_name, attributes, table, current_context)
+                table.append_child(new_node)
+                context.enter_table_mode(ParserState.IN_TABLE_BODY)
+                return new_node, current_context
+            return None
+
+        # Handle table
+        if tag_name == 'table':
+            new_node = self._create_node(tag_name, attributes, current_parent, current_context)
+            current_parent.append_child(new_node)
+            context.enter_table_mode(ParserState.IN_TABLE)
+            return new_node, current_context
+
+        # Handle caption (must be first child of table)
+        if tag_name == 'caption':
+            if context.table_state == ParserState.IN_TABLE:
+                new_node = self._create_node(tag_name, attributes, current_parent, current_context)
+                if not current_parent.children or current_parent.children[0].tag_name != 'caption':
+                    current_parent.children.insert(0, new_node)
+                else:
+                    current_parent.append_child(new_node)
+                return new_node, current_context
+
+        # Handle colgroup and col
+        if tag_name in ('colgroup', 'col'):
+            if context.table_state == ParserState.IN_TABLE:
+                if tag_name == 'col':
+                    colgroup = self._ensure_colgroup(current_parent)
+                    new_node = self._create_node(tag_name, attributes, colgroup, current_context)
+                    colgroup.append_child(new_node)
+                    return current_parent, current_context
+                else:
+                    new_node = self._create_node(tag_name, attributes, current_parent, current_context)
+                    current_parent.append_child(new_node)
+                    return new_node, current_context
+
+        return None
+
+    def _ensure_colgroup(self, table: Node) -> Node:
+        """Ensure table has a colgroup, create if needed"""
+        for child in table.children:
+            if child.tag_name == 'colgroup':
+                return child
+        colgroup = Node('colgroup')
+        # Insert after caption if it exists
+        if table.children and table.children[0].tag_name == 'caption':
+            table.children.insert(1, colgroup)
+        else:
+            table.children.insert(0, colgroup)
+        return colgroup
+
+    def _find_nearest_table_section(self, node: Node) -> Optional[Node]:
+        """Find nearest thead/tbody/tfoot ancestor, or create tbody if in table"""
+        while node:
+            if node.tag_name in ('thead', 'tbody', 'tfoot'):
+                return node
+            if node.tag_name == 'table':
+                return self._ensure_tbody(node)
+            node = node.parent
+        return None
+
+    def _is_in_table_row(self, node: Node) -> bool:
+        """Check if we're inside a table row context"""
+        while node:
+            if node.tag_name.lower() == 'tr':
+                return True
+            if node.tag_name.lower() in ('table', 'thead', 'tbody', 'tfoot'):
+                return False
+            node = node.parent
+        return False
+
+    def _ensure_tbody(self, table: Node) -> Node:
+        """Ensure table has a tbody, create if needed"""
+        for child in table.children:
+            if child.tag_name.lower() == 'tbody':
+                return child
+        tbody = Node('tbody')
+        table.append_child(tbody)
+        return tbody
+
+    def _ensure_tr(self, tbody: Node) -> Node:
+        """Ensure tbody has a tr, create if needed"""
+        if not tbody.children or tbody.children[-1].tag_name.lower() != 'tr':
+            tr = Node('tr')
+            tbody.append_child(tr)
+            return tr
+        return tbody.children[-1]
+
+    def _needs_foster_parenting(self, tag_name: str, current_parent: Node) -> bool:
+        """
+        Determine if an element needs foster parenting based on HTML5 rules.
+        """
+        # Don't foster parent table elements themselves
+        if tag_name in TABLE_ELEMENTS:
+            return False
+
+        # Check if we're in a table context where foster parenting applies
+        parent = current_parent
+        while parent:
+            if parent.tag_name == 'table':
+                # We're in a table context where non-table elements need foster parenting
+                return True
+            if parent.tag_name in ('td', 'th'):
+                # We're in a table cell - no foster parenting needed
+                return False
+            parent = parent.parent
+        return False
+
+    def _get_foster_parent(self, current_parent: Node) -> Node:
+        """
+        Find the appropriate foster parent for an element that can't be in a table.
+        Returns the parent node where the fostered element should be placed.
+        """
+        # Find the table ancestor
+        table = None
+        node = current_parent
+        while node:
+            if node.tag_name == 'table':
+                table = node
+                break
+            node = node.parent
+
+        if not table or not table.parent:
+            return self.body_node
+
+        # Place fostered elements before the table
+        return table.parent

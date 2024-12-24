@@ -39,6 +39,8 @@ BLOCK_ELEMENTS = {
     'p', 'pre', 'section', 'table', 'ul', 'summary'
 }
 
+TABLE_ELEMENTS = {'table', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th', 'caption', 'colgroup'}
+
 TABLE_CONTAINING_ELEMENTS = {
     'html', 'body', 'div', 'form', 'button', 'ruby', 'td', 'th', 'math', 'svg'
 }
