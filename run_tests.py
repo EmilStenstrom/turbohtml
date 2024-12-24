@@ -37,7 +37,7 @@ def parse_dat_file(content):
 def compare_outputs(expected, actual):
     return expected.strip() == actual.strip()
 
-def run_tests(test_dir, fail_fast=False, test_specs=None, verbose=False):
+def run_tests(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_files=None):
     passed = 0
     failed = 0
 
@@ -53,6 +53,9 @@ def run_tests(test_dir, fail_fast=False, test_specs=None, verbose=False):
     for root, _, files in os.walk(test_dir):
         for file in files:
             if file.endswith('.dat'):
+                # Add filter check
+                if filter_files and filter_files not in file:
+                    continue
                 if not test_specs or file in spec_dict:
                     all_files.append((root, file))
     
@@ -105,8 +108,8 @@ def run_tests(test_dir, fail_fast=False, test_specs=None, verbose=False):
     
     return passed, failed
 
-def main(test_dir, fail_fast=False, test_specs=None, verbose=False):
-    passed, failed = run_tests(test_dir, fail_fast, test_specs, verbose)
+def main(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_files=None):
+    passed, failed = run_tests(test_dir, fail_fast, test_specs, verbose, filter_files)
     total = passed + failed
     print(f'\nTests passed: {passed}/{total} ({round(passed*100/total) if total else 0}%)')
 
@@ -119,6 +122,8 @@ if __name__ == '__main__':
                        help='Space-separated list of test specs in format: file:indices (e.g., test1.dat:0,1,2 test2.dat:5,6)')
     parser.add_argument('-v', '--verbose', action='store_true',
                        help='Print detailed information for all tests')
+    parser.add_argument('--filter-files', type=str,
+                       help='Only run tests from files containing this string')
     args = parser.parse_args()
     
     # Split the test specs if they contain commas
@@ -127,4 +132,4 @@ if __name__ == '__main__':
         for spec in args.test_specs:
             test_specs.extend(spec.split(','))
     
-    main('../html5lib-tests/tree-construction', args.fail_fast, test_specs, args.verbose)
+    main('../html5lib-tests/tree-construction', args.fail_fast, test_specs, args.verbose, args.filter_files)
