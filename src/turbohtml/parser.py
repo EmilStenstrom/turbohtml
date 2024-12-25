@@ -8,7 +8,7 @@
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional, Dict, Tuple, TYPE_CHECKING
+from typing import List, Optional, Dict, Tuple, TYPE_CHECKING, Iterator
 
 from .foreign import ForeignContentHandler
 from .node import Node
@@ -23,6 +23,21 @@ from .constants import (
 if TYPE_CHECKING:
     from .node import Node
 
+class HTMLToken:
+    """Represents a token in the HTML stream"""
+    def __init__(self, type_: str, data: str = None, tag_name: str = None, 
+                 attributes: Dict[str, str] = None, is_self_closing: bool = False):
+        self.type = type_  # 'DOCTYPE', 'StartTag', 'EndTag', 'Comment', 'Character'
+        self.data = data
+        self.tag_name = tag_name
+        self.attributes = attributes or {}
+        self.is_self_closing = is_self_closing
+
+    def __repr__(self):
+        if self.type == 'Character':
+            return f"<{self.type} token: {self.data[:20]}...>"
+        return f"<{self.type} token: {self.tag_name or self.data}>"
+
 
 class ParserState(Enum):
     """
@@ -36,18 +51,6 @@ class ParserState(Enum):
     IN_ROW = "in_row"
     IN_CELL = "in_cell"
     RAWTEXT = "rawtext"
-
-
-@dataclass
-class TagInfo:
-    """
-    Represents basic details about an HTML tag encountered by the parser.
-    """
-    is_exclamation: bool
-    is_closing: bool
-    tag_name: str
-    attr_string: str
-    is_doctype: bool = False
 
 
 class ParseContext:
@@ -84,6 +87,106 @@ class ParseContext:
         self.rawtext_start = 0
 
 
+class HTMLTokenizer:
+    """
+    HTML5 tokenizer that generates tokens from an HTML string.
+    Maintains compatibility with existing parser logic while providing
+    a cleaner separation of concerns.
+    """
+    def __init__(self, html: str):
+        self.html = html
+        self.pos = 0
+        self.length = len(html)
+
+    def tokenize(self) -> Iterator[HTMLToken]:
+        """Generate tokens from the HTML string"""
+        while self.pos < self.length:
+            # 1. Try to match a comment
+            if token := self._try_comment():
+                yield token
+                continue
+
+            # 2. Try to match a tag
+            if token := self._try_tag():
+                yield token
+                continue
+
+            # 3. Handle character data
+            if token := self._consume_character_data():
+                yield token
+                continue
+
+            # Shouldn't reach here, but advance if we do
+            self.pos += 1
+
+    def _try_comment(self) -> Optional[HTMLToken]:
+        """Try to match a comment at current position"""
+        match = COMMENT_RE.match(self.html, self.pos)
+        if not match or match.start() != self.pos:
+            return None
+
+        full_match = match.group(0)
+        comment_text = match.group(1) or " "
+
+        # Handle special malformed comment cases
+        if full_match in ('<!-->', '<!--->'):
+            comment_text = " "
+
+        self.pos = match.end()
+        return HTMLToken('Comment', data=comment_text)
+
+    def _try_tag(self) -> Optional[HTMLToken]:
+        """Try to match a tag at current position"""
+        match = TAG_OPEN_RE.match(self.html, self.pos)
+        if not match or match.start() != self.pos:
+            return None
+
+        is_exclamation = (match.group(1) == '!')
+        is_closing = (match.group(2) == '/')
+        tag_name = match.group(3)
+        attr_string = match.group(4).strip()
+
+        # Handle DOCTYPE
+        if is_exclamation and tag_name.lower() == 'doctype':
+            self.pos = match.end()
+            return HTMLToken('DOCTYPE')
+
+        # Parse attributes
+        attributes = self._parse_attributes(attr_string)
+        
+        # Check for self-closing
+        is_self_closing = attr_string.rstrip().endswith('/')
+
+        self.pos = match.end()
+        
+        if is_closing:
+            return HTMLToken('EndTag', tag_name=tag_name)
+        return HTMLToken('StartTag', tag_name=tag_name, 
+                        attributes=attributes, is_self_closing=is_self_closing)
+
+    def _consume_character_data(self) -> HTMLToken:
+        """Consume character data until the next tag or comment"""
+        start = self.pos
+        while self.pos < self.length:
+            if self.html[self.pos] == '<':
+                if (COMMENT_RE.match(self.html, self.pos) or 
+                    TAG_OPEN_RE.match(self.html, self.pos)):
+                    break
+            self.pos += 1
+
+        text = self.html[start:self.pos]
+        return HTMLToken('Character', data=text)
+
+    def _parse_attributes(self, attr_string: str) -> Dict[str, str]:
+        """Parse attributes from a string using the ATTR_RE pattern"""
+        attr_string = attr_string.strip().rstrip('/')
+        matches = ATTR_RE.findall(attr_string)
+        attributes = {}
+        for attr_name, val1, val2, val3 in matches:
+            attr_value = val1 or val2 or val3 or ""
+            attributes[attr_name] = attr_value
+        return attributes
+
 class TextHandler:
     """
     Groups the methods that specifically handle text- and rawtext-related logic.
@@ -94,7 +197,7 @@ class TextHandler:
 
     def handle_rawtext_mode(
         self,
-        tag_info: Optional[TagInfo],
+        token: Optional[HTMLToken],
         current_parent: Node,
         rawtext_start: int,
         start_idx: int,
@@ -105,11 +208,11 @@ class TextHandler:
         a matching closing tag or reach EOF.
         """
         # If EOF or closing tag matches the current parent
-        if tag_info is None or (
-            tag_info.is_closing and
-            tag_info.tag_name.lower() == current_parent.tag_name.lower()
+        if token is None or (
+            token.type == 'EndTag' and
+            token.tag_name.lower() == current_parent.tag_name.lower()
         ):
-            text = self.parser.html[rawtext_start : (start_idx if tag_info else None)]
+            text = self.parser.html[rawtext_start : (start_idx if token else None)]
             if text:
                 self.handle_rawtext_content(text, current_parent)
             return (current_parent.parent, False, end_tag_idx)
@@ -194,7 +297,6 @@ class TextHandler:
         text = re.sub(r'&#([0-9]+);', lambda m: chr(int(m.group(1))), text)
         return text
 
-
 class TurboHTML:
     """
     Main parser interface.
@@ -241,27 +343,33 @@ class TurboHTML:
 
     def _parse(self) -> None:
         """
-        Main parsing loop using ParseContext. Delegates text logic to TextHandler.
+        Main parsing loop using ParseContext and HTMLTokenizer.
+        Delegates text logic to TextHandler.
         """
         context = ParseContext(len(self.html), self.body_node, self.html_node)
+        tokenizer = HTMLTokenizer(self.html)
 
-        while not context.at_end():
-            # 1) Process comment first
-            if self._process_comment(context):
-                continue
+        for token in tokenizer.tokenize():
+            if token.type == 'Comment':
+                self._append_comment_node(token.data, context)
+            
+            elif token.type == 'DOCTYPE':
+                self._handle_doctype(token)
+            
+            elif token.type in ('StartTag', 'EndTag'):
+                self._handle_regular_tag(token, context, tokenizer.pos)
+            
+            elif token.type == 'Character':
+                if context.in_rawtext:
+                    self.text_handler.handle_rawtext_content(
+                        token.data, context.current_parent
+                    )
+                else:
+                    self.text_handler.handle_text_between_tags(
+                        token.data, context.current_parent
+                    )
 
-            # 2) Process next tag if found
-            if self._process_tag(context):
-                continue
-
-            # 3) Handle leftover text or rawtext mode
-            if context.in_rawtext:
-                self._handle_rawtext_eof(context)
-            else:
-                self._handle_remaining_text(context)
-            break
-
-        # If we ended while still in rawtext mode, finalize leftover rawtext
+        # Handle any final rawtext content
         if context.in_rawtext:
             self._cleanup_rawtext(context)
 
@@ -364,21 +472,30 @@ class TurboHTML:
         self._handle_regular_tag(tag_info, context, end_tag_idx)
         return True
 
-    def _handle_regular_tag(self, tag_info: TagInfo, context: ParseContext, end_tag_idx: int) -> None:
+    def _handle_regular_tag(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> None:
         """
         Handle doctype, closing, or opening tags (excluding rawtext entry).
         """
-        tag_name_lower = tag_info.tag_name.lower()
+        tag_name_lower = token.tag_name.lower()
 
         # If this is </head>, move to after_head state
-        if tag_info.is_closing and tag_name_lower == 'head':
+        if token.type == 'EndTag' and tag_name_lower == 'head':
             self.state = ParserState.AFTER_HEAD
             context.current_parent = context.html_node
             context.index = end_tag_idx
             return
 
         # Closing tag
-        if tag_info.is_closing:
+        if token.type == 'EndTag':
+            if context.in_rawtext:
+                # For RAWTEXT elements, only look for exact matching end tag
+                if tag_name_lower == context.current_parent.tag_name.lower():
+                    context.in_rawtext = False
+                    context.current_parent = context.current_parent.parent
+                # Ignore all other end tags in rawtext mode
+                context.index = end_tag_idx
+                return
+
             # Special handling for table closing - find the nearest formatting parent
             if tag_name_lower == 'table':
                 table = context.current_parent
@@ -408,17 +525,42 @@ class TurboHTML:
                     context.current_context
                 )
         # DOCTYPE
-        elif tag_info.is_doctype:
-            self._handle_doctype(tag_info)
+        elif token.type == 'DOCTYPE':
+            self._handle_doctype(token)
         else:
+            # If we're in rawtext mode, treat everything as text until we see the matching end tag
+            if context.in_rawtext:
+                text = f"<{tag_name_lower}"
+                if token.attributes:
+                    for name, value in token.attributes.items():
+                        text += f' {name}="{value}"'
+                if token.is_self_closing:
+                    text += "/"
+                text += ">"
+                self.text_handler.handle_rawtext_content(text, context.current_parent)
+                context.index = end_tag_idx
+                return
+
             # Handle <form> limitation (only one form)
             if tag_name_lower == 'form':
                 if context.has_form:
                     context.index = end_tag_idx
                     return
                 context.has_form = True
+
+            # Check if this tag should trigger rawtext mode
+            if tag_name_lower in RAWTEXT_ELEMENTS:
+                context.current_parent, new_context = self._handle_rawtext_elements(
+                    tag_name_lower, token.attributes, context.current_parent, context.current_context
+                )
+                if new_context == ParserState.RAWTEXT.value:
+                    context.in_rawtext = True
+                    context.rawtext_start = end_tag_idx
+                    context.index = end_tag_idx
+                    return
+
             context.current_parent, context.current_context = self._handle_opening_tag(
-                tag_info,
+                token,
                 context.current_parent,
                 context.current_context,
                 context
@@ -488,25 +630,25 @@ class TurboHTML:
         if text:
             self.text_handler.handle_rawtext_content(text, context.current_parent)
 
-    def _tag_requires_rawtext_mode(self, tag_info: TagInfo, current_context: Optional[str]) -> bool:
+    def _tag_requires_rawtext_mode(self, token: HTMLToken, current_context: Optional[str]) -> bool:
         """
         Check if this tag should trigger rawtext mode.
         Renamed from '_should_enter_rawtext_mode' for clarity.
         """
         return (
-            not tag_info.is_closing
-            and tag_info.tag_name.lower() in RAWTEXT_ELEMENTS
+            not token.type == 'EndTag'
+            and token.tag_name.lower() in RAWTEXT_ELEMENTS
             and (not current_context or current_context not in ('svg', 'mathml'))
         )
 
-    def _handle_opening_tag(self, tag_info: TagInfo, current_parent: Node,
+    def _handle_opening_tag(self, token: HTMLToken, current_parent: Node,
                             current_context: Optional[str], context: ParseContext) -> Tuple[Node, Optional[str]]:
         """
         Handle an opening or self-closing tag, including special (html/head/body),
         rawtext, and foreign elements.
         """
-        tag_name = tag_info.tag_name.lower()
-        attributes = self._parse_attributes(tag_info.attr_string)
+        tag_name = token.tag_name.lower()
+        attributes = token.attributes
 
         # If we're in head or initial state and encounter a non-head element
         if (self.state in (ParserState.INITIAL, ParserState.AFTER_HEAD) and 
@@ -648,23 +790,25 @@ class TurboHTML:
     def _handle_rawtext_elements(self, tag_name: str, attributes: dict, current_parent: Node,
                                  current_context: Optional[str]) -> Tuple[Optional[Node], Optional[str]]:
         """
-        Handle <script>, <style>, and other rawtext elements.
+        Handle <script>, <style>, <title> and other rawtext elements.
         """
+        tag_name = tag_name.lower()
         is_dual_context = current_context in ('svg', 'mathml')
         is_dual_element = tag_name in DUAL_NAMESPACE_ELEMENTS
 
         if tag_name in RAWTEXT_ELEMENTS:
-            # Possibly place in head if appropriate
-            if new_node := self._insert_into_head_if_appropriate(
-                tag_name, attributes, current_context, is_dual_context, is_dual_element
-            ):
+            # Always try to place RAWTEXT elements in head if we're not explicitly in body
+            if (tag_name in HEAD_ELEMENTS and 
+                self.state != ParserState.IN_BODY and 
+                not (is_dual_context and is_dual_element)):
+                new_node = self._create_node(tag_name, attributes, self.head_node, current_context)
+                self.head_node.append_child(new_node)
                 return new_node, ParserState.RAWTEXT.value
 
-            # Otherwise treat as normal rawtext
+            # Otherwise create in current location
             new_node = self._create_node(tag_name, attributes, current_parent, current_context)
             current_parent.append_child(new_node)
-            # Remain in the same context if in dual context, otherwise set to rawtext
-            return new_node, current_context if is_dual_context else ParserState.RAWTEXT.value
+            return new_node, ParserState.RAWTEXT.value
         return None, None
 
     def _insert_into_head_if_appropriate(
@@ -762,7 +906,7 @@ class TurboHTML:
 
         return current_parent
 
-    def _extract_tag_info(self, match) -> Tuple[int, int, TagInfo]:
+    def _extract_tag_info(self, match) -> Tuple[int, int, HTMLToken]:
         """
         Extract tag information from a regex match, returning start idx, end idx, and a TagInfo object.
         """
@@ -771,14 +915,13 @@ class TurboHTML:
         tag_name = match.group(3)
         attr_string = match.group(4).strip()
 
-        tag_info = TagInfo(
-            is_exclamation=is_exclamation,
-            is_closing=is_closing,
+        tag_info = HTMLToken(
+            type_='StartTag',
             tag_name=tag_name,
-            attr_string=attr_string
+            attributes=self._parse_attributes(attr_string)
         )
         # Check for DOCTYPE
-        tag_info.is_doctype = (is_exclamation and tag_name.lower() == 'doctype')
+        tag_info.is_self_closing = attr_string.rstrip().endswith('/')
 
         return match.start(), match.end(), tag_info
 
@@ -794,7 +937,7 @@ class TurboHTML:
             attributes[attr_name] = attr_value
         return attributes
 
-    def _handle_doctype(self, tag_info: TagInfo) -> None:
+    def _handle_doctype(self, token: HTMLToken) -> None:
         """
         Handle DOCTYPE declarations by prepending them to the root's children.
         """
