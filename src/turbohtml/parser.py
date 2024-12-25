@@ -436,6 +436,21 @@ class TurboHTML:
                 context.index = end_tag_idx
                 return
 
+            if tag_name_lower == 'p':
+                # If we're in the body and the p was auto-closed
+                if (self.state == ParserState.IN_BODY and 
+                    not self._has_element_in_scope('p', context.current_parent)):
+                    # Create a new paragraph after the auto-closed one
+                    new_p = self._create_node('p', {}, context.current_parent, context.current_context)
+                    context.current_parent.append_child(new_p)
+                    context.current_parent = new_p
+            else:
+                context.current_parent, context.current_context = self._handle_closing_tag(
+                    tag_name_lower,
+                    context.current_parent,
+                    context.current_context
+                )
+
             # Handle table-specific closing tags
             if tag_name_lower == 'table':
                 table = context.current_parent
