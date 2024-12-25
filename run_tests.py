@@ -37,7 +37,7 @@ def parse_dat_file(content):
 def compare_outputs(expected, actual):
     return expected.strip() == actual.strip()
 
-def run_tests(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_files=None, quiet=False, exclude_errors=None, exclude_files=None):
+def run_tests(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_files=None, quiet=False, exclude_errors=None, exclude_files=None, exclude_html=None):
     passed = 0
     failed = 0
 
@@ -84,6 +84,10 @@ def run_tests(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_
             if exclude_errors and any(error_str in error for error_str in exclude_errors for error in test['errors']):
                 continue
 
+            # Skip tests with excluded HTML content
+            if exclude_html and any(html_str in test['data'] for html_str in exclude_html):
+                continue
+
             html_input = test['data']
             errors = test['errors']
             expected_output = test['document']
@@ -115,8 +119,8 @@ def run_tests(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_
     
     return passed, failed
 
-def main(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_files=None, quiet=False, exclude_errors=None, exclude_files=None):
-    passed, failed = run_tests(test_dir, fail_fast, test_specs, verbose, filter_files, quiet, exclude_errors, exclude_files)
+def main(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_files=None, quiet=False, exclude_errors=None, exclude_files=None, exclude_html=None):
+    passed, failed = run_tests(test_dir, fail_fast, test_specs, verbose, filter_files, quiet, exclude_errors, exclude_files, exclude_html)
     total = passed + failed
     if fail_fast:
         print(f'\nTests passed: {passed}/{total}')
@@ -140,6 +144,8 @@ if __name__ == '__main__':
                        help='Skip tests containing any of these strings in their errors (comma-separated)')
     parser.add_argument('--exclude-files', type=str,
                        help='Skip files containing any of these strings in their names (comma-separated)')
+    parser.add_argument('--exclude-html', type=str,
+                       help='Skip tests containing any of these strings in their HTML input (comma-separated)')
     args = parser.parse_args()
     
     # Split the test specs if they contain commas
@@ -151,6 +157,7 @@ if __name__ == '__main__':
     # Split exclude lists on commas
     exclude_errors = args.exclude_errors.split(',') if args.exclude_errors else None
     exclude_files = args.exclude_files.split(',') if args.exclude_files else None
+    exclude_html = args.exclude_html.split(',') if args.exclude_html else None
     
     main('../html5lib-tests/tree-construction', args.fail_fast, test_specs, args.verbose, 
-         args.filter_files, args.quiet, exclude_errors, exclude_files)
+         args.filter_files, args.quiet, exclude_errors, exclude_files, exclude_html)
