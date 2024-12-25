@@ -337,9 +337,7 @@ class TurboHTML:
                         token.data, context.current_parent
                     )
                 else:
-                    self.text_handler.handle_text_between_tags(
-                        token.data, context.current_parent
-                    )
+                    self._handle_text_between_tags(token.data, context.current_parent)
 
         # Handle any final rawtext content
         if context.in_rawtext:
@@ -352,22 +350,25 @@ class TurboHTML:
         comment_node = Node('#comment')
         comment_node.text_content = text
 
-        # Determine proper parent and insertion location based on parser state
-        if self.state == ParserState.INITIAL:
-            # Comments before <html> go directly under root
+        # If we haven't seen any HTML elements yet, put comment at root level
+        if context.current_parent == self.body_node and not self.body_node.children:
             self.root.children.insert(0, comment_node)
-        elif self.state == ParserState.AFTER_HEAD:
-            # Comments between </head> and <body> go after head
-            head_index = self.html_node.children.index(self.head_node)
-            self.html_node.children.insert(head_index + 1, comment_node)
-            comment_node.parent = self.html_node
-        elif (self.state != ParserState.IN_BODY and 
-              context.current_parent.tag_name != 'math annotation-xml'):
-            # Special handling for certain states
-            self.html_node.append_child(comment_node)
-        else:
-            # All other comments go under their current parent
-            context.current_parent.append_child(comment_node)
+            return
+
+        # Check if we need foster parenting (comment directly under table)
+        if context.current_parent.tag_name.lower() == 'table':
+            # Get the parent of the table
+            foster_parent = context.current_parent.parent
+            if foster_parent:
+                # Find the last node before the table
+                table_index = foster_parent.children.index(context.current_parent)
+                
+                # Create new comment node before table
+                foster_parent.children.insert(table_index, comment_node)
+                return
+
+        # Normal comment handling for non-table elements
+        context.current_parent.append_child(comment_node)
 
     def _handle_tag(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> None:
         """Handle all HTML tags: opening, closing, and special cases."""
@@ -388,7 +389,7 @@ class TurboHTML:
         elif token.type == 'EndTag':
             self._handle_end_tag(token, tag_name_lower, context)
         elif token.type == 'Character':
-            self.text_handler.handle_text_between_tags(token.data, context.current_parent)
+            self._handle_text_between_tags(token.data, context.current_parent)
 
         context.index = end_tag_idx
 
@@ -726,3 +727,40 @@ class TurboHTML:
             context.in_rawtext = False
             # Move back to parent node
             context.current_parent = context.current_parent.parent
+
+    def _handle_text_between_tags(self, text: str, current_parent: Node) -> None:
+        """Handle text nodes between tags, with special handling for tables."""
+        # Check if we need foster parenting (text directly under table)
+        if current_parent.tag_name.lower() == 'table':
+            # Get the parent of the table
+            foster_parent = current_parent.parent
+            if foster_parent:
+                # Find the last text node before the table
+                table_index = foster_parent.children.index(current_parent)
+                last_text_node = None
+                
+                # Look through previous siblings for a text node
+                for child in foster_parent.children[:table_index]:
+                    if child.tag_name == '#text':
+                        last_text_node = child
+                    elif child.children:
+                        # Look for text nodes in children
+                        for descendant in reversed(child.children):
+                            if descendant.tag_name == '#text':
+                                last_text_node = descendant
+                                break
+                        if last_text_node:
+                            break
+                
+                if last_text_node:
+                    # Append to existing text node
+                    last_text_node.text_content += text
+                else:
+                    # Create new text node before table
+                    text_node = Node('#text')
+                    text_node.text_content = text
+                    foster_parent.children.insert(table_index, text_node)
+                return
+
+        # Normal text handling for non-table elements
+        self.text_handler.handle_text_between_tags(text, current_parent)
