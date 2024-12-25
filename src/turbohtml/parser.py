@@ -175,7 +175,6 @@ class TextHandler:
     def _append_text_node(self, parent: Node, text: str) -> None:
         """
         Central place to create and attach a text node to a parent.
-        Concatenates with previous text node if one exists.
         """
         # If the last child is a text node, concatenate with it
         if parent.children and parent.children[-1].tag_name == '#text':
@@ -558,6 +557,23 @@ class TurboHTML:
         # Special case: </p> inside button
         if result := self._handle_p_in_button(tag_name_lower, current_parent, current_context):
             return result
+
+        # Special handling for </p>
+        if tag_name_lower == 'p':
+            # If we're in a block element, create an implicit <p>
+            block_ancestor = None
+            temp = current_parent
+            while temp:
+                if temp.tag_name.lower() in BLOCK_ELEMENTS:
+                    block_ancestor = temp
+                    break
+                temp = temp.parent
+                
+            if block_ancestor:
+                # Create implicit <p>
+                new_p = Node('p')
+                block_ancestor.append_child(new_p)
+                return new_p, current_context
 
         # Check if the element is in scope
         if not self._has_element_in_scope(tag_name_lower, current_parent):
