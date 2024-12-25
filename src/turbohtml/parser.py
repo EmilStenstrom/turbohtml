@@ -278,7 +278,7 @@ class TurboHTML:
         # Handle special malformed comment cases
         if full_match in ('<!-->', '<!--->'):
             comment_text = " "
-            context.index += len(full_match)  # Length of <!--> or <!-->
+            context.index += len(full_match)
         else:
             context.index = match.end()
 
