@@ -394,9 +394,7 @@ class TurboHTML:
             context.current_parent.append_child(comment_node)
 
     def _handle_tag(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> None:
-        """
-        Handle all HTML tags: opening, closing, and special cases like DOCTYPE and RAWTEXT elements.
-        """
+        """Handle all HTML tags: opening, closing, and special cases."""
         # Handle DOCTYPE first since it doesn't have a tag_name
         if token.type == 'DOCTYPE':
             self._handle_doctype(token)
@@ -406,173 +404,176 @@ class TurboHTML:
         # Now we know we have a tag_name for all other cases
         tag_name_lower = token.tag_name.lower()
 
-        # Special handling for html/head/body tags
-        if token.type == 'StartTag' and tag_name_lower in ('html', 'head', 'body'):
-            if tag_name_lower == 'html':
-                # Merge attributes with existing html node
-                self.html_node.attributes.update(token.attributes)
-                context.index = end_tag_idx
+        if token.type == 'StartTag':
+            if tag_name_lower in ('html', 'head', 'body'):
+                self._handle_special_element(token, tag_name_lower, context, end_tag_idx)
                 return
-            elif tag_name_lower == 'head':
-                # Use existing head node
-                context.current_parent = self.head_node
-                context.index = end_tag_idx
-                return
-            elif tag_name_lower == 'body':
-                # Use existing body node and merge attributes
-                self.body_node.attributes.update(token.attributes)
-                context.current_parent = self.body_node
-                context.index = end_tag_idx
-                return
-
-        # Closing tag
-        if token.type == 'EndTag':
-            if context.in_rawtext:
-                # For RAWTEXT elements, only look for exact matching end tag
-                if tag_name_lower == context.current_parent.tag_name.lower():
-                    context.in_rawtext = False
-                    context.current_parent = context.current_parent.parent
-                # Ignore all other end tags in rawtext mode
-                context.index = end_tag_idx
-                return
-
-            if tag_name_lower == 'p':
-                # If we're in the body and the p was auto-closed
-                if (self.state == ParserState.IN_BODY and 
-                    not self._has_element_in_scope('p', context.current_parent)):
-                    # Create a new paragraph after the auto-closed one
-                    new_p = self._create_node('p', {}, context.current_parent, context.current_context)
-                    context.current_parent.append_child(new_p)
-                    context.current_parent = new_p
-            else:
-                context.current_parent, context.current_context = self._handle_closing_tag(
-                    tag_name_lower,
-                    context.current_parent,
-                    context.current_context
-                )
-
-            # Handle table-specific closing tags
-            if tag_name_lower == 'table':
-                table = context.current_parent
-                while table and table.tag_name.lower() != 'table':
-                    table = table.parent
-                
-                if table and table.parent:
-                    formatting_parent = table.parent
-                    while formatting_parent and formatting_parent != self.body_node:
-                        if formatting_parent.tag_name.lower() in FORMATTING_ELEMENTS:
-                            context.current_parent = formatting_parent
-                            break
-                        formatting_parent = formatting_parent.parent
-                    if formatting_parent == self.body_node:
-                        context.current_parent = table.parent
-            else:
-                # Update table state for other closing tags
-                if tag_name_lower in ('thead', 'tbody', 'tfoot'):
-                    self.state = ParserState.IN_TABLE_BODY
-                elif tag_name_lower == 'tr':
-                    self.state = ParserState.IN_ROW
-
-                context.current_parent, context.current_context = self._handle_closing_tag(
-                    tag_name_lower,
-                    context.current_parent,
-                    context.current_context
-                )
-
-        # Opening tag
-        elif token.type == 'StartTag':
-            # If we're in rawtext mode, treat everything as text
-            if context.in_rawtext:
-                text = f"<{tag_name_lower}"
-                if token.attributes:
-                    for name, value in token.attributes.items():
-                        text += f' {name}="{value}"'
-                if token.is_self_closing:
-                    text += "/"
-                text += ">"
-                self.text_handler.handle_rawtext_content(text, context.current_parent)
-                context.index = end_tag_idx
-                return
-
-            # Switch to body mode for non-head elements after head
-            if (self.state != ParserState.IN_BODY and 
-                tag_name_lower not in HEAD_ELEMENTS):
-                self.state = ParserState.IN_BODY
-                context.current_parent = self.body_node
-
-            # Handle <form> limitation
-            if tag_name_lower == 'form':
-                if context.has_form:
-                    context.index = end_tag_idx
-                    return
-                context.has_form = True
-
-            # Check if this tag should trigger rawtext mode
-            if tag_name_lower in RAWTEXT_ELEMENTS:
-                context.current_parent, new_context = self._handle_rawtext_elements(
-                    tag_name_lower, token.attributes, context.current_parent, context.current_context
-                )
-                if new_context == ParserState.RAWTEXT.value:
-                    context.in_rawtext = True
-                    context.rawtext_start = end_tag_idx
-                    context.index = end_tag_idx
-                    return
-
-            # Handle auto-closing tags
-            if tag_name_lower in AUTO_CLOSING_TAGS:
-                current = context.current_parent
-                while current and current != self.body_node:
-                    current_tag = current.tag_name.lower()
-                    if current_tag in AUTO_CLOSING_TAGS.get(tag_name_lower, set()):
-                        # Implicitly close the current tag by moving up to its parent
-                        context.current_parent = current.parent
-                        break
-                    current = current.parent
-
-            # Handle table structure
-            if tag_name_lower in TABLE_ELEMENTS:
-                if tag_name_lower == 'table':
-                    new_node = self._create_node(tag_name_lower, token.attributes, context.current_parent, context.current_context)
-                    context.current_parent.append_child(new_node)
-                    context.current_parent = new_node
-                    context.state = ParserState.IN_TABLE
-                    context.index = end_tag_idx
-                    return
-                elif tag_name_lower in ('td', 'th'):
-                    table = self._find_ancestor(context.current_parent, 'table')
-                    if table:
-                        tbody = self._ensure_tbody(table)
-                        tr = self._ensure_tr(tbody)
-                        new_node = self._create_node(tag_name_lower, token.attributes, tr, context.current_context)
-                        tr.append_child(new_node)
-                        context.current_parent = new_node
-                        context.state = ParserState.IN_CELL
-                        context.index = end_tag_idx
-                        return
-                elif tag_name_lower == 'tr':
-                    table = self._find_ancestor(context.current_parent, 'table')
-                    if table:
-                        tbody = self._ensure_tbody(table)
-                        new_node = self._create_node(tag_name_lower, token.attributes, tbody, context.current_context)
-                        tbody.append_child(new_node)
-                        context.current_parent = new_node
-                        context.state = ParserState.IN_ROW
-                        context.index = end_tag_idx
-                        return
-
-            # Create and append the new node (remove all the foster parenting checks)
-            new_node = self._create_node(tag_name_lower, token.attributes, context.current_parent, context.current_context)
-            context.current_parent.append_child(new_node)
-            
-            # Update current_parent for non-void elements
-            if tag_name_lower not in VOID_ELEMENTS:
-                context.current_parent = new_node
-
-        # Handle text content (remove foster parenting checks)
+            self._handle_start_tag(token, tag_name_lower, context, end_tag_idx)
+        elif token.type == 'EndTag':
+            self._handle_end_tag(token, tag_name_lower, context)
         elif token.type == 'Character':
             self.text_handler.handle_text_between_tags(token.data, context.current_parent)
 
         context.index = end_tag_idx
+
+    def _handle_special_element(self, token: HTMLToken, tag_name_lower: str, context: ParseContext, end_tag_idx: int) -> None:
+        """Handle html, head and body tags."""
+        if tag_name_lower == 'html':
+            self.html_node.attributes.update(token.attributes)
+        elif tag_name_lower == 'head':
+            context.current_parent = self.head_node
+        elif tag_name_lower == 'body':
+            self.body_node.attributes.update(token.attributes)
+            context.current_parent = self.body_node
+        context.index = end_tag_idx
+
+    def _handle_start_tag(self, token: HTMLToken, tag_name_lower: str, context: ParseContext, end_tag_idx: int) -> None:
+        """Handle opening tags."""
+        # If we're in rawtext mode, treat everything as text
+        if context.in_rawtext:
+            self._handle_tag_in_rawtext(token, tag_name_lower, context, end_tag_idx)
+            return
+
+        # Switch to body mode for non-head elements after head
+        if (self.state != ParserState.IN_BODY and 
+            tag_name_lower not in HEAD_ELEMENTS):
+            self.state = ParserState.IN_BODY
+            context.current_parent = self.body_node
+
+        # Handle <form> limitation
+        if tag_name_lower == 'form':
+            if context.has_form:
+                context.index = end_tag_idx
+                return
+            context.has_form = True
+
+        # Check if this tag should trigger rawtext mode
+        if tag_name_lower in RAWTEXT_ELEMENTS:
+            context.current_parent, new_context = self._handle_rawtext_elements(
+                tag_name_lower, token.attributes, context.current_parent, context.current_context
+            )
+            if new_context == ParserState.RAWTEXT.value:
+                context.in_rawtext = True
+                context.rawtext_start = end_tag_idx
+                context.index = end_tag_idx
+                return
+
+        # Handle auto-closing tags
+        if tag_name_lower in AUTO_CLOSING_TAGS:
+            self._handle_auto_closing(tag_name_lower, context)
+
+        # Handle table structure
+        if tag_name_lower in TABLE_ELEMENTS:
+            if self._handle_table_element(token, tag_name_lower, context, end_tag_idx):
+                return
+
+        # Create and append the new node
+        new_node = self._create_node(tag_name_lower, token.attributes, context.current_parent, context.current_context)
+        context.current_parent.append_child(new_node)
+        
+        # Update current_parent for non-void elements
+        if tag_name_lower not in VOID_ELEMENTS:
+            context.current_parent = new_node
+
+    def _handle_tag_in_rawtext(self, token: HTMLToken, tag_name_lower: str, context: ParseContext, end_tag_idx: int) -> None:
+        """Handle tags when in rawtext mode."""
+        text = f"<{tag_name_lower}"
+        if token.attributes:
+            for name, value in token.attributes.items():
+                text += f' {name}="{value}"'
+        if token.is_self_closing:
+            text += "/"
+        text += ">"
+        self.text_handler.handle_rawtext_content(text, context.current_parent)
+        context.index = end_tag_idx
+
+    def _handle_auto_closing(self, tag_name_lower: str, context: ParseContext) -> None:
+        """Handle auto-closing tag logic."""
+        current = context.current_parent
+        while current and current != self.body_node:
+            current_tag = current.tag_name.lower()
+            if current_tag in AUTO_CLOSING_TAGS.get(tag_name_lower, set()):
+                context.current_parent = current.parent
+                break
+            current = current.parent
+
+    def _handle_table_element(self, token: HTMLToken, tag_name_lower: str, context: ParseContext, end_tag_idx: int) -> bool:
+        """Handle table-related elements. Returns True if handled."""
+        if tag_name_lower == 'table':
+            new_node = self._create_node(tag_name_lower, token.attributes, context.current_parent, context.current_context)
+            context.current_parent.append_child(new_node)
+            context.current_parent = new_node
+            context.state = ParserState.IN_TABLE
+            context.index = end_tag_idx
+            return True
+        elif tag_name_lower in ('td', 'th'):
+            table = self._find_ancestor(context.current_parent, 'table')
+            if table:
+                tbody = self._ensure_tbody(table)
+                tr = self._ensure_tr(tbody)
+                new_node = self._create_node(tag_name_lower, token.attributes, tr, context.current_context)
+                tr.append_child(new_node)
+                context.current_parent = new_node
+                context.state = ParserState.IN_CELL
+                context.index = end_tag_idx
+                return True
+        elif tag_name_lower == 'tr':
+            table = self._find_ancestor(context.current_parent, 'table')
+            if table:
+                tbody = self._ensure_tbody(table)
+                new_node = self._create_node(tag_name_lower, token.attributes, tbody, context.current_context)
+                tbody.append_child(new_node)
+                context.current_parent = new_node
+                context.state = ParserState.IN_ROW
+                context.index = end_tag_idx
+                return True
+        return False
+
+    def _handle_end_tag(self, token: HTMLToken, tag_name_lower: str, context: ParseContext) -> None:
+        """Handle closing tags."""
+        if context.in_rawtext:
+            if tag_name_lower == context.current_parent.tag_name.lower():
+                context.in_rawtext = False
+                context.current_parent = context.current_parent.parent
+            return
+
+        if tag_name_lower == 'p':
+            if (self.state == ParserState.IN_BODY and 
+                not self._has_element_in_scope('p', context.current_parent)):
+                new_p = self._create_node('p', {}, context.current_parent, context.current_context)
+                context.current_parent.append_child(new_p)
+                context.current_parent = new_p
+        else:
+            context.current_parent, context.current_context = self._handle_closing_tag(
+                tag_name_lower,
+                context.current_parent,
+                context.current_context
+            )
+
+        # Handle table-specific closing tags
+        if tag_name_lower == 'table':
+            self._handle_table_end(context)
+        else:
+            if tag_name_lower in ('thead', 'tbody', 'tfoot'):
+                self.state = ParserState.IN_TABLE_BODY
+            elif tag_name_lower == 'tr':
+                self.state = ParserState.IN_ROW
+
+    def _handle_table_end(self, context: ParseContext) -> None:
+        """Handle table end tag special cases."""
+        table = context.current_parent
+        while table and table.tag_name.lower() != 'table':
+            table = table.parent
+        
+        if table and table.parent:
+            formatting_parent = table.parent
+            while formatting_parent and formatting_parent != self.body_node:
+                if formatting_parent.tag_name.lower() in FORMATTING_ELEMENTS:
+                    context.current_parent = formatting_parent
+                    break
+                formatting_parent = formatting_parent.parent
+            if formatting_parent == self.body_node:
+                context.current_parent = table.parent
 
     def _handle_closing_tag(self, tag_name: str, current_parent: Node,
                             current_context: Optional[str]) -> Tuple[Node, Optional[str]]:
@@ -715,34 +716,6 @@ class TurboHTML:
         if self.foreign_handler:
             return self.foreign_handler.create_node(tag_name, attributes, current_parent, current_context)
         return Node(tag_name.lower(), attributes)
-
-    def _handle_auto_closing(self, tag_name: str, current_parent: Node) -> Node:
-        """
-        Handle auto-closing rules for elements that can't be nested.
-        """
-        tag_name_lower = tag_name.lower()
-
-        # Close previous sibling if it's the same or another header
-        if tag_name_lower in SIBLING_ELEMENTS:
-            temp_parent = current_parent
-            while temp_parent:
-                parent_tag = temp_parent.tag_name.lower()
-                if parent_tag in SIBLING_ELEMENTS:
-                    # For headers, any header should close any other header
-                    if ((tag_name_lower in HEADER_ELEMENTS and 
-                         parent_tag in HEADER_ELEMENTS) or
-                        tag_name_lower == parent_tag):
-                        return temp_parent.parent
-                temp_parent = temp_parent.parent
-
-        # Block elements close paragraphs
-        if tag_name_lower in BLOCK_ELEMENTS:
-            button_ancestor = self._find_ancestor(current_parent, 'button')
-            if not button_ancestor:
-                if p_ancestor := self._find_ancestor(current_parent, 'p'):
-                    return p_ancestor.parent
-
-        return current_parent
 
     def _handle_doctype(self, token: HTMLToken) -> None:
         """
