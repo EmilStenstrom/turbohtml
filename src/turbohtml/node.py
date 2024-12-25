@@ -105,7 +105,7 @@ class Node:
         if self.tag_name == '#text':
             return f'| {" " * indent}"{self.text_content}"'
         if self.tag_name == '#comment':
-            return f'| {" " * indent}<!--{self.text_content}-->'
+            return f'| {" " * indent}<!-- {self.text_content} -->'
         if self.tag_name == '!doctype':
             return '| <!DOCTYPE html>'
 

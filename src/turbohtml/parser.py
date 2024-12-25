@@ -130,7 +130,7 @@ class HTMLTokenizer:
 
         # Handle special malformed comment cases
         if full_match in ('<!-->', '<!--->'):
-            comment_text = " "
+            comment_text = ""
 
         self.pos = match.end()
         return HTMLToken('Comment', data=comment_text)
