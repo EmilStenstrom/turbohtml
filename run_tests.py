@@ -37,7 +37,7 @@ def parse_dat_file(content):
 def compare_outputs(expected, actual):
     return expected.strip() == actual.strip()
 
-def run_tests(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_files=None):
+def run_tests(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_files=None, quiet=False):
     passed = 0
     failed = 0
 
@@ -96,7 +96,7 @@ def run_tests(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_
                     print(f"Errors: {errors}")
                 print(f'Expected:\n{expected_output}')
                 print(f'Actual:\n{actual_output}')
-            elif not should_print_heading:
+            elif not should_print_heading and not quiet:
                 print("x" if not test_passed else ".", end="", flush=True)
 
             if not test_passed:
@@ -108,10 +108,13 @@ def run_tests(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_
     
     return passed, failed
 
-def main(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_files=None):
-    passed, failed = run_tests(test_dir, fail_fast, test_specs, verbose, filter_files)
+def main(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_files=None, quiet=False):
+    passed, failed = run_tests(test_dir, fail_fast, test_specs, verbose, filter_files, quiet)
     total = passed + failed
-    print(f'\nTests passed: {passed}/{total} ({round(passed*100/total) if total else 0}%)')
+    if fail_fast:
+        print(f'\nTests passed: {passed}/{total}')
+    else:
+        print(f'\nTests passed: {passed}/{total} ({round(passed*100/total) if total else 0}%)')
 
 
 if __name__ == '__main__':
@@ -124,6 +127,8 @@ if __name__ == '__main__':
                        help='Print detailed information for all tests')
     parser.add_argument('--filter-files', type=str,
                        help='Only run tests from files containing this string')
+    parser.add_argument('-q', '--quiet', action='store_true',
+                       help='Suppress progress indicators (dots and x\'s)')
     args = parser.parse_args()
     
     # Split the test specs if they contain commas
@@ -132,4 +137,4 @@ if __name__ == '__main__':
         for spec in args.test_specs:
             test_specs.extend(spec.split(','))
     
-    main('../html5lib-tests/tree-construction', args.fail_fast, test_specs, args.verbose, args.filter_files)
+    main('../html5lib-tests/tree-construction', args.fail_fast, test_specs, args.verbose, args.filter_files, args.quiet)
