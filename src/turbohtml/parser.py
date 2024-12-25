@@ -481,8 +481,15 @@ class TurboHTML:
         """
         tag_name = tag_info.tag_name.lower()
         attributes = self._parse_attributes(tag_info.attr_string)
-        
-        # Check if we need to foster parent before handling table structure
+
+        # If we're in head or initial state and encounter a non-head element
+        if (self.state in (ParserState.INITIAL, ParserState.AFTER_HEAD) and 
+            tag_name not in HEAD_ELEMENTS and 
+            tag_name not in ('html', 'head', 'body')):
+            self.state = ParserState.IN_BODY
+            current_parent = self.body_node
+
+        # Rest of the existing _handle_opening_tag logic...
         if self._needs_foster_parenting(tag_name, current_parent):
             foster_parent = self._get_foster_parent(current_parent)
             new_node = self._create_node(tag_name, attributes, foster_parent, current_context)
