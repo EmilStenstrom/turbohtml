@@ -16,7 +16,8 @@ from .constants import (
     VOID_ELEMENTS, HTML_ELEMENTS, SPECIAL_ELEMENTS, BLOCK_ELEMENTS,
     TABLE_CONTAINING_ELEMENTS, RAWTEXT_ELEMENTS, HEAD_ELEMENTS,
     TAG_OPEN_RE, ATTR_RE, COMMENT_RE, DUAL_NAMESPACE_ELEMENTS,
-    SIBLING_ELEMENTS, TABLE_ELEMENTS, HEADER_ELEMENTS
+    SIBLING_ELEMENTS, TABLE_ELEMENTS, HEADER_ELEMENTS, BOUNDARY_ELEMENTS,
+    FORMATTING_ELEMENTS
 )
 
 if TYPE_CHECKING:
@@ -174,7 +175,14 @@ class TextHandler:
     def _append_text_node(self, parent: Node, text: str) -> None:
         """
         Central place to create and attach a text node to a parent.
+        Concatenates with previous text node if one exists.
         """
+        # If the last child is a text node, concatenate with it
+        if parent.children and parent.children[-1].tag_name == '#text':
+            parent.children[-1].text_content += text
+            return
+
+        # Otherwise create a new text node
         text_node = Node('#text')
         text_node.text_content = text
         parent.append_child(text_node)
@@ -346,19 +354,34 @@ class TurboHTML:
 
         # Closing tag
         if tag_info.is_closing:
-            # Update table state for closing tags
+            # Special handling for table closing - find the nearest formatting parent
             if tag_name_lower == 'table':
-                self.state = ParserState.IN_TABLE
-            elif tag_name_lower in ('thead', 'tbody', 'tfoot'):
-                self.state = ParserState.IN_TABLE_BODY
-            elif tag_name_lower == 'tr':
-                self.state = ParserState.IN_ROW
+                table = context.current_parent
+                while table and table.tag_name.lower() != 'table':
+                    table = table.parent
+                
+                if table and table.parent:
+                    # Look for formatting elements that contain this table
+                    formatting_parent = table.parent
+                    while formatting_parent and formatting_parent != self.body_node:
+                        if formatting_parent.tag_name.lower() in FORMATTING_ELEMENTS:
+                            context.current_parent = formatting_parent
+                            break
+                        formatting_parent = formatting_parent.parent
+                    if formatting_parent == self.body_node:
+                        context.current_parent = table.parent
+            else:
+                # Update table state for other closing tags
+                if tag_name_lower in ('thead', 'tbody', 'tfoot'):
+                    self.state = ParserState.IN_TABLE_BODY
+                elif tag_name_lower == 'tr':
+                    self.state = ParserState.IN_ROW
 
-            context.current_parent, context.current_context = self._handle_closing_tag(
-                tag_name_lower,
-                context.current_parent,
-                context.current_context
-            )
+                context.current_parent, context.current_context = self._handle_closing_tag(
+                    tag_name_lower,
+                    context.current_parent,
+                    context.current_context
+                )
         # DOCTYPE
         elif tag_info.is_doctype:
             self._handle_doctype(tag_info)
@@ -521,8 +544,8 @@ class TurboHTML:
     def _handle_closing_tag(self, tag_name: str, current_parent: Node,
                             current_context: Optional[str]) -> Tuple[Node, Optional[str]]:
         """
-        Close the specified tag, with special handling for </p> inside buttons
-        and adoption agency cases.
+        Close the specified tag, with special handling for formatting elements
+        inside special elements.
         """
         tag_name_lower = tag_name.lower()
 
@@ -536,18 +559,27 @@ class TurboHTML:
         if result := self._handle_p_in_button(tag_name_lower, current_parent, current_context):
             return result
 
+        # Check if the element is in scope
+        if not self._has_element_in_scope(tag_name_lower, current_parent):
+            # If not in scope, ignore the closing tag completely
+            return current_parent, current_context
+
         # Find the element to close
         temp_parent = current_parent
         while temp_parent and temp_parent.tag_name.lower() != tag_name_lower:
             temp_parent = temp_parent.parent
 
         if temp_parent:
-            # If we're in a table cell and not closing a table element,
-            # stay in the cell
-            if (tag_name_lower not in ('table', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th') and
-                (self._find_ancestor(current_parent, 'td') or self._find_ancestor(current_parent, 'th'))):
-                return current_parent, current_context
-            return temp_parent.parent, current_context
+            # When closing any element, return to its parent's context
+            target_parent = temp_parent.parent
+            
+            # If we're closing a table element, look for any active formatting elements
+            if tag_name_lower in TABLE_ELEMENTS:
+                while target_parent and target_parent.tag_name.lower() in FORMATTING_ELEMENTS:
+                    return target_parent, current_context
+            
+            return target_parent, current_context
+
         return current_parent, current_context
 
     def _handle_p_in_button(self, tag_name: str, current_parent: Node,
@@ -910,7 +942,7 @@ class TurboHTML:
         # Check if we're in a table context where foster parenting applies
         parent = current_parent
         while parent:
-            if parent.tag_name == 'table':
+            if parent.tag_name.lower() == 'table':
                 # We're in a table context where non-table elements need foster parenting
                 return True
             if parent.tag_name in ('td', 'th'):
@@ -938,3 +970,18 @@ class TurboHTML:
 
         # Place fostered elements before the table
         return table.parent
+
+    def _has_element_in_scope(self, tag_name: str, current_parent: Node) -> bool:
+        """
+        Check if an element is in scope according to HTML5 rules.
+        Returns False if we hit a scope boundary before finding the element.
+        """
+        node = current_parent
+        while node:
+            if node.tag_name.lower() == tag_name:
+                return True
+            # Check for scope boundaries
+            if node.tag_name.lower() in BOUNDARY_ELEMENTS:
+                return False
+            node = node.parent
+        return False
