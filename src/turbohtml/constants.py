@@ -154,3 +154,39 @@ SIBLING_ELEMENTS = {
     'option', # Select options
     *HEADER_ELEMENTS  # Headers
 }
+
+# Elements that can close other elements
+AUTO_CLOSING_TAGS = {
+    'p': {'p'},
+    'li': {'li'},
+    'dt': {'dt', 'dd'},
+    'dd': {'dt', 'dd'},
+    'address': {'p'},
+    'article': {'p'},
+    'aside': {'p'},
+    'blockquote': {'p'},
+    'details': {'p'},
+    'div': {'p'},
+    'dl': {'p'},
+    'fieldset': {'p'},
+    'figcaption': {'p'},
+    'figure': {'p'},
+    'footer': {'p'},
+    'form': {'p'},
+    'header': {'p'},
+    'hr': {'p'},
+    'main': {'p'},
+    'nav': {'p'},
+    'ol': {'p'},
+    'pre': {'p'},
+    'section': {'p'},
+    'table': {'p'},
+    'ul': {'p'},
+    # Add header elements - any header should close any other header
+    'h1': {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'},
+    'h2': {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'},
+    'h3': {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'},
+    'h4': {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'},
+    'h5': {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'},
+    'h6': {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'},
+}

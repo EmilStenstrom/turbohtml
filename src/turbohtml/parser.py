@@ -17,7 +17,7 @@ from .constants import (
     TABLE_CONTAINING_ELEMENTS, RAWTEXT_ELEMENTS, HEAD_ELEMENTS,
     TAG_OPEN_RE, ATTR_RE, COMMENT_RE, DUAL_NAMESPACE_ELEMENTS,
     SIBLING_ELEMENTS, TABLE_ELEMENTS, HEADER_ELEMENTS, BOUNDARY_ELEMENTS,
-    FORMATTING_ELEMENTS
+    FORMATTING_ELEMENTS, AUTO_CLOSING_TAGS
 )
 
 if TYPE_CHECKING:
@@ -352,11 +352,8 @@ class TurboHTML:
             if token.type == 'Comment':
                 self._append_comment_node(token.data, context)
             
-            elif token.type == 'DOCTYPE':
-                self._handle_doctype(token)
-            
-            elif token.type in ('StartTag', 'EndTag'):
-                self._handle_regular_tag(token, context, tokenizer.pos)
+            elif token.type in ('DOCTYPE', 'StartTag', 'EndTag'):
+                self._handle_tag(token, context, tokenizer.pos)
             
             elif token.type == 'Character':
                 if context.in_rawtext:
@@ -371,27 +368,6 @@ class TurboHTML:
         # Handle any final rawtext content
         if context.in_rawtext:
             self._cleanup_rawtext(context)
-
-    def _process_comment(self, context: ParseContext) -> bool:
-        """Check if the next token is a comment. If so, handle it."""
-        match = COMMENT_RE.search(self.html, context.index)
-        if not match or match.start() != context.index:
-            return False
-
-        # Extract comment text and handle special cases
-        full_match = match.group(0)
-        comment_text = match.group(1) or " "  # Default to space for malformed comments
-        
-        # Handle special malformed comment cases
-        if full_match in ('<!-->', '<!--->'):
-            comment_text = " "
-            context.index += len(full_match)
-        else:
-            context.index = match.end()
-
-        # Create and insert comment node
-        self._append_comment_node(comment_text, context)
-        return True
 
     def _append_comment_node(self, text: str, context: ParseContext) -> None:
         """
@@ -417,72 +393,37 @@ class TurboHTML:
             # All other comments go under their current parent
             context.current_parent.append_child(comment_node)
 
-    def _process_tag(self, context: ParseContext) -> bool:
-        """Check if the next token is a tag. If so, handle it and update context."""
-        index = context.index
-        match = TAG_OPEN_RE.search(self.html, index)
-        if not match:
-            return False
-
-        start_idx = match.start()
-
-        # 1) Handle text before this tag if we're not in rawtext
-        if start_idx > index and not context.in_rawtext:
-            context.current_parent, new_state = self._handle_text_before_tag(
-                index, start_idx, context.current_parent
-            )
-            if new_state:
-                self.state = ParserState.IN_BODY
-            context.index = start_idx
-
-        # 2) Extract tag info
-        start_tag_idx, end_tag_idx, tag_info = self._extract_tag_info(match)
-
-        # 3) If we're in rawtext, pass control to TextHandler
-        if context.in_rawtext:
-            (
-                context.current_parent,
-                context.in_rawtext,
-                new_index
-            ) = self.text_handler.handle_rawtext_mode(
-                tag_info,
-                context.current_parent,
-                context.rawtext_start,
-                start_idx,
-                end_tag_idx
-            )
-            context.index = new_index
-            return True
-
-        # 4) Check if this tag triggers rawtext mode
-        if self._tag_requires_rawtext_mode(tag_info, context.current_context):
-            context.current_parent, context.current_context = self._handle_opening_tag(
-                tag_info,
-                context.current_parent,
-                context.current_context,
-                context
-            )
-            context.in_rawtext = True
-            context.rawtext_start = end_tag_idx
-            context.index = end_tag_idx
-            return True
-
-        # 5) Otherwise handle doctype, closing, or a regular opening tag
-        self._handle_regular_tag(tag_info, context, end_tag_idx)
-        return True
-
-    def _handle_regular_tag(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> None:
+    def _handle_tag(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> None:
         """
-        Handle doctype, closing, or opening tags (excluding rawtext entry).
+        Handle all HTML tags: opening, closing, and special cases like DOCTYPE and RAWTEXT elements.
         """
-        tag_name_lower = token.tag_name.lower()
-
-        # If this is </head>, move to after_head state
-        if token.type == 'EndTag' and tag_name_lower == 'head':
-            self.state = ParserState.AFTER_HEAD
-            context.current_parent = context.html_node
+        # Handle DOCTYPE first since it doesn't have a tag_name
+        if token.type == 'DOCTYPE':
+            self._handle_doctype(token)
             context.index = end_tag_idx
             return
+
+        # Now we know we have a tag_name for all other cases
+        tag_name_lower = token.tag_name.lower()
+
+        # Special handling for html/head/body tags
+        if token.type == 'StartTag' and tag_name_lower in ('html', 'head', 'body'):
+            if tag_name_lower == 'html':
+                # Merge attributes with existing html node
+                self.html_node.attributes.update(token.attributes)
+                context.index = end_tag_idx
+                return
+            elif tag_name_lower == 'head':
+                # Use existing head node
+                context.current_parent = self.head_node
+                context.index = end_tag_idx
+                return
+            elif tag_name_lower == 'body':
+                # Use existing body node and merge attributes
+                self.body_node.attributes.update(token.attributes)
+                context.current_parent = self.body_node
+                context.index = end_tag_idx
+                return
 
         # Closing tag
         if token.type == 'EndTag':
@@ -495,14 +436,13 @@ class TurboHTML:
                 context.index = end_tag_idx
                 return
 
-            # Special handling for table closing - find the nearest formatting parent
+            # Handle table-specific closing tags
             if tag_name_lower == 'table':
                 table = context.current_parent
                 while table and table.tag_name.lower() != 'table':
                     table = table.parent
                 
                 if table and table.parent:
-                    # Look for formatting elements that contain this table
                     formatting_parent = table.parent
                     while formatting_parent and formatting_parent != self.body_node:
                         if formatting_parent.tag_name.lower() in FORMATTING_ELEMENTS:
@@ -523,11 +463,10 @@ class TurboHTML:
                     context.current_parent,
                     context.current_context
                 )
-        # DOCTYPE
-        elif token.type == 'DOCTYPE':
-            self._handle_doctype(token)
-        else:
-            # If we're in rawtext mode, treat everything as text until we see the matching end tag
+
+        # Opening tag
+        elif token.type == 'StartTag':
+            # If we're in rawtext mode, treat everything as text
             if context.in_rawtext:
                 text = f"<{tag_name_lower}"
                 if token.attributes:
@@ -540,7 +479,13 @@ class TurboHTML:
                 context.index = end_tag_idx
                 return
 
-            # Handle <form> limitation (only one form)
+            # Switch to body mode for non-head elements after head
+            if (self.state != ParserState.IN_BODY and 
+                tag_name_lower not in HEAD_ELEMENTS):
+                self.state = ParserState.IN_BODY
+                context.current_parent = self.body_node
+
+            # Handle <form> limitation
             if tag_name_lower == 'form':
                 if context.has_form:
                     context.index = end_tag_idx
@@ -558,161 +503,62 @@ class TurboHTML:
                     context.index = end_tag_idx
                     return
 
-            context.current_parent, context.current_context = self._handle_opening_tag(
-                token,
-                context.current_parent,
-                context.current_context,
-                context
-            )
+            # Handle auto-closing tags
+            if tag_name_lower in AUTO_CLOSING_TAGS:
+                current = context.current_parent
+                while current and current != self.body_node:
+                    current_tag = current.tag_name.lower()
+                    if current_tag in AUTO_CLOSING_TAGS.get(tag_name_lower, set()):
+                        # Implicitly close the current tag by moving up to its parent
+                        context.current_parent = current.parent
+                        break
+                    current = current.parent
+
+            # Handle table structure
+            if tag_name_lower in TABLE_ELEMENTS:
+                if tag_name_lower == 'table':
+                    new_node = self._create_node(tag_name_lower, token.attributes, context.current_parent, context.current_context)
+                    context.current_parent.append_child(new_node)
+                    context.current_parent = new_node
+                    context.state = ParserState.IN_TABLE
+                    context.index = end_tag_idx
+                    return
+                elif tag_name_lower in ('td', 'th'):
+                    table = self._find_ancestor(context.current_parent, 'table')
+                    if table:
+                        tbody = self._ensure_tbody(table)
+                        tr = self._ensure_tr(tbody)
+                        new_node = self._create_node(tag_name_lower, token.attributes, tr, context.current_context)
+                        tr.append_child(new_node)
+                        context.current_parent = new_node
+                        context.state = ParserState.IN_CELL
+                        context.index = end_tag_idx
+                        return
+                elif tag_name_lower == 'tr':
+                    table = self._find_ancestor(context.current_parent, 'table')
+                    if table:
+                        tbody = self._ensure_tbody(table)
+                        new_node = self._create_node(tag_name_lower, token.attributes, tbody, context.current_context)
+                        tbody.append_child(new_node)
+                        context.current_parent = new_node
+                        context.state = ParserState.IN_ROW
+                        context.index = end_tag_idx
+                        return
+
+            # Create and append the new node (default case)
+            new_node = self._create_node(tag_name_lower, token.attributes, context.current_parent, context.current_context)
+            context.current_parent.append_child(new_node)
+            
+            # Update current_parent for non-void elements
+            if tag_name_lower not in VOID_ELEMENTS:
+                if tag_name_lower in SPECIAL_ELEMENTS:
+                    context.current_parent = new_node
+                    if tag_name_lower in ('svg', 'mathml'):
+                        context.current_context = tag_name_lower
+                else:
+                    context.current_parent = new_node
+
         context.index = end_tag_idx
-
-    def _handle_text_before_tag(self, start: int, end: int, current_parent: Node) -> Tuple[Node, Optional[str]]:
-        """
-        Handle any text found before a tag. If non-whitespace text appears after
-        head, we switch to body mode.
-        """
-        text = self.html[start:end]
-        new_state = None
-
-        if text.strip() and self.state == ParserState.AFTER_HEAD:
-            new_state = 'in_body'  # We'll translate this to ParserState.IN_BODY later
-            if current_parent.tag_name.lower() != 'pre':
-                current_parent = self.body_node
-
-        if text:
-            if self.foreign_handler and current_parent.tag_name == 'math annotation-xml':
-                node = self.foreign_handler.handle_text(text, current_parent)
-                if node:
-                    current_parent.append_child(node)
-            else:
-                # Delegate to TextHandler
-                self.text_handler.handle_text_between_tags(text, current_parent)
-
-        return current_parent, new_state
-
-    def _handle_rawtext_eof(self, context: ParseContext) -> None:
-        """
-        If in rawtext mode and no more tags found, handle leftover rawtext.
-        """
-        index = context.index
-        length = context.length
-        (
-            context.current_parent,
-            context.in_rawtext,
-            new_index
-        ) = self.text_handler.handle_rawtext_mode(
-            None,
-            context.current_parent,
-            context.rawtext_start,
-            index,
-            length
-        )
-        context.index = new_index
-
-    def _handle_remaining_text(self, context: ParseContext) -> None:
-        """
-        If not in rawtext, any remaining text from index to end is handled.
-        """
-        index = context.index
-        length = context.length
-        if index < length:
-            text = self.html[index:]
-            if text:
-                self.text_handler.handle_text_between_tags(text, context.current_parent)
-        context.index = length
-
-    def _cleanup_rawtext(self, context: ParseContext) -> None:
-        """
-        If parsing ended while in rawtext mode, finalize leftover rawtext.
-        """
-        text = self.html[context.rawtext_start:]
-        if text:
-            self.text_handler.handle_rawtext_content(text, context.current_parent)
-
-    def _tag_requires_rawtext_mode(self, token: HTMLToken, current_context: Optional[str]) -> bool:
-        """
-        Check if this tag should trigger rawtext mode.
-        Renamed from '_should_enter_rawtext_mode' for clarity.
-        """
-        return (
-            not token.type == 'EndTag'
-            and token.tag_name.lower() in RAWTEXT_ELEMENTS
-            and (not current_context or current_context not in ('svg', 'mathml'))
-        )
-
-    def _handle_opening_tag(self, token: HTMLToken, current_parent: Node,
-                            current_context: Optional[str], context: ParseContext) -> Tuple[Node, Optional[str]]:
-        """
-        Handle an opening or self-closing tag, including special (html/head/body),
-        rawtext, and foreign elements.
-        """
-        tag_name = token.tag_name.lower()
-        attributes = token.attributes
-
-        # If we're in head or initial state and encounter a non-head element
-        if (self.state in (ParserState.INITIAL, ParserState.AFTER_HEAD) and 
-            tag_name not in HEAD_ELEMENTS and 
-            tag_name not in ('html', 'head', 'body')):
-            self.state = ParserState.IN_BODY
-            current_parent = self.body_node
-
-        # Rest of the existing _handle_opening_tag logic...
-        if self._needs_foster_parenting(tag_name, current_parent):
-            foster_parent = self._get_foster_parent(current_parent)
-            new_node = self._create_node(tag_name, attributes, foster_parent, current_context)
-            foster_parent.append_child(new_node)
-            if tag_name not in VOID_ELEMENTS:
-                return new_node, current_context
-            return foster_parent, current_context
-
-        # Handle table structure before other special elements
-        if result := self._handle_table_structure(tag_name, attributes, current_parent, current_context, context):
-            return result
-
-        # If we don't have a valid parent, use body node
-        if not current_parent:
-            current_parent = self.body_node
-
-        # Handle head elements that appear before <head>
-        if (tag_name in HEAD_ELEMENTS 
-            and self.state == ParserState.INITIAL 
-            and current_parent == self.html_node):
-            self.head_node.append_child(self._create_node(tag_name, attributes, self.head_node, current_context))
-            return current_parent, current_context
-
-        # Possibly handle <html>, <head>, <body>
-        if result := self._handle_special_elements(tag_name, attributes):
-            if result[0]:
-                return result
-
-        # Rawtext elements
-        if result := self._handle_rawtext_elements(tag_name, attributes, current_parent, current_context):
-            if result[0]:
-                return result
-
-        # <option> nesting logic
-        if result := self._handle_option_tag(tag_name, attributes, current_parent, current_context):
-            if result[0]:
-                return result
-
-        # Possibly handle foreign context (SVG/MathML)
-        if self.foreign_handler:
-            current_parent, current_context = self.foreign_handler.handle_context(
-                tag_name, current_parent, current_context
-            )
-
-        # Auto-closing for certain tags
-        current_parent = self._handle_auto_closing(tag_name, current_parent)
-
-        # Create and attach the new node
-        new_node = self._create_node(tag_name, attributes, current_parent, current_context)
-        current_parent.append_child(new_node)
-
-        # For non-void elements, the new node becomes the current parent
-        if tag_name not in VOID_ELEMENTS:
-            current_parent = new_node
-
-        return current_parent, current_context
 
     def _handle_closing_tag(self, tag_name: str, current_parent: Node,
                             current_context: Optional[str]) -> Tuple[Node, Optional[str]]:
@@ -810,27 +656,6 @@ class TurboHTML:
             return new_node, ParserState.RAWTEXT.value
         return None, None
 
-    def _insert_into_head_if_appropriate(
-        self,
-        tag_name: str,
-        attributes: dict,
-        current_context: Optional[str],
-        is_dual_context: bool,
-        is_dual_element: bool
-    ) -> Optional[Node]:
-        """
-        If it's a head element and we're not in body mode,
-        insert it into the head node instead of the current parent.
-        """
-        if (tag_name in HEAD_ELEMENTS
-            and self.head_node
-            and self.state != ParserState.IN_BODY
-            and not (is_dual_context and is_dual_element)):
-            new_node = self._create_node(tag_name, attributes, self.head_node, ParserState.RAWTEXT.value)
-            self.head_node.append_child(new_node)
-            return new_node
-        return None
-
     def _handle_option_tag(self, tag_name: str, attributes: dict, current_parent: Node,
                            current_context: Optional[str]) -> Tuple[Optional[Node], Optional[str]]:
         """
@@ -904,37 +729,6 @@ class TurboHTML:
                     return p_ancestor.parent
 
         return current_parent
-
-    def _extract_tag_info(self, match) -> Tuple[int, int, HTMLToken]:
-        """
-        Extract tag information from a regex match, returning start idx, end idx, and a TagInfo object.
-        """
-        is_exclamation = (match.group(1) == '!')
-        is_closing = (match.group(2) == '/')
-        tag_name = match.group(3)
-        attr_string = match.group(4).strip()
-
-        tag_info = HTMLToken(
-            type_='StartTag',
-            tag_name=tag_name,
-            attributes=self._parse_attributes(attr_string)
-        )
-        # Check for DOCTYPE
-        tag_info.is_self_closing = attr_string.rstrip().endswith('/')
-
-        return match.start(), match.end(), tag_info
-
-    def _parse_attributes(self, attr_string: str) -> Dict[str, str]:
-        """
-        Parse attributes from a string using the ATTR_RE pattern.
-        """
-        attr_string = attr_string.strip().rstrip('/')
-        matches = ATTR_RE.findall(attr_string)
-        attributes = {}
-        for attr_name, val1, val2, val3 in matches:
-            attr_value = val1 or val2 or val3 or ""
-            attributes[attr_name] = attr_value
-        return attributes
 
     def _handle_doctype(self, token: HTMLToken) -> None:
         """
@@ -1158,3 +952,14 @@ class TurboHTML:
                 return False
             node = node.parent
         return False
+
+    def _cleanup_rawtext(self, context: ParseContext) -> None:
+        """
+        Handle any remaining rawtext content at the end of parsing.
+        Treats unclosed RAWTEXT elements as if they were closed at EOF.
+        """
+        if context.in_rawtext and context.current_parent:
+            # Reset rawtext state
+            context.in_rawtext = False
+            # Move back to parent node
+            context.current_parent = context.current_parent.parent
