@@ -62,19 +62,25 @@ class ParseContext:
         self.in_rawtext = False
         self.rawtext_start = 0
         self.html_node = html_node
-        self.table_state = None  # Track table-specific state
+        self.state = ParserState.INITIAL
 
     def at_end(self) -> bool:
         """Check if we've reached or passed the end of the HTML text."""
         return self.index >= self.length
 
     def enter_table_mode(self, state: ParserState) -> None:
-        """Enter a table-specific parsing mode"""
-        self.table_state = state
+        """Update parser state for table-related elements."""
+        self.state = state
 
-    def exit_table_mode(self) -> None:
-        """Exit table-specific parsing mode"""
-        self.table_state = None
+    def enter_rawtext_mode(self) -> None:
+        """Enter rawtext mode for script, style, etc."""
+        self.in_rawtext = True
+        self.rawtext_start = self.index
+
+    def exit_rawtext_mode(self) -> None:
+        """Exit rawtext mode."""
+        self.in_rawtext = False
+        self.rawtext_start = 0
 
 
 class TextHandler:
@@ -342,13 +348,11 @@ class TurboHTML:
         if tag_info.is_closing:
             # Update table state for closing tags
             if tag_name_lower == 'table':
-                context.exit_table_mode()
+                self.state = ParserState.IN_TABLE
             elif tag_name_lower in ('thead', 'tbody', 'tfoot'):
-                context.table_state = ParserState.IN_TABLE
+                self.state = ParserState.IN_TABLE_BODY
             elif tag_name_lower == 'tr':
-                context.table_state = ParserState.IN_TABLE_BODY
-            elif tag_name_lower in ('td', 'th'):
-                context.table_state = ParserState.IN_ROW
+                self.state = ParserState.IN_ROW
 
             context.current_parent, context.current_context = self._handle_closing_tag(
                 tag_name_lower,
