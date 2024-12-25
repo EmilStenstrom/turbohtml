@@ -37,7 +37,7 @@ def parse_dat_file(content):
 def compare_outputs(expected, actual):
     return expected.strip() == actual.strip()
 
-def run_tests(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_files=None, quiet=False):
+def run_tests(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_files=None, quiet=False, exclude_errors=None, exclude_files=None):
     passed = 0
     failed = 0
 
@@ -53,6 +53,9 @@ def run_tests(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_
     for root, _, files in os.walk(test_dir):
         for file in files:
             if file.endswith('.dat'):
+                # Skip excluded files
+                if exclude_files and any(exclude in file for exclude in exclude_files):
+                    continue
                 # Add filter check
                 if filter_files and filter_files not in file:
                     continue
@@ -75,6 +78,10 @@ def run_tests(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_
         for i, test in enumerate(tests):
             # Skip tests not in the specified indices for this file
             if test_specs and i not in spec_dict.get(file, []):
+                continue
+
+            # Skip tests with excluded error strings
+            if exclude_errors and any(error_str in error for error_str in exclude_errors for error in test['errors']):
                 continue
 
             html_input = test['data']
@@ -108,8 +115,8 @@ def run_tests(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_
     
     return passed, failed
 
-def main(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_files=None, quiet=False):
-    passed, failed = run_tests(test_dir, fail_fast, test_specs, verbose, filter_files, quiet)
+def main(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_files=None, quiet=False, exclude_errors=None, exclude_files=None):
+    passed, failed = run_tests(test_dir, fail_fast, test_specs, verbose, filter_files, quiet, exclude_errors, exclude_files)
     total = passed + failed
     if fail_fast:
         print(f'\nTests passed: {passed}/{total}')
@@ -129,6 +136,10 @@ if __name__ == '__main__':
                        help='Only run tests from files containing this string')
     parser.add_argument('-q', '--quiet', action='store_true',
                        help='Suppress progress indicators (dots and x\'s)')
+    parser.add_argument('--exclude-errors', type=str,
+                       help='Skip tests containing any of these strings in their errors (comma-separated)')
+    parser.add_argument('--exclude-files', type=str,
+                       help='Skip files containing any of these strings in their names (comma-separated)')
     args = parser.parse_args()
     
     # Split the test specs if they contain commas
@@ -137,4 +148,9 @@ if __name__ == '__main__':
         for spec in args.test_specs:
             test_specs.extend(spec.split(','))
     
-    main('../html5lib-tests/tree-construction', args.fail_fast, test_specs, args.verbose, args.filter_files, args.quiet)
+    # Split exclude lists on commas
+    exclude_errors = args.exclude_errors.split(',') if args.exclude_errors else None
+    exclude_files = args.exclude_files.split(',') if args.exclude_files else None
+    
+    main('../html5lib-tests/tree-construction', args.fail_fast, test_specs, args.verbose, 
+         args.filter_files, args.quiet, exclude_errors, exclude_files)
