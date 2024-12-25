@@ -1,7 +1,11 @@
 import re
 TAG_OPEN_RE = re.compile(r'<(!?)(/)?([a-zA-Z0-9][-a-zA-Z0-9:]*)(.*?)>')
 ATTR_RE = re.compile(r'([a-zA-Z_:][-a-zA-Z0-9_:.]*)(?:\s*=\s*"([^"]*)"|\s*=\s*\'([^\']*)\'|\s*=\s*([^>\s]+)|)(?=\s|$)')
-COMMENT_RE = re.compile(r'<!--(.*?)-->')
+
+# Normal comment: <!-- comment -->
+# Special case: <!---> (malformed)
+# Special case: <!--> (malformed)
+COMMENT_RE = re.compile(r'<!--(?:>|->|([^>].*?)-->)')
 
 # HTML Element Sets
 VOID_ELEMENTS = {

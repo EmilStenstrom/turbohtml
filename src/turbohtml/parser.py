@@ -267,22 +267,48 @@ class TurboHTML:
 
     def _process_comment(self, context: ParseContext) -> bool:
         """Check if the next token is a comment. If so, handle it."""
-        index = context.index
-        match = COMMENT_RE.search(self.html, index)
-        if match and match.start() == index:
-            # Decide comment parent
-            if (self.state == ParserState.AFTER_HEAD and
-                self.state != ParserState.IN_BODY and
-                context.current_parent.tag_name != 'math annotation-xml'):
-                comment_parent = context.html_node
-            else:
-                comment_parent = context.current_parent
+        match = COMMENT_RE.search(self.html, context.index)
+        if not match or match.start() != context.index:
+            return False
 
-            # Handle the comment
-            new_index = self._handle_comment(match, comment_parent, context.in_rawtext)
-            context.index = new_index
-            return True
-        return False
+        # Extract comment text and handle special cases
+        full_match = match.group(0)
+        comment_text = match.group(1) or " "  # Default to space for malformed comments
+        
+        # Handle special malformed comment cases
+        if full_match in ('<!-->', '<!--->'):
+            comment_text = " "
+            context.index += len(full_match)  # Length of <!--> or <!-->
+        else:
+            context.index = match.end()
+
+        # Create and insert comment node
+        self._append_comment_node(comment_text, context)
+        return True
+
+    def _append_comment_node(self, text: str, context: ParseContext) -> None:
+        """
+        Create and append a comment node with proper placement based on parser state.
+        """
+        comment_node = Node('#comment')
+        comment_node.text_content = text
+
+        # Determine proper parent and insertion location based on parser state
+        if self.state == ParserState.INITIAL:
+            # Comments before <html> go directly under root
+            self.root.children.insert(0, comment_node)
+        elif self.state == ParserState.AFTER_HEAD:
+            # Comments between </head> and <body> go after head
+            head_index = self.html_node.children.index(self.head_node)
+            self.html_node.children.insert(head_index + 1, comment_node)
+            comment_node.parent = self.html_node
+        elif (self.state != ParserState.IN_BODY and 
+              context.current_parent.tag_name != 'math annotation-xml'):
+            # Special handling for certain states
+            self.html_node.append_child(comment_node)
+        else:
+            # All other comments go under their current parent
+            context.current_parent.append_child(comment_node)
 
     def _process_tag(self, context: ParseContext) -> bool:
         """Check if the next token is a tag. If so, handle it and update context."""
@@ -767,23 +793,6 @@ class TurboHTML:
             attr_value = val1 or val2 or val3 or ""
             attributes[attr_name] = attr_value
         return attributes
-
-    def _handle_comment(self, match: re.Match, current_parent: Node, in_rawtext: bool) -> int:
-        """
-        Insert an HTML comment node into the tree.
-        """
-        comment_text = match.group(1)
-        comment_node = Node('#comment')
-        comment_node.text_content = comment_text
-        
-        if current_parent == self.html_node:
-            # Insert comment after <head> but before <body>
-            head_index = self.html_node.children.index(self.head_node)
-            self.html_node.children.insert(head_index + 1, comment_node)
-            comment_node.parent = self.html_node
-        else:
-            current_parent.append_child(comment_node)
-        return match.end()
 
     def _handle_doctype(self, tag_info: TagInfo) -> None:
         """
