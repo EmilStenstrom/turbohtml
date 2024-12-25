@@ -560,18 +560,17 @@ class TurboHTML:
                         context.index = end_tag_idx
                         return
 
-            # Create and append the new node (default case)
+            # Create and append the new node (remove all the foster parenting checks)
             new_node = self._create_node(tag_name_lower, token.attributes, context.current_parent, context.current_context)
             context.current_parent.append_child(new_node)
             
             # Update current_parent for non-void elements
             if tag_name_lower not in VOID_ELEMENTS:
-                if tag_name_lower in SPECIAL_ELEMENTS:
-                    context.current_parent = new_node
-                    if tag_name_lower in ('svg', 'mathml'):
-                        context.current_context = tag_name_lower
-                else:
-                    context.current_parent = new_node
+                context.current_parent = new_node
+
+        # Handle text content (remove foster parenting checks)
+        elif token.type == 'Character':
+            self.text_handler.handle_text_between_tags(token.data, context.current_parent)
 
         context.index = end_tag_idx
 
