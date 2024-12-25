@@ -104,7 +104,7 @@ SVG_CASE_SENSITIVE_ELEMENTS = {
     'fecomponenttransfer': 'feComponentTransfer',
     'fecomposite': 'feComposite',
     'feconvolvematrix': 'feConvolveMatrix',
-    'fediffuselight': 'feDiffuseLighting',
+    'fediffuselighting': 'feDiffuseLighting',
     'fedisplacementmap': 'feDisplacementMap',
     'fedistantlight': 'feDistantLight',
     'fedropshadow': 'feDropShadow',
@@ -125,7 +125,13 @@ SVG_CASE_SENSITIVE_ELEMENTS = {
     'feturbulence': 'feTurbulence',
     'lineargradient': 'linearGradient',
     'radialgradient': 'radialGradient',
-    'textpath': 'textPath'
+    'textpath': 'textPath',
+    'altglyph': 'altGlyph',
+    'altglyphdef': 'altGlyphDef',
+    'altglyphitem': 'altGlyphItem',
+    'animatecolor': 'animateColor',
+    'femerge': 'feMerge',
+    'glyphref': 'glyphRef'
 }
 
 # Header elements h1-h6
