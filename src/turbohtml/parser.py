@@ -311,7 +311,6 @@ class TurboHTML:
         """
         self.html = html
         self.foreign_handler = ForeignContentHandler() if handle_foreign_elements else None
-        self.has_doctype = False
         self.state = ParserState.INITIAL
 
         # Create basic HTML structure
@@ -941,7 +940,6 @@ class TurboHTML:
         """
         Handle DOCTYPE declarations by prepending them to the root's children.
         """
-        self.has_doctype = True
         doctype_node = Node('!doctype')
         self.root.children.insert(0, doctype_node)
 
