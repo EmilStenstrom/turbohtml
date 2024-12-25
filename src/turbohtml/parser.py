@@ -1,10 +1,3 @@
-# fast_html.py
-#
-# Minimal HTML parser built from scratch:
-# - Partially HTML5-compliant tokenizer
-# - Lightweight DOM (Node)
-# - Basic CSS-like query methods: tag, #id, .class
-
 import re
 from dataclasses import dataclass
 from enum import Enum
