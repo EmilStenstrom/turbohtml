@@ -68,24 +68,6 @@ class ParseContext:
         self.html_node = html_node
         self.state = ParserState.INITIAL
 
-    def at_end(self) -> bool:
-        """Check if we've reached or passed the end of the HTML text."""
-        return self.index >= self.length
-
-    def enter_table_mode(self, state: ParserState) -> None:
-        """Update parser state for table-related elements."""
-        self.state = state
-
-    def enter_rawtext_mode(self) -> None:
-        """Enter rawtext mode for script, style, etc."""
-        self.in_rawtext = True
-        self.rawtext_start = self.index
-
-    def exit_rawtext_mode(self) -> None:
-        """Exit rawtext mode."""
-        self.in_rawtext = False
-        self.rawtext_start = 0
-
 
 class HTMLTokenizer:
     """
@@ -236,11 +218,12 @@ class TextHandler:
         Handle text nodes between tags, with special handling for <pre> and rawtext elements.
         """
         # Check if text needs foster parenting
-        if self.parser._needs_foster_parenting('#text', current_parent):
-            foster_parent = self.parser._get_foster_parent(current_parent)
-            if text.strip():  # Only foster parent non-whitespace text
-                self.handle_text_between_tags(text, foster_parent)
-            return
+        if self.parser._has_element_in_scope('#text', current_parent):
+            foster_parent = self.parser._find_ancestor(current_parent, 'p')
+            if foster_parent:
+                if text.strip():  # Only foster parent non-whitespace text
+                    self.handle_text_between_tags(text, foster_parent)
+                return
 
         # <pre> requires entity decoding and preserving line breaks
         if current_parent.tag_name.lower() == 'pre':
@@ -671,43 +654,6 @@ class TurboHTML:
             return new_node, ParserState.RAWTEXT.value
         return None, None
 
-    def _handle_option_tag(self, tag_name: str, attributes: dict, current_parent: Node,
-                           current_context: Optional[str]) -> Tuple[Optional[Node], Optional[str]]:
-        """
-        Handle special nesting rules for <option> tags.
-        """
-        if tag_name != 'option':
-            return None, None
-
-        temp_parent = current_parent
-        while temp_parent:
-            if temp_parent.tag_name.lower() == 'option':
-                # If there's something else inside the option
-                if any(child.tag_name.lower() != 'option' for child in temp_parent.children):
-                    new_node = self._create_node(tag_name, attributes, current_parent, current_context)
-                    current_parent.append_child(new_node)
-                    return new_node, current_context
-                # Otherwise place it as a sibling
-                new_node = self._create_node(tag_name, attributes, temp_parent.parent, current_context)
-                temp_parent.parent.append_child(new_node)
-                return new_node, current_context
-            temp_parent = temp_parent.parent
-        return None, None
-
-    def _handle_special_elements(self, tag_name: str, attributes: dict) -> Tuple[Optional[Node], Optional[str]]:
-        """
-        Handle <html>, <head>, <body> if encountered again in the markup.
-        """
-        if tag_name == 'html':
-            self.html_node.attributes.update(attributes)
-            return self.html_node, None
-        if tag_name == 'body':
-            self.body_node.attributes.update(attributes)
-            return self.body_node, None
-        if tag_name == 'head':
-            return self.head_node, None
-        return None, None
-
     def _create_node(self, tag_name: str, attributes: dict,
                      current_parent: Node, current_context: Optional[str]) -> Node:
         """
@@ -745,129 +691,6 @@ class TurboHTML:
             current = current.parent
         return ancestors
 
-    def _handle_table_structure(self, tag_name: str, attributes: dict, 
-                              current_parent: Node, current_context: Optional[str],
-                              context: ParseContext) -> Optional[Tuple[Node, Optional[str]]]:
-        """Handle table structure elements according to HTML5 spec"""
-        tag_name = tag_name.lower()
-        
-        if not current_parent:
-            current_parent = self.body_node
-
-        # Handle td/th first as they're most common
-        if tag_name in ('td', 'th'):
-            table_parent = self._find_ancestor(current_parent, 'table')
-            if table_parent:
-                tbody = self._ensure_tbody(table_parent)
-                tr = self._ensure_tr(tbody)
-                new_node = self._create_node(tag_name, attributes, tr, current_context)
-                tr.append_child(new_node)
-                context.enter_table_mode(ParserState.IN_CELL)
-                return new_node, current_context
-            table = Node('table')
-            current_parent.append_child(table)
-            tbody = self._ensure_tbody(table)
-            tr = self._ensure_tr(tbody)
-            new_node = self._create_node(tag_name, attributes, tr, current_context)
-            tr.append_child(new_node)
-            context.enter_table_mode(ParserState.IN_CELL)
-            return new_node, current_context
-
-        # Handle tr
-        if tag_name == 'tr':
-            section_parent = self._find_nearest_table_section(current_parent)
-            if section_parent:
-                new_node = self._create_node(tag_name, attributes, section_parent, current_context)
-                section_parent.append_child(new_node)
-                context.enter_table_mode(ParserState.IN_ROW)
-                return new_node, current_context
-            return None
-
-        # Handle thead/tbody/tfoot
-        if tag_name in ('thead', 'tbody', 'tfoot'):
-            table = self._find_ancestor(current_parent, 'table')
-            if table:
-                new_node = self._create_node(tag_name, attributes, table, current_context)
-                table.append_child(new_node)
-                context.enter_table_mode(ParserState.IN_TABLE_BODY)
-                return new_node, current_context
-            return None
-
-        # Handle table
-        if tag_name == 'table':
-            new_node = self._create_node(tag_name, attributes, current_parent, current_context)
-            current_parent.append_child(new_node)
-            context.enter_table_mode(ParserState.IN_TABLE)
-            return new_node, current_context
-
-        # Handle caption
-        if tag_name == 'caption':
-            table = self._find_ancestor(current_parent, 'table')
-            if table:
-                new_node = self._create_node(tag_name, attributes, table, current_context)
-                if not table.children or table.children[0].tag_name != 'caption':
-                    table.children.insert(0, new_node)
-                else:
-                    table.append_child(new_node)
-                return new_node, current_context
-            return None
-
-        # Handle colgroup and col
-        if tag_name in ('colgroup', 'col'):
-            table = self._find_ancestor(current_parent, 'table')
-            if table:
-                if tag_name == 'col':
-                    # Always ensure colgroup exists
-                    colgroup = self._ensure_colgroup(table)
-                    new_node = self._create_node(tag_name, attributes, colgroup, current_context)
-                    colgroup.append_child(new_node)
-                    return current_parent, current_context
-                else:
-                    # Direct colgroup handling
-                    new_node = self._create_node(tag_name, attributes, table, current_context)
-                    # Insert after caption if it exists, otherwise at start
-                    if table.children and table.children[0].tag_name == 'caption':
-                        table.children.insert(1, new_node)
-                    else:
-                        table.children.insert(0, new_node)
-                    return new_node, current_context
-            return None
-
-        return None
-
-    def _ensure_colgroup(self, table: Node) -> Node:
-        """Ensure table has a colgroup, create if needed"""
-        for child in table.children:
-            if child.tag_name == 'colgroup':
-                return child
-        colgroup = Node('colgroup')
-        # Insert after caption if it exists
-        if table.children and table.children[0].tag_name == 'caption':
-            table.children.insert(1, colgroup)
-        else:
-            table.children.insert(0, colgroup)
-        return colgroup
-
-    def _find_nearest_table_section(self, node: Node) -> Optional[Node]:
-        """Find nearest thead/tbody/tfoot ancestor, or create tbody if in table"""
-        while node:
-            if node.tag_name in ('thead', 'tbody', 'tfoot'):
-                return node
-            if node.tag_name == 'table':
-                return self._ensure_tbody(node)
-            node = node.parent
-        return None
-
-    def _is_in_table_row(self, node: Node) -> bool:
-        """Check if we're inside a table row context"""
-        while node:
-            if node.tag_name.lower() == 'tr':
-                return True
-            if node.tag_name.lower() in ('table', 'thead', 'tbody', 'tfoot'):
-                return False
-            node = node.parent
-        return False
-
     def _ensure_tbody(self, table: Node) -> Node:
         """Ensure table has a tbody, create if needed"""
         for child in table.children:
@@ -884,46 +707,6 @@ class TurboHTML:
             tbody.append_child(tr)
             return tr
         return tbody.children[-1]
-
-    def _needs_foster_parenting(self, tag_name: str, current_parent: Node) -> bool:
-        """
-        Determine if an element needs foster parenting based on HTML5 rules.
-        """
-        # Don't foster parent table elements themselves
-        if tag_name in TABLE_ELEMENTS:
-            return False
-
-        # Check if we're in a table context where foster parenting applies
-        parent = current_parent
-        while parent:
-            if parent.tag_name.lower() == 'table':
-                # We're in a table context where non-table elements need foster parenting
-                return True
-            if parent.tag_name in ('td', 'th'):
-                # We're in a table cell - no foster parenting needed
-                return False
-            parent = parent.parent
-        return False
-
-    def _get_foster_parent(self, current_parent: Node) -> Node:
-        """
-        Find the appropriate foster parent for an element that can't be in a table.
-        Returns the parent node where the fostered element should be placed.
-        """
-        # Find the table ancestor
-        table = None
-        node = current_parent
-        while node:
-            if node.tag_name == 'table':
-                table = node
-                break
-            node = node.parent
-
-        if not table or not table.parent:
-            return self.body_node
-
-        # Place fostered elements before the table
-        return table.parent
 
     def _has_element_in_scope(self, tag_name: str, current_parent: Node) -> bool:
         """

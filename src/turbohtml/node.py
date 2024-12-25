@@ -17,10 +17,6 @@ class Node:
         self.parent: Optional['Node'] = None
         self.text_content = ""  # For text nodes or concatenated text in element nodes
 
-    def __getitem__(self, key: str) -> Optional[str]:
-        """Allows dict-like attribute access, e.g., node['href']."""
-        return self.attributes.get(key)
-
     def append_child(self, child: 'Node'):
         self.children.append(child)
         child.parent = self

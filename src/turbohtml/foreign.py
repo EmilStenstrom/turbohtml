@@ -112,12 +112,3 @@ class ForeignContentHandler:
             text_node.text_content = text
             return text_node
         return None
-
-    def handle_comment(self, comment_text: str, current_parent: 'Node') -> Optional['Node']:
-        """Handle comments in foreign content contexts."""
-        if current_parent.tag_name == 'math annotation-xml':
-            comment_node = Node('#comment')
-            comment_node.text_content = comment_text.strip()
-            return comment_node
-        return None
-
