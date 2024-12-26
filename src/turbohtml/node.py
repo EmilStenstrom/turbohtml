@@ -90,6 +90,8 @@ class Node:
     def __repr__(self):
         if self.tag_name == '#text':
             return f"Node(#text='{self.text_content[:30]}')"
+        if self.tag_name == '#comment':
+            return f"Node(#comment='{self.text_content[:30]}')"
         return f"Node(<{self.tag_name}>, children={len(self.children)})"
 
     def to_test_format(self, indent=0):
