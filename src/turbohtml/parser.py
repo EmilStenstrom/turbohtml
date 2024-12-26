@@ -51,7 +51,6 @@ class ParserState(Enum):
     IN_CELL = "in_cell"
     RAWTEXT = "rawtext"
 
-
 class ParseContext:
     """
     Holds parser state during the parsing process.
@@ -78,7 +77,7 @@ class ParseContext:
             self._state = new_state
 
     def __repr__(self):
-        return f"<ParseContext: {self.state}, {self.current_parent}>"
+        return f"<ParseContext: state={self.state.value}, parent={self.current_parent.tag_name}>"
 
 class HTMLTokenizer:
     """
@@ -348,6 +347,7 @@ class TurboHTML:
         tokenizer = HTMLTokenizer(self.html)
 
         for token in tokenizer.tokenize():
+            debug(f"_parse: {token}, context: {context}")
             if token.type == 'Comment':
                 self._append_comment_node(token.data, context)
             
@@ -372,8 +372,6 @@ class TurboHTML:
         """
         comment_node = Node('#comment')
         comment_node.text_content = text
-
-        debug(f"Comment node: {comment_node}, context: {context}")
 
         # First comment should go in root if we're still in initial state
         if context.state == ParserState.INITIAL:
@@ -427,7 +425,8 @@ class TurboHTML:
         context.index = end_tag_idx
 
     def _handle_start_tag(self, token: HTMLToken, tag_name_lower: str, context: ParseContext, end_tag_idx: int) -> None:
-        """Handle opening tags."""
+        debug(f"_handle_start_tag: {tag_name_lower}, current_parent={context.current_parent}")
+        
         # Ensure we always have a valid current_parent
         if not context.current_parent:
             context.current_parent = self.body_node
@@ -437,11 +436,38 @@ class TurboHTML:
             self._handle_tag_in_rawtext(token, tag_name_lower, context, end_tag_idx)
             return
 
-        # Switch to body mode for non-head elements after head
-        if (self.state != ParserState.IN_BODY and 
+        # Switch to body mode for non-head elements
+        if (context.state == ParserState.INITIAL and 
             tag_name_lower not in HEAD_ELEMENTS):
-            self.state = ParserState.IN_BODY
+            debug(f"\tSwitching to body mode due to {tag_name_lower}")
+            context.state = ParserState.IN_BODY
             context.current_parent = self.body_node
+
+        # Handle list items
+        if tag_name_lower == 'li':
+            debug(f"\tProcessing list item, current parent: {context.current_parent}")
+            # Find closest list container or li
+            current = context.current_parent
+            list_parent = None
+            while current:
+                if current.tag_name.lower() in ('ul', 'ol'):
+                    list_parent = current
+                    break
+                if current.tag_name.lower() == 'li':
+                    # Close current li if we find another li
+                    debug(f"\tFound existing li, closing it: {current}")
+                    context.current_parent = current.parent
+                    break
+                current = current.parent
+
+            # Create and append the new li
+            target_parent = list_parent or context.current_parent
+            debug(f"\tAppending li to {target_parent}")
+            new_node = self._create_node(tag_name_lower, token.attributes, target_parent, context.current_context)
+            target_parent.append_child(new_node)
+            context.current_parent = new_node
+            debug(f"\tUpdated current_parent to {new_node}")
+            return
 
         # Handle <form> limitation
         if tag_name_lower == 'form':
@@ -513,10 +539,12 @@ class TurboHTML:
         # Create and append the new node
         new_node = self._create_node(tag_name_lower, token.attributes, context.current_parent, context.current_context)
         context.current_parent.append_child(new_node)
+        debug(f"Created and appended {tag_name_lower} to {context.current_parent}")
         
         # Update current_parent for non-void elements
         if tag_name_lower not in VOID_ELEMENTS:
             context.current_parent = new_node
+            debug(f"Updated current_parent to {new_node}")
 
     def _handle_tag_in_rawtext(self, token: HTMLToken, tag_name_lower: str, context: ParseContext, end_tag_idx: int) -> None:
         """Handle tags when in rawtext mode."""
@@ -574,6 +602,8 @@ class TurboHTML:
 
     def _handle_end_tag(self, token: HTMLToken, tag_name_lower: str, context: ParseContext) -> None:
         """Handle closing tags."""
+        debug(f"_handle_end_tag: {tag_name_lower}, current_parent={context.current_parent}")
+        
         if not context.current_parent:
             context.current_parent = self.body_node
 
@@ -581,31 +611,41 @@ class TurboHTML:
             if tag_name_lower == context.current_parent.tag_name.lower():
                 context.in_rawtext = False
                 context.current_parent = context.current_parent.parent or self.body_node
+                debug(f"Exiting rawtext mode, new parent={context.current_parent}")
             return
 
+        # Special handling for </p>
         if tag_name_lower == 'p':
-            if (self.state == ParserState.IN_BODY and 
-                not self._has_element_in_scope('p', context.current_parent)):
+            debug(f"\tHandling </p> tag")
+            debug(f"\tCurrent state: {context.state}")
+            if context.state == ParserState.IN_BODY:
+                debug(f"\tCreating new p tag in body")
                 new_p = self._create_node('p', {}, context.current_parent, context.current_context)
                 context.current_parent.append_child(new_p)
                 context.current_parent = new_p
-        else:
-            new_parent, new_context = self._handle_closing_tag(
-                tag_name_lower,
-                context.current_parent,
-                context.current_context
-            )
-            context.current_parent = new_parent or self.body_node
-            context.current_context = new_context
+                return
+            else:
+                debug(f"\tNot creating new p, state={context.state}")
 
         # Handle table-specific closing tags
         if tag_name_lower == 'table':
+            debug(f"\tHandling </table> tag")
             self._handle_table_end(context)
         else:
             if tag_name_lower in ('thead', 'tbody', 'tfoot'):
                 self.state = ParserState.IN_TABLE_BODY
             elif tag_name_lower == 'tr':
                 self.state = ParserState.IN_ROW
+
+        new_parent, new_context = self._handle_closing_tag(
+            tag_name_lower,
+            context.current_parent,
+            context.current_context
+        )
+        debug(f"\tAfter closing {tag_name_lower}: new_parent={new_parent}, new_context={new_context}")
+        
+        context.current_parent = new_parent or self.body_node
+        context.current_context = new_context
 
     def _handle_table_end(self, context: ParseContext) -> None:
         """Handle table end tag special cases."""
