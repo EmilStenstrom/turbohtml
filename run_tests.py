@@ -37,7 +37,7 @@ def parse_dat_file(content):
 def compare_outputs(expected, actual):
     return expected.strip() == actual.strip()
 
-def run_tests(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_files=None, quiet=False, exclude_errors=None, exclude_files=None, exclude_html=None):
+def run_tests(test_dir, fail_fast=False, test_specs=None, debug=False, filter_files=None, quiet=False, exclude_errors=None, exclude_files=None, exclude_html=None):
     passed = 0
     failed = 0
 
@@ -92,14 +92,14 @@ def run_tests(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_
             errors = test['errors']
             expected_output = test['document']
 
-            should_print_heading = verbose or fail_fast or (test_specs and i in spec_dict.get(file, []))
+            should_print_heading = debug or fail_fast or (test_specs and i in spec_dict.get(file, []))
             if should_print_heading:
                 print(f'Test {file} #{i}: {html_input}')
 
-            parser = TurboHTML(html_input)
+            parser = TurboHTML(html_input, debug=debug)
             actual_output = parser.root.to_test_format()
             test_passed = compare_outputs(expected_output, actual_output)
-            should_print_details = verbose or (fail_fast and not test_passed) or (test_specs and i in spec_dict.get(file, []))
+            should_print_details = debug or (fail_fast and not test_passed) or (test_specs and i in spec_dict.get(file, []))
 
             if should_print_details:
                 print(f'{"PASSED" if test_passed else "FAILED"}:')
@@ -119,8 +119,8 @@ def run_tests(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_
     
     return passed, failed
 
-def main(test_dir, fail_fast=False, test_specs=None, verbose=False, filter_files=None, quiet=False, exclude_errors=None, exclude_files=None, exclude_html=None):
-    passed, failed = run_tests(test_dir, fail_fast, test_specs, verbose, filter_files, quiet, exclude_errors, exclude_files, exclude_html)
+def main(test_dir, fail_fast=False, test_specs=None, debug=False, filter_files=None, quiet=False, exclude_errors=None, exclude_files=None, exclude_html=None):
+    passed, failed = run_tests(test_dir, fail_fast, test_specs, debug, filter_files, quiet, exclude_errors, exclude_files, exclude_html)
     total = passed + failed
     if fail_fast:
         print(f'\nTests passed: {passed}/{total}')
@@ -134,8 +134,8 @@ if __name__ == '__main__':
                        help='Break on first test failure')
     parser.add_argument('--test-specs', type=str, nargs='+', default=None,
                        help='Space-separated list of test specs in format: file:indices (e.g., test1.dat:0,1,2 test2.dat:5,6)')
-    parser.add_argument('-v', '--verbose', action='store_true',
-                       help='Print detailed information for all tests')
+    parser.add_argument('-d', '--debug', action='store_true',
+                       help='Print debug information')
     parser.add_argument('--filter-files', type=str,
                        help='Only run tests from files containing this string')
     parser.add_argument('-q', '--quiet', action='store_true',
@@ -159,5 +159,5 @@ if __name__ == '__main__':
     exclude_files = args.exclude_files.split(',') if args.exclude_files else None
     exclude_html = args.exclude_html.split(',') if args.exclude_html else None
     
-    main('../html5lib-tests/tree-construction', args.fail_fast, test_specs, args.verbose, 
+    main('../html5lib-tests/tree-construction', args.fail_fast, test_specs, args.debug, 
          args.filter_files, args.quiet, exclude_errors, exclude_files, exclude_html)

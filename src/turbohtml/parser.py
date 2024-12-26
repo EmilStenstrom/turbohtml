@@ -16,6 +16,12 @@ from .constants import (
 if TYPE_CHECKING:
     from .node import Node
 
+DEBUG = False
+
+def debug(*args, **kwargs) -> None:
+    if DEBUG:
+        print(*args, **kwargs)
+
 class HTMLToken:
     """Represents a token in the HTML stream"""
     def __init__(self, type_: str, data: str = None, tag_name: str = None, 
@@ -59,8 +65,20 @@ class ParseContext:
         self.in_rawtext = False
         self.rawtext_start = 0
         self.html_node = html_node
-        self.state = ParserState.INITIAL
+        self._state = ParserState.INITIAL
 
+    @property
+    def state(self) -> ParserState:
+        return self._state
+
+    @state.setter
+    def state(self, new_state: ParserState) -> None:
+        if new_state != self._state:
+            debug(f"State change: {self._state} -> {new_state}")
+            self._state = new_state
+
+    def __repr__(self):
+        return f"<ParseContext: {self.state}, {self.current_parent}>"
 
 class HTMLTokenizer:
     """
@@ -279,11 +297,12 @@ class TurboHTML:
     - Instantiation with an HTML string automatically triggers parsing.
     - Provides a root Node that represents the DOM tree.
     """
-    def __init__(self, html: str, handle_foreign_elements: bool = True):
+    def __init__(self, html: str, handle_foreign_elements: bool = True, debug: bool = False):
         """
         Args:
             html: The HTML string to parse
             handle_foreign_elements: Whether to handle SVG/MathML elements
+            debug: Whether to enable debug prints
         """
         self.html = html
         self.foreign_handler = ForeignContentHandler() if handle_foreign_elements else None
@@ -301,6 +320,10 @@ class TurboHTML:
 
         # Text handler for rawtext and text-related logic
         self.text_handler = TextHandler(self)
+
+        # Set up debug flag
+        global DEBUG
+        DEBUG = debug
 
         # Trigger parsing
         self._parse()
@@ -350,7 +373,9 @@ class TurboHTML:
         comment_node = Node('#comment')
         comment_node.text_content = text
 
-        # First comment should go in head if we're still in initial state
+        debug(f"Comment node: {comment_node}, context: {context}")
+
+        # First comment should go in root if we're still in initial state
         if context.state == ParserState.INITIAL:
             self.root.children.insert(0, comment_node)
             context.state = ParserState.IN_BODY
@@ -457,7 +482,6 @@ class TurboHTML:
                     tr.append_child(new_node)
                     context.current_parent = new_node
                     context.state = ParserState.IN_CELL
-                    print(f"[Table] Created cell in proper structure: table > tbody > tr > {tag_name_lower}")
                     return
             else:
                 # Foster parent non-table elements
