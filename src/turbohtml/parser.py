@@ -34,8 +34,14 @@ class HTMLToken:
 
     def __repr__(self):
         if self.type == 'Character':
-            return f"<{self.type} token: {self.data[:20]}...>"
-        return f"<{self.type} token: {self.tag_name or self.data}>"
+            preview = self.data[:20]
+            suffix = '...' if len(self.data) > 20 else ''
+            return f"<{self.type}: '{preview}{suffix}'>"
+        if self.type == 'Comment':
+            preview = self.data[:20]
+            suffix = '...' if len(self.data) > 20 else ''
+            return f"<{self.type}: '{preview}{suffix}'>"
+        return f"<{self.type}: {self.tag_name or self.data}>"
 
 
 class ParserState(Enum):
