@@ -522,25 +522,29 @@ class TurboHTML:
                     table_index = foster_parent.children.index(context.current_parent)
                     new_node = self._create_node(tag_name_lower, token.attributes, foster_parent, context.current_context)
                     foster_parent.children.insert(table_index, new_node)
-                    
-                    # Store the table for later use
+
                     table = context.current_parent
-                    
-                    # Set current parent to new node temporarily
                     context.current_parent = new_node
-                    
-                    # Process any children
-                    # ... process children ...
-                    
-                    # Restore table context
                     context.current_parent = table
-                    
                     return
 
         # Handle table structure
         if tag_name_lower in TABLE_ELEMENTS:
             if self._handle_table_element(token, tag_name_lower, context, end_tag_idx):
                 return
+
+        # Special handling for select-related elements
+        if tag_name_lower in ('optgroup', 'select'):
+            current = context.current_parent
+            # If we're inside an option, move up to its parent
+            while current and current.tag_name.lower() == 'option':
+                current = current.parent
+            
+            # Create and append the new node to the appropriate parent
+            new_node = self._create_node(tag_name_lower, token.attributes, current, context.current_context)
+            current.append_child(new_node)
+            context.current_parent = new_node
+            return
 
         # Create and append the new node
         new_node = self._create_node(tag_name_lower, token.attributes, context.current_parent, context.current_context)
@@ -642,6 +646,25 @@ class TurboHTML:
                 self.state = ParserState.IN_TABLE_BODY
             elif tag_name_lower == 'tr':
                 self.state = ParserState.IN_ROW
+
+        # Special handling for select-related elements
+        if tag_name_lower == 'option':
+            debug(f"\tHandling </option> tag")
+            # Find the nearest option element
+            current = context.current_parent
+            while current and current.tag_name.lower() != 'option':
+                current = current.parent
+            
+            if current and current.tag_name.lower() == 'option':
+                # Move any optgroup children to be siblings
+                for child in current.children[:]:
+                    if child.tag_name.lower() == 'optgroup':
+                        current.parent.append_child(child)
+                        current.children.remove(child)
+                
+                # Move back to the option's parent
+                context.current_parent = current.parent or self.body_node
+                return
 
         new_parent, new_context = self._handle_closing_tag(
             tag_name_lower,
