@@ -336,14 +336,6 @@ class TurboHTML:
     def __repr__(self) -> str:
         return f"<TurboHTML root={self.root}>"
 
-    def query_all(self, selector: str) -> List[Node]:
-        """Query all nodes matching the selector."""
-        return self.root.query_all(selector)
-
-    def query(self, selector: str) -> Optional[Node]:
-        """Shortcut to query the root node."""
-        return self.root.query(selector)
-
     def _parse(self) -> None:
         """
         Main parsing loop using ParseContext and HTMLTokenizer.
