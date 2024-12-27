@@ -674,54 +674,66 @@ class RawtextTagHandler(TagHandler):
 class ButtonTagHandler(TagHandler):
     """Handles button elements"""
     def should_handle_start(self, tag_name: str) -> bool:
+        debug(f"ButtonTagHandler.should_handle_start: {tag_name}", indent=0)
         return tag_name == 'button'
 
     def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
-        debug(f"ButtonTagHandler.handle_start: {token.tag_name}")
+        debug(f"ButtonTagHandler.handle_start: {token.tag_name}", indent=0)
+        debug(f"Current parent: {context.current_parent}", indent=0)
         new_node = self.parser._create_node(token.tag_name, token.attributes, context.current_parent, context.current_context)
         context.current_parent.append_child(new_node)
         context.current_parent = new_node
+        debug(f"New current parent: {context.current_parent}", indent=0)
 
     def should_handle_end(self, tag_name: str) -> bool:
+        debug(f"ButtonTagHandler.should_handle_end: {tag_name}", indent=0)
         return tag_name == 'button'
 
     def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
-        debug(f"ButtonTagHandler.handle_end: {token.tag_name}")
-        current = context.current_parent
-        current = self.parser._find_ancestor(current, 'button')
-
+        debug(f"ButtonTagHandler.handle_end: {token.tag_name}", indent=0)
+        debug(f"Current parent: {context.current_parent}", indent=0)
+        current = self.parser._find_ancestor(context.current_parent, 'button')
+        debug(f"Found button ancestor: {current}", indent=0)
         if current:
-            # Merge text nodes in button
+            debug("Merging text nodes in button", indent=0)
             text_content = ""
             new_children = []
             for child in current.children:
+                debug(f"Processing child: {child}", indent=0)
                 if child.tag_name == '#text':
                     text_content += child.text_content
                 else:
                     new_children.append(child)
             
             if text_content:
+                debug(f"Creating merged text node with content: {text_content}", indent=0)
                 text_node = Node('#text')
                 text_node.text_content = text_content
                 new_children.insert(0, text_node)
             
             current.children = new_children
             context.current_parent = current.parent or self.parser.body_node
-            return
+            debug(f"New current parent: {context.current_parent}", indent=0)
 
     def handle_text(self, text: str, context: ParseContext) -> bool:
-        debug(f"ButtonTagHandler.handle_text: '{text}'")
-        if context.current_parent.tag_name == 'button':
-            # If there's already a text node, append to it
-            if (context.current_parent.children and 
-                context.current_parent.children[-1].tag_name == '#text'):
-                context.current_parent.children[-1].text_content += text
+        debug(f"ButtonTagHandler.handle_text: '{text}'", indent=0)
+        debug(f"Current parent: {context.current_parent}", indent=0)
+        button = self.parser._find_ancestor(context.current_parent, 'button')
+        debug(f"Found button ancestor: {button}", indent=0)
+        if button:
+            if (button.children and 
+                button.children[-1].tag_name == '#text'):
+                debug("Appending to existing text node", indent=0)
+                button.children[-1].text_content += text
             else:
-                # Otherwise create a new text node
+                debug("Creating new text node", indent=0)
                 text_node = Node('#text')
                 text_node.text_content = text
-                context.current_parent.append_child(text_node)
-            return
+                button.append_child(text_node)
+            debug(f"Button children after text handling: {button.children}", indent=0)
+            return True
+        debug("No button ancestor found, not handling text", indent=0)
+        return False
 
 class VoidElementHandler(TagHandler):
     """Handles void elements that can't have children"""
@@ -730,6 +742,14 @@ class VoidElementHandler(TagHandler):
 
     def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
         debug(f"VoidElementHandler.handle_start: {token.tag_name}")
+        
+        # If we're in a paragraph and this is a block element, close the paragraph first
+        if (token.tag_name in BLOCK_ELEMENTS and 
+            self.parser._find_ancestor(context.current_parent, 'p')):
+            debug("Block element in paragraph, closing paragraph")
+            p_node = self.parser._find_ancestor(context.current_parent, 'p')
+            context.current_parent = p_node.parent or self.parser.body_node
+        
         new_node = self.parser._create_node(token.tag_name, token.attributes, context.current_parent, context.current_context)
         context.current_parent.append_child(new_node)
 
@@ -902,6 +922,12 @@ class TurboHTML:
         
         if not context.current_parent:
             context.current_parent = self.body_node
+
+        # Check if we're inside a button - if so, don't allow closing ancestor tags
+        button = self._find_ancestor(context.current_parent, 'button')
+        if button and tag_name != 'button':
+            debug(f"Inside button, ignoring end tag for {tag_name}")
+            return
 
         # Try tag handlers first
         debug(f"Trying tag handlers for end tag {tag_name}")
