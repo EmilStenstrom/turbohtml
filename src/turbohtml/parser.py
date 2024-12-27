@@ -385,115 +385,198 @@ class ParagraphTagHandler(TagHandler):
 
 class TableTagHandler(TagHandler):
     """Handles table-related elements"""
-    def _foster_parent(self, node: Node, parent_before_table: Node, table: Node) -> None:
-        """Move a node to before the nearest table"""
-        if not parent_before_table or not table:
-            return
-
-        # If we found a text node and the last element is also text, merge them
-        if (isinstance(node, Node) and node.tag_name == '#text' and
-            parent_before_table.children and 
-            parent_before_table.children[-1].tag_name == '#text'):
-            parent_before_table.children[-1].text_content += node.text_content
-        else:
-            # Otherwise insert before the table
-            table_index = parent_before_table.children.index(table)
-            parent_before_table.children.insert(table_index, node)
+    @property
+    def handles_state(self) -> ParserState:
+        return ParserState.IN_TABLE
 
     def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
         tag_name = token.tag_name.lower()
-        if tag_name not in ('table', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th'):
-            # If we're in a table context, move non-table elements before the table
-            if context.state == ParserState.IN_TABLE:
-                table = self.parser._find_ancestor(context.current_parent, 'table')
-                if table and table.parent:
-                    # Create node in the current parent first
-                    new_node = self.parser._create_node(tag_name, token.attributes, table.parent, context.current_context)
-                    # Then move it to before the table
-                    self._foster_parent(new_node, table.parent, table)
-                    context.current_parent = new_node
-                    context.state = ParserState.IN_BODY  # Move back to body context
-                    return True
-                else:
-                    # If we can't find a proper parent, add to body
-                    new_node = self.parser._create_node(tag_name, token.attributes, self.parser.body_node, context.current_context)
-                    self.parser.body_node.append_child(new_node)
-                    context.current_parent = new_node
-                    context.state = ParserState.IN_BODY  # Move back to body context
-                    return True
-            return False
-
+        debug(f"Table handler start: {tag_name}, state={context.state}")
+        
+        # Handle table structure elements
         if tag_name == 'table':
-            # Move any non-table content before the table
-            if context.current_parent.tag_name.lower() != 'table':
-                for child in context.current_parent.children[:]:
-                    if child.tag_name.lower() not in TABLE_ELEMENTS:
-                        # Find the last non-table element before where the table will be
-                        table_index = len(context.current_parent.children)
-                        for i, sibling in enumerate(context.current_parent.children):
-                            if sibling.tag_name.lower() == 'table':
-                                table_index = i
-                                break
-                        context.current_parent.children.insert(table_index - 1, child)
-                        context.current_parent.children.remove(child)
-
             new_node = self.parser._create_node(tag_name, token.attributes, context.current_parent, context.current_context)
             context.current_parent.append_child(new_node)
             context.current_parent = new_node
             context.state = ParserState.IN_TABLE
+            debug("Created new table, switched to IN_TABLE state")
             return True
+            
+        if tag_name in ('td', 'th'):
+            # If we're in table mode, there must be a table somewhere
+            if context.state == ParserState.IN_TABLE:
+                # First try to find table from current parent
+                table = self.parser._find_ancestor(context.current_parent, 'table')
+                if not table:
+                    # If not found, search from root
+                    debug("Searching for table from root")
+                    current = self.parser.root
+                    while current:
+                        if current.tag_name.lower() == 'table':
+                            table = current
+                            break
+                        if current.children:
+                            current = current.children[-1]  # Go to last child
+                        else:
+                            break
 
-        elif tag_name in ('td', 'th'):
+                if table:
+                    debug(f"Found table for cell: {table}")
+                    tbody = self._ensure_tbody(table)
+                    tr = self._ensure_tr(tbody)
+                    new_node = self.parser._create_node(tag_name, token.attributes, tr, context.current_context)
+                    tr.append_child(new_node)
+                    context.current_parent = new_node
+                    return True
+            
+        # Foster parent non-table elements when in table mode
+        if context.state == ParserState.IN_TABLE:
+            # Check if we're inside a table cell - if so, don't foster parent
+            current = context.current_parent
+            while current:
+                if current.tag_name.lower() in ('td', 'th'):
+                    debug("Inside table cell, creating normally")
+                    new_node = self.parser._create_node(tag_name, token.attributes, context.current_parent, context.current_context)
+                    context.current_parent.append_child(new_node)
+                    context.current_parent = new_node
+                    return True
+                if current.tag_name.lower() == 'table':
+                    break
+                current = current.parent
+
+            # 1. Find the last table element in the stack of open elements
             table = self.parser._find_ancestor(context.current_parent, 'table')
-            if table:
-                tbody = self._ensure_tbody(table)
-                tr = self._ensure_tr(tbody)
-                new_node = self.parser._create_node(tag_name, token.attributes, tr, context.current_context)
-                tr.append_child(new_node)
+            debug(f"Found table ancestor: {table}")
+            
+            if not table:
+                debug("No table found, treating as normal element")
+                # Create in body if we can't find a table
+                new_node = self.parser._create_node(tag_name, token.attributes, self.parser.body_node, context.current_context)
+                self.parser.body_node.append_child(new_node)
                 context.current_parent = new_node
-                context.state = ParserState.IN_CELL
+                context.state = ParserState.IN_BODY
                 return True
+
+            # 2. Find the parent of the table
+            if not table.parent:
+                debug("Table has no parent, creating in body")
+                new_node = self.parser._create_node(tag_name, token.attributes, self.parser.body_node, context.current_context)
+                self.parser.body_node.append_child(new_node)
+                context.current_parent = new_node
+                return True
+
+            # 3. If the last table has a parent element
+            foster_parent = None
+            if table.parent.tag_name.lower() == 'template':
+                # If parent is template, insert into template
+                foster_parent = table.parent
+            else:
+                # Otherwise insert into table's parent
+                foster_parent = table.parent
+
+            debug(f"Foster parenting into: {foster_parent}")
+            
+            if not foster_parent:
+                debug("No foster parent found, creating in body")
+                new_node = self.parser._create_node(tag_name, token.attributes, self.parser.body_node, context.current_context)
+                self.parser.body_node.append_child(new_node)
+                context.current_parent = new_node
+                return True
+
+            # Create the new node
+            new_node = self.parser._create_node(tag_name, token.attributes, foster_parent, context.current_context)
+            
+            # 4. Insert immediately before the table element
+            self._foster_parent(new_node, foster_parent, table)
+            context.current_parent = new_node
+            return True
 
         return False
 
     def handle_text(self, text: str, context: ParseContext) -> bool:
         """Handle text nodes in table context"""
         if context.state == ParserState.IN_TABLE:
-            table = self.parser._find_ancestor(context.current_parent, 'table')
-            if table and table.parent:
-                # Create text node
+            # Check if we're inside a table cell
+            current = context.current_parent
+            while current:
+                if current.tag_name.lower() in ('td', 'th'):
+                    debug("Inside table cell, creating text normally")
+                    text_node = Node('#text')
+                    text_node.text_content = text
+                    context.current_parent.append_child(text_node)
+                    return True
+                if current.tag_name.lower() == 'table':
+                    break
+                current = current.parent
+
+            # If parent is already foster parented (not in table structure),
+            # append text directly to it
+            if not self._is_table_element(context.current_parent.tag_name):
+                debug(f"Adding text to foster parented element: {text}")
                 text_node = Node('#text')
                 text_node.text_content = text
-                # Move it before the table
+                context.current_parent.append_child(text_node)
+                return True
+
+            # Otherwise foster parent the text
+            table = self.parser._find_ancestor(context.current_parent, 'table')
+            if table and table.parent:
+                debug(f"Foster parenting text: {text}")
+                text_node = Node('#text')
+                text_node.text_content = text
                 self._foster_parent(text_node, table.parent, table)
                 return True
         return False
 
-    def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
+    def handle_end(self, token: HTMLToken, context: ParseContext, pos: int) -> bool:
+        """Handle end tags in table context"""
         tag_name = token.tag_name.lower()
-        if tag_name not in ('table', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th'):
-            return False
-
-        if tag_name == 'table':
-            # Find the table element
+        
+        if tag_name == 'tr':
+            # Find the nearest tr element
             current = context.current_parent
-            while current and current.tag_name.lower() != 'table':
+            while current:
+                if current.tag_name.lower() == 'tr':
+                    # Move context back to tbody or table
+                    if current.parent:
+                        context.current_parent = current.parent
+                    else:
+                        # If tr was foster parented, go back to table
+                        table = self.parser._find_ancestor(current, 'table')
+                        context.current_parent = table or self.parser.body_node
+                    return True
                 current = current.parent
-            
-            if current:
-                context.current_parent = current.parent or self.parser.body_node
-                context.state = ParserState.IN_BODY
-        elif tag_name in ('thead', 'tbody', 'tfoot'):
-            context.state = ParserState.IN_TABLE
-        elif tag_name == 'tr':
-            context.state = ParserState.IN_TABLE_BODY
-        elif tag_name in ('td', 'th'):
-            context.state = ParserState.IN_ROW
+                
+        return False
 
-        return True
+    def _foster_parent(self, node: Node, foster_parent: Node, table: Node) -> None:
+        """
+        Foster parent a node according to the HTML5 spec:
+        - If last element before table is text, merge text nodes
+        - Otherwise insert immediately before the table
+        """
+        debug(f"Foster parenting: {node}, foster_parent={foster_parent}")
+        
+        if not foster_parent or not table:
+            debug("Missing foster parent or table, skipping foster parenting")
+            return
+
+        # Find the table's index in its parent
+        table_index = foster_parent.children.index(table)
+        
+        # If we're foster parenting text and there's a text node before the table
+        if (node.tag_name == '#text' and table_index > 0 and 
+            foster_parent.children[table_index - 1].tag_name == '#text'):
+            # Merge with existing text node
+            debug("Merging with existing text node")
+            foster_parent.children[table_index - 1].text_content += node.text_content
+        else:
+            # Insert before the table
+            debug(f"Inserting before table at index {table_index}")
+            foster_parent.children.insert(table_index, node)
 
     def _ensure_tbody(self, table):
-        """Ensure table has a tbody, create if needed"""
+        """Ensure table has a tbody element"""
         for child in table.children:
             if child.tag_name.lower() == 'tbody':
                 return child
@@ -502,12 +585,17 @@ class TableTagHandler(TagHandler):
         return tbody
 
     def _ensure_tr(self, tbody):
-        """Ensure tbody has a tr, create if needed"""
-        if not tbody.children or tbody.children[-1].tag_name.lower() != 'tr':
-            tr = self.parser._create_node('tr', {}, tbody, None)
-            tbody.append_child(tr)
-            return tr
-        return tbody.children[-1]
+        """Ensure tbody has a tr element"""
+        for child in tbody.children:
+            if child.tag_name.lower() == 'tr':
+                return child
+        tr = self.parser._create_node('tr', {}, tbody, None)
+        tbody.append_child(tr)
+        return tr
+
+    def _is_table_element(self, tag_name: str) -> bool:
+        """Check if an element is part of table structure"""
+        return tag_name.lower() in ('table', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th', 'caption', 'colgroup', 'col')
 
 class FormTagHandler(TagHandler):
     """Handles form-related elements (form, input, button, etc.)"""
