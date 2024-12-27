@@ -842,6 +842,23 @@ class ButtonTagHandler(TagHandler):
             return True
         return False
 
+class VoidElementHandler(TagHandler):
+    """Handles void elements that can't have children"""
+    def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
+        tag_name = token.tag_name.lower()
+        if tag_name not in VOID_ELEMENTS:
+            return False
+
+        # Create the void element
+        new_node = self.parser._create_node(tag_name, token.attributes, context.current_parent, context.current_context)
+        context.current_parent.append_child(new_node)
+        # Don't change current_parent since void elements can't have children
+        return True
+
+    def handle_end(self, token: HTMLToken, context: ParseContext, pos: int) -> bool:
+        # Void elements don't need end tag handling
+        return False
+
 class TurboHTML:
     """
     Main parser interface.
@@ -877,6 +894,7 @@ class TurboHTML:
         self.tag_handlers = [
             TextHandler(self),
             RawtextTagHandler(self),
+            VoidElementHandler(self),
             SelectTagHandler(self),
             ParagraphTagHandler(self),
             TableTagHandler(self),
