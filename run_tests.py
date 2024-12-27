@@ -37,7 +37,7 @@ def parse_dat_file(content):
 def compare_outputs(expected, actual):
     return expected.strip() == actual.strip()
 
-def run_tests(test_dir, fail_fast=False, test_specs=None, debug=False, filter_files=None, quiet=False, exclude_errors=None, exclude_files=None, exclude_html=None):
+def run_tests(test_dir, fail_fast=False, test_specs=None, debug=False, filter_files=None, quiet=False, exclude_errors=None, exclude_files=None, exclude_html=None, filter_html=None, filter_errors=None, print_fails=False):
     passed = 0
     failed = 0
 
@@ -88,6 +88,14 @@ def run_tests(test_dir, fail_fast=False, test_specs=None, debug=False, filter_fi
             if exclude_html and any(html_str in test['data'] for html_str in exclude_html):
                 continue
 
+            # Skip tests that don't contain the filtered HTML content
+            if filter_html and not any(html_str in test['data'] for html_str in filter_html):
+                continue
+
+            # Skip tests that don't contain the filtered error strings
+            if filter_errors and not any(error_str in error for error_str in filter_errors for error in test['errors']):
+                continue
+
             html_input = test['data']
             errors = test['errors']
             expected_output = test['document']
@@ -99,9 +107,14 @@ def run_tests(test_dir, fail_fast=False, test_specs=None, debug=False, filter_fi
             parser = TurboHTML(html_input, debug=debug)
             actual_output = parser.root.to_test_format()
             test_passed = compare_outputs(expected_output, actual_output)
-            should_print_details = debug or (fail_fast and not test_passed) or (test_specs and i in spec_dict.get(file, []))
+            should_print_details = (debug or 
+                                  (fail_fast and not test_passed) or 
+                                  (test_specs and i in spec_dict.get(file, [])) or
+                                  (print_fails and not test_passed))
 
             if should_print_details:
+                if not test_passed or not print_fails:
+                    print(f'\nTest {file} #{i}: {html_input}')
                 print(f'{"PASSED" if test_passed else "FAILED"}:')
                 if errors:
                     print(f"Errors: {errors}")
@@ -119,8 +132,8 @@ def run_tests(test_dir, fail_fast=False, test_specs=None, debug=False, filter_fi
     
     return passed, failed
 
-def main(test_dir, fail_fast=False, test_specs=None, debug=False, filter_files=None, quiet=False, exclude_errors=None, exclude_files=None, exclude_html=None):
-    passed, failed = run_tests(test_dir, fail_fast, test_specs, debug, filter_files, quiet, exclude_errors, exclude_files, exclude_html)
+def main(test_dir, fail_fast=False, test_specs=None, debug=False, filter_files=None, quiet=False, exclude_errors=None, exclude_files=None, exclude_html=None, filter_html=None, filter_errors=None, print_fails=False):
+    passed, failed = run_tests(test_dir, fail_fast, test_specs, debug, filter_files, quiet, exclude_errors, exclude_files, exclude_html, filter_html, filter_errors, print_fails)
     total = passed + failed
     summary = f'Tests passed: {passed}/{total}'
     if not fail_fast:
@@ -149,6 +162,12 @@ if __name__ == '__main__':
                        help='Skip files containing any of these strings in their names (comma-separated)')
     parser.add_argument('--exclude-html', type=str,
                        help='Skip tests containing any of these strings in their HTML input (comma-separated)')
+    parser.add_argument('--filter-html', type=str,
+                       help='Only run tests containing any of these strings in their HTML input (comma-separated)')
+    parser.add_argument('--print-fails', action='store_true',
+                       help='Print details for all failing tests')
+    parser.add_argument('--filter-errors', type=str,
+                       help='Only run tests containing any of these strings in their errors (comma-separated)')
     args = parser.parse_args()
     
     # Split the test specs if they contain commas
@@ -161,6 +180,9 @@ if __name__ == '__main__':
     exclude_errors = args.exclude_errors.split(',') if args.exclude_errors else None
     exclude_files = args.exclude_files.split(',') if args.exclude_files else None
     exclude_html = args.exclude_html.split(',') if args.exclude_html else None
+    filter_html = args.filter_html.split(',') if args.filter_html else None
+    filter_errors = args.filter_errors.split(',') if args.filter_errors else None
     
     main('../html5lib-tests/tree-construction', args.fail_fast, test_specs, args.debug, 
-         args.filter_files, args.quiet, exclude_errors, exclude_files, exclude_html)
+         args.filter_files, args.quiet, exclude_errors, exclude_files, exclude_html, filter_html,
+         filter_errors, args.print_fails)
