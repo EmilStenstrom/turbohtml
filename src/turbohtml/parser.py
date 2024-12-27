@@ -185,116 +185,549 @@ class HTMLTokenizer:
             attributes[attr_name] = attr_value
         return attributes
 
-class TextHandler:
-    """
-    Groups the methods that specifically handle text- and rawtext-related logic.
-    This helps keep the parser code more modular.
-    """
-    def __init__(self, parser: "TurboHTML"):
+class TagHandler:
+    """Base class for tag-specific handling logic"""
+    def __init__(self, parser: 'TurboHTML'):
         self.parser = parser
 
-    def handle_rawtext_mode(
-        self,
-        token: Optional[HTMLToken],
-        current_parent: Node,
-        rawtext_start: int,
-        start_idx: int,
-        end_tag_idx: int
-    ) -> Tuple[Node, bool, int]:
-        """
-        Handle parsing while in rawtext mode, which continues until we see
-        a matching closing tag or reach EOF.
-        """
-        # If EOF or closing tag matches the current parent
-        if token is None or (
-            token.type == 'EndTag' and
-            token.tag_name.lower() == current_parent.tag_name.lower()
-        ):
-            text = self.parser.html[rawtext_start : (start_idx if token else None)]
-            if text:
-                self.handle_rawtext_content(text, current_parent)
-            return (current_parent.parent, False, end_tag_idx)
-        return (current_parent, True, end_tag_idx)
+    def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
+        """Handle start tag. Return True if handled."""
+        return False
 
-    def handle_rawtext_content(self, text: str, current_parent: Node) -> None:
-        """
-        Handle rawtext content for <script>, <style>, <textarea>, <pre>, etc.
-        """
-        if text:
-            # Remove first newline for textarea/pre if this is the first child
-            if (current_parent.tag_name.lower() in ('textarea', 'pre')
-                and not current_parent.children
-                and text.startswith('\n')):
-                text = text[1:]
-            if text:
-                self._append_text_node(current_parent, text)
+    def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
+        """Handle end tag. Return True if handled."""
+        return False
 
-    def handle_text_between_tags(self, text: str, current_parent: Node) -> None:
-        """
-        Handle text nodes between tags, with special handling for <pre> and rawtext elements.
-        """
+class TextHandler(TagHandler):
+    """Handles all regular text content"""
+    
+    def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
+        return False  # Text handler doesn't handle start tags
+        
+    def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
+        return False  # Text handler doesn't handle end tags
+    
+    def handle_text(self, text: str, context: ParseContext) -> bool:
+        """Handle regular text content"""
+        if not text:
+            return True
+
+        # Skip if we're in rawtext mode (let RawtextTagHandler handle it)
+        if context.in_rawtext:
+            # Store the text in the current rawtext element
+            text_node = Node('#text')
+            text_node.text_content = text
+            context.current_parent.append_child(text_node)
+            return True
+
+        # If we're in a table context, let the table handler deal with it
+        if context.state == ParserState.IN_TABLE:
+            return False
+
         # Check if text needs foster parenting
-        if self.parser._has_element_in_scope('#text', current_parent):
-            foster_parent = self.parser._find_ancestor(current_parent, 'p')
+        if self.parser._has_element_in_scope('#text', context.current_parent):
+            foster_parent = self.parser._find_ancestor(context.current_parent, 'p')
             if foster_parent:
                 if text.strip():  # Only foster parent non-whitespace text
-                    self.handle_text_between_tags(text, foster_parent)
-                return
+                    return self._handle_normal_text(text, ParseContext(
+                        context.length, foster_parent, context.html_node))
+                return True
 
-        # <pre> requires entity decoding and preserving line breaks
-        if current_parent.tag_name.lower() == 'pre':
-            decoded_text = self._decode_html_entities(text)
-            # Append to existing text node if present
-            if (current_parent.children and
-                current_parent.children[-1].tag_name == '#text'):
-                current_parent.children[-1].text_content += decoded_text
-            else:
-                # Remove a leading newline if this is the first text node
-                if not current_parent.children and decoded_text.startswith('\n'):
-                    decoded_text = decoded_text[1:]
-                if decoded_text:
-                    self._append_text_node(current_parent, decoded_text)
-            return
-
-        # If it's a rawtext element (script/style/etc.), only add if there's actual content
-        if current_parent.tag_name.lower() in RAWTEXT_ELEMENTS:
-            if text.strip():
-                self._append_text_node(current_parent, text)
-            return
-
-        # Foreign content (MathML/SVG)
-        if (self.parser.foreign_handler and
-            current_parent.tag_name == 'math annotation-xml'):
-            node = self.parser.foreign_handler.handle_text(text, current_parent)
-            if node:
-                current_parent.append_child(node)
-            return
+        # Handle <pre> elements specially
+        if context.current_parent.tag_name.lower() == 'pre':
+            return self._handle_pre_text(text, context.current_parent)
 
         # Default text handling
-        if text:
-            self._append_text_node(current_parent, text)
+        return self._handle_normal_text(text, context)
 
-    def _append_text_node(self, parent: Node, text: str) -> None:
-        """
-        Central place to create and attach a text node to a parent.
-        """
-        # If the last child is a text node, concatenate with it
-        if parent.children and parent.children[-1].tag_name == '#text':
-            parent.children[-1].text_content += text
-            return
+    def _handle_normal_text(self, text: str, context: ParseContext) -> bool:
+        """Handle normal text content"""
+        # If last child is a text node, append to it
+        if (context.current_parent.children and 
+            context.current_parent.children[-1].tag_name == '#text'):
+            context.current_parent.children[-1].text_content += text
+        else:
+            # Create new text node
+            text_node = Node('#text')
+            text_node.text_content = text
+            context.current_parent.append_child(text_node)
+        return True
 
-        # Otherwise create a new text node
-        text_node = Node('#text')
-        text_node.text_content = text
-        parent.append_child(text_node)
+    def _handle_pre_text(self, text: str, parent: Node) -> bool:
+        """Handle text specifically for <pre> elements"""
+        decoded_text = self._decode_html_entities(text)
+        
+        # Append to existing text node if present
+        if (parent.children and
+            parent.children[-1].tag_name == '#text'):
+            parent.children[-1].text_content += decoded_text
+        else:
+            # Remove a leading newline if this is the first text node
+            if not parent.children and decoded_text.startswith('\n'):
+                decoded_text = decoded_text[1:]
+            if decoded_text:
+                text_node = Node('#text')
+                text_node.text_content = decoded_text
+                parent.append_child(text_node)
+        return True
 
     def _decode_html_entities(self, text: str) -> str:
-        """
-        Decode numeric HTML entities: both hex (&#x0a;) and decimal (&#10;).
-        """
-        text = re.sub(r'&#x([0-9a-fA-F]+);', lambda m: chr(int(m.group(1), 16)), text)
-        text = re.sub(r'&#([0-9]+);', lambda m: chr(int(m.group(1))), text)
+        """Decode numeric HTML entities."""
+        text = re.sub(r'&#x([0-9a-fA-F]+);', 
+                     lambda m: chr(int(m.group(1), 16)), text)
+        text = re.sub(r'&#([0-9]+);', 
+                     lambda m: chr(int(m.group(1))), text)
         return text
+
+class SelectTagHandler(TagHandler):
+    """Handles select, option, and optgroup elements"""
+    def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
+        tag_name = token.tag_name.lower()
+        if tag_name not in ('select', 'option', 'optgroup'):
+            return False
+
+        if tag_name in ('optgroup', 'select'):
+            current = context.current_parent
+            # If we're inside an option, move up to its parent
+            while current and current.tag_name.lower() == 'option':
+                current = current.parent
+            
+            # Create and append the new node to the appropriate parent
+            new_node = self.parser._create_node(tag_name, token.attributes, current, context.current_context)
+            current.append_child(new_node)
+            context.current_parent = new_node
+        else:  # option
+            new_node = self.parser._create_node(tag_name, token.attributes, context.current_parent, context.current_context)
+            context.current_parent.append_child(new_node)
+            context.current_parent = new_node
+
+        return True
+
+    def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
+        if token.tag_name.lower() != 'option':
+            return False
+
+        # Find the nearest option element
+        current = context.current_parent
+        while current and current.tag_name.lower() != 'option':
+            current = current.parent
+        
+        if current and current.tag_name.lower() == 'option':
+            # Move any optgroup children to be siblings
+            for child in current.children[:]:
+                if child.tag_name.lower() == 'optgroup':
+                    current.parent.append_child(child)
+                    current.children.remove(child)
+            
+            # Move back to the option's parent
+            context.current_parent = current.parent or self.parser.body_node
+
+        return True
+
+class ParagraphTagHandler(TagHandler):
+    """Handles paragraph elements"""
+    def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
+        tag_name = token.tag_name.lower()
+        if tag_name != 'p':
+            return False
+
+        # Make sure we have a valid parent
+        if not context.current_parent:
+            context.current_parent = self.parser.body_node
+
+        # Create and append the new node
+        new_node = self.parser._create_node(tag_name, token.attributes, context.current_parent, context.current_context)
+        context.current_parent.append_child(new_node)
+        context.current_parent = new_node
+        return True
+
+    def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
+        if token.tag_name.lower() != 'p':
+            return False
+
+        # Find the nearest p element using the helper
+        current = self.parser._find_ancestor(context.current_parent, 'p')
+        
+        if current:
+            # Found a matching p element, close it
+            context.current_parent = current.parent or self.parser.body_node
+        else:
+            # No matching p element found, create an implicit one
+            new_p = self.parser._create_node('p', {}, context.current_parent, context.current_context)
+            context.current_parent.append_child(new_p)
+
+        return True
+
+class TableTagHandler(TagHandler):
+    """Handles table-related elements"""
+    def _foster_parent(self, node: Node, parent_before_table: Node, table: Node) -> None:
+        """Move a node to before the nearest table"""
+        if not parent_before_table or not table:
+            return
+
+        # If we found a text node and the last element is also text, merge them
+        if (isinstance(node, Node) and node.tag_name == '#text' and
+            parent_before_table.children and 
+            parent_before_table.children[-1].tag_name == '#text'):
+            parent_before_table.children[-1].text_content += node.text_content
+        else:
+            # Otherwise insert before the table
+            table_index = parent_before_table.children.index(table)
+            parent_before_table.children.insert(table_index, node)
+
+    def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
+        tag_name = token.tag_name.lower()
+        if tag_name not in ('table', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th'):
+            # If we're in a table context, move non-table elements before the table
+            if context.state == ParserState.IN_TABLE:
+                table = self.parser._find_ancestor(context.current_parent, 'table')
+                if table and table.parent:
+                    # Create node in the current parent first
+                    new_node = self.parser._create_node(tag_name, token.attributes, table.parent, context.current_context)
+                    # Then move it to before the table
+                    self._foster_parent(new_node, table.parent, table)
+                    context.current_parent = new_node
+                    context.state = ParserState.IN_BODY  # Move back to body context
+                    return True
+                else:
+                    # If we can't find a proper parent, add to body
+                    new_node = self.parser._create_node(tag_name, token.attributes, self.parser.body_node, context.current_context)
+                    self.parser.body_node.append_child(new_node)
+                    context.current_parent = new_node
+                    context.state = ParserState.IN_BODY  # Move back to body context
+                    return True
+            return False
+
+        if tag_name == 'table':
+            # Move any non-table content before the table
+            if context.current_parent.tag_name.lower() != 'table':
+                for child in context.current_parent.children[:]:
+                    if child.tag_name.lower() not in TABLE_ELEMENTS:
+                        # Find the last non-table element before where the table will be
+                        table_index = len(context.current_parent.children)
+                        for i, sibling in enumerate(context.current_parent.children):
+                            if sibling.tag_name.lower() == 'table':
+                                table_index = i
+                                break
+                        context.current_parent.children.insert(table_index - 1, child)
+                        context.current_parent.children.remove(child)
+
+            new_node = self.parser._create_node(tag_name, token.attributes, context.current_parent, context.current_context)
+            context.current_parent.append_child(new_node)
+            context.current_parent = new_node
+            context.state = ParserState.IN_TABLE
+            return True
+
+        elif tag_name in ('td', 'th'):
+            table = self.parser._find_ancestor(context.current_parent, 'table')
+            if table:
+                tbody = self._ensure_tbody(table)
+                tr = self._ensure_tr(tbody)
+                new_node = self.parser._create_node(tag_name, token.attributes, tr, context.current_context)
+                tr.append_child(new_node)
+                context.current_parent = new_node
+                context.state = ParserState.IN_CELL
+                return True
+
+        return False
+
+    def handle_text(self, text: str, context: ParseContext) -> bool:
+        """Handle text nodes in table context"""
+        if context.state == ParserState.IN_TABLE:
+            table = self.parser._find_ancestor(context.current_parent, 'table')
+            if table and table.parent:
+                # Create text node
+                text_node = Node('#text')
+                text_node.text_content = text
+                # Move it before the table
+                self._foster_parent(text_node, table.parent, table)
+                return True
+        return False
+
+    def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
+        tag_name = token.tag_name.lower()
+        if tag_name not in ('table', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th'):
+            return False
+
+        if tag_name == 'table':
+            # Find the table element
+            current = context.current_parent
+            while current and current.tag_name.lower() != 'table':
+                current = current.parent
+            
+            if current:
+                context.current_parent = current.parent or self.parser.body_node
+                context.state = ParserState.IN_BODY
+        elif tag_name in ('thead', 'tbody', 'tfoot'):
+            context.state = ParserState.IN_TABLE
+        elif tag_name == 'tr':
+            context.state = ParserState.IN_TABLE_BODY
+        elif tag_name in ('td', 'th'):
+            context.state = ParserState.IN_ROW
+
+        return True
+
+    def _ensure_tbody(self, table):
+        """Ensure table has a tbody, create if needed"""
+        for child in table.children:
+            if child.tag_name.lower() == 'tbody':
+                return child
+        tbody = self.parser._create_node('tbody', {}, table, None)
+        table.append_child(tbody)
+        return tbody
+
+    def _ensure_tr(self, tbody):
+        """Ensure tbody has a tr, create if needed"""
+        if not tbody.children or tbody.children[-1].tag_name.lower() != 'tr':
+            tr = self.parser._create_node('tr', {}, tbody, None)
+            tbody.append_child(tr)
+            return tr
+        return tbody.children[-1]
+
+class FormTagHandler(TagHandler):
+    """Handles form-related elements (form, input, button, etc.)"""
+    def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
+        tag_name = token.tag_name.lower()
+        if tag_name not in ('form', 'input', 'button', 'textarea', 'select', 'label'):
+            return False
+
+        if tag_name == 'form':
+            # Only one form element allowed
+            if context.has_form:
+                return True
+            context.has_form = True
+
+        # Create and append the new node
+        new_node = self.parser._create_node(tag_name, token.attributes, context.current_parent, context.current_context)
+        context.current_parent.append_child(new_node)
+        
+        # Update current parent for non-void elements
+        if tag_name not in ('input',):
+            context.current_parent = new_node
+
+        return True
+
+    def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
+        tag_name = token.tag_name.lower()
+        if tag_name not in ('form', 'button', 'textarea', 'select', 'label'):
+            return False
+
+        # Find the nearest matching element
+        current = context.current_parent
+        while current and current.tag_name.lower() != tag_name:
+            current = current.parent
+
+        if current:
+            context.current_parent = current.parent or self.parser.body_node
+            if tag_name == 'form':
+                context.has_form = False
+
+        return True
+
+class ListTagHandler(TagHandler):
+    """Handles list-related elements (ul, ol, li)"""
+    def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
+        tag_name = token.tag_name.lower()
+        if tag_name not in ('ul', 'ol', 'li'):
+            return False
+
+        # If we're in a table context, let the table handler deal with it
+        if context.state == ParserState.IN_TABLE:
+            return False
+
+        # Make sure we have a valid parent
+        if not context.current_parent:
+            context.current_parent = self.parser.body_node
+
+        if tag_name == 'li':
+            # Close any open li elements first
+            current = context.current_parent
+            while current:
+                if current.tag_name.lower() == 'li':
+                    context.current_parent = current.parent or self.parser.body_node
+                    break
+                if current.tag_name.lower() in ('ul', 'ol'):
+                    break
+                current = current.parent
+
+        # Create and append the new node
+        new_node = self.parser._create_node(tag_name, token.attributes, context.current_parent, context.current_context)
+        context.current_parent.append_child(new_node)
+        context.current_parent = new_node
+        return True
+
+    def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
+        tag_name = token.tag_name.lower()
+        if tag_name not in ('ul', 'ol', 'li'):
+            return False
+
+        # If we're in a table context, let the table handler deal with it
+        if context.state == ParserState.IN_TABLE:
+            return False
+
+        # Find the nearest matching element
+        current = context.current_parent
+        while current and current.tag_name.lower() != tag_name:
+            current = current.parent
+
+        if current:
+            context.current_parent = current.parent or self.parser.body_node
+        else:
+            context.current_parent = self.parser.body_node
+
+        return True
+
+class HeadingTagHandler(TagHandler):
+    """Handles heading elements (h1-h6)"""
+    def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
+        tag_name = token.tag_name.lower()
+        if not tag_name.startswith('h') or not tag_name[1:].isdigit() or not (1 <= int(tag_name[1:]) <= 6):
+            return False
+
+        # Close any open headings first
+        current = context.current_parent
+        while current:
+            current_tag = current.tag_name.lower()
+            if current_tag.startswith('h') and current_tag[1:].isdigit():
+                context.current_parent = current.parent
+                break
+            current = current.parent
+
+        # Create and append the new heading
+        new_node = self.parser._create_node(tag_name, token.attributes, context.current_parent, context.current_context)
+        context.current_parent.append_child(new_node)
+        context.current_parent = new_node
+        return True
+
+    def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
+        tag_name = token.tag_name.lower()
+        if not tag_name.startswith('h') or not tag_name[1:].isdigit() or not (1 <= int(tag_name[1:]) <= 6):
+            return False
+
+        # Find the nearest heading element
+        current = context.current_parent
+        while current:
+            current_tag = current.tag_name.lower()
+            if current_tag == tag_name:
+                context.current_parent = current.parent or self.parser.body_node
+                break
+            current = current.parent
+
+        return True
+
+class RawtextTagHandler(TagHandler):
+    """Handles rawtext elements like script, style, title, etc."""
+    def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
+        tag_name = token.tag_name.lower()
+        if tag_name not in RAWTEXT_ELEMENTS:
+            return False
+
+        # Always try to place RAWTEXT elements in head if we're not explicitly in body
+        if (tag_name in HEAD_ELEMENTS and 
+            context.state != ParserState.IN_BODY):
+            new_node = self.parser._create_node(tag_name, token.attributes, self.parser.head_node, context.current_context)
+            self.parser.head_node.append_child(new_node)
+            context.current_parent = new_node
+            context.state = ParserState.RAWTEXT
+            context.in_rawtext = True
+            context.rawtext_start = end_tag_idx
+            return True
+
+        # Otherwise create in current location
+        new_node = self.parser._create_node(tag_name, token.attributes, context.current_parent, context.current_context)
+        context.current_parent.append_child(new_node)
+        context.current_parent = new_node
+        context.state = ParserState.RAWTEXT
+        context.in_rawtext = True
+        context.rawtext_start = end_tag_idx
+        return True
+
+    def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
+        tag_name = token.tag_name.lower()
+        if tag_name not in RAWTEXT_ELEMENTS:
+            return False
+
+        if context.in_rawtext and tag_name == context.current_parent.tag_name.lower():
+            # Get the raw text content before changing state
+            text = self.parser.html[context.rawtext_start:context.index]
+            if text:
+                # Create a text node with the raw content
+                text_node = Node('#text')
+                text_node.text_content = text
+                context.current_parent.append_child(text_node)
+            
+            context.in_rawtext = False
+            context.state = ParserState.IN_BODY
+            
+            # If it's a head element and we're not in body mode, stay in head
+            if (tag_name in HEAD_ELEMENTS and 
+                context.current_parent.parent == self.parser.head_node):
+                context.current_parent = self.parser.head_node
+            else:
+                # Otherwise move to body
+                context.current_parent = self.parser.body_node
+            return True
+
+        return False
+
+class ButtonTagHandler(TagHandler):
+    """Handles button elements"""
+    def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
+        tag_name = token.tag_name.lower()
+        if tag_name != 'button':
+            return False
+
+        # Create and append the new node
+        new_node = self.parser._create_node(tag_name, token.attributes, context.current_parent, context.current_context)
+        context.current_parent.append_child(new_node)
+        context.current_parent = new_node
+        return True
+
+    def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
+        tag_name = token.tag_name.lower()
+        if tag_name != 'button':
+            return False
+
+        # Find the nearest button element
+        current = context.current_parent
+        while current and current.tag_name.lower() != 'button':
+            current = current.parent
+
+        if current:
+            # Merge text nodes in button
+            text_content = ""
+            new_children = []
+            for child in current.children:
+                if child.tag_name == '#text':
+                    text_content += child.text_content
+                else:
+                    new_children.append(child)
+            
+            if text_content:
+                text_node = Node('#text')
+                text_node.text_content = text_content
+                new_children.insert(0, text_node)
+            
+            current.children = new_children
+            context.current_parent = current
+            return True
+
+        return False
+
+    def handle_text(self, text: str, context: ParseContext) -> bool:
+        """Handle text nodes in button context"""
+        if context.current_parent.tag_name.lower() == 'button':
+            # If there's already a text node, append to it
+            if (context.current_parent.children and 
+                context.current_parent.children[-1].tag_name == '#text'):
+                context.current_parent.children[-1].text_content += text
+            else:
+                # Otherwise create a new text node
+                text_node = Node('#text')
+                text_node.text_content = text
+                context.current_parent.append_child(text_node)
+            return True
+        return False
 
 class TurboHTML:
     """
@@ -323,12 +756,22 @@ class TurboHTML:
         self.html_node.append_child(self.head_node)
         self.html_node.append_child(self.body_node)
 
-        # Text handler for rawtext and text-related logic
-        self.text_handler = TextHandler(self)
-
         # Set up debug flag
         global DEBUG
         DEBUG = debug
+
+        # Initialize tag handlers
+        self.tag_handlers = [
+            TextHandler(self),
+            RawtextTagHandler(self),
+            SelectTagHandler(self),
+            ParagraphTagHandler(self),
+            TableTagHandler(self),
+            FormTagHandler(self),
+            ListTagHandler(self),
+            HeadingTagHandler(self),
+            ButtonTagHandler(self),
+        ]
 
         # Trigger parsing
         self._parse()
@@ -353,16 +796,9 @@ class TurboHTML:
                 self._handle_tag(token, context, tokenizer.pos)
             
             elif token.type == 'Character':
-                if context.in_rawtext:
-                    self.text_handler.handle_rawtext_content(
-                        token.data, context.current_parent
-                    )
-                else:
-                    self._handle_text_between_tags(token.data, context.current_parent)
-
-        # Handle any final rawtext content
-        if context.in_rawtext:
-            self._cleanup_rawtext(context)
+                for handler in self.tag_handlers:
+                    if hasattr(handler, 'handle_text') and handler.handle_text(token.data, context):
+                        break
 
     def _append_comment_node(self, text: str, context: ParseContext) -> None:
         """
@@ -376,15 +812,6 @@ class TurboHTML:
             self.root.children.insert(0, comment_node)
             context.state = ParserState.IN_BODY
             return
-
-        # If we're in a table context or any of its descendants
-        current = context.current_parent
-        while current:
-            if current.tag_name.lower() == 'table':
-                tbody = self._ensure_tbody(current)
-                tbody.append_child(comment_node)
-                return
-            current = current.parent
 
         context.current_parent.append_child(comment_node)
 
@@ -406,8 +833,6 @@ class TurboHTML:
             self._handle_start_tag(token, tag_name_lower, context, end_tag_idx)
         elif token.type == 'EndTag':
             self._handle_end_tag(token, tag_name_lower, context)
-        elif token.type == 'Character':
-            self._handle_text_between_tags(token.data, context.current_parent)
 
         context.index = end_tag_idx
 
@@ -423,142 +848,65 @@ class TurboHTML:
         context.index = end_tag_idx
 
     def _handle_start_tag(self, token: HTMLToken, tag_name_lower: str, context: ParseContext, end_tag_idx: int) -> None:
+        """Handle all opening HTML tags."""
         debug(f"_handle_start_tag: {tag_name_lower}, current_parent={context.current_parent}")
         
         # Ensure we always have a valid current_parent
         if not context.current_parent:
             context.current_parent = self.body_node
 
-        # If we're in rawtext mode, treat everything as text
-        if context.in_rawtext:
-            self._handle_tag_in_rawtext(token, tag_name_lower, context, end_tag_idx)
+        # If we're in rawtext mode, ignore all tokens except for the matching end tag
+        if context.state == ParserState.RAWTEXT:
             return
 
         # Switch to body mode for non-head elements
-        if (context.state == ParserState.INITIAL and 
+        if ((context.state == ParserState.INITIAL or context.current_parent == self.head_node) and 
             tag_name_lower not in HEAD_ELEMENTS):
             debug(f"\tSwitching to body mode due to {tag_name_lower}")
             context.state = ParserState.IN_BODY
             context.current_parent = self.body_node
 
-        # Handle list items
-        if tag_name_lower == 'li':
-            debug(f"\tProcessing list item, current parent: {context.current_parent}")
-            # Find closest list container or li
-            current = context.current_parent
-            list_parent = None
-            while current:
-                if current.tag_name.lower() in ('ul', 'ol'):
-                    list_parent = current
-                    break
-                if current.tag_name.lower() == 'li':
-                    # Close current li if we find another li
-                    debug(f"\tFound existing li, closing it: {current}")
-                    context.current_parent = current.parent
-                    break
-                current = current.parent
-
-            # Create and append the new li
-            target_parent = list_parent or context.current_parent
-            debug(f"\tAppending li to {target_parent}")
-            new_node = self._create_node(tag_name_lower, token.attributes, target_parent, context.current_context)
-            target_parent.append_child(new_node)
-            context.current_parent = new_node
-            debug(f"\tUpdated current_parent to {new_node}")
+        # Handle special elements (html, head, body)
+        if tag_name_lower in ('html', 'head', 'body'):
+            self._handle_special_element(token, tag_name_lower, context, end_tag_idx)
             return
-
-        # Handle <form> limitation
-        if tag_name_lower == 'form':
-            if context.has_form:
-                context.index = end_tag_idx
-                return
-            context.has_form = True
-
-        # Check if this tag should trigger rawtext mode
-        if tag_name_lower in RAWTEXT_ELEMENTS:
-            new_parent, new_context = self._handle_rawtext_elements(
-                tag_name_lower, token.attributes, context.current_parent, context.current_context
-            )
-            context.current_parent = new_parent or context.current_parent
-            if new_context == ParserState.RAWTEXT.value:
-                context.in_rawtext = True
-                context.rawtext_start = end_tag_idx
-                context.index = end_tag_idx
-                return
 
         # Handle auto-closing tags
-        if tag_name_lower in AUTO_CLOSING_TAGS:
-            self._handle_auto_closing(tag_name_lower, context)
-            if not context.current_parent:
-                context.current_parent = self.body_node
+        self._handle_auto_closing(tag_name_lower, context)
 
-        # Handle foster parenting for elements inside table
-        if (context.current_parent and 
-            context.current_parent.tag_name.lower() == 'table'):
-            
-            if tag_name_lower in TABLE_ELEMENTS:
-                # Handle table structure elements properly
-                if tag_name_lower in ('th', 'td'):
-                    table = context.current_parent
-                    tbody = self._ensure_tbody(table)
-                    tr = self._ensure_tr(tbody)
-                    new_node = self._create_node(tag_name_lower, token.attributes, tr, context.current_context)
-                    tr.append_child(new_node)
-                    context.current_parent = new_node
-                    context.state = ParserState.IN_CELL
-                    return
-            else:
-                # Foster parent non-table elements
-                foster_parent = context.current_parent.parent
-                if foster_parent:
-                    table_index = foster_parent.children.index(context.current_parent)
-                    new_node = self._create_node(tag_name_lower, token.attributes, foster_parent, context.current_context)
-                    foster_parent.children.insert(table_index, new_node)
-
-                    table = context.current_parent
-                    context.current_parent = new_node
-                    context.current_parent = table
-                    return
-
-        # Handle table structure
-        if tag_name_lower in TABLE_ELEMENTS:
-            if self._handle_table_element(token, tag_name_lower, context, end_tag_idx):
+        # Try tag handlers first
+        for handler in self.tag_handlers:
+            if handler.handle_start(token, context, end_tag_idx):
                 return
 
-        # Special handling for select-related elements
-        if tag_name_lower in ('optgroup', 'select'):
-            current = context.current_parent
-            # If we're inside an option, move up to its parent
-            while current and current.tag_name.lower() == 'option':
-                current = current.parent
-            
-            # Create and append the new node to the appropriate parent
-            new_node = self._create_node(tag_name_lower, token.attributes, current, context.current_context)
-            current.append_child(new_node)
-            context.current_parent = new_node
-            return
-
-        # Create and append the new node
+        # Default handling for unhandled tags
         new_node = self._create_node(tag_name_lower, token.attributes, context.current_parent, context.current_context)
         context.current_parent.append_child(new_node)
-        debug(f"Created and appended {tag_name_lower} to {context.current_parent}")
         
         # Update current_parent for non-void elements
         if tag_name_lower not in VOID_ELEMENTS:
             context.current_parent = new_node
-            debug(f"Updated current_parent to {new_node}")
 
-    def _handle_tag_in_rawtext(self, token: HTMLToken, tag_name_lower: str, context: ParseContext, end_tag_idx: int) -> None:
-        """Handle tags when in rawtext mode."""
-        text = f"<{tag_name_lower}"
-        if token.attributes:
-            for name, value in token.attributes.items():
-                text += f' {name}="{value}"'
-        if token.is_self_closing:
-            text += "/"
-        text += ">"
-        self.text_handler.handle_rawtext_content(text, context.current_parent)
-        context.index = end_tag_idx
+    def _handle_end_tag(self, token: HTMLToken, tag_name_lower: str, context: ParseContext) -> None:
+        """Handle closing tags."""
+        debug(f"_handle_end_tag: {tag_name_lower}, current_parent={context.current_parent}")
+        
+        if not context.current_parent:
+            context.current_parent = self.body_node
+
+        # Try tag handlers first
+        for handler in self.tag_handlers:
+            if handler.handle_end(token, context):
+                return
+
+        # Default handling for unhandled tags
+        if self._has_element_in_scope(tag_name_lower, context.current_parent):
+            current = context.current_parent
+            while current and current.tag_name.lower() != tag_name_lower:
+                current = current.parent
+            
+            if current:
+                context.current_parent = current.parent or self.body_node
 
     def _handle_auto_closing(self, tag_name_lower: str, context: ParseContext) -> None:
         """Handle auto-closing tag logic."""
@@ -569,120 +917,6 @@ class TurboHTML:
                 context.current_parent = current.parent
                 break
             current = current.parent
-
-    def _handle_table_element(self, token: HTMLToken, tag_name_lower: str, context: ParseContext, end_tag_idx: int) -> bool:
-        """Handle table-related elements. Returns True if handled."""
-        if tag_name_lower == 'table':
-            new_node = self._create_node(tag_name_lower, token.attributes, context.current_parent, context.current_context)
-            context.current_parent.append_child(new_node)
-            context.current_parent = new_node
-            context.state = ParserState.IN_TABLE
-            context.index = end_tag_idx
-            return True
-        elif tag_name_lower in ('td', 'th'):
-            table = self._find_ancestor(context.current_parent, 'table')
-            if table:
-                tbody = self._ensure_tbody(table)
-                tr = self._ensure_tr(tbody)
-                new_node = self._create_node(tag_name_lower, token.attributes, tr, context.current_context)
-                tr.append_child(new_node)
-                context.current_parent = new_node
-                context.state = ParserState.IN_CELL
-                context.index = end_tag_idx
-                return True
-        elif tag_name_lower == 'tr':
-            table = self._find_ancestor(context.current_parent, 'table')
-            if table:
-                tbody = self._ensure_tbody(table)
-                new_node = self._create_node(tag_name_lower, token.attributes, tbody, context.current_context)
-                tbody.append_child(new_node)
-                context.current_parent = new_node
-                context.state = ParserState.IN_ROW
-                context.index = end_tag_idx
-                return True
-        return False
-
-    def _handle_end_tag(self, token: HTMLToken, tag_name_lower: str, context: ParseContext) -> None:
-        """Handle closing tags."""
-        debug(f"_handle_end_tag: {tag_name_lower}, current_parent={context.current_parent}")
-        
-        if not context.current_parent:
-            context.current_parent = self.body_node
-
-        if context.in_rawtext:
-            if tag_name_lower == context.current_parent.tag_name.lower():
-                context.in_rawtext = False
-                context.current_parent = context.current_parent.parent or self.body_node
-                debug(f"Exiting rawtext mode, new parent={context.current_parent}")
-            return
-
-        # Special handling for </p>
-        if tag_name_lower == 'p':
-            debug(f"\tHandling </p> tag")
-            debug(f"\tCurrent state: {context.state}")
-            if context.state == ParserState.IN_BODY:
-                debug(f"\tCreating new p tag in body")
-                new_p = self._create_node('p', {}, context.current_parent, context.current_context)
-                context.current_parent.append_child(new_p)
-                context.current_parent = new_p
-                return
-            else:
-                debug(f"\tNot creating new p, state={context.state}")
-
-        # Handle table-specific closing tags
-        if tag_name_lower == 'table':
-            debug(f"\tHandling </table> tag")
-            self._handle_table_end(context)
-        else:
-            if tag_name_lower in ('thead', 'tbody', 'tfoot'):
-                self.state = ParserState.IN_TABLE_BODY
-            elif tag_name_lower == 'tr':
-                self.state = ParserState.IN_ROW
-
-        # Special handling for select-related elements
-        if tag_name_lower == 'option':
-            debug(f"\tHandling </option> tag")
-            # Find the nearest option element
-            current = context.current_parent
-            while current and current.tag_name.lower() != 'option':
-                current = current.parent
-            
-            if current and current.tag_name.lower() == 'option':
-                # Move any optgroup children to be siblings
-                for child in current.children[:]:
-                    if child.tag_name.lower() == 'optgroup':
-                        current.parent.append_child(child)
-                        current.children.remove(child)
-                
-                # Move back to the option's parent
-                context.current_parent = current.parent or self.body_node
-                return
-
-        new_parent, new_context = self._handle_closing_tag(
-            tag_name_lower,
-            context.current_parent,
-            context.current_context
-        )
-        debug(f"\tAfter closing {tag_name_lower}: new_parent={new_parent}, new_context={new_context}")
-        
-        context.current_parent = new_parent or self.body_node
-        context.current_context = new_context
-
-    def _handle_table_end(self, context: ParseContext) -> None:
-        """Handle table end tag special cases."""
-        table = context.current_parent
-        while table and table.tag_name.lower() != 'table':
-            table = table.parent
-        
-        if table and table.parent:
-            formatting_parent = table.parent
-            while formatting_parent and formatting_parent != self.body_node:
-                if formatting_parent.tag_name.lower() in FORMATTING_ELEMENTS:
-                    context.current_parent = formatting_parent
-                    break
-                formatting_parent = formatting_parent.parent
-            if formatting_parent == self.body_node:
-                context.current_parent = table.parent
 
     def _handle_closing_tag(self, tag_name: str, current_parent: Node,
                             current_context: Optional[str]) -> Tuple[Node, Optional[str]]:
@@ -697,27 +931,6 @@ class TurboHTML:
             current_parent, current_context = self.foreign_handler.handle_foreign_end_tag(
                 tag_name, current_parent, current_context
             )
-
-        # Special case: </p> inside button
-        if result := self._handle_p_in_button(tag_name_lower, current_parent, current_context):
-            return result
-
-        # Special handling for </p>
-        if tag_name_lower == 'p':
-            # If we're in a block element, create an implicit <p>
-            block_ancestor = None
-            temp = current_parent
-            while temp:
-                if temp.tag_name.lower() in BLOCK_ELEMENTS:
-                    block_ancestor = temp
-                    break
-                temp = temp.parent
-                
-            if block_ancestor:
-                # Create implicit <p>
-                new_p = Node('p')
-                block_ancestor.append_child(new_p)
-                return new_p, current_context
 
         # Check if the element is in scope
         if not self._has_element_in_scope(tag_name_lower, current_parent):
@@ -741,44 +954,6 @@ class TurboHTML:
             return target_parent, current_context
 
         return current_parent, current_context
-
-    def _handle_p_in_button(self, tag_name: str, current_parent: Node,
-                           current_context: Optional[str]) -> Optional[Tuple[Node, Optional[str]]]:
-        """Handle the special case of </p> inside a button."""
-        if tag_name != 'p':
-            return None
-
-        if p_ancestor := self._find_ancestor(current_parent, 'p'):
-            if current_parent.tag_name.lower() == 'button':
-                new_p = Node('p')
-                current_parent.append_child(new_p)
-                return new_p, current_context
-            return p_ancestor.parent, current_context
-        return None
-
-    def _handle_rawtext_elements(self, tag_name: str, attributes: dict, current_parent: Node,
-                                 current_context: Optional[str]) -> Tuple[Optional[Node], Optional[str]]:
-        """
-        Handle <script>, <style>, <title> and other rawtext elements.
-        """
-        tag_name = tag_name.lower()
-        is_dual_context = current_context in ('svg', 'mathml')
-        is_dual_element = tag_name in DUAL_NAMESPACE_ELEMENTS
-
-        if tag_name in RAWTEXT_ELEMENTS:
-            # Always try to place RAWTEXT elements in head if we're not explicitly in body
-            if (tag_name in HEAD_ELEMENTS and 
-                self.state != ParserState.IN_BODY and 
-                not (is_dual_context and is_dual_element)):
-                new_node = self._create_node(tag_name, attributes, self.head_node, current_context)
-                self.head_node.append_child(new_node)
-                return new_node, ParserState.RAWTEXT.value
-
-            # Otherwise create in current location
-            new_node = self._create_node(tag_name, attributes, current_parent, current_context)
-            current_parent.append_child(new_node)
-            return new_node, ParserState.RAWTEXT.value
-        return None, None
 
     def _create_node(self, tag_name: str, attributes: dict,
                      current_parent: Node, current_context: Optional[str]) -> Node:
@@ -817,23 +992,6 @@ class TurboHTML:
             current = current.parent
         return ancestors
 
-    def _ensure_tbody(self, table: Node) -> Node:
-        """Ensure table has a tbody, create if needed"""
-        for child in table.children:
-            if child.tag_name.lower() == 'tbody':
-                return child
-        tbody = Node('tbody')
-        table.append_child(tbody)
-        return tbody
-
-    def _ensure_tr(self, tbody: Node) -> Node:
-        """Ensure tbody has a tr, create if needed"""
-        if not tbody.children or tbody.children[-1].tag_name.lower() != 'tr':
-            tr = Node('tr')
-            tbody.append_child(tr)
-            return tr
-        return tbody.children[-1]
-
     def _has_element_in_scope(self, tag_name: str, current_parent: Node) -> bool:
         """
         Check if an element is in scope according to HTML5 rules.
@@ -848,51 +1006,3 @@ class TurboHTML:
                 return False
             node = node.parent
         return False
-
-    def _cleanup_rawtext(self, context: ParseContext) -> None:
-        """
-        Handle any remaining rawtext content at the end of parsing.
-        Treats unclosed RAWTEXT elements as if they were closed at EOF.
-        """
-        if context.in_rawtext and context.current_parent:
-            # Reset rawtext state
-            context.in_rawtext = False
-            # Move back to parent node
-            context.current_parent = context.current_parent.parent
-
-    def _handle_text_between_tags(self, text: str, current_parent: Node) -> None:
-        """Handle text nodes between tags, with special handling for tables."""
-        if not current_parent:
-            return
-
-        # Check if we need foster parenting (text directly under table)
-        if current_parent.tag_name.lower() == 'table':
-            # Look for the most recent non-table element
-            foster_parent = None
-            table = current_parent
-            
-            if table.parent:
-                # First try to find the last non-table element before the table
-                table_index = table.parent.children.index(table)
-                for sibling in reversed(table.parent.children[:table_index]):
-                    if sibling.tag_name.lower() not in TABLE_ELEMENTS:
-                        if sibling.tag_name == '#text':
-                            # If it's a text node, append to its content
-                            sibling.text_content += text
-                            return
-                        foster_parent = sibling
-                        break
-                
-                # If no suitable sibling found, use the parent
-                if not foster_parent:
-                    foster_parent = table.parent
-
-            if foster_parent:
-                # Create new text node
-                text_node = Node('#text')
-                text_node.text_content = text
-                foster_parent.append_child(text_node)
-            return
-
-        # Normal text handling for non-table elements
-        self.text_handler.handle_text_between_tags(text, current_parent)
