@@ -122,10 +122,13 @@ def run_tests(test_dir, fail_fast=False, test_specs=None, debug=False, filter_fi
 def main(test_dir, fail_fast=False, test_specs=None, debug=False, filter_files=None, quiet=False, exclude_errors=None, exclude_files=None, exclude_html=None):
     passed, failed = run_tests(test_dir, fail_fast, test_specs, debug, filter_files, quiet, exclude_errors, exclude_files, exclude_html)
     total = passed + failed
-    if fail_fast:
-        print(f'\nTests passed: {passed}/{total}')
-    else:
-        print(f'\nTests passed: {passed}/{total} ({round(passed*100/total) if total else 0}%)')
+    summary = f'Tests passed: {passed}/{total}'
+    if not fail_fast:
+        summary += f' ({round(passed*100/total) if total else 0}%)'
+        # Save test results to file
+        with open('test-summary.txt', 'w') as f:
+            f.write(summary)
+    print(f'\n{summary}')
 
 
 if __name__ == '__main__':
