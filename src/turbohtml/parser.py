@@ -1,6 +1,6 @@
 import re
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, auto
 from typing import List, Optional, Dict, Tuple, TYPE_CHECKING, Iterator
 
 from .foreign import ForeignContentHandler
@@ -51,14 +51,15 @@ class ParserState(Enum):
     """
     Enumerates parser states for clarity and safety.
     """
-    INITIAL = "initial"
-    AFTER_HEAD = "after_head"
-    IN_BODY = "in_body"
-    IN_TABLE = "in_table"
-    IN_TABLE_BODY = "in_table_body"
-    IN_ROW = "in_row"
-    IN_CELL = "in_cell"
-    RAWTEXT = "rawtext"
+    INITIAL = auto()
+    AFTER_HEAD = auto()
+    IN_BODY = auto()
+    IN_TABLE = auto()
+    IN_TABLE_BODY = auto()
+    IN_ROW = auto()
+    IN_CELL = auto()
+    RAWTEXT = auto()
+    IN_CAPTION = auto()
 
 class ParseContext:
     """
