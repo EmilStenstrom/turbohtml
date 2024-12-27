@@ -18,9 +18,12 @@ if TYPE_CHECKING:
 
 DEBUG = False
 
-def debug(*args, **kwargs) -> None:
+def debug(*args, indent=4, **kwargs) -> None:
     if DEBUG:
-        print(*args, **kwargs)
+        if indent:
+            print(f"{' ' * indent}{args[0]}", *args[1:], **kwargs)
+        else:
+            print(*args, **kwargs)
 
 class HTMLToken:
     """Represents a token in the HTML stream"""
@@ -185,7 +188,29 @@ class HTMLTokenizer:
             attributes[attr_name] = attr_value
         return attributes
 
-class TagHandler:
+class HandlerMethod:
+    """Descriptor that wraps handler methods with debug logging"""
+    def __init__(self, method):
+        self.method = method
+        
+    def __get__(self, obj, objtype=None):
+        def wrapped(*args, **kwargs):
+            result = self.method(obj, *args, **kwargs)
+            if result:
+                debug(f"{obj.__class__.__name__} handled {self.method.__name__}: {args[0]}")
+            return result
+        return wrapped
+
+class HandlerMetaclass(type):
+    """Metaclass that automatically wraps handler methods with debug logging"""
+    def __new__(mcs, name, bases, attrs):
+        # Wrap all handler methods
+        for key, value in attrs.items():
+            if key.startswith('handle_') and callable(value):
+                attrs[key] = HandlerMethod(value)
+        return super().__new__(mcs, name, bases, attrs)
+
+class TagHandler(metaclass=HandlerMetaclass):
     """Base class for tag-specific handling logic"""
     def __init__(self, parser: 'TurboHTML'):
         self.parser = parser
