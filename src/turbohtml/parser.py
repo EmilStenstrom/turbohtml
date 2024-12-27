@@ -528,7 +528,7 @@ class TableTagHandler(TagHandler):
                 return True
         return False
 
-    def handle_end(self, token: HTMLToken, context: ParseContext, pos: int) -> bool:
+    def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
         """Handle end tags in table context"""
         tag_name = token.tag_name.lower()
         
@@ -855,7 +855,7 @@ class VoidElementHandler(TagHandler):
         # Don't change current_parent since void elements can't have children
         return True
 
-    def handle_end(self, token: HTMLToken, context: ParseContext, pos: int) -> bool:
+    def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
         # Void elements don't need end tag handling
         return False
 
