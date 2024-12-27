@@ -813,7 +813,7 @@ class TurboHTML:
         tokenizer = HTMLTokenizer(self.html)
 
         for token in tokenizer.tokenize():
-            debug(f"_parse: {token}, context: {context}")
+            debug(f"_parse: {token}, context: {context}", indent=0)
             if token.type == 'Comment':
                 self._append_comment_node(token.data, context)
             
