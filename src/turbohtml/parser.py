@@ -117,8 +117,7 @@ class TextHandler(TagHandler):
             if foster_parent:
                 if text.strip():  # Only foster parent non-whitespace text
                     self._handle_normal_text(text, ParseContext(
-                        context.length, foster_parent, context.html_node)
-                    )
+                        context.length, foster_parent, context.html_node))
                 return
 
         # Handle <pre> elements specially
