@@ -758,12 +758,12 @@ class TurboHTML:
         # Handle state transitions for non-head elements
         if tag_name not in HEAD_ELEMENTS:
             if context.state == ParserState.INITIAL:
-                debug("\tImplicitly closing head and switching to body")
+                debug("Implicitly closing head and switching to body")
                 context.state = ParserState.IN_BODY
                 if context.current_parent == self.head_node:
                     context.current_parent = self.body_node
             elif context.current_parent == self.head_node:
-                debug("\tClosing head and switching to body")
+                debug("Closing head and switching to body")
                 context.state = ParserState.IN_BODY
                 context.current_parent = self.body_node
 
