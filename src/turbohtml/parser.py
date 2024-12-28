@@ -90,7 +90,7 @@ class TagHandler:
 
 class TextHandler(TagHandler):
     """Handles all regular text content"""
-    def should_handle_text(self, text: str) -> bool:
+    def should_handle_text(self, text: str, context: ParseContext) -> bool:
         """Return True if this handler should handle the given text"""
         return True
 
@@ -167,7 +167,7 @@ class TextHandler(TagHandler):
 
 class SelectTagHandler(TagHandler):
     """Handles select, option, and optgroup elements"""
-    def should_handle_start(self, tag_name: str) -> bool:
+    def should_handle_start(self, tag_name: str, context: ParseContext) -> bool:
         return tag_name in ('select', 'option', 'optgroup')
 
     def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
@@ -188,7 +188,7 @@ class SelectTagHandler(TagHandler):
             context.current_parent.append_child(new_node)
             context.current_parent = new_node
 
-    def should_handle_end(self, tag_name: str) -> bool:
+    def should_handle_end(self, tag_name: str, context: ParseContext) -> bool:
         return tag_name == 'option'
 
     def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
@@ -204,7 +204,7 @@ class SelectTagHandler(TagHandler):
 
 class ParagraphTagHandler(TagHandler):
     """Handles paragraph elements"""
-    def should_handle_start(self, tag_name: str) -> bool:
+    def should_handle_start(self, tag_name: str, context: ParseContext) -> bool:
         return tag_name == 'p'
 
     def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
@@ -215,7 +215,7 @@ class ParagraphTagHandler(TagHandler):
         context.current_parent.append_child(new_node)
         context.current_parent = new_node
 
-    def should_handle_end(self, tag_name: str) -> bool:
+    def should_handle_end(self, tag_name: str, context: ParseContext) -> bool:
         return tag_name == 'p'
 
     def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
@@ -230,8 +230,8 @@ class ParagraphTagHandler(TagHandler):
 class TableTagHandler(TagHandler):
     """Handles table-related elements"""
 
-    def should_handle_start(self, tag_name: str) -> bool:
-        return tag_name in ('table', 'td', 'th', 'tr', 'tbody', 'thead', 'tfoot')
+    def should_handle_start(self, tag_name: str, context: ParseContext) -> bool:
+        return tag_name in ('table', 'td', 'th', 'tr', 'tbody', 'thead', 'tfoot', 'caption', 'colgroup')
 
     def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
         debug(f"TableTagHandler.handle_start: {token.tag_name}")
@@ -383,7 +383,7 @@ class TableTagHandler(TagHandler):
 class FormTagHandler(TagHandler):
     """Handles form-related elements (form, input, button, etc.)"""
 
-    def should_handle_start(self, tag_name: str) -> bool:
+    def should_handle_start(self, tag_name: str, context: ParseContext) -> bool:
         return tag_name in ('form', 'input', 'button', 'textarea', 'select', 'label')
 
     def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
@@ -403,7 +403,7 @@ class FormTagHandler(TagHandler):
         if tag_name not in ('input',):
             context.current_parent = new_node
 
-    def should_handle_end(self, tag_name: str) -> bool:
+    def should_handle_end(self, tag_name: str, context: ParseContext) -> bool:
         return tag_name in ('form', 'button', 'textarea', 'select', 'label')
 
     def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
@@ -419,7 +419,7 @@ class FormTagHandler(TagHandler):
 
 class ListTagHandler(TagHandler):
     """Handles list-related elements (ul, ol, li)"""
-    def should_handle_start(self, tag_name: str) -> bool:
+    def should_handle_start(self, tag_name: str, context: ParseContext) -> bool:
         return tag_name in ('ul', 'ol', 'li')
 
     def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
@@ -454,7 +454,7 @@ class ListTagHandler(TagHandler):
         context.current_parent.append_child(new_node)
         context.current_parent = new_node
 
-    def should_handle_end(self, tag_name: str) -> bool:
+    def should_handle_end(self, tag_name: str, context: ParseContext) -> bool:
         return tag_name in ('ul', 'ol', 'li')
 
     def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
@@ -466,7 +466,7 @@ class ListTagHandler(TagHandler):
 
 class HeadingTagHandler(TagHandler):
     """Handles heading elements (h1-h6)"""
-    def should_handle_start(self, tag_name: str) -> bool:
+    def should_handle_start(self, tag_name: str, context: ParseContext) -> bool:
         return tag_name in HEADING_ELEMENTS
 
     def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
@@ -481,7 +481,7 @@ class HeadingTagHandler(TagHandler):
         context.current_parent.append_child(new_node)
         context.current_parent = new_node
 
-    def should_handle_end(self, tag_name: str) -> bool:
+    def should_handle_end(self, tag_name: str, context: ParseContext) -> bool:
         return tag_name in HEADING_ELEMENTS
 
     def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
@@ -492,7 +492,7 @@ class HeadingTagHandler(TagHandler):
 
 class RawtextTagHandler(TagHandler):
     """Handles rawtext elements like script, style, title, etc."""
-    def should_handle_start(self, tag_name: str) -> bool:
+    def should_handle_start(self, tag_name: str, context: ParseContext) -> bool:
         return tag_name in RAWTEXT_ELEMENTS
 
     def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
@@ -518,7 +518,7 @@ class RawtextTagHandler(TagHandler):
         context.in_rawtext = True
         context.rawtext_start = end_tag_idx
 
-    def should_handle_end(self, tag_name: str) -> bool:
+    def should_handle_end(self, tag_name: str, context: ParseContext) -> bool:
         return tag_name in RAWTEXT_ELEMENTS
 
     def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
@@ -546,8 +546,7 @@ class RawtextTagHandler(TagHandler):
 
 class ButtonTagHandler(TagHandler):
     """Handles button elements"""
-    def should_handle_start(self, tag_name: str) -> bool:
-        debug(f"ButtonTagHandler.should_handle_start: {tag_name}", indent=0)
+    def should_handle_start(self, tag_name: str, context: ParseContext) -> bool:
         return tag_name == 'button'
 
     def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
@@ -558,8 +557,7 @@ class ButtonTagHandler(TagHandler):
         context.current_parent = new_node
         debug(f"New current parent: {context.current_parent}", indent=0)
 
-    def should_handle_end(self, tag_name: str) -> bool:
-        debug(f"ButtonTagHandler.should_handle_end: {tag_name}", indent=0)
+    def should_handle_end(self, tag_name: str, context: ParseContext) -> bool:
         return tag_name == 'button'
 
     def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
@@ -588,6 +586,9 @@ class ButtonTagHandler(TagHandler):
             context.current_parent = current.parent or self.parser.body_node
             debug(f"New current parent: {context.current_parent}", indent=0)
 
+    def should_handle_text(self, text: str, context: ParseContext) -> bool:
+        return True
+
     def handle_text(self, text: str, context: ParseContext) -> bool:
         debug(f"ButtonTagHandler.handle_text: '{text}'", indent=0)
         debug(f"Current parent: {context.current_parent}", indent=0)
@@ -610,7 +611,7 @@ class ButtonTagHandler(TagHandler):
 
 class VoidElementHandler(TagHandler):
     """Handles void elements that can't have children"""
-    def should_handle_start(self, tag_name: str) -> bool:
+    def should_handle_start(self, tag_name: str, context: ParseContext) -> bool:
         return tag_name in VOID_ELEMENTS
 
     def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
@@ -710,7 +711,7 @@ class TurboHTML:
             
             elif token.type == 'Character':
                 for handler in self.tag_handlers:
-                    if handler.should_handle_text(token.data):
+                    if handler.should_handle_text(token.data, context):
                         debug(f"{handler.__class__.__name__}: handling {token}")
                         handler.handle_text(token.data, context)
                         break
@@ -774,7 +775,7 @@ class TurboHTML:
         # Try tag handlers first
         debug(f"Trying tag handlers for {tag_name}")
         for handler in self.tag_handlers:
-            if handler.should_handle_start(tag_name):
+            if handler.should_handle_start(tag_name, context):
                 debug(f"{handler.__class__.__name__}: handling {token}")
                 handler.handle_start(token, context, end_tag_idx)
                 return
@@ -805,7 +806,7 @@ class TurboHTML:
         # Try tag handlers first
         debug(f"Trying tag handlers for end tag {tag_name}")
         for handler in self.tag_handlers:
-            if handler.should_handle_end(tag_name):
+            if handler.should_handle_end(tag_name, context):
                 debug(f"{handler.__class__.__name__}: handling {token}")
                 handler.handle_end(token, context)
                 return
