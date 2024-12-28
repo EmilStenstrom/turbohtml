@@ -1,20 +1,15 @@
 import re
-from dataclasses import dataclass
 from enum import Enum, auto
-from typing import List, Optional, Dict, Tuple, TYPE_CHECKING, Iterator
+from typing import Optional, Tuple
 
 from .foreign import ForeignContentHandler
 from .node import Node
+from .tokenizer import HTMLToken, HTMLTokenizer
 from .constants import (
-    VOID_ELEMENTS, HTML_ELEMENTS, SPECIAL_ELEMENTS, BLOCK_ELEMENTS,
-    TABLE_CONTAINING_ELEMENTS, RAWTEXT_ELEMENTS, HEAD_ELEMENTS,
-    TAG_OPEN_RE, ATTR_RE, COMMENT_RE, DUAL_NAMESPACE_ELEMENTS,
-    SIBLING_ELEMENTS, TABLE_ELEMENTS, HEADER_ELEMENTS, BOUNDARY_ELEMENTS,
+    VOID_ELEMENTS, BLOCK_ELEMENTS, RAWTEXT_ELEMENTS, 
+    HEAD_ELEMENTS, TABLE_ELEMENTS, BOUNDARY_ELEMENTS,
     FORMATTING_ELEMENTS, AUTO_CLOSING_TAGS, HEADING_ELEMENTS
 )
-
-if TYPE_CHECKING:
-    from .node import Node
 
 DEBUG = False
 
@@ -24,28 +19,6 @@ def debug(*args, indent=4, **kwargs) -> None:
             print(f"{' ' * indent}{args[0]}", *args[1:], **kwargs)
         else:
             print(*args, **kwargs)
-
-class HTMLToken:
-    """Represents a token in the HTML stream"""
-    def __init__(self, type_: str, data: str = None, tag_name: str = None, 
-                 attributes: Dict[str, str] = None, is_self_closing: bool = False):
-        self.type = type_  # 'DOCTYPE', 'StartTag', 'EndTag', 'Comment', 'Character'
-        self.data = data
-        self.tag_name = tag_name.lower() if tag_name is not None else None
-        self.attributes = attributes or {}
-        self.is_self_closing = is_self_closing
-
-    def __repr__(self):
-        if self.type == 'Character':
-            preview = self.data[:20]
-            suffix = '...' if len(self.data) > 20 else ''
-            return f"<{self.type}: '{preview}{suffix}'>"
-        if self.type == 'Comment':
-            preview = self.data[:20]
-            suffix = '...' if len(self.data) > 20 else ''
-            return f"<{self.type}: '{preview}{suffix}'>"
-        return f"<{self.type}: {self.tag_name or self.data}>"
-
 
 class ParserState(Enum):
     """
@@ -89,126 +62,26 @@ class ParseContext:
     def __repr__(self):
         return f"<ParseContext: state={self.state.value}, parent={self.current_parent.tag_name}>"
 
-class HTMLTokenizer:
-    """
-    HTML5 tokenizer that generates tokens from an HTML string.
-    Maintains compatibility with existing parser logic while providing
-    a cleaner separation of concerns.
-    """
-    def __init__(self, html: str):
-        self.html = html
-        self.pos = 0
-        self.length = len(html)
-
-    def tokenize(self) -> Iterator[HTMLToken]:
-        """Generate tokens from the HTML string"""
-        while self.pos < self.length:
-            # 1. Try to match a comment
-            if token := self._try_comment():
-                yield token
-                continue
-
-            # 2. Try to match a tag
-            if token := self._try_tag():
-                yield token
-                continue
-
-            # 3. Handle character data
-            if token := self._consume_character_data():
-                yield token
-                continue
-
-            # Shouldn't reach here, but advance if we do
-            self.pos += 1
-
-    def _try_comment(self) -> Optional[HTMLToken]:
-        """Try to match a comment at current position"""
-        match = COMMENT_RE.match(self.html, self.pos)
-        if not match or match.start() != self.pos:
-            return None
-
-        full_match = match.group(0)
-        comment_text = match.group(1) or " "
-
-        # Handle special malformed comment cases
-        if full_match in ('<!-->', '<!--->'):
-            comment_text = ""
-
-        self.pos = match.end()
-        return HTMLToken('Comment', data=comment_text)
-
-    def _try_tag(self) -> Optional[HTMLToken]:
-        """Try to match a tag at current position"""
-        match = TAG_OPEN_RE.match(self.html, self.pos)
-        if not match or match.start() != self.pos:
-            return None
-
-        is_exclamation = (match.group(1) == '!')
-        is_closing = (match.group(2) == '/')
-        tag_name = match.group(3)
-        attr_string = match.group(4).strip()
-
-        # Handle DOCTYPE
-        if is_exclamation and tag_name.lower() == 'doctype':
-            self.pos = match.end()
-            return HTMLToken('DOCTYPE')
-
-        # Parse attributes
-        attributes = self._parse_attributes(attr_string)
-        
-        # Check for self-closing
-        is_self_closing = attr_string.rstrip().endswith('/')
-
-        self.pos = match.end()
-        
-        if is_closing:
-            return HTMLToken('EndTag', tag_name=tag_name)
-        return HTMLToken('StartTag', tag_name=tag_name, 
-                        attributes=attributes, is_self_closing=is_self_closing)
-
-    def _consume_character_data(self) -> HTMLToken:
-        """Consume character data until the next tag or comment"""
-        start = self.pos
-        while self.pos < self.length:
-            if self.html[self.pos] == '<':
-                if (COMMENT_RE.match(self.html, self.pos) or 
-                    TAG_OPEN_RE.match(self.html, self.pos)):
-                    break
-            self.pos += 1
-
-        text = self.html[start:self.pos]
-        return HTMLToken('Character', data=text)
-
-    def _parse_attributes(self, attr_string: str) -> Dict[str, str]:
-        """Parse attributes from a string using the ATTR_RE pattern"""
-        attr_string = attr_string.strip().rstrip('/')
-        matches = ATTR_RE.findall(attr_string)
-        attributes = {}
-        for attr_name, val1, val2, val3 in matches:
-            attr_value = val1 or val2 or val3 or ""
-            attributes[attr_name] = attr_value
-        return attributes
-
 class TagHandler:
     """Base class for tag-specific handling logic"""
     def __init__(self, parser: 'TurboHTML'):
         self.parser = parser
 
-    def should_handle_start(self, tag_name: str) -> bool:
+    def should_handle_start(self, tag_name: str, context: ParseContext) -> bool:
         """Return True if this handler should handle the given start tag"""
         return False
 
     def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
         pass
 
-    def should_handle_end(self, tag_name: str) -> bool:
+    def should_handle_end(self, tag_name: str, context: ParseContext) -> bool:
         """Return True if this handler should handle the given end tag"""
         return False
 
     def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
         pass
 
-    def should_handle_text(self, text: str) -> bool:
+    def should_handle_text(self, text: str, context: ParseContext) -> bool:
         """Return True if this handler should handle the given text"""
         return False
 
