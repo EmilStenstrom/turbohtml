@@ -178,34 +178,33 @@ class SelectTagHandler(TagHandler):
         return tag_name in ('select', 'option', 'optgroup')
 
     def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
-        if token.tag_name in ('optgroup', 'select'):
-            current = self.parser._find_ancestor(context.current_parent, 'option')
-            new_node = self.parser._create_node(token.tag_name, token.attributes, context.current_parent, context.current_context)
-            
-            # If we found an option parent, append to it, otherwise append to current parent
-            if current:
-                current.append_child(new_node)
-            else:
-                context.current_parent.append_child(new_node)
-            
-            context.current_parent = new_node
-        else:  # option
-            new_node = self.parser._create_node(token.tag_name, token.attributes, context.current_parent, context.current_context)
-            context.current_parent.append_child(new_node)
-            context.current_parent = new_node
+        tag_name = token.tag_name
+        
+        # If we're in an option and get a new option/optgroup, close the current option first
+        if tag_name in ('option', 'optgroup') and context.current_parent.tag_name == 'option':
+            context.current_parent = context.current_parent.parent or self.parser.body_node
+        
+        # If we're in an optgroup and get a new optgroup, close the current optgroup first
+        if tag_name == 'optgroup' and context.current_parent.tag_name == 'optgroup':
+            context.current_parent = context.current_parent.parent or self.parser.body_node
+
+        # Create the new node
+        new_node = self.parser._create_node(tag_name, token.attributes, context.current_parent, context.current_context)
+        context.current_parent.append_child(new_node)
+        context.current_parent = new_node
+        return True
 
     def should_handle_end(self, tag_name: str, context: ParseContext) -> bool:
-        return tag_name == 'option'
+        return tag_name in ('select', 'option', 'optgroup')
 
     def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
-        current = self.parser._find_ancestor(context.current_parent, 'option')
-
-        if current and current.tag_name == 'option':
-            for child in current.children[:]:
-                if child.tag_name == 'optgroup':
-                    current.parent.append_child(child)
-                    current.children.remove(child)
+        tag_name = token.tag_name
+        current = self.parser._find_ancestor(context.current_parent, tag_name)
+        
+        if current:
             context.current_parent = current.parent or self.parser.body_node
+            return True
+        return False
 
 class ParagraphTagHandler(TagHandler):
     """Handles paragraph elements"""
