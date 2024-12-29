@@ -604,36 +604,22 @@ class RawtextTagHandler(TagHandler):
             new_node = self.parser._create_node(tag_name, token.attributes, self.parser.head_node, context.current_context)
             self.parser.head_node.append_child(new_node)
             context.current_parent = new_node
-            context.state = ParserState.RAWTEXT
-            context.in_rawtext = True
-            context.rawtext_start = end_tag_idx
-            return True
+        else:
+            # Otherwise create in current location
+            new_node = self.parser._create_node(tag_name, token.attributes, context.current_parent, context.current_context)
+            context.current_parent.append_child(new_node)
+            context.current_parent = new_node
 
-        # Otherwise create in current location
-        new_node = self.parser._create_node(tag_name, token.attributes, context.current_parent, context.current_context)
-        context.current_parent.append_child(new_node)
-        context.current_parent = new_node
+        # Switch to RAWTEXT state and let tokenizer handle the content
         context.state = ParserState.RAWTEXT
-        context.in_rawtext = True
-        context.rawtext_start = end_tag_idx
+        self.parser.tokenizer.start_rawtext(tag_name)  # Tell tokenizer which tag we're processing
         return True
 
     def should_handle_end(self, tag_name: str, context: ParseContext) -> bool:
         return tag_name in RAWTEXT_ELEMENTS
 
     def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
-        if context.in_rawtext and token.tag_name == context.current_parent.tag_name:
-            # Get the raw text content before changing state
-            text = self.parser.html[context.rawtext_start:context.index]
-            if text:
-                # Create a text node with the raw content
-                text_node = Node('#text')
-                text_node.text_content = text
-                context.current_parent.append_child(text_node)
-            else:
-                return False
-            
-            context.in_rawtext = False
+        if context.state == ParserState.RAWTEXT and token.tag_name == context.current_parent.tag_name:
             context.state = ParserState.IN_BODY
             
             # If it's a head element and we're not in body mode, stay in head
@@ -856,9 +842,9 @@ class TurboHTML:
         Main parsing loop using ParseContext and HTMLTokenizer.
         """
         context = ParseContext(len(self.html), self.body_node, self.html_node)
-        tokenizer = HTMLTokenizer(self.html)
+        self.tokenizer = HTMLTokenizer(self.html)  # Store tokenizer instance
 
-        for token in tokenizer.tokenize():
+        for token in self.tokenizer.tokenize():
             debug(f"_parse: {token}, context: {context}", indent=0)
             if token.type == 'Comment':
                 self._handle_comment(token.data, context)
@@ -866,22 +852,22 @@ class TurboHTML:
             # Handle DOCTYPE first since it doesn't have a tag_name
             if token.type == 'DOCTYPE':
                 self._handle_doctype(token)
-                context.index = tokenizer.pos
+                context.index = self.tokenizer.pos
                 continue
 
             if token.type == 'StartTag':
                 # Handle special elements and state transitions first
-                if self._handle_special_element(token, token.tag_name, context, tokenizer.pos):
-                    context.index = tokenizer.pos
+                if self._handle_special_element(token, token.tag_name, context, self.tokenizer.pos):
+                    context.index = self.tokenizer.pos
                     continue
                 
                 # Then handle the actual tag
-                self._handle_start_tag(token, token.tag_name, context, tokenizer.pos)
-                context.index = tokenizer.pos
+                self._handle_start_tag(token, token.tag_name, context, self.tokenizer.pos)
+                context.index = self.tokenizer.pos
 
             if token.type == 'EndTag':
                 self._handle_end_tag(token, token.tag_name, context)
-                context.index = tokenizer.pos
+                context.index = self.tokenizer.pos
             
             elif token.type == 'Character':
                 for handler in self.tag_handlers:

@@ -30,135 +30,223 @@ class HTMLTokenizer:
     """
     def __init__(self, html: str):
         self.html = html
-        self.pos = 0
         self.length = len(html)
+        self.pos = 0
+        self.state = "DATA"  # Default state
+        self.rawtext_tag = None  # Current RAWTEXT element being processed
+        self.buffer = []  # General buffer for text content
+        self.temp_buffer = []  # For collecting potential end tag name
+
+    def start_rawtext(self, tag_name: str) -> None:
+        """Switch to RAWTEXT state for the given tag"""
+        self.state = "RAWTEXT"
+        self.rawtext_tag = tag_name
+        self.buffer = []
+        self.temp_buffer = []
 
     def tokenize(self) -> Iterator[HTMLToken]:
         """Generate tokens from the HTML string"""
         while self.pos < self.length:
-            # 1. Try to match a comment
-            if token := self._try_comment():
-                yield token
-                continue
+            if self.state == "DATA":
+                token = self._try_tag() or self._try_text()
+                if token:
+                    yield token
+                elif self.pos < self.length:
+                    # If neither method produced a token, force advance
+                    self.pos += 1
+            elif self.state == "RAWTEXT":
+                token = self._handle_rawtext()
+                if token:
+                    yield token
+            else:
+                # Handle other states...
+                pass
 
-            # 2. Try to match special tags (bogus comments etc)
-            if token := self._try_tag():
-                yield token
-                continue
+    def _handle_rawtext(self) -> Optional[HTMLToken]:
+        """Handle RAWTEXT content according to HTML5 spec"""
+        while self.pos < self.length:
+            char = self.html[self.pos]
 
-            # 3. Try to match a regular tag
-            match = TAG_OPEN_RE.match(self.html, self.pos)
-            if match and match.start() == self.pos:
-                is_exclamation = (match.group(1) == '!')
-                is_closing = (match.group(2) == '/')
-                tag_name = match.group(3)
-                attr_string = match.group(4).strip()
+            if char == '<':
+                # If we have buffered content, emit it first
+                if self.buffer:
+                    text = ''.join(self.buffer)
+                    self.buffer = []
+                    return HTMLToken('Character', data=text)
 
-                # Handle DOCTYPE
-                if is_exclamation and tag_name.lower() == 'doctype':
-                    self.pos = match.end()
-                    yield HTMLToken('DOCTYPE')
-                    continue
-
-                # Parse attributes
-                attributes = self._parse_attributes(attr_string)
-
-                # Check for self-closing
-                is_self_closing = attr_string.rstrip().endswith('/')
-
-                self.pos = match.end()
-
-                if is_closing:
-                    yield HTMLToken('EndTag', tag_name=tag_name)
+                # Look for potential end tag
+                if (self.pos + 2 < self.length and 
+                    self.html[self.pos + 1] == '/'):
+                    # Start collecting potential end tag name
+                    self.pos += 2  # Skip </
+                    self.temp_buffer = []
+                    start_pos = self.pos  # Remember where tag name started
+                    
+                    # Collect tag name
+                    while (self.pos < self.length and 
+                           self.html[self.pos].isascii() and 
+                           self.html[self.pos].isalpha()):
+                        self.temp_buffer.append(self.html[self.pos].lower())
+                        self.pos += 1
+                    
+                    # Check if it matches our current tag
+                    tag_name = ''.join(self.temp_buffer)
+                    if (tag_name == self.rawtext_tag and 
+                        self.pos < self.length and 
+                        self.html[self.pos] == '>'):
+                        self.pos += 1  # Skip >
+                        self.state = "DATA"
+                        tag_name = self.rawtext_tag  # Use the original tag name
+                        self.rawtext_tag = None
+                        return HTMLToken('EndTag', tag_name=tag_name)
+                    
+                    # Not a matching end tag, treat as text
+                    self.pos = start_pos  # Reset position
+                    self.buffer.append('</')  # Add the </ we skipped
                 else:
-                    yield HTMLToken('StartTag', tag_name=tag_name, 
-                                  attributes=attributes, 
-                                  is_self_closing=is_self_closing)
-                continue
+                    # Just a < character
+                    self.buffer.append(char)
+                    self.pos += 1
+            else:
+                self.buffer.append(char)
+                self.pos += 1
 
-            # 4. Handle character data
-            if token := self._consume_character_data():
-                yield token
-                continue
-
-            # Shouldn't reach here, but advance if we do
-            self.pos += 1
-
-    def _try_comment(self) -> Optional[HTMLToken]:
-        """Try to match a comment at current position"""
-        match = COMMENT_RE.match(self.html, self.pos)
-        if not match or match.start() != self.pos:
-            return None
-
-        full_match = match.group(0)
-        comment_text = match.group(1) or " "
-
-        # Handle special malformed comment cases
-        if full_match in ('<!-->', '<!--->'):
-            comment_text = ""
-
-        self.pos = match.end()
-        return HTMLToken('Comment', data=comment_text)
+        # If we reach end of input, emit what we have
+        if self.buffer:
+            text = ''.join(self.buffer)
+            self.buffer = []
+            return HTMLToken('Character', data=text)
+        return None
 
     def _try_tag(self) -> Optional[HTMLToken]:
         """Try to match a tag at current position"""
         if not self.html.startswith('<', self.pos):
             return None
 
-        # Case 1: </x where x is not an ASCII alpha
-        if (self.html.startswith('</', self.pos) and 
-            self.pos + 2 < self.length and 
-            not self.html[self.pos + 2].isalpha()):
-            self.pos += 2  # Skip '</'
+        # If this is the last character, treat it as text
+        if self.pos + 1 >= self.length:
+            self.pos += 1
+            return HTMLToken('Character', data='<')
+
+        # Handle DOCTYPE
+        if self.html.startswith('<!DOCTYPE', self.pos, self.pos + 9) or \
+           self.html.startswith('<!doctype', self.pos, self.pos + 9):
+            end_pos = self.html.find('>', self.pos)
+            if end_pos == -1:
+                end_pos = self.length
+            doctype_text = self.html[self.pos + 9:end_pos].strip()
+            self.pos = end_pos + 1
+            return HTMLToken('DOCTYPE', data=doctype_text)
+
+        # Handle comments and special cases
+        if self.html.startswith('<!--', self.pos):
+            # Special case: <!--> is treated as <!-- -->
+            if self.pos + 4 < self.length and self.html[self.pos + 4] == '>':
+                self.pos += 5
+                return HTMLToken('Comment', data='')
+            return self._handle_comment()
+        elif self.html.startswith('<!', self.pos):
+            return self._handle_bogus_comment()
+        elif self.html.startswith('</', self.pos):
+            # Special case: </# should be treated as a bogus comment
+            if self.pos + 2 < self.length and not self.html[self.pos + 2].isalpha():
+                self.pos += 2  # Skip </
+                start = self.pos
+                while self.pos < self.length and self.html[self.pos] != '>':
+                    self.pos += 1
+                comment_text = self.html[start:self.pos]
+                if self.pos < self.length:  # Skip closing >
+                    self.pos += 1
+                return HTMLToken('Comment', data=comment_text)
+        elif self.html.startswith('<?', self.pos):
+            # Special case: <? should be treated as a bogus comment
+            self.pos += 1  # Skip <
             start = self.pos
             while self.pos < self.length and self.html[self.pos] != '>':
                 self.pos += 1
             comment_text = self.html[start:self.pos]
-            if self.pos < self.length:  # if we found '>', consume it
-                self.pos += 1
-            return HTMLToken('Comment', data=comment_text)
-            
-        # Case 2: <? starts bogus comment
-        if self.html.startswith('<?', self.pos):
-            self.pos += 2  # Skip '<?'
-            start = self.pos
-            while self.pos < self.length and self.html[self.pos] != '>':
-                self.pos += 1
-            comment_text = '?' + self.html[start:self.pos]
-            if self.pos < self.length:  # if we found '>', consume it
-                self.pos += 1
-            return HTMLToken('Comment', data=comment_text)
-            
-        # Case 3: <! not followed by -- or DOCTYPE
-        if self.html.startswith('<!', self.pos):
-            # Skip proper comments and DOCTYPE
-            if (self.html.startswith('<!--', self.pos) or 
-                self.html[self.pos:].lower().startswith('<!doctype')):
-                return None
-            # Otherwise, it's a bogus comment
-            self.pos += 2  # Skip '<!'
-            start = self.pos
-            while self.pos < self.length and self.html[self.pos] != '>':
-                self.pos += 1
-            comment_text = self.html[start:self.pos]
-            if self.pos < self.length:  # if we found '>', consume it
+            if self.pos < self.length:  # Skip closing >
                 self.pos += 1
             return HTMLToken('Comment', data=comment_text)
 
-        return None
+        # Try to match a tag using TAG_OPEN_RE
+        match = TAG_OPEN_RE.match(self.html[self.pos:])
+        if match:
+            bang, is_end_tag, tag_name, attributes = match.groups()
+            self.pos += len(match.group(0))  # Advance past the entire tag
 
-    def _consume_character_data(self) -> HTMLToken:
-        """Consume character data until the next tag or comment"""
+            # Normal tag
+            if is_end_tag:
+                return HTMLToken('EndTag', tag_name=tag_name)
+            else:
+                attrs = self._parse_attributes(attributes)
+                return HTMLToken('StartTag', tag_name=tag_name, attributes=attrs)
+
+        # If we get here, we found a < that isn't part of a valid tag
+        self.pos += 1
+        return HTMLToken('Character', data='<')
+
+    def _handle_comment(self) -> HTMLToken:
+        """Handle comment according to HTML5 spec"""
+        self.pos += 4  # Skip <!--
+        
+        # Special case: <!--> is treated as <!--  -->
+        if self.pos < self.length and self.html[self.pos] == '>':
+            self.pos += 1
+            return HTMLToken('Comment', data='')
+        
+        buffer = []
+        while self.pos < self.length:
+            # Check for comment end
+            if self.html.startswith('-->', self.pos):
+                self.pos += 3
+                return HTMLToken('Comment', data=''.join(buffer))
+            
+            # Regular character
+            buffer.append(self.html[self.pos])
+            self.pos += 1
+        
+        # EOF: emit what we have
+        return HTMLToken('Comment', data=''.join(buffer))
+
+    def _handle_bogus_comment(self) -> HTMLToken:
+        """Handle bogus comment according to HTML5 spec"""
+        self.pos += 2  # Skip <!
+        
+        # Special case: <!-> is treated as <!--  -->
+        if self.pos < self.length and self.html[self.pos] == '-':
+            if self.pos + 1 < self.length and self.html[self.pos + 1] == '>':
+                self.pos += 2
+                return HTMLToken('Comment', data='')
+        
+        # Regular bogus comment
         start = self.pos
         while self.pos < self.length:
+            if self.html[self.pos] == '>':
+                comment_text = self.html[start:self.pos]
+                self.pos += 1
+                return HTMLToken('Comment', data=comment_text)
+            self.pos += 1
+        
+        # EOF: emit what we have
+        return HTMLToken('Comment', data=self.html[start:])
+
+    def _try_text(self) -> Optional[HTMLToken]:
+        """Try to match text at current position"""
+        start = self.pos
+        
+        # If we're starting with '<', don't try to parse as text
+        if self.html[start] == '<':
+            return None
+        
+        while self.pos < self.length:
             if self.html[self.pos] == '<':
-                if (COMMENT_RE.match(self.html, self.pos) or 
-                    TAG_OPEN_RE.match(self.html, self.pos)):
-                    break
+                break
             self.pos += 1
 
         text = self.html[start:self.pos]
-        return HTMLToken('Character', data=text)
+        # Only emit non-empty text tokens
+        return HTMLToken('Character', data=text) if text else None
 
     def _parse_attributes(self, attr_string: str) -> Dict[str, str]:
         """Parse attributes from a string using the ATTR_RE pattern"""
@@ -169,21 +257,3 @@ class HTMLTokenizer:
             attr_value = val1 or val2 or val3 or ""
             attributes[attr_name] = attr_value
         return attributes
-
-    def _handle_bogus_comment(self, prefix: str = '') -> HTMLToken:
-        """Handle bogus comment according to spec.
-        
-        Consumes characters until > or EOF.
-        If prefix is provided, it's included at the start of the comment data.
-        """
-        self.pos += 1  # Skip the current character
-        start = self.pos
-        # Consume until > or EOF
-        while self.pos < self.length and self.html[self.pos] != '>':
-            self.pos += 1
-            
-        comment_text = prefix + self.html[start:self.pos]
-        if self.pos < self.length:  # if we found '>', consume it
-            self.pos += 1
-            
-        return HTMLToken('Comment', data=comment_text)
