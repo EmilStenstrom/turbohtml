@@ -627,6 +627,16 @@ class RawtextTagHandler(TagHandler):
                 context.current_parent = self.parser.head_node
             else:
                 context.current_parent = self.parser.body_node
+            
+            # If there was trailing whitespace, add it before changing state
+            if 'trailing_space' in token.attributes:
+                text_node = Node('#text')
+                text_node.text_content = token.attributes['trailing_space']
+                if context.current_parent == self.parser.head_node:
+                    self.parser.head_node.append_child(text_node)
+                else:
+                    context.current_parent.append_child(text_node)
+            
             context.state = ParserState.IN_BODY
             return True
         return False

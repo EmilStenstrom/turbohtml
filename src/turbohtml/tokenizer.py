@@ -91,18 +91,36 @@ class HTMLTokenizer:
                     
                     # Check if it matches our current tag
                     tag_name = ''.join(self.temp_buffer)
-                    if (tag_name == self.rawtext_tag and 
-                        self.pos < self.length and 
-                        self.html[self.pos] == '>'):
-                        self.pos += 1  # Skip >
-                        self.state = "DATA"
-                        tag_name = self.rawtext_tag  # Use the original tag name
-                        self.rawtext_tag = None
-                        return HTMLToken('EndTag', tag_name=tag_name)
-                    
-                    # Not a matching end tag, treat as text
-                    self.pos = start_pos  # Reset position
-                    self.buffer.append('</')  # Add the </ we skipped
+                    if (tag_name == self.rawtext_tag):
+                        # Skip whitespace
+                        while self.pos < self.length and self.html[self.pos].isspace():
+                            self.pos += 1
+                        
+                        if self.pos < self.length and self.html[self.pos] == '>':
+                            self.pos += 1  # Skip >
+                            # Look for whitespace after end tag
+                            whitespace = []
+                            while self.pos < self.length and self.html[self.pos].isspace():
+                                whitespace.append(self.html[self.pos])
+                                self.pos += 1
+                            
+                            # If we found whitespace, emit it as a separate token
+                            if whitespace:
+                                self.state = "DATA"
+                                self.rawtext_tag = None
+                                return HTMLToken('EndTag', tag_name=tag_name, attributes={'trailing_space': ''.join(whitespace)})
+                            
+                            self.state = "DATA"
+                            self.rawtext_tag = None
+                            return HTMLToken('EndTag', tag_name=tag_name)
+                        
+                        # Not a proper end tag, reset position
+                        self.pos = start_pos
+                        self.buffer.append('</')
+                    else:
+                        # Not our tag, reset position
+                        self.pos = start_pos
+                        self.buffer.append('</')
                 else:
                     # Just a < character
                     self.buffer.append(char)
