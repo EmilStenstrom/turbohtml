@@ -21,6 +21,15 @@ class Node:
         self.children.append(child)
         child.parent = self
 
+    def insert_child_before(self, new_node: 'Node', reference_node: 'Node') -> None:
+        """Insert a node before a specific child node"""
+        if reference_node not in self.children:
+            return
+        
+        index = self.children.index(reference_node)
+        self.children.insert(index, new_node)
+        new_node.parent = self
+
     def __repr__(self):
         if self.tag_name == '#text':
             return f"Node(#text='{self.text_content[:30]}')"
