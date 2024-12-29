@@ -88,7 +88,7 @@ AUTO_CLOSING_TRIGGERS = [
 # Formatting elements that can be reconstructed
 FORMATTING_ELEMENTS = [
     'a', 'b', 'big', 'code', 'em', 'font', 'i', 'nobr', 's',
-    'small', 'strike', 'strong', 'tt', 'u'
+    'small', 'strike', 'strong', 'tt', 'u', 'cite'
 ]
 
 # Elements that define scope boundaries

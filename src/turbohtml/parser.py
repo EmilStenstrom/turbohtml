@@ -173,6 +173,50 @@ class TextHandler(TagHandler):
                      lambda m: chr(int(m.group(1))), text)
         return text
 
+class FormattingElementHandler(TagHandler):
+    """Handles formatting elements and their interaction with block elements"""
+    
+    def should_handle_start(self, tag_name: str, context: ParseContext) -> bool:
+        return (tag_name in BLOCK_ELEMENTS and 
+                self._has_formatting_parent(context.current_parent))
+
+    def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
+        # Only get immediate formatting parent
+        formatting_parent = self._get_formatting_parent(context.current_parent)
+        if not formatting_parent:
+            return False
+
+        # Create the block element
+        block = self.parser._create_node(token.tag_name, token.attributes, formatting_parent, context.current_context)
+        context.current_parent.append_child(block)
+        
+        # Set current parent to block and mark that we're in a block-in-formatting context
+        context.current_parent = block
+        context.in_block_formatting = block
+        return True
+
+    def should_handle_end(self, tag_name: str, context: ParseContext) -> bool:
+        return (tag_name in FORMATTING_ELEMENTS and 
+                hasattr(context, 'in_block_formatting') and 
+                context.in_block_formatting)
+
+    def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
+        # If we're in a block-in-formatting context, ignore the formatting end tag
+        # and keep content in the block
+        if context.in_block_formatting:
+            return True
+        return False
+
+    def _has_formatting_parent(self, node: Node) -> bool:
+        """Check if node's immediate parent is a formatting element"""
+        return node and node.parent and node.parent.tag_name in FORMATTING_ELEMENTS
+
+    def _get_formatting_parent(self, node: Node) -> Optional[Node]:
+        """Get the immediate formatting parent if it exists"""
+        if node and node.parent and node.parent.tag_name in FORMATTING_ELEMENTS:
+            return node.parent
+        return None
+
 class SelectTagHandler(TagHandler):
     """Handles select, option, and optgroup elements"""
     def should_handle_start(self, tag_name: str, context: ParseContext) -> bool:
@@ -831,6 +875,7 @@ class TurboHTML:
             VoidElementHandler(self),
             RawtextTagHandler(self),
             TableTagHandler(self),
+            FormattingElementHandler(self),
             TextHandler(self),
             SelectTagHandler(self),
             FormTagHandler(self),
