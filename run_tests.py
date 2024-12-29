@@ -103,12 +103,16 @@ def run_tests(test_dir, fail_fast=False, test_specs=None, debug=False, filter_fi
             errors = test['errors']
             expected_output = test['document']
 
-            # Capture all output including from TurboHTML
-            stdout_capture = StringIO()
-            with redirect_stdout(stdout_capture):
+            # Capture output only if print_fails is enabled
+            if print_fails:
+                stdout_capture = StringIO()
+                with redirect_stdout(stdout_capture):
+                    parser = TurboHTML(html_input, debug=debug)
+                captured_output = stdout_capture.getvalue()
+            else:
                 parser = TurboHTML(html_input, debug=debug)
+                captured_output = ""
                 
-            captured_output = stdout_capture.getvalue()
             actual_output = parser.root.to_test_format()
             test_passed = compare_outputs(expected_output, actual_output)
             
@@ -116,7 +120,7 @@ def run_tests(test_dir, fail_fast=False, test_specs=None, debug=False, filter_fi
             test_details = [
                 f'{"PASSED" if test_passed else "FAILED"}:',
             ]
-            if captured_output:
+            if captured_output:  # This will only be non-empty when print_fails is True
                 test_details.append(captured_output)
             if errors:
                 test_details.append(f"Errors: {errors}")
