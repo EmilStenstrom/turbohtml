@@ -41,12 +41,42 @@ class HTMLTokenizer:
                 yield token
                 continue
 
-            # 2. Try to match a tag
+            # 2. Try to match special tags (bogus comments etc)
             if token := self._try_tag():
                 yield token
                 continue
 
-            # 3. Handle character data
+            # 3. Try to match a regular tag
+            match = TAG_OPEN_RE.match(self.html, self.pos)
+            if match and match.start() == self.pos:
+                is_exclamation = (match.group(1) == '!')
+                is_closing = (match.group(2) == '/')
+                tag_name = match.group(3)
+                attr_string = match.group(4).strip()
+
+                # Handle DOCTYPE
+                if is_exclamation and tag_name.lower() == 'doctype':
+                    self.pos = match.end()
+                    yield HTMLToken('DOCTYPE')
+                    continue
+
+                # Parse attributes
+                attributes = self._parse_attributes(attr_string)
+
+                # Check for self-closing
+                is_self_closing = attr_string.rstrip().endswith('/')
+
+                self.pos = match.end()
+
+                if is_closing:
+                    yield HTMLToken('EndTag', tag_name=tag_name)
+                else:
+                    yield HTMLToken('StartTag', tag_name=tag_name, 
+                                  attributes=attributes, 
+                                  is_self_closing=is_self_closing)
+                continue
+
+            # 4. Handle character data
             if token := self._consume_character_data():
                 yield token
                 continue
@@ -72,32 +102,50 @@ class HTMLTokenizer:
 
     def _try_tag(self) -> Optional[HTMLToken]:
         """Try to match a tag at current position"""
-        match = TAG_OPEN_RE.match(self.html, self.pos)
-        if not match or match.start() != self.pos:
+        if not self.html.startswith('<', self.pos):
             return None
 
-        is_exclamation = (match.group(1) == '!')
-        is_closing = (match.group(2) == '/')
-        tag_name = match.group(3)
-        attr_string = match.group(4).strip()
+        # Case 1: </x where x is not an ASCII alpha
+        if (self.html.startswith('</', self.pos) and 
+            self.pos + 2 < self.length and 
+            not self.html[self.pos + 2].isalpha()):
+            self.pos += 2  # Skip '</'
+            start = self.pos
+            while self.pos < self.length and self.html[self.pos] != '>':
+                self.pos += 1
+            comment_text = self.html[start:self.pos]
+            if self.pos < self.length:  # if we found '>', consume it
+                self.pos += 1
+            return HTMLToken('Comment', data=comment_text)
+            
+        # Case 2: <? starts bogus comment
+        if self.html.startswith('<?', self.pos):
+            self.pos += 2  # Skip '<?'
+            start = self.pos
+            while self.pos < self.length and self.html[self.pos] != '>':
+                self.pos += 1
+            comment_text = '?' + self.html[start:self.pos]
+            if self.pos < self.length:  # if we found '>', consume it
+                self.pos += 1
+            return HTMLToken('Comment', data=comment_text)
+            
+        # Case 3: <! not followed by -- or DOCTYPE
+        if self.html.startswith('<!', self.pos):
+            # Skip proper comments and DOCTYPE
+            if (self.html.startswith('<!--', self.pos) or 
+                self.html[self.pos:].lower().startswith('<!doctype')):
+                return None
+            # Otherwise, it's a bogus comment
+            self.pos += 2  # Skip '<!'
+            start = self.pos
+            while self.pos < self.length and self.html[self.pos] != '>':
+                self.pos += 1
+            comment_text = self.html[start:self.pos]
+            if self.pos < self.length:  # if we found '>', consume it
+                self.pos += 1
+            return HTMLToken('Comment', data=comment_text)
 
-        # Handle DOCTYPE
-        if is_exclamation and tag_name.lower() == 'doctype':
-            self.pos = match.end()
-            return HTMLToken('DOCTYPE')
-
-        # Parse attributes
-        attributes = self._parse_attributes(attr_string)
-        
-        # Check for self-closing
-        is_self_closing = attr_string.rstrip().endswith('/')
-
-        self.pos = match.end()
-        
-        if is_closing:
-            return HTMLToken('EndTag', tag_name=tag_name)
-        return HTMLToken('StartTag', tag_name=tag_name, 
-                        attributes=attributes, is_self_closing=is_self_closing)
+        return None
 
     def _consume_character_data(self) -> HTMLToken:
         """Consume character data until the next tag or comment"""
@@ -121,3 +169,21 @@ class HTMLTokenizer:
             attr_value = val1 or val2 or val3 or ""
             attributes[attr_name] = attr_value
         return attributes
+
+    def _handle_bogus_comment(self, prefix: str = '') -> HTMLToken:
+        """Handle bogus comment according to spec.
+        
+        Consumes characters until > or EOF.
+        If prefix is provided, it's included at the start of the comment data.
+        """
+        self.pos += 1  # Skip the current character
+        start = self.pos
+        # Consume until > or EOF
+        while self.pos < self.length and self.html[self.pos] != '>':
+            self.pos += 1
+            
+        comment_text = prefix + self.html[start:self.pos]
+        if self.pos < self.length:  # if we found '>', consume it
+            self.pos += 1
+            
+        return HTMLToken('Comment', data=comment_text)
