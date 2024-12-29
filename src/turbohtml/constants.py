@@ -169,6 +169,11 @@ AUTO_CLOSING_TAGS = {
     'dt': ['dt', 'dd'],
     'dd': ['dt', 'dd'],
     
+    # Table elements
+    'tr': ['tr', 'td', 'th'],
+    'td': ['td', 'th'],
+    'th': ['td', 'th'],
+
     # Ruby elements
     'rt': ['rt', 'rp'],
     'rp': ['rt', 'rp'],
