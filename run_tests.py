@@ -2,6 +2,9 @@ from turbohtml import TurboHTML
 import os
 import argparse
 import re
+from io import StringIO
+import sys
+from contextlib import redirect_stdout
 
 
 def parse_dat_file(content):
@@ -100,28 +103,36 @@ def run_tests(test_dir, fail_fast=False, test_specs=None, debug=False, filter_fi
             errors = test['errors']
             expected_output = test['document']
 
-            should_print_heading = debug or fail_fast or (test_specs and i in spec_dict.get(file, []))
-            if should_print_heading:
-                print(f'Test {file} #{i}: {html_input}')
-
-            parser = TurboHTML(html_input, debug=debug)
+            # Capture all output including from TurboHTML
+            stdout_capture = StringIO()
+            with redirect_stdout(stdout_capture):
+                parser = TurboHTML(html_input, debug=debug)
+                
+            captured_output = stdout_capture.getvalue()
             actual_output = parser.root.to_test_format()
             test_passed = compare_outputs(expected_output, actual_output)
-            should_print_details = (debug or 
-                                  (fail_fast and not test_passed) or 
-                                  (test_specs and i in spec_dict.get(file, [])) or
-                                  (print_fails and not test_passed))
+            
+            # Store test details for potential failure output
+            test_details = [
+                f'{"PASSED" if test_passed else "FAILED"}:',
+            ]
+            if captured_output:
+                test_details.append(captured_output)
+            if errors:
+                test_details.append(f"Errors: {errors}")
+            test_details.extend([
+                f'Expected:\n{expected_output}',
+                f'Actual:\n{actual_output}'
+            ])
 
-            if should_print_details:
-                if not test_passed or not print_fails:
-                    print(f'\nTest {file} #{i}: {html_input}')
-                print(f'{"PASSED" if test_passed else "FAILED"}:')
-                if errors:
-                    print(f"Errors: {errors}")
-                print(f'Expected:\n{expected_output}')
-                print(f'Actual:\n{actual_output}')
-            elif not should_print_heading and not quiet:
-                print("x" if not test_passed else ".", end="", flush=True)
+            # Print debug info and test details for failing tests
+            if not test_passed:
+                if debug:
+                    print(f'Test {file} #{i}: {html_input}')
+                if print_fails or fail_fast or (test_specs and i in spec_dict.get(file, [])):
+                    print('\n'.join(test_details))
+            elif not quiet:
+                print(".", end="", flush=True)
 
             if not test_passed:
                 failed += 1
