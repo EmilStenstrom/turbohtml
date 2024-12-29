@@ -119,11 +119,10 @@ def run_tests(test_dir, fail_fast=False, test_specs=None, debug=False, filter_fi
             # Store test details for potential failure output
             test_details = [
                 f'{"PASSED" if test_passed else "FAILED"}:',
+                f'HTML: {html_input}',
             ]
             if captured_output:  # This will only be non-empty when print_fails is True
                 test_details.append(captured_output)
-            if errors:
-                test_details.append(f"Errors: {errors}")
             test_details.extend([
                 f'Expected:\n{expected_output}',
                 f'Actual:\n{actual_output}'
