@@ -105,7 +105,6 @@ class TextHandler(TagHandler):
 
         # Skip if we're in rawtext mode (let RawtextTagHandler handle it)
         if context.in_rawtext:
-            # Store the text in the current rawtext element
             text_node = Node('#text')
             text_node.text_content = text
             context.current_parent.append_child(text_node)
@@ -115,20 +114,22 @@ class TextHandler(TagHandler):
         if context.state == ParserState.IN_TABLE:
             return False
 
-        # Check if text needs foster parenting
-        if self.parser._find_ancestor(context.current_parent, '#text', stop_at_boundary=True):
-            foster_parent = self.parser._find_ancestor(context.current_parent, 'p')
-            if foster_parent:
-                if text.strip():  # Only foster parent non-whitespace text
-                    return self._handle_normal_text(text, ParseContext(
-                        context.length, foster_parent, context.html_node))
-
-        # Handle <pre> elements specially
-        if context.current_parent.tag_name == 'pre':
-            return self._handle_pre_text(text, context.current_parent)
+        # If we're in body state but text would go to head, move it to body
+        if (context.state == ParserState.IN_BODY and 
+            self._is_in_head(context.current_parent)):
+            context.current_parent = self.parser.body_node
 
         # Default text handling
         return self._handle_normal_text(text, context)
+
+    def _is_in_head(self, node: Node) -> bool:
+        """Check if a node is within the head section"""
+        current = node
+        while current:
+            if current == self.parser.head_node:
+                return True
+            current = current.parent
+        return False
 
     def _handle_normal_text(self, text: str, context: ParseContext) -> bool:
         """Handle normal text content"""
@@ -598,21 +599,21 @@ class RawtextTagHandler(TagHandler):
     def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
         tag_name = token.tag_name
         
-        # Always try to place RAWTEXT elements in head if we're not explicitly in body
+        # HEAD_ELEMENTS should always be in head unless explicitly in body
         if (tag_name in HEAD_ELEMENTS and 
             context.state != ParserState.IN_BODY):
             new_node = self.parser._create_node(tag_name, token.attributes, self.parser.head_node, context.current_context)
             self.parser.head_node.append_child(new_node)
             context.current_parent = new_node
         else:
-            # Otherwise create in current location
+            # Other elements stay in their current context
             new_node = self.parser._create_node(tag_name, token.attributes, context.current_parent, context.current_context)
             context.current_parent.append_child(new_node)
             context.current_parent = new_node
 
         # Switch to RAWTEXT state and let tokenizer handle the content
         context.state = ParserState.RAWTEXT
-        self.parser.tokenizer.start_rawtext(tag_name)  # Tell tokenizer which tag we're processing
+        self.parser.tokenizer.start_rawtext(tag_name)
         return True
 
     def should_handle_end(self, tag_name: str, context: ParseContext) -> bool:
@@ -620,17 +621,14 @@ class RawtextTagHandler(TagHandler):
 
     def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
         if context.state == ParserState.RAWTEXT and token.tag_name == context.current_parent.tag_name:
-            context.state = ParserState.IN_BODY
-            
-            # If it's a head element and we're not in body mode, stay in head
+            # For HEAD_ELEMENTS, stay in head unless explicitly in body
             if (token.tag_name in HEAD_ELEMENTS and 
                 context.current_parent.parent == self.parser.head_node):
                 context.current_parent = self.parser.head_node
             else:
-                # Otherwise move to body
                 context.current_parent = self.parser.body_node
+            context.state = ParserState.IN_BODY
             return True
-
         return False
 
 class ButtonTagHandler(TagHandler):
