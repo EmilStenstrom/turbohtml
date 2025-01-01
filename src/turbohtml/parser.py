@@ -2,16 +2,39 @@ import re
 from enum import Enum, auto
 from typing import Optional, Tuple, List
 
-from turbohtml.handlers import TextHandler, AnchorTagHandler, TableTagHandler, ListTagHandler, AutoClosingTagHandler, VoidElementHandler, RawtextTagHandler, FormattingElementHandler, SelectTagHandler, FormTagHandler, HeadingTagHandler, ParagraphTagHandler, ButtonTagHandler, ForeignTagHandler
+from turbohtml.handlers import (
+    TextHandler,
+    AnchorTagHandler,
+    TableTagHandler,
+    ListTagHandler,
+    AutoClosingTagHandler,
+    VoidElementHandler,
+    RawtextTagHandler,
+    FormattingElementHandler,
+    SelectTagHandler,
+    FormTagHandler,
+    HeadingTagHandler,
+    ParagraphTagHandler,
+    ButtonTagHandler,
+    ForeignTagHandler,
+)
 from turbohtml.node import Node
 from turbohtml.context import ParseContext, ParserState
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
 from .constants import (
-    VOID_ELEMENTS, BLOCK_ELEMENTS, RAWTEXT_ELEMENTS, 
-    HEAD_ELEMENTS, TABLE_ELEMENTS, BOUNDARY_ELEMENTS,
-    FORMATTING_ELEMENTS, AUTO_CLOSING_TAGS, HEADING_ELEMENTS,
-    CLOSE_ON_PARENT_CLOSE, ADOPTION_FORMATTING_ELEMENTS
+    VOID_ELEMENTS,
+    BLOCK_ELEMENTS,
+    RAWTEXT_ELEMENTS,
+    HEAD_ELEMENTS,
+    TABLE_ELEMENTS,
+    BOUNDARY_ELEMENTS,
+    FORMATTING_ELEMENTS,
+    AUTO_CLOSING_TAGS,
+    HEADING_ELEMENTS,
+    CLOSE_ON_PARENT_CLOSE,
+    ADOPTION_FORMATTING_ELEMENTS,
 )
+
 
 class TurboHTML:
     """
@@ -19,7 +42,10 @@ class TurboHTML:
     - Instantiation with an HTML string automatically triggers parsing.
     - Provides a root Node that represents the DOM tree.
     """
-    def __init__(self, html: str, handle_foreign_elements: bool = True, debug: bool = False):
+
+    def __init__(
+        self, html: str, handle_foreign_elements: bool = True, debug: bool = False
+    ):
         """
         Args:
             html: The HTML string to parse
@@ -27,26 +53,12 @@ class TurboHTML:
             debug: Whether to enable debug prints
         """
         self.env_debug = debug
-
         self.html = html
-        
+
         # Reset all state for each new parser instance
         self.state = ParserState.INITIAL
-        self.root = Node('document')
-        self.html_node = Node('html')
-        self.head_node = Node('head')
-        self.body_node = Node('body')
-        
-        # Ensure deterministic order of children
-        self.root.children = []
-        self.html_node.children = []
-        self.head_node.children = []
-        self.body_node.children = []
-        
-        self.root.append_child(self.html_node)
-        self.html_node.append_child(self.head_node)
-        self.html_node.append_child(self.body_node)
-        
+        self._init_dom_structure()
+
         # Initialize tag handlers in deterministic order
         self.tag_handlers = [
             AnchorTagHandler(self),
@@ -65,7 +77,7 @@ class TurboHTML:
             ForeignTagHandler(self) if handle_foreign_elements else None,
         ]
         self.tag_handlers = [h for h in self.tag_handlers if h is not None]
-        
+
         # Trigger parsing
         self._parse()
 
@@ -78,6 +90,20 @@ class TurboHTML:
 
         print(f"{' ' * indent}{args[0]}", *args[1:], **kwargs)
 
+    # DOM Structure Methods
+    def _init_dom_structure(self) -> None:
+        """Initialize the basic DOM structure with document, html, head, and body nodes."""
+        # Initialize basic DOM structure
+        self.html_node = Node("html")
+        self.head_node = Node("head")
+        self.body_node = Node("body")
+        self.root = Node("document")
+
+        # Build the hierarchy
+        self.html_node.children = [self.head_node, self.body_node]
+        self.root.children = [self.html_node]
+
+    # Main Parsing Methods
     def _parse(self) -> None:
         """
         Main parsing loop using ParseContext and HTMLTokenizer.
@@ -90,65 +116,121 @@ class TurboHTML:
 
         for token in self.tokenizer.tokenize():
             self.debug(f"_parse: {token}, context: {context}", indent=0)
-            if token.type == 'Comment':
+            if token.type == "Comment":
                 self._handle_comment(token.data, context)
-            
+
             # Handle DOCTYPE first since it doesn't have a tag_name
-            if token.type == 'DOCTYPE':
+            if token.type == "DOCTYPE":
                 self._handle_doctype(token)
                 context.index = self.tokenizer.pos
                 continue
 
-            if token.type == 'StartTag':
+            if token.type == "StartTag":
                 # Handle special elements and state transitions first
-                if self._handle_special_element(token, token.tag_name, context, self.tokenizer.pos):
+                if self._handle_special_element(
+                    token, token.tag_name, context, self.tokenizer.pos
+                ):
                     context.index = self.tokenizer.pos
                     continue
-                
+
                 # Then handle the actual tag
-                self._handle_start_tag(token, token.tag_name, context, self.tokenizer.pos)
+                self._handle_start_tag(
+                    token, token.tag_name, context, self.tokenizer.pos
+                )
                 context.index = self.tokenizer.pos
 
-            if token.type == 'EndTag':
+            if token.type == "EndTag":
                 self._handle_end_tag(token, token.tag_name, context)
                 context.index = self.tokenizer.pos
-            
-            elif token.type == 'Character':
+
+            elif token.type == "Character":
                 for handler in self.tag_handlers:
                     if handler.should_handle_text(token.data, context):
-                        self.debug(f"{handler.__class__.__name__}: handling {token}, context={context}")
+                        self.debug(
+                            f"{handler.__class__.__name__}: handling {token}, context={context}"
+                        )
                         if handler.handle_text(token.data, context):
                             break
 
-    def _handle_comment(self, text: str, context: ParseContext) -> None:
-        """
-        Create and append a comment node with proper placement based on parser state.
-        """
-        comment_node = Node('#comment')
-        comment_node.text_content = text
+    # Tag Handling Methods
+    def _handle_start_tag(
+        self, token: HTMLToken, tag_name: str, context: ParseContext, end_tag_idx: int
+    ) -> None:
+        """Handle all opening HTML tags."""
+        self.debug(
+            f"_handle_start_tag: {tag_name}, current_parent={context.current_parent}"
+        )
 
-        # First comment should go in root if we're still in initial state
-        if context.state == ParserState.INITIAL:
-            self.root.children.insert(0, comment_node)
-            context.state = ParserState.IN_BODY
+        if context.state == ParserState.RAWTEXT:
+            self.debug("In rawtext mode, ignoring start tag")
             return
 
-        context.current_parent.append_child(comment_node)
+        # Try tag handlers first
+        self.debug(f"Trying tag handlers for {tag_name}")
+        for handler in self.tag_handlers:
+            if handler.should_handle_start(tag_name, context):
+                self.debug(
+                    f"{handler.__class__.__name__}: handling {token}, context={context}"
+                )
+                if handler.handle_start(token, context, not token.is_last_token):
+                    return
 
-    def _handle_special_element(self, token: HTMLToken, tag_name: str, context: ParseContext, end_tag_idx: int) -> bool:
+        # Default handling for unhandled tags
+        self.debug(f"No handler found, using default handling for {tag_name}")
+        new_node = Node(tag_name, token.attributes)
+        context.current_parent.append_child(new_node)
+
+        if tag_name not in VOID_ELEMENTS:
+            self.debug(f"Updating current_parent to {tag_name}")
+            context.current_parent = new_node
+
+    def _handle_end_tag(
+        self, token: HTMLToken, tag_name: str, context: ParseContext
+    ) -> None:
+        """Handle all closing HTML tags."""
+        self.debug(
+            f"_handle_end_tag: {tag_name}, current_parent={context.current_parent}"
+        )
+
+        if not context.current_parent:
+            context.current_parent = self.body_node
+
+        # Try tag handlers first
+        self.debug(f"Trying tag handlers for end tag {tag_name}")
+        for handler in self.tag_handlers:
+            if handler.should_handle_end(tag_name, context):
+                self.debug(
+                    f"{handler.__class__.__name__}: handling {token}, context={context}"
+                )
+                if handler.handle_end(token, context):
+                    return
+
+        # Default handling for unhandled tags
+        self.debug(f"No end tag handler found, looking for matching tag {tag_name}")
+        current = context.current_parent.find_ancestor(tag_name)
+        if current:
+            self.debug(f"Found matching tag {tag_name}, updating current_parent")
+            context.current_parent = current.parent or self.body_node
+            # Set state to after_body when body tag is closed
+            if tag_name == 'body':
+                context.state = ParserState.AFTER_BODY
+
+    def _handle_special_element(
+        self, token: HTMLToken, tag_name: str, context: ParseContext, end_tag_idx: int
+    ) -> bool:
         """Handle html, head and body tags.
         Returns True if the tag was handled and should not be processed further."""
-        if tag_name == 'html':
+        if tag_name == "html":
             # Just update attributes, don't create a new node
             self.html_node.attributes.update(token.attributes)
             context.current_parent = self.html_node
             return True
-        elif tag_name == 'head':
+        elif tag_name == "head":
             # Don't create duplicate head elements
             context.current_parent = self.head_node
             context.state = ParserState.IN_HEAD
             return True
-        elif tag_name == 'body':
+        elif tag_name == "body":
             # Don't create duplicate body elements
             self.body_node.attributes.update(token.attributes)
             context.current_parent = self.body_node
@@ -168,57 +250,30 @@ class TurboHTML:
         context.index = end_tag_idx
         return False
 
-    def _handle_start_tag(self, token: HTMLToken, tag_name: str, context: ParseContext, end_tag_idx: int) -> None:
-        """Handle all opening HTML tags."""
-        self.debug(f"_handle_start_tag: {tag_name}, current_parent={context.current_parent}")
-        
-        if context.state == ParserState.RAWTEXT:
-            self.debug("In rawtext mode, ignoring start tag")
+    # Special Node Handling Methods
+    def _handle_comment(self, text: str, context: ParseContext) -> None:
+        """
+        Create and append a comment node with proper placement based on parser state.
+        """
+        comment_node = Node('#comment')
+        comment_node.text_content = text
+
+        # First comment should go in root if we're still in initial state
+        if context.state == ParserState.INITIAL:
+            self.root.children.insert(0, comment_node)
+            context.state = ParserState.IN_BODY
+            return
+            
+        # Comments after </body> should go in html node
+        if context.current_parent == self.body_node:
+            self.html_node.append_child(comment_node)
             return
 
-        # Try tag handlers first
-        self.debug(f"Trying tag handlers for {tag_name}")
-        for handler in self.tag_handlers:
-            if handler.should_handle_start(tag_name, context):
-                self.debug(f"{handler.__class__.__name__}: handling {token}, context={context}")
-                if handler.handle_start(token, context, not token.is_last_token):
-                    return
-
-        # Default handling for unhandled tags
-        self.debug(f"No handler found, using default handling for {tag_name}")
-        new_node = Node(tag_name, token.attributes)
-        context.current_parent.append_child(new_node)
-        
-        if tag_name not in VOID_ELEMENTS:
-            self.debug(f"Updating current_parent to {tag_name}")
-            context.current_parent = new_node
-
-    def _handle_end_tag(self, token: HTMLToken, tag_name: str, context: ParseContext) -> None:
-        """Handle all closing HTML tags."""
-        self.debug(f"_handle_end_tag: {tag_name}, current_parent={context.current_parent}")
-        
-        if not context.current_parent:
-            context.current_parent = self.body_node
-
-        # Try tag handlers first
-        self.debug(f"Trying tag handlers for end tag {tag_name}")
-        for handler in self.tag_handlers:
-            if handler.should_handle_end(tag_name, context):
-                self.debug(f"{handler.__class__.__name__}: handling {token}, context={context}")
-                if handler.handle_end(token, context):
-                    return
-
-        # Default handling for unhandled tags
-        self.debug(f"No end tag handler found, looking for matching tag {tag_name}")
-        current = context.current_parent.find_ancestor(tag_name)
-        if current:
-            self.debug(f"Found matching tag {tag_name}, updating current_parent")
-            context.current_parent = current.parent or self.body_node
+        context.current_parent.append_child(comment_node)
 
     def _handle_doctype(self, token: HTMLToken) -> None:
         """
         Handle DOCTYPE declarations by prepending them to the root's children.
         """
-        doctype_node = Node('!doctype')
+        doctype_node = Node("!doctype")
         self.root.children.insert(0, doctype_node)
-

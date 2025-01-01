@@ -9,6 +9,7 @@ class ParserState(Enum):
     IN_HEAD = auto()
     AFTER_HEAD = auto()
     IN_BODY = auto()
+    AFTER_BODY = auto()
     IN_TABLE = auto()
     IN_TABLE_BODY = auto()
     IN_ROW = auto()
