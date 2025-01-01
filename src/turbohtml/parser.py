@@ -179,10 +179,7 @@ class TurboHTML:
         self.debug(f"No handler found, using default handling for {tag_name}")
         new_node = Node(tag_name, token.attributes)
         context.current_parent.append_child(new_node)
-
-        if tag_name not in VOID_ELEMENTS:
-            self.debug(f"Updating current_parent to {tag_name}")
-            context.current_parent = new_node
+        context.current_parent = new_node
 
     def _handle_end_tag(
         self, token: HTMLToken, tag_name: str, context: ParseContext
