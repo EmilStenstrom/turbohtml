@@ -22,17 +22,7 @@ from turbohtml.node import Node
 from turbohtml.context import ParseContext, ParserState
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
 from .constants import (
-    VOID_ELEMENTS,
-    BLOCK_ELEMENTS,
-    RAWTEXT_ELEMENTS,
     HEAD_ELEMENTS,
-    TABLE_ELEMENTS,
-    BOUNDARY_ELEMENTS,
-    FORMATTING_ELEMENTS,
-    AUTO_CLOSING_TAGS,
-    HEADING_ELEMENTS,
-    CLOSE_ON_PARENT_CLOSE,
-    ADOPTION_FORMATTING_ELEMENTS,
 )
 
 
