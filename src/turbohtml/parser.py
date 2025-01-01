@@ -1,6 +1,5 @@
 from turbohtml.context import ParseContext, ParserState
 from turbohtml.handlers import (
-    AnchorTagHandler,
     AutoClosingTagHandler,
     ButtonTagHandler,
     ForeignTagHandler,
@@ -46,7 +45,6 @@ class TurboHTML:
 
         # Initialize tag handlers in deterministic order
         self.tag_handlers = [
-            AnchorTagHandler(self),
             TableTagHandler(self),
             ListTagHandler(self),
             AutoClosingTagHandler(self),

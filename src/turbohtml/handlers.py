@@ -161,10 +161,25 @@ class FormattingElementHandler(TagHandler):
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
         return tag_name in FORMATTING_ELEMENTS
 
-    def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", end_tag_idx: int
-    ) -> bool:
-        # Create new formatting element
+    def handle_start(self, token: "HTMLToken", context: "ParseContext", end_tag_idx: int) -> bool:
+        # First check for existing instance of same formatting element
+        current = context.current_parent.find_ancestor(token.tag_name)
+        if current:
+            # Close current formatting element first
+            context.current_parent = current.parent or self.parser.body_node
+
+        # Handle table boundary crossing
+        if context.state in (ParserState.IN_TABLE, ParserState.IN_TABLE_BODY, ParserState.IN_ROW, ParserState.IN_CELL):
+            table = context.current_table
+            if table and table.parent:
+                # Foster parent the new formatting element
+                new_element = Node(token.tag_name, token.attributes)
+                table_index = table.parent.children.index(table)
+                table.parent.children.insert(table_index, new_element)
+                context.current_parent = new_element
+                return True
+
+        # Normal case - create new formatting element
         new_element = Node(token.tag_name, token.attributes)
         context.current_parent.append_child(new_element)
         context.current_parent = new_element
@@ -174,18 +189,14 @@ class FormattingElementHandler(TagHandler):
         return tag_name in FORMATTING_ELEMENTS
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
-        self.debug(f"FormattingElementHandler: handling {token}, context={context}")
-
-        # Check if we're inside an active block from adoption agency
-        if context.current_parent and context.current_parent.tag_name == "div":
-            # If we're inside a block, stay there
-            self.debug(f"Inside block {context.current_parent}, staying in block")
-            return True
-
-        # Normal formatting element handling
         current = context.current_parent.find_ancestor(token.tag_name)
-        if current and current.parent:
-            context.current_parent = current.parent
+        if current:
+            # When ending a formatting element in a table context, move to the table
+            if context.state in (ParserState.IN_TABLE, ParserState.IN_TABLE_BODY, ParserState.IN_ROW, ParserState.IN_CELL):
+                if context.current_table:
+                    context.current_parent = context.current_table
+            else:
+                context.current_parent = current.parent or self.parser.body_node
             return True
         return False
 
@@ -480,37 +491,14 @@ class TableTagHandler(TagHandler):
                     return True
 
         else:
-            # Check if element is in scope
-            if not context.current_parent.find_ancestor(
-                tag_name, stop_at_boundary=True
-            ):
-                return True  # Ignore out-of-scope closing tags
-
-            # Find the element to close
-            temp_parent = context.current_parent.find_ancestor(tag_name)
-
-            if temp_parent:
-                # Move to parent's context
-                target_parent = temp_parent.parent or self.parser.body_node
-
-                # Special handling for table elements
-                if tag_name in TABLE_ELEMENTS:
-                    # Find first non-formatting ancestor
-                    target_parent = target_parent.find_ancestor(
-                        lambda n: n.tag_name not in FORMATTING_ELEMENTS
-                    )
-
-                # If we're still in a table cell or template after closing the tag, stay there
-                current_container = target_parent.find_ancestor(
-                    lambda n: n.tag_name in ["td", "th", "template"]
-                )
-                if current_container:
-                    context.current_parent = target_parent
-                    context.current_context = context.current_context
-                else:
-                    # If we've moved outside, ensure we stay in the table
-                    context.current_parent = context.current_table
-                return True
+            # For non-table elements (like formatting elements)
+            if context.current_parent:
+                # Find the element to close
+                temp_parent = context.current_parent.find_ancestor(tag_name)
+                if temp_parent:
+                    # Move to parent's context
+                    context.current_parent = temp_parent.parent or context.current_table or self.parser.body_node
+                    return True
 
         return False
 
@@ -975,56 +963,6 @@ class AutoClosingTagHandler(TagHandler):
                     context.current_parent = parent
                     return True
         return False
-
-
-class AnchorTagHandler(TagHandler):
-    """Special handling for <a> tags"""
-
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
-        return tag_name == "a"
-
-    def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", end_tag_idx: int
-    ) -> bool:
-        # Find any existing anchor elements in the stack
-        existing_anchor = context.current_parent.find_ancestor("a")
-        if existing_anchor:
-            # Move content before the anchor to a new anchor
-            if existing_anchor.children:
-                # Create new anchor with same attributes
-                new_anchor = Node("a", existing_anchor.attributes.copy())
-
-                # Move children to new anchor
-                for child in existing_anchor.children[:]:
-                    new_anchor.append_child(child)
-
-                # Insert new anchor before existing one
-                if existing_anchor.parent:
-                    existing_anchor.parent.insert_before(new_anchor, existing_anchor)
-                    # Remove the empty existing anchor
-                    existing_anchor.parent.children.remove(existing_anchor)
-
-            # Move to parent
-            if existing_anchor.parent:
-                context.current_parent = existing_anchor.parent
-
-        # Create new anchor
-        new_anchor = Node("a", token.attributes)
-        context.current_parent.append_child(new_anchor)
-        context.current_parent = new_anchor
-        return True
-
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
-        return tag_name == "a"
-
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
-        current_anchor = context.current_parent.find_ancestor("a")
-        if not current_anchor or not current_anchor.parent:
-            return False
-
-        # Move to parent of anchor
-        context.current_parent = current_anchor.parent
-        return True
 
 
 class AdoptionAgencyHelper:
