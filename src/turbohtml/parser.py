@@ -1,4 +1,3 @@
-
 from turbohtml.context import ParseContext, ParserState
 from turbohtml.handlers import (
     AnchorTagHandler,

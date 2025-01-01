@@ -7,6 +7,7 @@ class ParserState(Enum):
     """
     Enumerates parser states for clarity and safety.
     """
+
     INITIAL = auto()
     IN_HEAD = auto()
     AFTER_HEAD = auto()
@@ -19,11 +20,15 @@ class ParserState(Enum):
     RAWTEXT = auto()
     IN_CAPTION = auto()
 
+
 class ParseContext:
     """
     Holds parser state during the parsing process.
     """
-    def __init__(self, length: int, body_node: "Node", html_node: "Node", debug_callback=None):
+
+    def __init__(
+        self, length: int, body_node: "Node", html_node: "Node", debug_callback=None
+    ):
         self.index = 0
         self.length = length
         self.current_parent = body_node
@@ -54,4 +59,4 @@ class ParseContext:
 
     def __repr__(self):
         parent_name = self.current_parent.tag_name if self.current_parent else "None"
-        return f"<ParseContext: state={self.state.name}, parent={parent_name}>" 
+        return f"<ParseContext: state={self.state.name}, parent={parent_name}>"
