@@ -199,7 +199,7 @@ class TurboHTML:
             self.debug(f"Found matching tag {tag_name}, updating current_parent")
             context.current_parent = current.parent or self.body_node
             # Set state to after_body when body tag is closed
-            if tag_name == 'body':
+            if tag_name == "body":
                 context.state = ParserState.AFTER_BODY
 
     def _handle_special_element(
@@ -242,7 +242,7 @@ class TurboHTML:
         """
         Create and append a comment node with proper placement based on parser state.
         """
-        comment_node = Node('#comment')
+        comment_node = Node("#comment")
         comment_node.text_content = text
 
         # First comment should go in root if we're still in initial state
@@ -250,7 +250,7 @@ class TurboHTML:
             self.root.children.insert(0, comment_node)
             context.state = ParserState.IN_BODY
             return
-            
+
         # Comments after </body> should go in html node
         if context.current_parent == self.body_node:
             self.html_node.append_child(comment_node)
