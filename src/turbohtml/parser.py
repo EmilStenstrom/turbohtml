@@ -51,6 +51,7 @@ class ParseContext:
         self.html_node = html_node
         self._state = ParserState.INITIAL
         self.current_table = None
+        self.active_block = None  # Initialize active_block
 
     @property
     def state(self) -> ParserState:
@@ -196,23 +197,19 @@ class FormattingElementHandler(TagHandler):
         return tag_name in ADOPTION_FORMATTING_ELEMENTS
 
     def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
-        # Check if we're inside a button
-        button = self.parser._find_ancestor(context.current_parent, 'button')
-        if button:
-            # Inside a button, split the formatting element
-            current = self.parser._find_ancestor(context.current_parent, token.tag_name)
-            if current and current.parent:
-                # Move content after the formatting element
-                new_parent = button
-                context.current_parent = new_parent
-                return True
-
-        # Normal end tag handling
+        debug(f"FormattingElementHandler: handling {token}, context={context}")
+        
+        # Check if we're inside an active block from adoption agency
+        if context.current_parent and context.current_parent.tag_name == 'div':
+            # If we're inside a block, stay there
+            debug(f"Inside block {context.current_parent}, staying in block")
+            return True
+            
+        # Normal formatting element handling
         current = self.parser._find_ancestor(context.current_parent, token.tag_name)
         if current and current.parent:
             context.current_parent = current.parent
             return True
-
         return False
 
 class SelectTagHandler(TagHandler):
@@ -807,13 +804,15 @@ class AutoClosingTagHandler(TagHandler):
     def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
         debug(f"Checking auto-closing rules for {token.tag_name}")
         current = context.current_parent
+        if not current:
+            current = context.current_parent = self.parser.body_node
         debug(f"Current parent: {current}")
         
         # If we're starting a block element inside a formatting element
         if (token.tag_name in BLOCK_ELEMENTS and 
             self._find_formatting_ancestor(current)):
             
-            # Find all formatting elements up to the block (adoption agency step 1)
+            # Find all formatting elements up to the block
             formatting_elements = []
             temp = current
             while temp and temp.tag_name != 'body':
@@ -831,7 +830,7 @@ class AutoClosingTagHandler(TagHandler):
             current_fmt = formatting_elements[-1]
             debug(f"Current formatting element: {current_fmt}")
             
-            # Create block inside current formatting element (adoption agency step 4)
+            # Create block inside current formatting element
             new_block = self.parser._create_node(token.tag_name, token.attributes, 
                                                current_fmt, context.current_context)
             current_fmt.append_child(new_block)
