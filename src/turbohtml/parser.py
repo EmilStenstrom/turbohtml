@@ -1,6 +1,6 @@
 import re
 from enum import Enum, auto
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 from .foreign import ForeignContentHandler
 from .node import Node
@@ -268,33 +268,36 @@ class ParagraphTagHandler(TagHandler):
         return tag_name == 'p'
 
     def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
-        # First, implicitly close any open paragraph
+        debug(f"ParagraphTagHandler: handling {token}, context={context}")
+        
+        # First, close any open paragraphs
         current_p = self.parser._find_ancestor(context.current_parent, 'p')
         if current_p:
+            debug(f"Closing existing paragraph: {current_p}")
             context.current_parent = current_p.parent or self.parser.body_node
-
-        # Then check for formatting ancestor (like <a>)
-        formatting_ancestor = self.parser._find_ancestor(
-            context.current_parent,
-            lambda n: n.tag_name in ADOPTION_FORMATTING_ELEMENTS
-        )
-
-        if formatting_ancestor:
-            # Close formatting element and reparent
-            if formatting_ancestor.parent:
-                context.current_parent = formatting_ancestor.parent
-
+        
         # Create new paragraph
-        new_p = self.parser._create_node('p', token.attributes, context.current_parent, context.current_context)
-        context.current_parent.append_child(new_p)
-        context.current_parent = new_p
-
-        # If we had a formatting ancestor, create new one inside paragraph
-        if formatting_ancestor:
-            new_formatting = Node(formatting_ancestor.tag_name, formatting_ancestor.attributes.copy())
-            new_p.append_child(new_formatting)
-            context.current_parent = new_formatting
-
+        new_p = self.parser._create_node('p', token.attributes, 
+                                       context.current_parent, context.current_context)
+        debug(f"Created new paragraph node: {new_p}")
+        
+        # Handle formatting elements
+        parent, formatting_elements = AdoptionAgencyHelper.handle_formatting_boundary(context, self.parser)
+        
+        if formatting_elements:
+            # Reparent formatting elements inside paragraph
+            current = AdoptionAgencyHelper.reparent_formatting_elements(
+                new_p, formatting_elements, context, self.parser)
+            
+            # Add paragraph after the formatting elements
+            parent.append_child(new_p)
+            context.current_parent = current
+        else:
+            # No formatting elements, simpler case
+            parent = context.current_parent or self.parser.body_node
+            parent.append_child(new_p)
+            context.current_parent = new_p
+            
         return True
 
     def should_handle_end(self, tag_name: str, context: ParseContext) -> bool:
@@ -955,123 +958,73 @@ class AnchorTagHandler(TagHandler):
         context.current_parent = current_anchor.parent
         return True
 
-class AdoptionAgencyHandler(TagHandler):
-    """Handles adoption agency algorithm for formatting elements"""
-    def handle_end(self, token: HTMLToken, context: ParseContext) -> bool:
-        tag_name = token.tag_name
+class AdoptionAgencyHelper:
+    """Helper class for implementing the adoption agency algorithm"""
+    
+    @staticmethod
+    def handle_formatting_boundary(context: ParseContext, parser) -> Tuple[Node, List[Node]]:
+        """
+        Handles a formatting boundary (when block element meets formatting elements)
+        Returns (new_parent, formatting_elements)
+        """
+        debug("AdoptionAgencyHelper: handling formatting boundary")
         
-        # Special handling for nested anchors
-        if tag_name == 'a':
-            return self._handle_anchor_end(token, context)
+        # Find any formatting elements we're inside of
+        formatting_elements = []
+        temp = context.current_parent
+        while temp and temp.tag_name != 'body':
+            if temp.tag_name in ADOPTION_FORMATTING_ELEMENTS:
+                formatting_elements.insert(0, temp)
+                debug(f"Found formatting element: {temp.tag_name} with children: {[c.tag_name for c in temp.children]}")
+            temp = temp.parent
             
-        # Regular adoption agency algorithm for other formatting elements
-        return self._handle_formatting_end(token, context)
-
-    def _handle_anchor_end(self, token: HTMLToken, context: ParseContext) -> bool:
-        """Special handling for </a> tags"""
-        current_anchor = self.parser._find_ancestor(context.current_parent, 'a')
-        if not current_anchor:
-            return False
-
-        # Find the nearest block ancestor
-        block_ancestor = self.parser._find_ancestor(
-            context.current_parent,
-            lambda n: n.tag_name in BLOCK_ELEMENTS
-        )
-
-        if block_ancestor:
-            # Move content inside block to after the anchor
-            for child in current_anchor.children[:]:
-                if self._is_inside_node(child, block_ancestor):
-                    block_ancestor.append_child(child)
-
-        # Update current parent
-        if current_anchor.parent:
-            context.current_parent = current_anchor.parent
-        return True
-
-    def _is_inside_node(self, node: Node, container: Node) -> bool:
-        """Check if node is inside container"""
-        current = node
-        while current:
-            if current == container:
-                return True
-            current = current.parent
-        return False
-
-    def _handle_formatting_end(self, token: HTMLToken, context: ParseContext) -> bool:
-        formatting_element = self.parser._find_ancestor(context.current_parent, token.tag_name)
-        if not formatting_element:
-            return False
-
-        # Step 1: Find the furthest block ancestor between the current node and formatting element
-        furthest_block = None
-        current = context.current_parent
-        while current and current != formatting_element.parent:
-            if current.tag_name in BLOCK_ELEMENTS:
-                furthest_block = current
-            current = current.parent
-
-        if not furthest_block:
-            # No block found, simple reparenting
-            if formatting_element.parent:
-                context.current_parent = formatting_element.parent
-            return True
-
-        # Step 2: Find the common ancestor
-        common_ancestor = formatting_element.parent
-
-        # Step 3: Create bookmark for formatting element's position
-        bookmark = formatting_element.next_sibling
-
-        # Step 4: Handle the furthest block
-        last_node = furthest_block
-        node = furthest_block
-        inner_counter = 0
-
-        # Step 4a: Find next node to handle
-        while node != formatting_element:
-            node = self._find_next_node(node)
-            if not node:
-                break
-
-            # Step 4b-4h: Handle each node
-            if self._is_formatting_node(node):
-                # Remove node from its position
-                if node.parent:
-                    node.parent.children.remove(node)
-                
-                # Insert at bookmark position
-                if bookmark and bookmark.parent:
-                    bookmark_idx = bookmark.parent.children.index(bookmark)
-                    bookmark.parent.children.insert(bookmark_idx, node)
-                
-                # Move its children to last_node
-                for child in node.children[:]:
-                    last_node.append_child(child)
-                
-                last_node = node
+        debug(f"Found formatting elements: {[f.tag_name for f in formatting_elements]}")
+        
+        if not formatting_elements:
+            return context.current_parent, []
             
-            inner_counter += 1
-            if inner_counter > 8:
-                break  # Prevent infinite loops
-
-        return True
-
-    def _is_formatting_node(self, node: Node) -> bool:
-        return node.tag_name in ADOPTION_FORMATTING_ELEMENTS
-
-    def _find_next_node(self, node: Node) -> Optional[Node]:
-        """Find the next node in tree order"""
-        if node.children:
-            return node.children[0]
+        # Get the parent of the outermost formatting element
+        parent = formatting_elements[0].parent or parser.body_node
+        debug(f"Using parent: {parent.tag_name}")
         
-        while node:
-            if node.next_sibling:
-                return node.next_sibling
-            node = node.parent
-        
-        return None
+        return parent, formatting_elements
+
+    @staticmethod
+    def reparent_formatting_elements(new_container: Node, formatting_elements: List[Node], 
+                                   context: ParseContext, parser) -> Node:
+        """
+        Creates new copies of formatting elements inside a new container
+        Returns the innermost new formatting element
+        """
+        current = new_container
+        for fmt in formatting_elements:
+            debug(f"Processing formatting element {fmt.tag_name}")
+            # Create new formatting element
+            new_fmt = parser._create_node(fmt.tag_name, fmt.attributes, 
+                                        current, context.current_context)
+            debug(f"Created new formatting element: {new_fmt.tag_name}")
+            
+            # Move children from original to new formatting element
+            if fmt.children:
+                debug(f"Moving children from {fmt.tag_name}: {[c.tag_name for c in fmt.children]}")
+                children_to_move = fmt.children[:]  # Create a copy of the list
+                
+                for child in children_to_move:
+                    # First detach from old parent
+                    child.parent = None
+                    fmt.children.remove(child)
+                    
+                    # Then attach to new parent
+                    child.parent = new_fmt
+                    new_fmt.children.append(child)
+                    
+                debug(f"After move - Original {fmt.tag_name} children: {[c.tag_name for c in fmt.children]}")
+                debug(f"After move - New {new_fmt.tag_name} children: {[c.tag_name for c in new_fmt.children]}")
+            
+            current.append_child(new_fmt)
+            current = new_fmt
+            
+        return current
 
 class TurboHTML:
     """
@@ -1111,7 +1064,6 @@ class TurboHTML:
         
         # Initialize tag handlers in deterministic order
         self.tag_handlers = [
-            AdoptionAgencyHandler(self),
             AnchorTagHandler(self),
             TableTagHandler(self),
             ListTagHandler(self),
