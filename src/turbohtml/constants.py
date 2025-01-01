@@ -1,11 +1,16 @@
-import re
-TAG_OPEN_RE = re.compile(r'<(!?)(/)?([a-zA-Z0-9][-a-zA-Z0-9:]*)(.*?)>')
-ATTR_RE = re.compile(r'([a-zA-Z_:][-a-zA-Z0-9_:.]*)(?:\s*=\s*"([^"]*)"|\s*=\s*\'([^\']*)\'|\s*=\s*([^>\s]+)|)(?=\s|$)')
+"""HTML5 Element Constants
 
-# Normal comment: <!-- comment -->
-# Special case: <!---> (malformed)
-# Special case: <!--> (malformed)
-COMMENT_RE = re.compile(r'<!--(?:>|->|([^>].*?)-->)')
+This module defines constants used for HTML5 parsing according to the WHATWG spec.
+Elements are organized into lists to maintain consistent iteration order while
+still allowing efficient lookups.
+
+Usage:
+    from turbohtml.constants import VOID_ELEMENTS, HTML_ELEMENTS
+
+References:
+    - https://html.spec.whatwg.org/multipage/syntax.html#void-elements
+    - https://html.spec.whatwg.org/multipage/syntax.html#optional-tags
+"""
 
 # HTML Element Sets
 VOID_ELEMENTS = [
@@ -14,7 +19,7 @@ VOID_ELEMENTS = [
 ]
 
 HTML_ELEMENTS = [
-    'b', 'big', 'blockquote', 'body', 'br', 'center', 'code',
+    'a', 'b', 'big', 'blockquote', 'body', 'br', 'center', 'code',
     'dd', 'div', 'dl', 'dt', 'em', 'embed', 'h1', 'h2', 'h3', 'h4',
     'h5', 'h6', 'head', 'hr', 'i', 'img', 'li', 'listing',
     'menu', 'meta', 'nobr', 'ol', 'p', 'pre', 's', 'small',
@@ -23,17 +28,31 @@ HTML_ELEMENTS = [
 ]
 
 SPECIAL_ELEMENTS = [
-    'address', 'applet', 'area', 'article', 'aside', 'base', 'basefont',
-    'bgsound', 'blockquote', 'body', 'br', 'button', 'caption', 'center',
-    'col', 'colgroup', 'dd', 'details', 'dir', 'div', 'dl', 'dt', 'embed',
-    'fieldset', 'figcaption', 'figure', 'footer', 'form', 'frame', 'frameset',
-    'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'head', 'header', 'hgroup', 'hr',
-    'html', 'iframe', 'img', 'input', 'keygen', 'li', 'link', 'listing',
-    'main', 'marquee', 'menu', 'meta', 'nav', 'noembed', 'noframes',
-    'noscript', 'object', 'ol', 'p', 'param', 'plaintext', 'pre', 'script',
-    'section', 'select', 'source', 'style', 'summary', 'table', 'tbody',
-    'td', 'template', 'textarea', 'tfoot', 'th', 'thead', 'title', 'tr',
-    'track', 'ul', 'wbr', 'xmp'
+    # Root elements
+    'html', 'body', 'head',
+    
+    # Sectioning elements
+    'address', 'article', 'aside', 'footer', 'header', 'nav', 'section',
+    
+    # Form elements
+    'button', 'fieldset', 'form', 'input', 'keygen', 'select', 'textarea',
+    
+    # Media elements
+    'applet', 'bgsound', 'embed', 'iframe', 'img', 'object', 'param',
+    'source', 'track',
+    
+    # Table elements
+    'table', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th', 'caption', 'colgroup',
+    
+    # List elements
+    'dd', 'dir', 'dl', 'dt', 'li', 'menu', 'ol', 'ul',
+    
+    # Other block elements
+    'blockquote', 'div', 'figure', 'figcaption', 'hr', 'main', 'pre',
+    
+    # Script and style elements
+    'noembed', 'noframes', 'noscript', 'script', 'style', 'template',
+    'title'
 ]
 
 BLOCK_ELEMENTS = [
@@ -43,71 +62,99 @@ BLOCK_ELEMENTS = [
     'p', 'pre', 'section', 'table', 'ul', 'summary'
 ]
 
-TABLE_ELEMENTS = ['table', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th', 'caption', 'colgroup']
+TABLE_ELEMENTS = [
+    # Structure elements
+    'table', 'thead', 'tbody', 'tfoot', 'caption', 'colgroup',
+    # Row elements
+    'tr',
+    # Cell elements
+    'td', 'th'
+]
 
 TABLE_CONTAINING_ELEMENTS = [
-    'html', 'body', 'div', 'form', 'button', 'ruby', 'td', 'th', 'math', 'svg'
+    'html', 'body', 'div', 'form', 'button', 'ruby', 
+    'td', 'th', 'math', 'svg'
 ]
 
-# Elements that can appear in the head section according to WHATWG spec
 HEAD_ELEMENTS = [
-    'base',      # Must be before other elements that can have URLs
-    'title',     # Required element
-    'meta',      # Charset declaration should be within first 1024 bytes
-    'link',
-    'style',
-    'noscript',
-    'script',
-    'template',
-    # Legacy elements maintained for compatibility
-    'basefont',  # Legacy - obsolete but kept for compatibility
-    'bgsound',   # Legacy - non-standard but kept for compatibility
-    'noframes'   # Legacy - obsolete but kept for compatibility
+    'base', 'title', 'meta', 'link', 'style', 'noscript',
+    'script', 'template', 'basefont', 'bgsound', 'noframes'
 ]
 
-# Raw text elements (content parsed as raw text)
 RAWTEXT_ELEMENTS = [
-    'style',
-    'script',
-    'xmp',
-    'iframe',
-    'noembed',
-    'noframes',
-    'title',
-    'textarea',
-    'noscript'
+    'script', 'style', 'xmp', 'iframe', 'noembed', 'noframes',
+    'title', 'textarea', 'noscript'
 ]
 
-# Elements that can contain both HTML and SVG/MathML content
-DUAL_NAMESPACE_ELEMENTS = [
-    'title', 'script', 'style'
-]
-
-# Elements that can be self-closing
-SELF_CLOSING_ELEMENTS = [
-    'button', 'a', 'select', 'textarea', 'option', 'optgroup'
-]
-
-# Elements that trigger auto-closing of other elements
-AUTO_CLOSING_TRIGGERS = [
-    'address', 'article', 'aside', 'blockquote', 'details', 'div', 'dl',
-    'fieldset', 'figcaption', 'figure', 'footer', 'form', 'h1', 'h2', 'h3',
-    'h4', 'h5', 'h6', 'header', 'hr', 'main', 'nav', 'ol', 'p', 'pre',
-    'section', 'table', 'ul'
-]
-
-# Formatting elements that can be reconstructed
 FORMATTING_ELEMENTS = [
     'a', 'b', 'big', 'code', 'em', 'font', 'i', 'nobr', 's',
     'small', 'strike', 'strong', 'tt', 'u', 'cite'
 ]
 
-# Elements that define scope boundaries
 BOUNDARY_ELEMENTS = [
     'applet', 'button', 'marquee', 'object', 'table', 'td', 'th'
 ]
 
-# SVG elements that require case-sensitive handling
+HEADING_ELEMENTS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']
+
+OPTIONAL_END_TAG_ELEMENTS = [
+    'li', 'dt', 'dd', 'p', 'rb', 'rt', 'rtc', 'rp', 'optgroup', 
+    'option', 'thead', 'tbody', 'tfoot', 'tr', 'td', 'th'
+]
+
+AUTO_CLOSING_TAGS = {
+    'li': ['li'],
+    'dt': ['dt', 'dd'],
+    'dd': ['dt', 'dd'],
+    'tr': ['tr', 'td', 'th'],
+    'td': ['td', 'th'],
+    'th': ['td', 'th'],
+    'rt': ['rt', 'rp'],
+    'rp': ['rt', 'rp'],
+    'h1': ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
+    'h2': ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
+    'h3': ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
+    'h4': ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
+    'h5': ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
+    'h6': ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
+    'address': ['p'], 
+    'article': ['p'], 
+    'aside': ['p'], 
+    'blockquote': ['p'],
+    'details': ['p'], 
+    'div': ['p'], 
+    'dl': ['p'], 
+    'fieldset': ['p'],
+    'figcaption': ['p'], 
+    'figure': ['p'], 
+    'footer': ['p'], 
+    'form': ['p'],
+    'header': ['p'], 
+    'hr': ['p'], 
+    'main': ['p'], 
+    'nav': ['p'], 
+    'ol': ['p'],
+    'pre': ['p'], 
+    'section': ['p'], 
+    'table': ['p'], 
+    'ul': ['p']
+}
+
+CLOSE_ON_PARENT_CLOSE = {
+    'li': ['ul', 'ol', 'menu'],
+    'dt': ['dl'],
+    'dd': ['dl'],
+    'rb': ['ruby'],
+    'rt': ['ruby', 'rtc'],
+    'rtc': ['ruby'],
+    'rp': ['ruby'],
+    'optgroup': ['select'],
+    'option': ['select', 'optgroup', 'datalist'],
+    'tr': ['table', 'thead', 'tbody', 'tfoot'],
+    'td': ['tr'],
+    'th': ['tr'],
+}
+
 SVG_CASE_SENSITIVE_ELEMENTS = {
     'foreignobject': 'foreignObject',
     'animatemotion': 'animateMotion',
@@ -147,100 +194,3 @@ SVG_CASE_SENSITIVE_ELEMENTS = {
     'femerge': 'feMerge',
     'glyphref': 'glyphRef'
 }
-
-# Header elements h1-h6
-HEADER_ELEMENTS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']
-
-# Elements that auto-close their previous siblings
-SIBLING_ELEMENTS = [
-    'li',    # List items
-    'dt',    # Definition terms
-    'dd',    # Definition descriptions
-    'tr',    # Table rows
-    'th',    # Table headers
-    'td',    # Table cells
-    'nobr',  # No break
-    'button', # Button
-    'option', # Select options
-    *HEADER_ELEMENTS  # Headers
-]
-
-# Elements with optional end tags
-OPTIONAL_END_TAG_ELEMENTS = [
-    'li', 'dt', 'dd', 'p', 'rb', 'rt', 'rtc', 'rp', 'optgroup', 'option',
-    'thead', 'tbody', 'tfoot', 'tr', 'td', 'th'
-]
-
-# Elements that can close other elements when they start
-AUTO_CLOSING_TAGS = {
-    # List elements
-    'li': ['li'],
-    
-    # Definition list elements
-    'dt': ['dt', 'dd'],
-    'dd': ['dt', 'dd'],
-    
-    # Table elements
-    'tr': ['tr', 'td', 'th'],
-    'td': ['td', 'th'],
-    'th': ['td', 'th'],
-
-    # Ruby elements
-    'rt': ['rt', 'rp'],
-    'rp': ['rt', 'rp'],
-    
-    # Headers - any header closes other headers
-    'h1': ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
-    'h2': ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
-    'h3': ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
-    'h4': ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
-    'h5': ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
-    'h6': ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
-    
-    # Block elements that close paragraphs
-    'address': ['p'], 
-    'article': ['p'], 
-    'aside': ['p'], 
-    'blockquote': ['p'],
-    'details': ['p'], 
-    'div': ['p'], 
-    'dl': ['p'], 
-    'fieldset': ['p'],
-    'figcaption': ['p'], 
-    'figure': ['p'], 
-    'footer': ['p'], 
-    'form': ['p'],
-    'header': ['p'], 
-    'hr': ['p'], 
-    'main': ['p'], 
-    'nav': ['p'], 
-    'ol': ['p'],
-    'pre': ['p'], 
-    'section': ['p'], 
-    'table': ['p'], 
-    'ul': ['p']
-}
-
-# Elements that close when their parent closes
-CLOSE_ON_PARENT_CLOSE = {
-    'li': ['ul', 'ol', 'menu'],
-    'dt': ['dl'],
-    'dd': ['dl'],
-    'rb': ['ruby'],
-    'rt': ['ruby', 'rtc'],
-    'rtc': ['ruby'],
-    'rp': ['ruby'],
-    'optgroup': ['select'],
-    'option': ['select', 'optgroup', 'datalist'],
-    'tr': ['table', 'thead', 'tbody', 'tfoot'],
-    'td': ['tr'],
-    'th': ['tr'],
-}
-
-HEADING_ELEMENTS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']
-
-# Elements that trigger adoption agency algorithm
-ADOPTION_FORMATTING_ELEMENTS = [
-    'a', 'b', 'big', 'code', 'em', 'font', 'i', 'nobr', 
-    's', 'small', 'strike', 'strong', 'tt', 'u', 'cite'
-]
