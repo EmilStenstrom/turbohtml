@@ -7,8 +7,10 @@ class Node:
     - attributes: dict of tag attributes
     - children: list of child Nodes
     - parent: reference to parent Node (or None for root)
+    - next_sibling/previous_sibling: references to adjacent nodes in the tree
     """
-    __slots__ = ('tag_name', 'attributes', 'children', 'parent', 'text_content')
+    __slots__ = ('tag_name', 'attributes', 'children', 'parent', 'text_content', 
+                 'next_sibling', 'previous_sibling')
 
     def __init__(self, tag_name: str, attributes: Optional[Dict[str, str]] = None):
         self.tag_name = tag_name
@@ -16,20 +18,52 @@ class Node:
         self.children: List['Node'] = []
         self.parent: Optional['Node'] = None
         self.text_content = ""  # For text nodes or concatenated text in element nodes
+        self.next_sibling: Optional['Node'] = None
+        self.previous_sibling: Optional['Node'] = None
 
     def append_child(self, child: 'Node'):
-        self.children.append(child)
+        if child.parent:
+            # Update sibling links in old location
+            if child.previous_sibling:
+                child.previous_sibling.next_sibling = child.next_sibling
+            if child.next_sibling:
+                child.next_sibling.previous_sibling = child.previous_sibling
+            child.parent.children.remove(child)
+        
+        # Update sibling links in new location
+        if self.children:
+            self.children[-1].next_sibling = child
+            child.previous_sibling = self.children[-1]
+        else:
+            child.previous_sibling = None
+        
         child.parent = self
+        child.next_sibling = None
+        self.children.append(child)
 
-    def insert_child_before(self, new_node: 'Node', reference_node: 'Node') -> None:
-        """Insert a node before a specific child node"""
+    def insert_before(self, new_node: 'Node', reference_node: 'Node'):
         if reference_node not in self.children:
             return
         
-        index = self.children.index(reference_node)
-        self.children.insert(index, new_node)
+        if new_node.parent:
+            # Update sibling links in old location
+            if new_node.previous_sibling:
+                new_node.previous_sibling.next_sibling = new_node.next_sibling
+            if new_node.next_sibling:
+                new_node.next_sibling.previous_sibling = new_node.previous_sibling
+            new_node.parent.children.remove(new_node)
+        
+        idx = self.children.index(reference_node)
         new_node.parent = self
-
+        self.children.insert(idx, new_node)
+        
+        # Update sibling pointers
+        new_node.next_sibling = reference_node
+        new_node.previous_sibling = reference_node.previous_sibling
+        reference_node.previous_sibling = new_node
+        if new_node.previous_sibling:
+            new_node.previous_sibling.next_sibling = new_node
+            
     def __repr__(self):
         if self.tag_name == '#text':
             return f"Node(#text='{self.text_content[:30]}')"

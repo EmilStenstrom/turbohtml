@@ -227,3 +227,9 @@ CLOSE_ON_PARENT_CLOSE = {
 }
 
 HEADING_ELEMENTS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']
+
+# Elements that trigger adoption agency algorithm
+ADOPTION_FORMATTING_ELEMENTS = [
+    'a', 'b', 'big', 'code', 'em', 'font', 'i', 'nobr', 
+    's', 'small', 'strike', 'strong', 'tt', 'u', 'cite'
+]
