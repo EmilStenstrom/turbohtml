@@ -49,9 +49,20 @@ TABLE_CONTAINING_ELEMENTS = [
     'html', 'body', 'div', 'form', 'button', 'ruby', 'td', 'th', 'math', 'svg'
 ]
 
-# Elements that should be in the head
+# Elements that can appear in the head section according to WHATWG spec
 HEAD_ELEMENTS = [
-    'base', 'basefont', 'bgsound', 'link', 'meta', 'title', 'script', 'style', 'template'
+    'base',      # Must be before other elements that can have URLs
+    'title',     # Required element
+    'meta',      # Charset declaration should be within first 1024 bytes
+    'link',
+    'style',
+    'noscript',
+    'script',
+    'template',
+    # Legacy elements maintained for compatibility
+    'basefont',  # Legacy - obsolete but kept for compatibility
+    'bgsound',   # Legacy - non-standard but kept for compatibility
+    'noframes'   # Legacy - obsolete but kept for compatibility
 ]
 
 # Raw text elements (content parsed as raw text)
