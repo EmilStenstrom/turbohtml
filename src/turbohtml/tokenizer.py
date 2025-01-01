@@ -32,10 +32,11 @@ class HTMLTokenizer:
         self.html = html
         self.length = len(html)
         self.pos = 0
-        self.state = "DATA"  # Default state
-        self.rawtext_tag = None  # Current RAWTEXT element being processed
-        self.buffer = []  # General buffer for text content
-        self.temp_buffer = []  # For collecting potential end tag name
+        self.state = "DATA"
+        self.rawtext_tag = None
+        self.buffer = []
+        self.temp_buffer = []
+        self.last_pos = self.length  # Store the last position we'll process
 
     def start_rawtext(self, tag_name: str) -> None:
         """Switch to RAWTEXT state for the given tag"""
@@ -50,6 +51,7 @@ class HTMLTokenizer:
             if self.state == "DATA":
                 token = self._try_tag() or self._try_text()
                 if token:
+                    token.is_last_token = (self.pos >= self.last_pos)
                     yield token
                 elif self.pos < self.length:
                     # If neither method produced a token, force advance
@@ -57,6 +59,7 @@ class HTMLTokenizer:
             elif self.state == "RAWTEXT":
                 token = self._handle_rawtext()
                 if token:
+                    token.is_last_token = (self.pos >= self.last_pos)
                     yield token
             else:
                 # Handle other states...

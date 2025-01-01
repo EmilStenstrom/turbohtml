@@ -1,4 +1,6 @@
-from typing import List, Optional, Dict, TYPE_CHECKING
+from typing import List, Optional, Dict, TYPE_CHECKING, Union, Callable
+
+BOUNDARY_ELEMENTS = {'applet', 'caption', 'html', 'table', 'td', 'th', 'marquee', 'object', 'template'}
 
 class Node:
     """
@@ -96,3 +98,26 @@ class Node:
         for child in self.children:
             result += '\n' + child.to_test_format(indent + 2)
         return result
+
+    def find_ancestor(self, tag_name_or_predicate: Union[str, Callable[['Node'], bool]], 
+                     stop_at_boundary: bool = False) -> Optional['Node']:
+        """Find the nearest ancestor matching the given tag name or predicate.
+        Includes the current node in the search.
+        
+        Args:
+            tag_name_or_predicate: Tag name or callable that takes a Node and returns bool
+            stop_at_boundary: If True, stop searching at boundary elements (HTML5 scoping rules)
+        Returns:
+            The matching ancestor Node or None if not found
+        """
+        current = self
+        while current:
+            if callable(tag_name_or_predicate):
+                if tag_name_or_predicate(current):
+                    return current
+            elif current.tag_name == tag_name_or_predicate:
+                return current
+            if stop_at_boundary and current.tag_name in BOUNDARY_ELEMENTS:
+                return None
+            current = current.parent
+        return None
