@@ -1,29 +1,25 @@
-import re
-from enum import Enum, auto
-from typing import Optional, Tuple, List
 
+from turbohtml.context import ParseContext, ParserState
 from turbohtml.handlers import (
-    TextHandler,
     AnchorTagHandler,
-    TableTagHandler,
-    ListTagHandler,
     AutoClosingTagHandler,
-    VoidElementHandler,
-    RawtextTagHandler,
-    FormattingElementHandler,
-    SelectTagHandler,
-    FormTagHandler,
-    HeadingTagHandler,
-    ParagraphTagHandler,
     ButtonTagHandler,
     ForeignTagHandler,
+    FormattingElementHandler,
+    FormTagHandler,
+    HeadingTagHandler,
+    ListTagHandler,
+    ParagraphTagHandler,
+    RawtextTagHandler,
+    SelectTagHandler,
+    TableTagHandler,
+    TextHandler,
+    VoidElementHandler,
 )
 from turbohtml.node import Node
-from turbohtml.context import ParseContext, ParserState
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
-from .constants import (
-    HEAD_ELEMENTS,
-)
+
+from .constants import HEAD_ELEMENTS
 
 
 class TurboHTML:

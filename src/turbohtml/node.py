@@ -1,4 +1,4 @@
-from typing import List, Optional, Dict, TYPE_CHECKING, Union, Callable
+from typing import Callable, Dict, List, Optional, Union
 
 BOUNDARY_ELEMENTS = {'applet', 'caption', 'html', 'table', 'td', 'th', 'marquee', 'object', 'template'}
 
