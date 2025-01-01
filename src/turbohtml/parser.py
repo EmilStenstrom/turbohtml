@@ -213,25 +213,41 @@ class FormattingElementHandler(TagHandler):
         return False
 
 class SelectTagHandler(TagHandler):
-    """Handles select, option, and optgroup elements"""
+    """Handles select, option, optgroup and hr elements"""
     def should_handle_start(self, tag_name: str, context: ParseContext) -> bool:
-        return tag_name in ('select', 'option', 'optgroup')
+        # Handle these tags directly
+        if tag_name in ('select', 'option', 'optgroup'):
+            return True
+            
+        # Also handle hr if we're inside a select
+        if tag_name == 'hr' and self.parser._find_ancestor(context.current_parent, 'select'):
+            return True
+            
+        return False
 
     def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
         tag_name = token.tag_name
         
+        if tag_name == 'hr':
+            # Move back to select level
+            select = self.parser._find_ancestor(context.current_parent, 'select')
+            if select:
+                new_node = self.parser._create_node(tag_name, token.attributes, select, context.current_context)
+                select.append_child(new_node)
+                return True
+            return False
+            
         # If we're in an option and get a new option/optgroup, close the current option first
         if tag_name in ('option', 'optgroup') and context.current_parent.tag_name == 'option':
-            context.current_parent = context.current_parent.parent or self.parser.body_node
+            context.current_parent = context.current_parent.parent
         
-        # If we're in an optgroup and get a new optgroup, close the current optgroup first
-        if tag_name == 'optgroup' and context.current_parent.tag_name == 'optgroup':
-            context.current_parent = context.current_parent.parent or self.parser.body_node
-
         # Create the new node
         new_node = self.parser._create_node(tag_name, token.attributes, context.current_parent, context.current_context)
         context.current_parent.append_child(new_node)
-        context.current_parent = new_node
+        
+        # Only update current_parent for non-void elements
+        if tag_name not in ('hr',):
+            context.current_parent = new_node
         return True
 
     def should_handle_end(self, tag_name: str, context: ParseContext) -> bool:
@@ -295,6 +311,10 @@ class TableTagHandler(TagHandler):
     """Handles table-related elements"""
 
     def should_handle_start(self, tag_name: str, context: ParseContext) -> bool:
+        # Don't handle tags if we're inside a select element
+        if self.parser._find_ancestor(context.current_parent, 'select'):
+            return False
+            
         # Handle any tag when in table context
         if context.state == ParserState.IN_TABLE:
             debug(f"Handling {tag_name} in table context")
@@ -774,6 +794,10 @@ class ButtonTagHandler(TagHandler):
 class VoidElementHandler(TagHandler):
     """Handles void elements that can't have children"""
     def should_handle_start(self, tag_name: str, context: ParseContext) -> bool:
+        # Don't handle void elements inside select
+        if self.parser._find_ancestor(context.current_parent, 'select'):
+            return False
+            
         return tag_name in VOID_ELEMENTS
 
     def handle_start(self, token: HTMLToken, context: ParseContext, end_tag_idx: int) -> bool:
