@@ -37,7 +37,7 @@ class TagHandler:
 
     def debug(self, message: str, indent: int = 4) -> None:
         """Delegate debug to parser"""
-        self.parser.debug(message, indent)
+        self.parser.debug(message, indent=indent)
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
         return False
