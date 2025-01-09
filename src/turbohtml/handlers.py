@@ -340,83 +340,134 @@ class TableTagHandler(TagHandler):
     def handle_start(
         self, token: "HTMLToken", context: "ParseContext", end_tag_idx: int
     ) -> bool:
-        if token.tag_name == "table":
-            # Create new table
+        tag_name = token.tag_name
+        if tag_name == "table":
+            self.debug(f"Creating new table, current parent={context.current_parent}")
             new_table = Node("table", token.attributes)
             context.current_parent.append_child(new_table)
             context.current_parent = new_table
-            context.state = ParserState.IN_TABLE
-            # Store reference to current table
             context.current_table = new_table
+            context.state = ParserState.IN_TABLE
             return True
 
-        # Handle elements in table context
-        if context.state == ParserState.IN_TABLE:
-            table = context.current_table
-            if not table:
-                return False
+        if not self.should_handle_start(tag_name, context):
+            return False
 
-            if token.tag_name == "template":
-                # Create template node and append to current parent
-                new_node = Node(token.tag_name, token.attributes)
-                context.current_parent.append_child(new_node)
-                context.current_parent = new_node
-                return True
+        self.debug(f"Handling {tag_name} in table context")
+        self.debug(f"Current parent: {context.current_parent}")
+        self.debug(f"Current table: {context.current_table}")
 
-            if token.tag_name in ["td", "th"]:
-                # First ensure we have a tbody and tr if not in template
-                if context.current_parent.tag_name != "template":
-                    tbody = self._ensure_tbody(table)
-                    tr = self._ensure_tr(tbody)
-                    parent = tr
-                else:
-                    parent = context.current_parent
-
-                # Create the cell
-                new_cell = Node(token.tag_name, token.attributes)
-                parent.append_child(new_cell)
-                context.current_parent = new_cell
-                return True
-
-            elif token.tag_name == "tr":
-                # If in template, append directly to it
-                if context.current_parent.tag_name == "template":
-                    parent = context.current_parent
-                else:
-                    # Only create tbody when we have rows
-                    parent = self._ensure_tbody(table)
-
-                new_tr = Node("tr", token.attributes)
-                parent.append_child(new_tr)
-                context.current_parent = new_tr
-                return True
-
+        # Special handling for <a> tags per spec
+        if tag_name == "a":
             # Check if we're inside a table cell
-            in_cell = context.current_parent.tag_name in [
-                "td",
-                "th",
-            ] or context.current_parent.find_ancestor(
+            current_cell = context.current_parent.find_ancestor(
                 lambda n: n.tag_name in ["td", "th"]
             )
+            if current_cell:
+                # Handle normally inside cells
+                self.debug(f"Inside cell {current_cell}, handling <a> normally")
+                new_a = Node("a", token.attributes)
+                context.current_parent.append_child(new_a)
+                context.current_parent = new_a
+                return True
 
-            if in_cell:
-                # Inside a cell, handle normally without foster parenting
-                if token.tag_name in FORMATTING_ELEMENTS:
-                    new_node = Node(token.tag_name, token.attributes)
-                    context.current_parent.append_child(new_node)
-                    context.current_parent = new_node
-                    return True
+            # Find any existing <a> elements
+            existing_a = context.current_parent.find_ancestor("a")
+            if existing_a:
+                # Close the existing <a> and adopt its formatting context
+                self.debug(f"Found existing <a>: {existing_a}")
+                context.current_parent = existing_a.parent
+                
+            # Foster parent the new <a>
+            table = context.current_table
+            if table and table.parent:
+                self.debug("Foster parenting new <a> tag")
+                new_a = Node("a", token.attributes)
+                table_index = table.parent.children.index(table)
+                table.parent.children.insert(table_index, new_a)
+                context.current_parent = new_a
+                return True
+
+        if tag_name in ["tr", "tbody", "thead", "tfoot"]:
+            # If we're not in a table context, create one
+            if not context.current_table:
+                self.debug("Creating implicit table")
+                new_table = Node("table")
+                context.current_parent.append_child(new_table)
+                context.current_table = new_table
+                context.state = ParserState.IN_TABLE
+            
+            tbody = self._ensure_tbody(context)
+            if tag_name == "tr":
+                new_tr = Node("tr", token.attributes)
+                tbody.append_child(new_tr)
+                context.current_parent = new_tr
             else:
-                # Not in a cell, foster parent non-table elements
-                if token.tag_name not in TABLE_ELEMENTS:
-                    if table.parent:
-                        new_node = Node(token.tag_name, token.attributes)
-                        table_index = table.parent.children.index(table)
-                        table.parent.children.insert(table_index, new_node)
-                        context.current_parent = new_node
-                    return True
+                new_section = Node(tag_name, token.attributes)
+                context.current_table.append_child(new_section)
+                context.current_parent = new_section
+            return True
+
+        if tag_name in ["td", "th"]:
+            self.debug("Handling table cell")
+            # If we're not in a table context, create one
+            if not context.current_table:
+                self.debug("Creating implicit table")
+                new_table = Node("table")
+                context.current_parent.append_child(new_table)
+                context.current_table = new_table
+                context.state = ParserState.IN_TABLE
+            
+            tr = self._ensure_tr(context)
+            new_cell = Node(tag_name, token.attributes)
+            tr.append_child(new_cell)
+            context.current_parent = new_cell
+            return True
+
+        # For other elements, check if we're inside a cell
+        current_cell = context.current_parent.find_ancestor(
+            lambda n: n.tag_name in ["td", "th"]
+        )
+        if current_cell:
+            self.debug(f"Inside cell {current_cell}, handling normally")
+            new_node = Node(tag_name, token.attributes)
+            context.current_parent.append_child(new_node)
+            context.current_parent = new_node
+            return True
 
         return False
+
+    def _ensure_tbody(self, context: "ParseContext") -> "Node":
+        """Ensure there's a tbody in the current table"""
+        table = context.current_table
+        if not table:
+            return None
+
+        # Look for existing tbody
+        for child in table.children:
+            if child.tag_name == "tbody":
+                return child
+
+        # Create new tbody if none exists
+        tbody = Node("tbody")
+        table.append_child(tbody)
+        return tbody
+
+    def _ensure_tr(self, context: "ParseContext") -> "Node":
+        """Ensure there's a tr in the current tbody"""
+        tbody = self._ensure_tbody(context)
+        if not tbody:
+            return None
+
+        # Look for existing tr
+        for child in tbody.children:
+            if child.tag_name == "tr":
+                return child
+
+        # Create new tr if none exists
+        tr = Node("tr")
+        tbody.append_child(tr)
+        return tr
 
     def should_handle_text(self, text: str, context: "ParseContext") -> bool:
         return context.state == ParserState.IN_TABLE
@@ -425,42 +476,116 @@ class TableTagHandler(TagHandler):
         if not self.should_handle_text(text, context):
             return False
 
+        self.debug(f"TableTagHandler: handling text '{text}' in {context}")
+
         # If we're inside a table cell, append text directly
         current_cell = context.current_parent.find_ancestor(
             lambda n: n.tag_name in ["td", "th"]
         )
         if current_cell:
+            self.debug(f"Inside table cell {current_cell}, appending text directly")
             text_node = Node("#text")
             text_node.text_content = text
             context.current_parent.append_child(text_node)
             return True
 
-        # If we're inside a foster-parented element, append text to it
+        # Foster parent text nodes
         table = context.current_table
         if not table or not table.parent:
+            self.debug("No table or table parent found")
             return False
 
-        # Check if current_parent is already foster-parented
-        if context.current_parent != table:
+        # Find the appropriate parent for foster parenting
+        foster_parent = table.parent
+        table_index = foster_parent.children.index(table)
+        self.debug(f"Foster parent: {foster_parent}, table index: {table_index}")
+
+        # Find the most recent <a> tag before the table with content
+        prev_a = None
+        for child in reversed(foster_parent.children[:table_index]):
+            if child.tag_name == "a" and child.children:
+                prev_a = child
+                self.debug(f"Found previous <a> tag with content: {prev_a} with attributes {prev_a.attributes}")
+                break
+
+        if prev_a:
+            self.debug("Creating new <a> tag with attributes from previous one")
+            # Create new <a> with same attributes
+            new_a = Node("a", prev_a.attributes.copy())
             text_node = Node("#text")
             text_node.text_content = text
-            context.current_parent.append_child(text_node)
+            new_a.append_child(text_node)
+            foster_parent.children.insert(table_index, new_a)
+            self.debug(f"Inserted new <a> tag before table: {new_a}")
             return True
 
-        # Otherwise foster parent the text
-        text_node = Node("#text")
-        text_node.text_content = text
+        # Check for other formatting context
+        formatting_elements = []
+        current = context.current_parent
+        while current and current != foster_parent:
+            if current.tag_name in FORMATTING_ELEMENTS:
+                formatting_elements.insert(0, current)
+            current = current.parent
+        self.debug(f"Found formatting elements: {formatting_elements}")
 
-        table_index = table.parent.children.index(table)
+        # If we have formatting elements, maintain their nesting
+        if formatting_elements:
+            # Find or create the outermost formatting element before the table
+            outer_format = None
+            for child in foster_parent.children[:table_index]:
+                if child.tag_name == formatting_elements[0].tag_name:
+                    outer_format = child
+                    self.debug(f"Found existing formatting element: {outer_format}")
+                    break
 
-        # Try to append to previous text node if possible
-        if (
-            table_index > 0
-            and table.parent.children[table_index - 1].tag_name == "#text"
-        ):
-            table.parent.children[table_index - 1].text_content += text
+            if not outer_format:
+                self.debug("Creating new formatting elements")
+                # Create new formatting elements with same nesting
+                current_parent = foster_parent
+                for fmt_elem in formatting_elements:
+                    new_fmt = Node(fmt_elem.tag_name, fmt_elem.attributes.copy())
+                    if current_parent == foster_parent:
+                        foster_parent.children.insert(table_index, new_fmt)
+                    else:
+                        current_parent.append_child(new_fmt)
+                    current_parent = new_fmt
+                    self.debug(f"Created new formatting element: {new_fmt}")
+                
+                # Try to merge with previous text node
+                prev_text = None
+                if table_index > 0 and foster_parent.children[table_index-1].tag_name == "#text":
+                    prev_text = foster_parent.children[table_index-1]
+                    prev_text.text_content += text
+                    self.debug(f"Merged with previous text node: {prev_text}")
+                else:
+                    # Add new text node to the innermost formatting element
+                    text_node = Node("#text")
+                    text_node.text_content = text
+                    current_parent.append_child(text_node)
+                    self.debug(f"Created new text node in formatting: {text_node}")
+            else:
+                # Try to merge with previous text node in the formatting element
+                if outer_format.children and outer_format.children[-1].tag_name == "#text":
+                    outer_format.children[-1].text_content += text
+                    self.debug(f"Merged with existing text in formatting: {outer_format.children[-1]}")
+                else:
+                    # Add new text node to existing formatting element
+                    text_node = Node("#text")
+                    text_node.text_content = text
+                    outer_format.append_child(text_node)
+                    self.debug(f"Added new text node to existing formatting: {text_node}")
         else:
-            table.parent.children.insert(table_index, text_node)
+            self.debug("No formatting context found")
+            # Try to merge with previous text node
+            if table_index > 0 and foster_parent.children[table_index-1].tag_name == "#text":
+                foster_parent.children[table_index-1].text_content += text
+                self.debug(f"Merged with previous text node: {foster_parent.children[table_index-1]}")
+            else:
+                # No formatting context, foster parent directly
+                text_node = Node("#text")
+                text_node.text_content = text
+                foster_parent.children.insert(table_index, text_node)
+                self.debug(f"Created new text node directly: {text_node}")
 
         return True
 
@@ -470,23 +595,43 @@ class TableTagHandler(TagHandler):
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         tag_name = token.tag_name
+        self.debug(f"TableTagHandler: handling end tag {tag_name}")
 
         if tag_name == "table":
             if context.current_table:
-                context.current_parent = context.current_table.parent
+                # Find the most recent <a> tag with content before the table
+                prev_a = None
+                table_parent = context.current_table.parent
+                if table_parent:
+                    table_index = table_parent.children.index(context.current_table)
+                    for child in reversed(table_parent.children[:table_index]):
+                        if child.tag_name == "a" and child.children:
+                            prev_a = child
+                            self.debug(f"Found previous <a> tag for after table: {prev_a}")
+                            break
+
+                if prev_a:
+                    self.debug("Creating new <a> for content after table")
+                    new_a = Node("a", prev_a.attributes.copy())
+                    # Append to body instead of table parent
+                    self.parser.body_node.append_child(new_a)
+                    context.current_parent = new_a
+                else:
+                    context.current_parent = self.parser.body_node
+                
                 context.current_table = None
                 context.state = ParserState.IN_BODY
                 return True
 
-        elif tag_name == "template":
-            # Find nearest template ancestor
-            template = context.current_parent.find_ancestor("template")
-            if template and template.parent:
-                context.current_parent = template.parent
+        elif tag_name == "a":
+            # Find the matching <a> tag
+            a_element = context.current_parent.find_ancestor("a")
+            if a_element:
+                context.current_parent = a_element.parent or context.current_table or self.parser.body_node
                 return True
 
         elif tag_name in TABLE_ELEMENTS:
-            if tag_name == "tr":
+            if tag_name in ["tbody", "thead", "tfoot"]:
                 tbody = context.current_parent.find_ancestor("tbody")
                 if tbody:
                     context.current_parent = tbody
@@ -496,38 +641,13 @@ class TableTagHandler(TagHandler):
                 if tr:
                     context.current_parent = tr
                     return True
-
-        else:
-            # For non-table elements (like formatting elements)
-            if context.current_parent:
-                # Find the element to close
-                temp_parent = context.current_parent.find_ancestor(tag_name)
-                if temp_parent:
-                    # Move to parent's context
-                    context.current_parent = temp_parent.parent or context.current_table or self.parser.body_node
+            elif tag_name == "tr":
+                tbody = context.current_parent.find_ancestor("tbody")
+                if tbody:
+                    context.current_parent = tbody
                     return True
 
         return False
-
-    def _ensure_tbody(self, table: Node) -> Node:
-        """Ensure table has a tbody, create if needed"""
-        for child in table.children:
-            if child.tag_name == "tbody":
-                return child
-
-        tbody = Node("tbody", {})
-        table.append_child(tbody)
-        return tbody
-
-    def _ensure_tr(self, tbody: Node) -> Node:
-        """Ensure tbody has a tr, create if needed"""
-        for child in tbody.children:
-            if child.tag_name == "tr":
-                return child
-
-        tr = Node("tr", {})
-        tbody.append_child(tr)
-        return tr
 
 
 class FormTagHandler(TagHandler):
