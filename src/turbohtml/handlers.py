@@ -191,12 +191,19 @@ class FormattingElementHandler(TagHandler):
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         current = context.current_parent.find_ancestor(token.tag_name)
         if current:
-            # When ending a formatting element in a table context, move to the table
-            if context.state in (ParserState.IN_TABLE, ParserState.IN_TABLE_BODY, ParserState.IN_ROW, ParserState.IN_CELL):
-                if context.current_table:
-                    context.current_parent = context.current_table
+            # If we're inside a block element, stay there
+            block_ancestor = context.current_parent.find_ancestor(
+                lambda n: n.tag_name in BLOCK_ELEMENTS
+            )
+            if block_ancestor:
+                context.current_parent = block_ancestor
             else:
-                context.current_parent = current.parent or self.parser.body_node
+                # When ending a formatting element in a table context, move to the table
+                if context.state in (ParserState.IN_TABLE, ParserState.IN_TABLE_BODY, ParserState.IN_ROW, ParserState.IN_CELL):
+                    if context.current_table:
+                        context.current_parent = context.current_table
+                else:
+                    context.current_parent = current.parent or self.parser.body_node
             return True
         return False
 
