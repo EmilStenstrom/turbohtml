@@ -13,6 +13,7 @@ from turbohtml.constants import (
     SVG_CASE_SENSITIVE_ELEMENTS,
     TABLE_ELEMENTS,
     VOID_ELEMENTS,
+    BOUNDARY_ELEMENTS,
 )
 from turbohtml.context import ParseContext, ParserState
 from turbohtml.node import Node
@@ -162,9 +163,24 @@ class FormattingElementHandler(TagHandler):
         return tag_name in FORMATTING_ELEMENTS
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", end_tag_idx: int) -> bool:
+        tag_name = token.tag_name
+        self.debug(f"FormattingElementHandler: handling <{tag_name}>, context={context}")
+
+        # Check if we're inside a boundary element
+        boundary = context.current_parent.find_ancestor(
+            lambda n: n.tag_name in BOUNDARY_ELEMENTS and n.tag_name != "table"  # Don't treat table as boundary
+        )
+        if boundary:
+            self.debug(f"Inside boundary element {boundary}, keeping new formatting element inside")
+            new_element = Node(token.tag_name, token.attributes)
+            context.current_parent.append_child(new_element)
+            context.current_parent = new_element
+            return True
+
         # First check for existing instance of same formatting element
         current = context.current_parent.find_ancestor(token.tag_name)
         if current:
+            self.debug(f"Found existing formatting element: {current}, closing it first")
             # Close current formatting element first
             context.current_parent = current.parent or self.parser.body_node
 
@@ -172,6 +188,7 @@ class FormattingElementHandler(TagHandler):
         if context.state in (ParserState.IN_TABLE, ParserState.IN_TABLE_BODY, ParserState.IN_ROW, ParserState.IN_CELL):
             table = context.current_table
             if table and table.parent:
+                self.debug(f"Handling table boundary crossing for <{tag_name}>")
                 # Foster parent the new formatting element
                 new_element = Node(token.tag_name, token.attributes)
                 table_index = table.parent.children.index(table)
@@ -180,6 +197,7 @@ class FormattingElementHandler(TagHandler):
                 return True
 
         # Normal case - create new formatting element
+        self.debug(f"Creating new formatting element: {tag_name} under {context.current_parent}")
         new_element = Node(token.tag_name, token.attributes)
         context.current_parent.append_child(new_element)
         context.current_parent = new_element
@@ -189,22 +207,29 @@ class FormattingElementHandler(TagHandler):
         return tag_name in FORMATTING_ELEMENTS
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        tag_name = token.tag_name
+        self.debug(f"FormattingElementHandler: handling end tag <{tag_name}>, context={context}")
         current = context.current_parent.find_ancestor(token.tag_name)
         if current:
+            self.debug(f"Found matching formatting element: {current}")
             # If we're inside a block element, stay there
             block_ancestor = context.current_parent.find_ancestor(
                 lambda n: n.tag_name in BLOCK_ELEMENTS
             )
             if block_ancestor:
+                self.debug(f"Staying inside block element: {block_ancestor}")
                 context.current_parent = block_ancestor
             else:
                 # When ending a formatting element in a table context, move to the table
                 if context.state in (ParserState.IN_TABLE, ParserState.IN_TABLE_BODY, ParserState.IN_ROW, ParserState.IN_CELL):
                     if context.current_table:
+                        self.debug(f"Moving to current table: {context.current_table}")
                         context.current_parent = context.current_table
                 else:
+                    self.debug(f"Moving to parent of formatting element: {current.parent}")
                     context.current_parent = current.parent or self.parser.body_node
             return True
+        self.debug(f"No matching formatting element found for end tag: {tag_name}")
         return False
 
 
@@ -1269,4 +1294,52 @@ class ForeignTagHandler(TagHandler):
             text_node.text_content = text
             context.current_parent.append_child(text_node)
             return True
+        return False
+
+
+class BoundaryElementHandler(TagHandler):
+    """Handles elements that create new formatting contexts like marquee, button, etc."""
+    
+    def __init__(self, parser: "ParserInterface"):
+        super().__init__(parser)
+        self.boundary_stack = []  # Track active boundary elements
+
+    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name in BOUNDARY_ELEMENTS
+
+    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name in BOUNDARY_ELEMENTS
+
+    def handle_start(
+        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
+    ) -> bool:
+        self.debug(f"BoundaryElementHandler: handling <{token.tag_name}>, context={context}")
+        new_node = Node(token.tag_name, token.attributes)
+        context.current_parent.append_child(new_node)
+        context.current_parent = new_node
+        self.boundary_stack.append(new_node)
+        self.debug(f"Added boundary element to stack: {new_node}")
+        return True
+
+    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        tag_name = token.tag_name
+        self.debug(f"BoundaryElementHandler: handling end tag {tag_name}")
+        
+        if tag_name in BOUNDARY_ELEMENTS and self.boundary_stack:
+            boundary = self.boundary_stack[-1]
+            self.debug(f"Found boundary element from stack: {boundary}")
+            
+            # Move back to boundary's parent
+            context.current_parent = boundary.parent
+            self.boundary_stack.pop()
+            
+            # If we're in a formatting context, restore it
+            if context.current_parent.tag_name in FORMATTING_ELEMENTS:
+                self.debug(f"Restoring formatting context: {context.current_parent}")
+                # Keep the formatting context active
+                return True
+                
+            self.debug(f"Restored context to: {context.current_parent}")
+            return True
+            
         return False
