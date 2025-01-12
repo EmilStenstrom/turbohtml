@@ -378,10 +378,6 @@ class TableTagHandler(TagHandler):
             return True
 
         elif tag_name == "tr":
-            # If we're in a tr already, move up to its parent
-            if context.current_parent.tag_name == "tr":
-                context.current_parent = context.current_parent.parent or context.current_table
-
             # Ensure we have a current table
             if not context.current_table:
                 context.current_table = context.current_parent.find_ancestor("table")
@@ -398,7 +394,7 @@ class TableTagHandler(TagHandler):
                 tbody = Node("tbody")
                 context.current_table.append_child(tbody)
 
-            # Add tr to tbody
+            # Always create new tr at tbody level
             new_tr = Node(tag_name, token.attributes)
             tbody.append_child(new_tr)
             context.current_parent = new_tr
@@ -411,29 +407,25 @@ class TableTagHandler(TagHandler):
                 if not context.current_table:
                     return False
 
-            # Create tbody if needed
-            tbody = None
-            for child in context.current_table.children:
-                if child.tag_name == "tbody":
-                    tbody = child
-                    break
-            if not tbody:
-                tbody = Node("tbody")
-                context.current_table.append_child(tbody)
+            # Get current tr or create new one
+            tr = context.current_parent
+            if tr.tag_name != "tr":
+                tr = tr.find_ancestor("tr")
+            
+            if not tr or tr.tag_name != "tr":
+                # Create tbody if needed
+                tbody = None
+                for child in context.current_table.children:
+                    if child.tag_name == "tbody":
+                        tbody = child
+                        break
+                if not tbody:
+                    tbody = Node("tbody")
+                    context.current_table.append_child(tbody)
 
-            # Create tr if needed
-            tr = None
-            for child in tbody.children:
-                if child.tag_name == "tr":
-                    tr = child
-                    break
-            if not tr:
+                # Create new tr
                 tr = Node("tr")
                 tbody.append_child(tr)
-
-            # If we're in a cell already, move up to tr
-            if context.current_parent.tag_name in ("td", "th"):
-                context.current_parent = tr
 
             self.debug("Handling table cell")
             new_cell = Node(tag_name, token.attributes)
