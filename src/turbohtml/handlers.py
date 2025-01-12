@@ -924,9 +924,22 @@ class RawtextTagHandler(TagHandler):
                     text_node.text_content = " "
                     self.parser.head_node.append_child(text_node)
 
-            # Switch to body state
-            context.state = ParserState.IN_BODY
-            context.current_parent = self.parser.body_node
+                # For style, stay in head state to allow more head elements
+                if token.tag_name == "style":
+                    context.state = ParserState.IN_HEAD
+                    context.current_parent = self.parser.head_node
+                # For script, switch to body state for text handling
+                elif token.tag_name == "script":
+                    context.state = ParserState.IN_BODY
+                    context.current_parent = self.parser.body_node
+                else:
+                    # Stay in head state for other head elements
+                    context.state = ParserState.IN_HEAD
+                    context.current_parent = self.parser.head_node
+            else:
+                # Switch to body state
+                context.state = ParserState.IN_BODY
+                context.current_parent = self.parser.body_node
             return True
         return False
 
@@ -1019,19 +1032,37 @@ class VoidElementHandler(TagHandler):
     def handle_start(
         self, token: "HTMLToken", context: "ParseContext", end_tag_idx: int
     ) -> bool:
+        tag_name = token.tag_name
+        self.debug(f"VoidElementHandler: handling {tag_name}, context={context}")
+        self.debug(f"Current parent: {context.current_parent}")
+
+        # HEAD_ELEMENTS should always be in head unless explicitly in body
+        if tag_name in HEAD_ELEMENTS and not tag_name in RAWTEXT_ELEMENTS:
+            self.debug(f"Found HEAD_ELEMENT: {tag_name}")
+            self.debug(f"Current state: {context.state}")
+            if context.state != ParserState.IN_BODY:
+                self.debug(f"Moving {tag_name} to head")
+                new_node = Node(tag_name, token.attributes)
+                self.parser.head_node.append_child(new_node)
+                context.current_parent = self.parser.head_node
+                return True
+            else:
+                self.debug(f"Keeping {tag_name} in body due to IN_BODY state")
+
         # If we're in a paragraph and this is a block element, close the paragraph first
-        if context.current_parent.tag_name == "p" and token.tag_name in BLOCK_ELEMENTS:
-            # Move up to paragraph's parent
+        if context.current_parent.tag_name == "p" and tag_name in BLOCK_ELEMENTS:
+            self.debug(f"Closing paragraph for block element {tag_name}")
             context.current_parent = (
                 context.current_parent.parent or self.parser.body_node
             )
 
         # Create the void element at the current level
-        new_node = Node(token.tag_name, token.attributes)
+        self.debug(f"Creating void element {tag_name} at current level")
+        new_node = Node(tag_name, token.attributes)
         context.current_parent.append_child(new_node)
 
         # If this is an hr, create a new paragraph after it
-        if token.tag_name == "hr":
+        if tag_name == "hr":
             self.debug("Creating new paragraph after hr")
             new_p = Node("p", {})
             context.current_parent.append_child(new_p)
