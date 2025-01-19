@@ -71,6 +71,11 @@ class TextHandler(TagHandler):
         self.debug(f"TextHandler: handling text '{text}' in state {context.state}")
         self.debug(f"TextHandler: current parent is {context.current_parent}")
 
+        # In RAWTEXT mode, always append to current parent
+        if context.state == ParserState.RAWTEXT:
+            self._append_text(text, context)
+            return True
+
         # In head, handle whitespace specially
         if context.state == ParserState.IN_HEAD:
             # Find the first non-whitespace character
@@ -1328,17 +1333,23 @@ class HeadElementHandler(TagHandler):
         tag_name = token.tag_name
         self.debug(f"HeadElementHandler: handling {tag_name} in {context.state}")
         
-        # Create node and move to head
+        # Create node and append to appropriate parent
         new_node = Node(tag_name, token.attributes)
-        self.parser.head_node.append_child(new_node)
-        self.debug(f"Created and appended {tag_name} to head")
+        if context.state == ParserState.IN_BODY:
+            # If we're in body, append to body
+            self.parser.body_node.append_child(new_node)
+        else:
+            # Otherwise append to head
+            self.parser.head_node.append_child(new_node)
+            
+        self.debug(f"Created and appended {tag_name} to {context.state}")
         
         # Special handling for rawtext elements to capture their content
         if tag_name in RAWTEXT_ELEMENTS:
             self.debug(f"Starting RAWTEXT mode for {tag_name}")
             context.state = ParserState.RAWTEXT
             context.current_parent = new_node
-            self.parser.tokenizer.start_rawtext(tag_name)
+            return True
             
         return True
 
@@ -1392,14 +1403,20 @@ class HeadElementHandler(TagHandler):
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         self.debug(f"HeadElementHandler: handling end tag {token.tag_name}")
-        if token.tag_name == "script":
-            self.debug("Script ended, switching to IN_HEAD state")
-            context.state = ParserState.IN_HEAD
-            context.current_parent = self.parser.head_node
+        
+        # For any head element, restore the previous state
+        if context.state == ParserState.RAWTEXT:
+            if token.tag_name == "script":
+                self.debug("Script ended, restoring state")
+                context.state = ParserState.IN_HEAD  # First go to IN_HEAD to handle whitespace
+                context.current_parent = self.parser.head_node
+            else:
+                # For non-script tags in RAWTEXT, go to IN_HEAD first
+                self.debug(f"Non-script tag {token.tag_name} ended in RAWTEXT")
+                context.state = ParserState.IN_HEAD  # First go to IN_HEAD to handle whitespace
+                context.current_parent = self.parser.head_node
+            
             self.debug(f"New context: state={context.state}, parent={context.current_parent}")
-        else:
-            self.debug(f"Non-script tag {token.tag_name} ended, switching to IN_HEAD state")
-            context.state = ParserState.IN_HEAD
-            context.current_parent = self.parser.head_node
-            self.debug(f"New context: state={context.state}, parent={context.current_parent}")
+            return True
+            
         return True
