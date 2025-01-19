@@ -365,158 +365,133 @@ class TableTagHandler(TagHandler):
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         tag_name = token.tag_name
         self.debug(f"Handling {tag_name} in table context")
-        self.debug(f"Current parent: {context.current_parent}")
-        self.debug(f"Current table: {context.current_table}")
         
+        # Handle table element separately since it creates the context
         if tag_name == "table":
-            # Create new table and set as current
-            new_table = Node(tag_name, token.attributes)
-            context.current_parent.append_child(new_table)
-            context.current_table = new_table
-            context.current_parent = new_table
-            context.state = ParserState.IN_TABLE
-            return True
+            return self._handle_table(token, context)
             
-        # For table elements, we need a current table
+        # For other table elements, we need a current table
         if not context.current_table:
-            # Create implicit table if needed
             new_table = Node("table")
             context.current_parent.append_child(new_table)
             context.current_table = new_table
             context.current_parent = new_table
             context.state = ParserState.IN_TABLE
             
-        if tag_name == "colgroup":
-            # If we're in a colgroup, move back to table level
-            if context.current_parent.tag_name == "colgroup":
-                context.current_parent = context.current_table
-            
-            # Create new colgroup at table level
-            new_colgroup = Node(tag_name, token.attributes)
-            context.current_table.append_child(new_colgroup)
-            context.current_parent = new_colgroup
-            return True
-            
-        elif tag_name == "col":
-            # If we're not in a colgroup, create one
-            if context.current_parent.tag_name != "colgroup":
-                new_colgroup = Node("colgroup")
-                context.current_table.append_child(new_colgroup)
-                context.current_parent = new_colgroup
-            
-            # Add col to current colgroup
-            new_col = Node(tag_name, token.attributes)
-            context.current_parent.append_child(new_col)
-            return True
-            
-        elif tag_name in ("thead", "tbody", "tfoot"):
-            # Close any open colgroup
-            if context.current_parent.tag_name == "colgroup":
-                context.current_parent = context.current_table
-            
-            # Create new section at table level
-            new_section = Node(tag_name, token.attributes)
-            context.current_table.append_child(new_section)
-            context.current_parent = new_section
-            return True
-            
-        elif tag_name == "tr":
-            # If we're in a section (thead/tbody/tfoot), add tr to it
-            if context.current_parent.tag_name in ("thead", "tbody", "tfoot"):
-                new_tr = Node(tag_name, token.attributes)
-                context.current_parent.append_child(new_tr)
-                context.current_parent = new_tr
-                return True
-                
-            # If we're not in a section, create implicit tbody
-            if context.current_parent.tag_name == "colgroup":
-                context.current_parent = context.current_table
-                
-            tbody = None
-            for child in context.current_table.children:
-                if child.tag_name == "tbody":
-                    tbody = child
-                    break
-            if not tbody:
-                tbody = Node("tbody")
-                context.current_table.append_child(tbody)
-            
-            new_tr = Node(tag_name, token.attributes)
-            tbody.append_child(new_tr)
+        # Handle each element type
+        handlers = {
+            "colgroup": self._handle_colgroup,
+            "col": self._handle_col,
+            "tbody": self._handle_tbody,
+            "thead": self._handle_thead,
+            "tfoot": self._handle_tfoot,
+            "tr": self._handle_tr,
+            "td": self._handle_cell,
+            "th": self._handle_cell
+        }
+        
+        return handlers[tag_name](token, context)
+
+    def _handle_table(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        """Handle table element"""
+        new_table = Node(token.tag_name, token.attributes)
+        context.current_parent.append_child(new_table)
+        context.current_table = new_table
+        context.current_parent = new_table
+        context.state = ParserState.IN_TABLE
+        return True
+
+    def _handle_colgroup(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        """Handle colgroup element"""
+        context.current_parent = context.current_table
+        new_colgroup = Node(token.tag_name, token.attributes)
+        context.current_table.append_child(new_colgroup)
+        context.current_parent = new_colgroup
+        return True
+
+    def _handle_col(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        """Handle col element"""
+        context.current_parent = context.current_table
+        new_colgroup = Node("colgroup")
+        context.current_table.append_child(new_colgroup)
+        new_col = Node(token.tag_name, token.attributes)
+        new_colgroup.append_child(new_col)
+        context.current_parent = new_colgroup
+        return True
+
+    def _handle_tbody(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        """Handle tbody element"""
+        if context.current_parent.tag_name == "colgroup":
+            context.current_parent = context.current_table
+        new_tbody = Node(token.tag_name, token.attributes)
+        context.current_table.append_child(new_tbody)
+        context.current_parent = new_tbody
+        return True
+
+    def _handle_thead(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        """Handle thead element"""
+        return self._handle_tbody(token, context)  # Same logic as tbody
+
+    def _handle_tfoot(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        """Handle tfoot element"""
+        return self._handle_tbody(token, context)  # Same logic as tbody
+
+    def _handle_tr(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        """Handle tr element"""
+        if context.current_parent.tag_name in ("tbody", "thead", "tfoot"):
+            new_tr = Node(token.tag_name, token.attributes)
+            context.current_parent.append_child(new_tr)
             context.current_parent = new_tr
             return True
-
-        elif tag_name in ("td", "th"):
-            # Ensure we have a current table
-            if not context.current_table:
-                context.current_table = context.current_parent.find_ancestor("table")
-                if not context.current_table:
-                    return False
-
-            # Get current tr or create new one
-            tr = context.current_parent
-            if tr.tag_name != "tr":
-                tr = tr.find_ancestor("tr")
             
-            if not tr or tr.tag_name != "tr":
-                # Create tbody if needed
-                tbody = None
-                for child in context.current_table.children:
-                    if child.tag_name == "tbody":
-                        tbody = child
-                        break
-                if not tbody:
-                    tbody = Node("tbody")
-                    context.current_table.append_child(tbody)
+        tbody = self._find_or_create_tbody(context)
+        new_tr = Node(token.tag_name, token.attributes)
+        tbody.append_child(new_tr)
+        context.current_parent = new_tr
+        return True
 
-                # Create new tr
-                tr = Node("tr")
-                tbody.append_child(tr)
+    def _handle_cell(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        """Handle td/th elements"""
+        tr = self._find_or_create_tr(context)
+        new_cell = Node(token.tag_name, token.attributes)
+        tr.append_child(new_cell)
+        context.current_parent = new_cell
+        return True
 
-            self.debug("Handling table cell")
-            new_cell = Node(tag_name, token.attributes)
-            tr.append_child(new_cell)
-            context.current_parent = new_cell
-            return True
-
-        # Handle other elements inside table cells
-        elif context.current_parent.tag_name in ("td", "th"):
-            self.debug(f"Inside cell {context.current_parent}, handling normally")
-            new_node = Node(tag_name, token.attributes)
-            context.current_parent.append_child(new_node)
-            context.current_parent = new_node
-            return True
-
-        return False
-
-    def _ensure_tbody(self, context: "ParseContext") -> "Node":
-        """Ensure there's a tbody in the current table"""
-        table = context.current_table
-        if not table:
-            return None
-
-        # Look for existing tbody
-        for child in table.children:
+    def _find_or_create_tbody(self, context: "ParseContext") -> "Node":
+        """Find existing tbody or create new one"""
+        # First check current context
+        current = context.current_parent
+        while current and current != context.current_table:
+            if current.tag_name == "tbody":
+                return current
+            current = current.parent
+            
+        # Look for existing tbody in table
+        for child in context.current_table.children:
             if child.tag_name == "tbody":
                 return child
-
-        # Create new tbody if none exists
+                
+        # Create new tbody
         tbody = Node("tbody")
-        table.append_child(tbody)
+        context.current_table.append_child(tbody)
         return tbody
 
-    def _ensure_tr(self, context: "ParseContext") -> "Node":
-        """Ensure there's a tr in the current tbody"""
-        tbody = self._ensure_tbody(context)
-        if not tbody:
-            return None
-
-        # Look for existing tr
-        for child in tbody.children:
-            if child.tag_name == "tr":
-                return child
-
-        # Create new tr if none exists
+    def _find_or_create_tr(self, context: "ParseContext") -> "Node":
+        """Find existing tr or create new one in tbody"""
+        # First check if we're in a tr
+        current = context.current_parent
+        while current and current != context.current_table:
+            if current.tag_name == "tr":
+                return current
+            current = current.parent
+            
+        # Get tbody and look for last tr
+        tbody = self._find_or_create_tbody(context)
+        if tbody.children and tbody.children[-1].tag_name == "tr":
+            return tbody.children[-1]
+            
+        # Create new tr
         tr = Node("tr")
         tbody.append_child(tr)
         return tr
