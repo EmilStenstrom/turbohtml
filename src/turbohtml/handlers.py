@@ -833,36 +833,51 @@ class ListTagHandler(TagHandler):
 
 
 class HeadingTagHandler(TagHandler):
-    """Handles heading elements (h1-h6)"""
-
+    """Handles h1-h6 heading elements"""
+    
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
         return tag_name in HEADING_ELEMENTS
-
-    def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", end_tag_idx: int
-    ) -> bool:
-        # Check if we're in a heading (includes current node and ancestors)
-        current = context.current_parent.find_ancestor(
-            lambda node: node.tag_name in HEADING_ELEMENTS
-        )
-        if current:
-            self.debug(f"Found existing heading, moving to its parent")
-            context.current_parent = current.parent or self.parser.body_node
-
-        # Create and append the new heading
-        new_node = Node(token.tag_name, token.attributes)
+        
+    def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
+        tag_name = token.tag_name
+        
+        # Check if we're inside a table cell
+        in_cell = context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th"))
+        
+        # If we're in a table cell, handle normally
+        if in_cell:
+            new_node = Node(tag_name, token.attributes)
+            context.current_parent.append_child(new_node)
+            context.current_parent = new_node
+            return True
+            
+        # Outside table cells, close any existing heading
+        current = context.current_parent
+        while current and current != self.parser.root:
+            if current.tag_name in HEADING_ELEMENTS:
+                context.current_parent = current.parent
+                break
+            current = current.parent
+            
+        new_node = Node(tag_name, token.attributes)
         context.current_parent.append_child(new_node)
         context.current_parent = new_node
         return True
-
+        
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
         return tag_name in HEADING_ELEMENTS
-
+        
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
-        current = context.current_parent.find_ancestor(token.tag_name)
-        if current:
-            context.current_parent = current.parent or self.parser.body_node
-            return True
+        tag_name = token.tag_name
+        
+        # Find matching heading and move to its parent
+        current = context.current_parent
+        while current and current != self.parser.root:
+            if current.tag_name == tag_name:
+                context.current_parent = current.parent
+                return True
+            current = current.parent
+            
         return False
 
 
