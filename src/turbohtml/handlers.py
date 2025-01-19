@@ -312,11 +312,15 @@ class ParagraphTagHandler(TagHandler):
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
         return tag_name == "p"
 
-    def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
-        self.debug(f"ParagraphTagHandler: handling {token}, context={context}")
-
+    def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
+        self.debug(f"ParagraphTagHandler: handling <StartTag: p>, context={context}")
+        
+        # If we're in head, implicitly close it and switch to body
+        if context.state in (ParserState.INITIAL, ParserState.IN_HEAD):
+            self.debug("Implicitly closing head and switching to body")
+            context.current_parent = self.parser.body_node
+            context.state = ParserState.IN_BODY
+        
         # Close any open paragraphs
         current_p = context.current_parent.find_ancestor("p")
         if current_p:
