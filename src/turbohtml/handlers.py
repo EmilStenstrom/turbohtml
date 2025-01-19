@@ -417,37 +417,104 @@ class TableTagHandler(TagHandler):
         return True
 
     def _handle_colgroup(self, token: "HTMLToken", context: "ParseContext") -> bool:
-        """Handle colgroup element"""
-        # Always create colgroup at table level
-        context.current_parent = context.current_table
+        """Handle colgroup element according to spec"""
+        self.debug(f"_handle_colgroup: token={token}, current_parent={context.current_parent}")
+        
+        # Rule 1: If we're not in a table context, ignore
+        if context.state != ParserState.IN_TABLE:
+            self.debug("Ignoring colgroup outside table context")
+            return True
+            
+        # Rule 2: Always create new colgroup at table level
+        self.debug("Creating new colgroup")
         new_colgroup = Node(token.tag_name, token.attributes)
         context.current_table.append_child(new_colgroup)
-        context.current_parent = new_colgroup
-        return True
-
-    def _handle_col(self, token: "HTMLToken", context: "ParseContext") -> bool:
-        """Handle col element"""
-        # If we're already in a colgroup, use it
+        
+        # Rule 3: Check context and create new tbody if needed
         current = context.current_parent
         while current and current != context.current_table:
-            if current.tag_name == "colgroup":
-                new_col = Node(token.tag_name, token.attributes)
-                current.append_child(new_col)
+            self.debug(f"Checking ancestor: {current}")
+            if current.tag_name == "td":
+                self.debug("Found td ancestor, staying in current context")
+                return True
+            if current.tag_name in ("tbody", "tr", "colgroup"):
+                self.debug("Found tbody/tr/colgroup ancestor, creating new tbody")
+                # Create new empty tbody after the colgroup
+                new_tbody = Node("tbody")
+                context.current_table.append_child(new_tbody)
+                context.current_parent = new_tbody
                 return True
             current = current.parent
             
-        # If no colgroup found, create one
-        new_colgroup = Node("colgroup")
-        context.current_table.append_child(new_colgroup)
+        # Rule 4: Otherwise stay at table level
+        self.debug("No tbody/tr/td ancestors, staying at table level")
+        context.current_parent = context.current_table
+        return True
+
+    def _handle_col(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        """Handle col element according to spec"""
+        self.debug(f"_handle_col: token={token}, current_parent={context.current_parent}")
+        
+        # Rule 1: If we're not in a table context, ignore
+        if context.state != ParserState.IN_TABLE:
+            self.debug("Ignoring col outside table context")
+            return True
+            
+        # Rule 2: Check if we need a new colgroup
+        need_new_colgroup = True
+        last_colgroup = None
+        
+        # Look for last colgroup that's still valid
+        for child in reversed(context.current_table.children):
+            if child.tag_name == "colgroup":
+                # Found a colgroup, but check if there's tbody/tr/td after it
+                idx = context.current_table.children.index(child)
+                has_content_after = any(c.tag_name in ("tbody", "tr", "td") 
+                                      for c in context.current_table.children[idx+1:])
+                self.debug(f"Found colgroup at index {idx}, has_content_after={has_content_after}")
+                if not has_content_after:
+                    last_colgroup = child
+                    need_new_colgroup = False
+                break
+                
+        # Rule 3: Create or reuse colgroup
+        if need_new_colgroup:
+            self.debug("Creating new colgroup")
+            last_colgroup = Node("colgroup")
+            context.current_table.append_child(last_colgroup)
+        else:
+            self.debug(f"Reusing existing colgroup: {last_colgroup}")
+            
+        # Rule 4: Add col to colgroup
         new_col = Node(token.tag_name, token.attributes)
-        new_colgroup.append_child(new_col)
-        context.current_parent = new_colgroup
+        last_colgroup.append_child(new_col)
+        self.debug(f"Added col to colgroup: {new_col}")
+        
+        # Rule 5: Check context and create new tbody if needed
+        current = context.current_parent
+        while current and current != context.current_table:
+            self.debug(f"Checking ancestor: {current}")
+            if current.tag_name == "td":
+                self.debug("Found td ancestor, staying in current context")
+                return True
+            if current.tag_name in ("tbody", "tr"):
+                self.debug("Found tbody/tr ancestor, creating new tbody")
+                # Create new empty tbody after the colgroup
+                new_tbody = Node("tbody")
+                context.current_table.append_child(new_tbody)
+                context.current_parent = new_tbody
+                return True
+            current = current.parent
+            
+        # Rule 6: Otherwise stay at table level
+        self.debug("No tbody/tr/td ancestors, staying at table level")
+        context.current_parent = context.current_table
         return True
 
     def _handle_tbody(self, token: "HTMLToken", context: "ParseContext") -> bool:
         """Handle tbody element"""
-        if context.current_parent.tag_name == "colgroup":
-            context.current_parent = context.current_table
+        # Always create new tbody at table level
+        context.current_parent = context.current_table
         new_tbody = Node(token.tag_name, token.attributes)
         context.current_table.append_child(new_tbody)
         context.current_parent = new_tbody
