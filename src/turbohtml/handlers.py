@@ -1421,3 +1421,81 @@ class HtmlTagHandler(TagHandler):
         context.state = ParserState.IN_BODY
         context.current_parent = self.parser.body_node
         return True
+
+
+class FramesetTagHandler(TagHandler):
+    """Handles frameset, frame, and noframes elements"""
+    
+    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name in ("frameset", "frame", "noframes")
+        
+    def handle_start(
+        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
+    ) -> bool:
+        tag_name = token.tag_name
+        self.debug(f"Handling {tag_name} tag")
+        
+        if tag_name == "frameset":
+            # If we're in initial state, replace body with frameset at HTML level
+            if context.state == ParserState.INITIAL:
+                context.state = ParserState.IN_FRAMESET
+                new_node = Node(tag_name, token.attributes)
+                
+                # Find body's index in html node's children
+                html_node = self.parser.root.children[0]  # html is always first child
+                for i, child in enumerate(html_node.children):
+                    if child == self.parser.body_node:
+                        # Replace body with frameset
+                        html_node.children[i] = new_node
+                        break
+                
+                context.current_parent = new_node
+                return True
+            
+            # Otherwise just create nested frameset
+            if context.current_parent.tag_name == "frameset":
+                new_node = Node(tag_name, token.attributes)
+                context.current_parent.append_child(new_node)
+                context.current_parent = new_node
+                return True
+                
+        elif tag_name == "frame":
+            # Frame can only appear inside frameset
+            if context.current_parent.tag_name == "frameset":
+                new_node = Node(tag_name, token.attributes)
+                context.current_parent.append_child(new_node)
+                return True
+                
+        elif tag_name == "noframes":
+            # noframes can appear inside frameset
+            new_node = Node(tag_name, token.attributes)
+            context.current_parent.append_child(new_node)
+            context.current_parent = new_node
+            context.state = ParserState.RAWTEXT
+            return True
+            
+        return False
+
+    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name in ("frameset", "noframes")
+        
+    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        tag_name = token.tag_name
+        
+        if tag_name == "frameset":
+            # Find matching frameset and move to its parent
+            current = context.current_parent
+            while current and current != self.parser.root:
+                if current.tag_name == "frameset":
+                    context.current_parent = current.parent or self.parser.root
+                    return True
+                current = current.parent
+                
+        elif tag_name == "noframes":
+            # Move back to frameset mode
+            if context.current_parent.tag_name == "noframes":
+                context.state = ParserState.IN_FRAMESET
+                context.current_parent = context.current_parent.parent
+                return True
+                
+        return False

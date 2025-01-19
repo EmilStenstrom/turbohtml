@@ -16,6 +16,7 @@ from turbohtml.handlers import (
     HeadElementHandler,
     ImageTagHandler,
     HtmlTagHandler,
+    FramesetTagHandler,
 )
 from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
@@ -48,6 +49,7 @@ class TurboHTML:
 
         # Initialize tag handlers in deterministic order
         self.tag_handlers = [
+            FramesetTagHandler(self),
             TableTagHandler(self),
             ListTagHandler(self),
             HeadElementHandler(self),
@@ -210,8 +212,7 @@ class TurboHTML:
     def _handle_special_element(
         self, token: HTMLToken, tag_name: str, context: ParseContext, end_tag_idx: int
     ) -> bool:
-        """Handle html, head and body tags.
-        Returns True if the tag was handled and should not be processed further."""
+        """Handle html, head, body and frameset tags."""
         if tag_name == "html":
             # Just update attributes, don't create a new node
             self.html_node.attributes.update(token.attributes)
@@ -222,14 +223,17 @@ class TurboHTML:
             context.current_parent = self.head_node
             context.state = ParserState.IN_HEAD
             return True
-        elif tag_name == "body":
-            # Don't create duplicate body elements
+        elif tag_name == "body" and context.state != ParserState.IN_FRAMESET:
+            # Don't create duplicate body elements, unless we're in frameset mode
             self.body_node.attributes.update(token.attributes)
             context.current_parent = self.body_node
             context.state = ParserState.IN_BODY
             return True
-        elif tag_name not in HEAD_ELEMENTS:
-            # Handle implicit head/body transitions
+        elif tag_name == "frameset" and context.state == ParserState.INITIAL:
+            # Let the frameset handler handle this
+            return False
+        elif tag_name not in HEAD_ELEMENTS and context.state != ParserState.IN_FRAMESET:
+            # Handle implicit head/body transitions (but not in frameset mode)
             if context.state == ParserState.INITIAL:
                 self.debug("Implicitly closing head and switching to body")
                 context.state = ParserState.IN_BODY

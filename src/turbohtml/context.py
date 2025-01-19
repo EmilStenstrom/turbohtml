@@ -19,6 +19,7 @@ class ParserState(Enum):
     IN_CELL = auto()
     RAWTEXT = auto()
     IN_CAPTION = auto()
+    IN_FRAMESET = auto()
 
 
 class ParseContext:
