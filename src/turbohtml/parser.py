@@ -14,6 +14,7 @@ from turbohtml.handlers import (
     TableTagHandler,
     TextHandler,
     VoidElementHandler,
+    HeadElementHandler,
 )
 from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
@@ -48,6 +49,7 @@ class TurboHTML:
         self.tag_handlers = [
             TableTagHandler(self),
             ListTagHandler(self),
+            HeadElementHandler(self),
             AutoClosingTagHandler(self),
             VoidElementHandler(self),
             RawtextTagHandler(self),
@@ -77,16 +79,20 @@ class TurboHTML:
 
     # DOM Structure Methods
     def _init_dom_structure(self) -> None:
-        """Initialize the basic DOM structure with document, html, head, and body nodes."""
-        # Initialize basic DOM structure
-        self.html_node = Node("html")
-        self.head_node = Node("head")
-        self.body_node = Node("body")
+        """Initialize the basic DOM structure"""
+        # Create document root
         self.root = Node("document")
-
-        # Build the hierarchy
-        self.html_node.children = [self.head_node, self.body_node]
-        self.root.children = [self.html_node]
+        
+        # Create HTML element
+        self.html_node = Node("html")
+        self.root.append_child(self.html_node)
+        
+        # Create head and body in correct order
+        self.head_node = Node("head")
+        self.html_node.append_child(self.head_node)
+        
+        self.body_node = Node("body")
+        self.html_node.append_child(self.body_node)
 
     # Main Parsing Methods
     def _parse(self) -> None:
@@ -94,10 +100,12 @@ class TurboHTML:
         Main parsing loop using ParseContext and HTMLTokenizer.
         """
         context = ParseContext(len(self.html), self.body_node, self.html_node)
-        self.tokenizer = HTMLTokenizer(self.html)  # Store tokenizer instance
+        self.tokenizer = HTMLTokenizer(self.html)
 
-        if self.env_debug:
-            self.debug(f"TOKENS: {list(HTMLTokenizer(self.html).tokenize())}", indent=0)
+        # if self.env_debug:
+        #     # Create debug tokenizer with same debug setting
+        #     debug_tokenizer = HTMLTokenizer(self.html, debug=self.env_debug)
+        #     self.debug(f"TOKENS: {list(debug_tokenizer.tokenize())}", indent=0)
 
         for token in self.tokenizer.tokenize():
             self.debug(f"_parse: {token}, context: {context}", indent=0)

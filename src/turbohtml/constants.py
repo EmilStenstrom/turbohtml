@@ -212,28 +212,28 @@ TABLE_CONTAINING_ELEMENTS = [
 
 HEAD_ELEMENTS = [
     "base",
-    "title",
-    "meta",
-    "link",
-    "style",
-    "noscript",
-    "script",
-    "template",
     "basefont",
     "bgsound",
+    "link",
+    "meta",
     "noframes",
+    "noscript",
+    "script",
+    "style",
+    "template",
+    "title"
 ]
 
 RAWTEXT_ELEMENTS = [
-    "script",
+    "title",
+    "textarea",
     "style",
+    "script",
     "xmp",
     "iframe",
     "noembed",
     "noframes",
-    "title",
-    "textarea",
-    "noscript",
+    "noscript"
 ]
 
 FORMATTING_ELEMENTS = [

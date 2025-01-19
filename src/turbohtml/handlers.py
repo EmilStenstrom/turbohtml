@@ -62,7 +62,7 @@ class TagHandler:
 
 
 class TextHandler(TagHandler):
-    """Handles all regular text content"""
+    """Default handler for text nodes"""
 
     def should_handle_text(self, text: str, context: "ParseContext") -> bool:
         return True
@@ -71,29 +71,41 @@ class TextHandler(TagHandler):
         self.debug(f"TextHandler: handling text '{text}' in state {context.state}")
         self.debug(f"TextHandler: current parent is {context.current_parent}")
 
-        # Skip text nodes in head unless they're only whitespace, but not in RAWTEXT mode
-        if (
-            not text.strip()
-            and self._is_in_head(context.current_parent)
-            and context.state != ParserState.RAWTEXT
-        ):
-            self.debug("TextHandler: skipping whitespace in head")
+        # In head, handle whitespace specially
+        if context.state == ParserState.IN_HEAD:
+            # Find the first non-whitespace character
+            for i, char in enumerate(text):
+                if not char.isspace():
+                    # If we have leading whitespace, keep it in head
+                    if i > 0:
+                        self.debug(f"Keeping leading whitespace '{text[:i]}' in head")
+                        self._append_text(text[:i], context)
+                    
+                    # Switch to body for the rest
+                    self.debug(f"Found non-whitespace at pos {i}, switching to body")
+                    context.state = ParserState.IN_BODY
+                    context.current_parent = self.parser.body_node
+                    self._append_text(text[i:], context)
+                    return True
+            
+            # If we get here, it's all whitespace
+            self._append_text(text, context)
             return True
 
-        # Try to merge with previous text node if possible
-        last_child = (
-            context.current_parent.children[-1]
-            if context.current_parent.children
-            else None
-        )
-        self.debug(f"TextHandler: last child is {last_child}")
+        # Handle other text normally
+        self._append_text(text, context)
+        return True
 
-        if last_child and last_child.tag_name == "#text":
-            self.debug(
-                f"TextHandler: merging with previous text node '{last_child.text_content}'"
-            )
-            last_child.text_content += text
-            self.debug(f"TextHandler: merged result '{last_child.text_content}'")
+    def _append_text(self, text: str, context: "ParseContext") -> None:
+        """Helper to append text, either as new node or merged with previous"""
+        self.debug(f"TextHandler: last child is {context.current_parent.children[-1] if context.current_parent.children else None}")
+        
+        # Try to merge with previous text node
+        if context.current_parent.children and context.current_parent.children[-1].tag_name == "#text":
+            prev_node = context.current_parent.children[-1]
+            self.debug(f"TextHandler: merging with previous text node '{prev_node.text_content}'")
+            prev_node.text_content += text
+            self.debug(f"TextHandler: merged result '{prev_node.text_content}'")
         else:
             # Create new text node
             self.debug("TextHandler: creating new text node")
@@ -101,7 +113,6 @@ class TextHandler(TagHandler):
             text_node.text_content = text
             context.current_parent.append_child(text_node)
             self.debug(f"TextHandler: created node with content '{text}'")
-        return True
 
     def _is_in_head(self, node: Node) -> bool:
         """Check if node is inside the head element"""
@@ -1353,3 +1364,90 @@ class BoundaryElementHandler(TagHandler):
             return True
             
         return False
+
+
+class HeadElementHandler(TagHandler):
+    """Handler for elements that belong in the head section (<base>, <link>, <meta>, <title>, etc)"""
+    
+    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name in HEAD_ELEMENTS
+        
+    def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
+        tag_name = token.tag_name
+        self.debug(f"HeadElementHandler: handling {tag_name} in {context.state}")
+        
+        # Create node and move to head
+        new_node = Node(tag_name, token.attributes)
+        self.parser.head_node.append_child(new_node)
+        self.debug(f"Created and appended {tag_name} to head")
+        
+        # Special handling for rawtext elements to capture their content
+        if tag_name in RAWTEXT_ELEMENTS:
+            self.debug(f"Starting RAWTEXT mode for {tag_name}")
+            context.state = ParserState.RAWTEXT
+            context.current_parent = new_node
+            self.parser.tokenizer.start_rawtext(tag_name)
+            
+        return True
+
+    def should_handle_text(self, text: str, context: "ParseContext") -> bool:
+        # Handle text in RAWTEXT mode or spaces in head
+        return ((context.state == ParserState.RAWTEXT and 
+                context.current_parent and 
+                context.current_parent.tag_name in RAWTEXT_ELEMENTS) or
+               (context.state == ParserState.IN_HEAD and text.isspace()))
+
+    def handle_text(self, text: str, context: "ParseContext") -> bool:
+        if not self.should_handle_text(text, context):
+            return False
+            
+        self.debug(f"HeadElementHandler: handling text '{text}' in {context.current_parent.tag_name}")
+        
+        # If we're in head state and see non-space text, don't handle it
+        if context.state == ParserState.IN_HEAD and not text.isspace():
+            self.debug("Non-space text in head, not handling")
+            return False
+        
+        # Try to combine with previous text node if it exists
+        if context.current_parent.children and context.current_parent.children[-1].tag_name == "#text":
+            self.debug("Found previous text node, combining")
+            prev_node = context.current_parent.children[-1]
+            prev_node.text_content += text
+            self.debug(f"Combined text: '{prev_node.text_content}'")
+        else:
+            text_node = Node("#text")
+            text_node.text_content = text
+            context.current_parent.append_child(text_node)
+            self.debug(f"Added new text node: '{text}'")
+        return True
+
+    def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:
+        return (context.state == ParserState.RAWTEXT and 
+                context.current_parent and 
+                context.current_parent.tag_name in RAWTEXT_ELEMENTS)
+
+    def handle_comment(self, comment: str, context: "ParseContext") -> bool:
+        self.debug(f"HeadElementHandler: handling comment '{comment}' in RAWTEXT mode")
+        # In RAWTEXT mode, treat comments as text
+        return self.handle_text(comment, context)
+
+    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        return (tag_name in HEAD_ELEMENTS and 
+                ((context.state == ParserState.RAWTEXT and
+                context.current_parent and 
+                context.current_parent.tag_name == tag_name) or
+                context.state == ParserState.IN_HEAD))
+
+    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        self.debug(f"HeadElementHandler: handling end tag {token.tag_name}")
+        if token.tag_name == "script":
+            self.debug("Script ended, switching to IN_HEAD state")
+            context.state = ParserState.IN_HEAD
+            context.current_parent = self.parser.head_node
+            self.debug(f"New context: state={context.state}, parent={context.current_parent}")
+        else:
+            self.debug(f"Non-script tag {token.tag_name} ended, switching to IN_HEAD state")
+            context.state = ParserState.IN_HEAD
+            context.current_parent = self.parser.head_node
+            self.debug(f"New context: state={context.state}, parent={context.current_parent}")
+        return True
