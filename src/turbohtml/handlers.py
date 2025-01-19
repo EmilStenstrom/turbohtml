@@ -387,7 +387,7 @@ class TableTagHandler(TagHandler):
             context.state = ParserState.IN_TABLE
             
         if tag_name == "colgroup":
-            # If we're already in a colgroup, close it first
+            # If we're in a colgroup, move back to table level
             if context.current_parent.tag_name == "colgroup":
                 context.current_parent = context.current_table
             
@@ -398,9 +398,8 @@ class TableTagHandler(TagHandler):
             return True
             
         elif tag_name == "col":
-            # Ensure we're in a colgroup
+            # If we're not in a colgroup, create one
             if context.current_parent.tag_name != "colgroup":
-                # Create implicit colgroup
                 new_colgroup = Node("colgroup")
                 context.current_table.append_child(new_colgroup)
                 context.current_parent = new_colgroup
@@ -422,13 +421,17 @@ class TableTagHandler(TagHandler):
             return True
             
         elif tag_name == "tr":
-            # Ensure we have a current table
-            if not context.current_table:
-                context.current_table = context.current_parent.find_ancestor("table")
-                if not context.current_table:
-                    return False
-
-            # Create tbody if needed
+            # If we're in a section (thead/tbody/tfoot), add tr to it
+            if context.current_parent.tag_name in ("thead", "tbody", "tfoot"):
+                new_tr = Node(tag_name, token.attributes)
+                context.current_parent.append_child(new_tr)
+                context.current_parent = new_tr
+                return True
+                
+            # If we're not in a section, create implicit tbody
+            if context.current_parent.tag_name == "colgroup":
+                context.current_parent = context.current_table
+                
             tbody = None
             for child in context.current_table.children:
                 if child.tag_name == "tbody":
@@ -437,8 +440,7 @@ class TableTagHandler(TagHandler):
             if not tbody:
                 tbody = Node("tbody")
                 context.current_table.append_child(tbody)
-
-            # Always create new tr at tbody level
+            
             new_tr = Node(tag_name, token.attributes)
             tbody.append_child(new_tr)
             context.current_parent = new_tr
