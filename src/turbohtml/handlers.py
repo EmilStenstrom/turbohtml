@@ -357,15 +357,26 @@ class TableTagHandler(TagHandler):
     """Handles table-related elements"""
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        # Always handle col/colgroup to prevent them being handled by VoidElementHandler
+        if tag_name in ("col", "colgroup"):
+            # But only process them if in table context
+            return True
+            
         # Don't handle table elements in foreign contexts
         if context.current_context in ("math", "svg"):
             return False
-        return tag_name in ("table", "colgroup", "col", "thead", "tbody", "tfoot", "tr", "td", "th")
+            
+        return tag_name in ("table", "thead", "tbody", "tfoot", "tr", "td", "th")
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         tag_name = token.tag_name
         self.debug(f"Handling {tag_name} in table context")
         
+        # Ignore col/colgroup outside of table context
+        if tag_name in ("col", "colgroup") and context.state != ParserState.IN_TABLE:
+            self.debug("Ignoring col/colgroup outside table context")
+            return True
+            
         # Handle table element separately since it creates the context
         if tag_name == "table":
             return self._handle_table(token, context)
