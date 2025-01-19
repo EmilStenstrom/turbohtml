@@ -357,33 +357,17 @@ class TableTagHandler(TagHandler):
     """Handles table-related elements"""
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
-        # Don't handle tags if we're inside a select element
-        if context.current_parent.find_ancestor("select"):
+        # Don't handle table elements in foreign contexts
+        if context.current_context in ("math", "svg"):
             return False
+        return tag_name in ("table", "colgroup", "col", "thead", "tbody", "tfoot", "tr", "td", "th")
 
-        # Handle any tag when in table context
-        if context.state == ParserState.IN_TABLE:
-            self.debug(f"Handling {tag_name} in table context")
-            return True
-
-        return tag_name in (
-            "table",
-            "td",
-            "th",
-            "tr",
-            "tbody",
-            "thead",
-            "tfoot",
-            "caption",
-            "colgroup",
-        )
-
-    def handle_start(self, token: "HTMLToken", context: "ParseContext", end_tag_idx: int) -> bool:
+    def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         tag_name = token.tag_name
         self.debug(f"Handling {tag_name} in table context")
         self.debug(f"Current parent: {context.current_parent}")
         self.debug(f"Current table: {context.current_table}")
-
+        
         if tag_name == "table":
             # Create new table and set as current
             new_table = Node(tag_name, token.attributes)
@@ -392,7 +376,51 @@ class TableTagHandler(TagHandler):
             context.current_parent = new_table
             context.state = ParserState.IN_TABLE
             return True
-
+            
+        # For table elements, we need a current table
+        if not context.current_table:
+            # Create implicit table if needed
+            new_table = Node("table")
+            context.current_parent.append_child(new_table)
+            context.current_table = new_table
+            context.current_parent = new_table
+            context.state = ParserState.IN_TABLE
+            
+        if tag_name == "colgroup":
+            # If we're already in a colgroup, close it first
+            if context.current_parent.tag_name == "colgroup":
+                context.current_parent = context.current_table
+            
+            # Create new colgroup at table level
+            new_colgroup = Node(tag_name, token.attributes)
+            context.current_table.append_child(new_colgroup)
+            context.current_parent = new_colgroup
+            return True
+            
+        elif tag_name == "col":
+            # Ensure we're in a colgroup
+            if context.current_parent.tag_name != "colgroup":
+                # Create implicit colgroup
+                new_colgroup = Node("colgroup")
+                context.current_table.append_child(new_colgroup)
+                context.current_parent = new_colgroup
+            
+            # Add col to current colgroup
+            new_col = Node(tag_name, token.attributes)
+            context.current_parent.append_child(new_col)
+            return True
+            
+        elif tag_name in ("thead", "tbody", "tfoot"):
+            # Close any open colgroup
+            if context.current_parent.tag_name == "colgroup":
+                context.current_parent = context.current_table
+            
+            # Create new section at table level
+            new_section = Node(tag_name, token.attributes)
+            context.current_table.append_child(new_section)
+            context.current_parent = new_section
+            return True
+            
         elif tag_name == "tr":
             # Ensure we have a current table
             if not context.current_table:
