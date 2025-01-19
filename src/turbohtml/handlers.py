@@ -1420,3 +1420,24 @@ class HeadElementHandler(TagHandler):
             return True
             
         return True
+
+
+class ImageTagHandler(TagHandler):
+    """Handles <image> tag normalization to <img>"""
+    
+    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name == "image"
+        
+    def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
+        self.debug("Normalizing <image> to <img>")
+        # Create img node instead of image
+        new_node = Node("img", token.attributes)
+        context.current_parent.append_child(new_node)
+        return True
+
+    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name == "image"
+        
+    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        # img is void element, no need to handle end tag
+        return True
