@@ -403,6 +403,7 @@ class TableTagHandler(TagHandler):
 
     def _handle_colgroup(self, token: "HTMLToken", context: "ParseContext") -> bool:
         """Handle colgroup element"""
+        # Always create colgroup at table level
         context.current_parent = context.current_table
         new_colgroup = Node(token.tag_name, token.attributes)
         context.current_table.append_child(new_colgroup)
@@ -411,7 +412,16 @@ class TableTagHandler(TagHandler):
 
     def _handle_col(self, token: "HTMLToken", context: "ParseContext") -> bool:
         """Handle col element"""
-        context.current_parent = context.current_table
+        # If we're already in a colgroup, use it
+        current = context.current_parent
+        while current and current != context.current_table:
+            if current.tag_name == "colgroup":
+                new_col = Node(token.tag_name, token.attributes)
+                current.append_child(new_col)
+                return True
+            current = current.parent
+            
+        # If no colgroup found, create one
         new_colgroup = Node("colgroup")
         context.current_table.append_child(new_colgroup)
         new_col = Node(token.tag_name, token.attributes)
