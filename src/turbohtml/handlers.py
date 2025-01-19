@@ -1441,3 +1441,17 @@ class ImageTagHandler(TagHandler):
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         # img is void element, no need to handle end tag
         return True
+
+
+class HtmlTagHandler(TagHandler):
+    """Handles html tag - switches to body mode on end tag per spec"""
+    
+    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name == "html"
+        
+    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        self.debug("HtmlTagHandler: handling </html> end tag")
+        # Switch to body mode
+        context.state = ParserState.IN_BODY
+        context.current_parent = self.parser.body_node
+        return True

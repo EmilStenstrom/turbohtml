@@ -15,6 +15,7 @@ from turbohtml.handlers import (
     VoidElementHandler,
     HeadElementHandler,
     ImageTagHandler,
+    HtmlTagHandler,
 )
 from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
@@ -50,6 +51,7 @@ class TurboHTML:
             TableTagHandler(self),
             ListTagHandler(self),
             HeadElementHandler(self),
+            HtmlTagHandler(self),
             AutoClosingTagHandler(self),
             VoidElementHandler(self),
             RawtextTagHandler(self),
