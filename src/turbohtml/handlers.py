@@ -734,107 +734,73 @@ class FormTagHandler(TagHandler):
 
 class ListTagHandler(TagHandler):
     """Handles list-related elements (ul, ol, li)"""
-
+    
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
         return tag_name in ("ul", "ol", "li")
-
+        
     def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", end_tag_idx: int
+        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
     ) -> bool:
         self.debug(f"Current parent before: {context.current_parent}")
         tag_name = token.tag_name
-
+        
         if tag_name == "li":
-            self.debug(
-                f"Handling li tag, current parent is {context.current_parent.tag_name}"
-            )
-
-            # If we're in another li, move up to its parent first
+            self.debug(f"Handling li tag, current parent is {context.current_parent.tag_name}")
+            
+            # If we're in another li, move up to its parent list or body
             if context.current_parent.tag_name == "li":
-                context.current_parent = (
-                    context.current_parent.parent or self.parser.body_node
-                )
-
+                parent = context.current_parent.parent
+                if parent and parent.tag_name in ("ul", "ol"):
+                    context.current_parent = parent
+                else:
+                    context.current_parent = self.parser.body_node
+            
             new_node = Node(tag_name, token.attributes)
             context.current_parent.append_child(new_node)
             context.current_parent = new_node
-            self.debug(f"Created new li: {new_node}, parent: {context.current_parent}")
+            self.debug(f"Created new li: {new_node}")
             return True
-
+            
         # Handle ul/ol elements
         if tag_name in ("ul", "ol"):
             self.debug(f"Handling {tag_name} tag")
-            # Find nearest li ancestor to properly nest the list
-            li_ancestor = context.current_parent.find_ancestor("li")
-            if li_ancestor:
-                context.current_parent = li_ancestor
-
             new_node = Node(tag_name, token.attributes)
             context.current_parent.append_child(new_node)
             context.current_parent = new_node
-            # Store the list container in the context for later reference
-            context.current_list = new_node
             self.debug(f"Created new {tag_name}: {new_node}")
             return True
-
+            
         return False
-
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
-        self.debug(f"Checking if should handle end tag: {tag_name}")
-        return tag_name in ("ul", "ol", "li")
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         self.debug(f"Current parent before end: {context.current_parent}")
+        tag_name = token.tag_name
 
-        if token.tag_name in ("ul", "ol"):
-            self.debug(f"Handling end tag for {token.tag_name}")
-            # First try to use the current_list from context
-            list_container = getattr(context, "current_list", None)
-            self.debug(f"Found list container from context: {list_container}")
+        if tag_name == "li":
+            # Find the nearest li ancestor
+            current = context.current_parent
+            while current and current != self.parser.root:
+                if current.tag_name == "li":
+                    # Move to the list parent or body
+                    if current.parent and current.parent.tag_name in ("ul", "ol"):
+                        context.current_parent = current.parent
+                    else:
+                        context.current_parent = self.parser.body_node
+                    return True
+                current = current.parent
+            return False
 
-            # If not found in context, search up the tree
-            if not list_container:
-                current = context.current_parent
-                while current and current != self.parser.root:
-                    self.debug(f"Checking ancestor: {current}")
-                    if current.tag_name == token.tag_name:
-                        list_container = current
-                        self.debug(
-                            f"Found list container in ancestors: {list_container}"
-                        )
-                        break
-                    current = current.parent
-                    self.debug(f"Moving up to parent: {current}")
+        elif tag_name in ("ul", "ol"):
+            # Find the matching list container
+            current = context.current_parent
+            while current and current != self.parser.root:
+                if current.tag_name == tag_name:
+                    # Move to the parent
+                    context.current_parent = current.parent or self.parser.body_node
+                    return True
+                current = current.parent
+            return False
 
-            if list_container:
-                # First close any open li elements inside the list
-                if context.current_parent.tag_name == "li":
-                    li = context.current_parent.find_ancestor("li")
-                    if li:
-                        self.debug(f"Closing li inside list: {li}")
-                        context.current_parent = li.parent
-
-                # Move to the list container's parent
-                self.debug(
-                    f"Moving to list container's parent: {list_container.parent}"
-                )
-                context.current_parent = list_container.parent
-                # Clear the current list reference
-                context.current_list = None
-                return True
-            self.debug("No matching list container found")
-
-        elif token.tag_name == "li":
-            self.debug(f"Handling end tag for li")
-            # Find and close the nearest li
-            li = context.current_parent.find_ancestor("li")
-            if li:
-                self.debug(f"Found li to close: {li}, moving to parent: {li.parent}")
-                context.current_parent = li.parent
-                return True
-            self.debug("No matching li found")
-
-        self.debug(f"No handler for end tag {token.tag_name}")
         return False
 
 
