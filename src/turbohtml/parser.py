@@ -1,7 +1,6 @@
 from turbohtml.context import ParseContext, ParserState
 from turbohtml.handlers import (
     AutoClosingTagHandler,
-    BoundaryElementHandler,
     ButtonTagHandler,
     ForeignTagHandler,
     FormattingElementHandler,
@@ -54,7 +53,6 @@ class TurboHTML:
             VoidElementHandler(self),
             RawtextTagHandler(self),
             FormattingElementHandler(self),
-            BoundaryElementHandler(self),
             TextHandler(self),
             SelectTagHandler(self),
             FormTagHandler(self),

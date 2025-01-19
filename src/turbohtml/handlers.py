@@ -1318,54 +1318,6 @@ class ForeignTagHandler(TagHandler):
         return False
 
 
-class BoundaryElementHandler(TagHandler):
-    """Handles elements that create new formatting contexts like marquee, button, etc."""
-    
-    def __init__(self, parser: "ParserInterface"):
-        super().__init__(parser)
-        self.boundary_stack = []  # Track active boundary elements
-
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
-        return tag_name in BOUNDARY_ELEMENTS
-
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
-        return tag_name in BOUNDARY_ELEMENTS
-
-    def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
-        self.debug(f"BoundaryElementHandler: handling <{token.tag_name}>, context={context}")
-        new_node = Node(token.tag_name, token.attributes)
-        context.current_parent.append_child(new_node)
-        context.current_parent = new_node
-        self.boundary_stack.append(new_node)
-        self.debug(f"Added boundary element to stack: {new_node}")
-        return True
-
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
-        tag_name = token.tag_name
-        self.debug(f"BoundaryElementHandler: handling end tag {tag_name}")
-        
-        if tag_name in BOUNDARY_ELEMENTS and self.boundary_stack:
-            boundary = self.boundary_stack[-1]
-            self.debug(f"Found boundary element from stack: {boundary}")
-            
-            # Move back to boundary's parent
-            context.current_parent = boundary.parent
-            self.boundary_stack.pop()
-            
-            # If we're in a formatting context, restore it
-            if context.current_parent.tag_name in FORMATTING_ELEMENTS:
-                self.debug(f"Restoring formatting context: {context.current_parent}")
-                # Keep the formatting context active
-                return True
-                
-            self.debug(f"Restored context to: {context.current_parent}")
-            return True
-            
-        return False
-
-
 class HeadElementHandler(TagHandler):
     """Handler for elements that belong in the head section (<base>, <link>, <meta>, <title>, etc)"""
     
