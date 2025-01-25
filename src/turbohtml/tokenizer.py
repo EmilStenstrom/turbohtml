@@ -152,7 +152,7 @@ class HTMLTokenizer:
             self.pos += 1
             return HTMLToken("Character", data="<")
 
-        # Handle DOCTYPE
+        # Handle DOCTYPE first
         if self.html.startswith("<!DOCTYPE", self.pos, self.pos + 9) or self.html.startswith("<!doctype", self.pos, self.pos + 9):
             self.pos += 9  # Skip <!DOCTYPE
             # Skip whitespace
@@ -176,14 +176,27 @@ class HTMLTokenizer:
                     return HTMLToken("Comment", data="")
                 return self._handle_comment()
             # Handle all bogus comment cases according to spec:
-            elif (
-                (self.html.startswith("</", self.pos)
-                and self.pos + 2 < self.length  # Not at EOF
-                and not (self.html[self.pos + 2].isascii() and self.html[self.pos + 2].isalpha()))
+            
+            # Check for end tag with attributes or invalid char after </
+            is_end_tag_start = self.html.startswith("</", self.pos)
+            has_invalid_char = (self.pos + 2 < self.length and 
+                              not (self.html[self.pos + 2].isascii() and 
+                                   self.html[self.pos + 2].isalpha()))
+            match = TAG_OPEN_RE.match(self.html[self.pos:]) if is_end_tag_start else None
+            has_attributes = match and match.group(2) and match.group(4).strip()
+            
+            self.debug(f"Checking bogus comment conditions:")
+            self.debug(f"  is_end_tag_start: {is_end_tag_start}")
+            self.debug(f"  has_invalid_char: {has_invalid_char}")
+            self.debug(f"  tag match: {match and match.groups()}")
+            self.debug(f"  has_attributes: {has_attributes}")
+            
+            if ((is_end_tag_start and (has_invalid_char or has_attributes))
                 or self.html.startswith("<!", self.pos)
-                or self.html.startswith("<?", self.pos)
-            ):
-                return self._handle_bogus_comment()
+                or self.html.startswith("<?", self.pos)):
+                self.debug("Found bogus comment case")
+                # Pass from_end_tag=True for end tags with attributes
+                return self._handle_bogus_comment(from_end_tag=is_end_tag_start and has_attributes)
 
         # Special case: </ at EOF should be treated as text
         if self.html.startswith("</", self.pos) and self.pos + 2 >= self.length:
@@ -192,9 +205,32 @@ class HTMLTokenizer:
 
         # Try to match a tag using TAG_OPEN_RE
         match = TAG_OPEN_RE.match(self.html[self.pos:])
+        self.debug(f"Trying to match tag: {match and match.groups()}")
+        
+        # If no match with >, try to match without it
+        if not match:
+            # Look for tag name
+            tag_match = re.match(r"<(!?)(/)?([a-zA-Z0-9][-a-zA-Z0-9:]*)", self.html[self.pos:])
+            if tag_match:
+                self.debug(f"Found unclosed tag: {tag_match.groups()}")
+                bang, is_end_tag, tag_name = tag_match.groups()
+                # Get rest of input as attributes
+                tag_prefix_len = len(tag_match.group(0))
+                attributes = self.html[self.pos + tag_prefix_len:]
+                self.pos = self.length
+                
+                # Return appropriate token
+                if is_end_tag:
+                    return HTMLToken("EndTag", tag_name=tag_name)
+                else:
+                    attrs = self._parse_attributes(attributes)
+                    return HTMLToken("StartTag", tag_name=tag_name, attributes=attrs)
+        
+        # Handle normal closed tags
         if match:
             bang, is_end_tag, tag_name, attributes = match.groups()
-            self.pos += len(match.group(0))  # Advance past the entire tag
+            self.debug(f"Found tag: bang={bang}, is_end_tag={is_end_tag}, tag_name={tag_name}, attributes={attributes}")
+            self.pos += len(match.group(0))
 
             # Handle state transitions for start tags
             if not is_end_tag and tag_name.lower() in RAWTEXT_ELEMENTS:
@@ -210,11 +246,15 @@ class HTMLTokenizer:
                 return HTMLToken("StartTag", tag_name=tag_name, attributes=attrs)
 
         # If we get here, we found a < that isn't part of a valid tag
+        self.debug("No valid tag found, treating as character")
         self.pos += 1
         return HTMLToken("Character", data="<")
 
     def _try_text(self) -> Optional[HTMLToken]:
         """Try to match text at current position"""
+        if self.pos >= self.length:
+            return None
+        
         start = self.pos
 
         # If we're starting with '<', don't try to parse as text
@@ -232,7 +272,14 @@ class HTMLTokenizer:
 
     def _parse_attributes(self, attr_string: str) -> Dict[str, str]:
         """Parse attributes from a string using the ATTR_RE pattern"""
+        self.debug(f"Parsing attributes: {attr_string[:50]}...")
         attr_string = attr_string.strip().rstrip("/")
+        
+        # Handle case where entire string is attribute name
+        if attr_string and not any(c in attr_string for c in "='\""):
+            self.debug("Single attribute without value")
+            return {attr_string: ""}
+        
         matches = ATTR_RE.findall(attr_string)
         attributes = {}
         for attr_name, val1, val2, val3 in matches:
@@ -259,9 +306,9 @@ class HTMLTokenizer:
         self.pos = self.length
         return HTMLToken("Comment", data=comment_text)
 
-    def _handle_bogus_comment(self) -> HTMLToken:
+    def _handle_bogus_comment(self, from_end_tag: bool = False) -> Optional[HTMLToken]:
         """Handle bogus comment according to HTML5 spec"""
-        self.debug(f"_handle_bogus_comment: pos={self.pos}, state={self.state}")
+        self.debug(f"_handle_bogus_comment: pos={self.pos}, state={self.state}, from_end_tag={from_end_tag}")
         # For <?, include the ? in the comment
         if self.html.startswith("<?", self.pos):
             start = self.pos + 1  # Only skip <
@@ -274,13 +321,20 @@ class HTMLTokenizer:
         else:  # starts with <!
             start = self.pos + 2  # Skip <!
         
-        # Regular bogus comment
+        # Look for next > to end the comment
         while self.pos < self.length:
-            if self.html[self.pos] == ">":
-                comment_text = self.html[start : self.pos]
-                self.pos += 1
+            if self.html[self.pos] == '>':
+                comment_text = self.html[start:self.pos]
+                self.pos += 1  # Skip >
+                # Return None for bogus comments from end tags with attributes
+                if from_end_tag:
+                    return None
                 return HTMLToken("Comment", data=comment_text)
             self.pos += 1
 
         # EOF: emit what we have
-        return HTMLToken("Comment", data=self.html[start:])
+        comment_text = self.html[start:]
+        self.pos = self.length  # Make sure we're at the end
+        if from_end_tag:
+            return None
+        return HTMLToken("Comment", data=comment_text)
