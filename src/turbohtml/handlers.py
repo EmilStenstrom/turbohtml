@@ -885,14 +885,15 @@ class FormTagHandler(TagHandler):
 
 
 class ListTagHandler(TagHandler):
-    """Handles list-related elements (ul, ol, li)"""
+    """Handles list-related elements (ul, ol, li, dl, dt, dd)"""
     
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
-        return tag_name in ("ul", "ol", "li")
+        return tag_name in ("ul", "ol", "li", "dl", "dt", "dd")
         
     def handle_start(
         self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
     ) -> bool:
+        self.debug(f"ListTagHandler: handling {token.tag_name}")
         self.debug(f"Current parent before: {context.current_parent}")
         tag_name = token.tag_name
         
@@ -903,15 +904,45 @@ class ListTagHandler(TagHandler):
                 context.current_parent = body
                 context.state = ParserState.IN_BODY
         
+        # Handle dd/dt elements
+        if tag_name in ("dd", "dt"):
+            self.debug(f"Handling {tag_name} tag")
+            # Find any existing dt/dd ancestor
+            ancestor = context.current_parent.find_ancestor("dt") or context.current_parent.find_ancestor("dd")
+            if ancestor:
+                self.debug(f"Found existing {ancestor.tag_name} ancestor")
+                # Close everything up to the dl parent
+                dl_parent = ancestor.parent
+                self.debug(f"Closing up to dl parent: {dl_parent}")
+                context.current_parent = dl_parent
+                
+                # Create new element at same level
+                new_node = Node(tag_name, token.attributes)
+                dl_parent.append_child(new_node)
+                context.current_parent = new_node
+                self.debug(f"Created new {tag_name} at dl level: {new_node}")
+                return True
+            
+            # No existing dt/dd, create normally
+            self.debug("No existing dt/dd found, creating normally")
+            new_node = Node(tag_name, token.attributes)
+            context.current_parent.append_child(new_node)
+            context.current_parent = new_node
+            self.debug(f"Created new {tag_name}: {new_node}")
+            return True
+        
         if tag_name == "li":
             self.debug(f"Handling li tag, current parent is {context.current_parent.tag_name}")
             
             # If we're in another li, close it first
             if context.current_parent.tag_name == "li":
+                self.debug("Inside another li, closing it first")
                 parent = context.current_parent.parent
                 if parent and parent.tag_name in ("ul", "ol"):
+                    self.debug(f"Moving up to list parent: {parent.tag_name}")
                     context.current_parent = parent
                 else:
+                    self.debug("No list parent found, moving to body")
                     body = self.parser._get_body_node()
                     context.current_parent = body or self.parser.html_node
             
@@ -921,8 +952,8 @@ class ListTagHandler(TagHandler):
             self.debug(f"Created new li: {new_node}")
             return True
             
-        # Handle ul/ol elements
-        if tag_name in ("ul", "ol"):
+        # Handle ul/ol/dl elements
+        if tag_name in ("ul", "ol", "dl"):
             self.debug(f"Handling {tag_name} tag")
             new_node = Node(tag_name, token.attributes)
             context.current_parent.append_child(new_node)
@@ -933,21 +964,46 @@ class ListTagHandler(TagHandler):
         return False
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
-        return tag_name in ("ul", "ol", "li")
+        return tag_name in ("ul", "ol", "li", "dl", "dt", "dd")
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        self.debug(f"ListTagHandler: handling end tag {token.tag_name}")
         self.debug(f"Current parent before end: {context.current_parent}")
         tag_name = token.tag_name
 
+        if tag_name in ("dt", "dd"):
+            self.debug(f"Handling end tag for {tag_name}")
+            # Find the nearest dt/dd ancestor
+            current = context.current_parent
+            while current and current != self.parser.html_node:
+                if current.tag_name in ("dt", "dd"):
+                    self.debug(f"Found matching {current.tag_name}")
+                    # Move to the dl parent
+                    if current.parent and current.parent.tag_name == "dl":
+                        self.debug("Moving to dl parent")
+                        context.current_parent = current.parent
+                    else:
+                        self.debug("No dl parent found, moving to body")
+                        body = self.parser._get_body_node()
+                        context.current_parent = body or self.parser.html_node
+                    return True
+                current = current.parent
+            self.debug(f"No matching {tag_name} found")
+            return False
+
         if tag_name == "li":
+            self.debug("Handling end tag for li")
             # Find the nearest li ancestor
             current = context.current_parent
             while current and current != self.parser.html_node:
                 if current.tag_name == "li":
+                    self.debug("Found matching li")
                     # Move to the list parent
                     if current.parent and current.parent.tag_name in ("ul", "ol"):
+                        self.debug("Moving to list parent")
                         context.current_parent = current.parent
                     else:
+                        self.debug("No list parent found, moving to body")
                         body = self.parser._get_body_node()
                         context.current_parent = body or self.parser.html_node
                     return True
@@ -956,22 +1012,27 @@ class ListTagHandler(TagHandler):
                     self.debug(f"Found {current.tag_name} before li, ignoring end tag")
                     return True
                 current = current.parent
+            self.debug("No matching li found")
             return False
 
-        elif tag_name in ("ul", "ol"):
+        elif tag_name in ("ul", "ol", "dl"):
+            self.debug(f"Handling end tag for {tag_name}")
             # Find the matching list container
             current = context.current_parent
             while current and current != self.parser.html_node:
                 if current.tag_name == tag_name:
-                    # If we're inside an li, stay there
-                    if current.parent and current.parent.tag_name == "li":
+                    self.debug(f"Found matching {tag_name}")
+                    # If we're inside an li/dt/dd, stay there
+                    if current.parent and current.parent.tag_name in ("li", "dt", "dd"):
+                        self.debug(f"Staying in {current.parent.tag_name}")
                         context.current_parent = current.parent
                     else:
-                        # Otherwise move to the parent
+                        self.debug("Moving to parent")
                         body = self.parser._get_body_node()
                         context.current_parent = current.parent or body or self.parser.html_node
                     return True
                 current = current.parent
+            self.debug(f"No matching {tag_name} found")
             return False
 
         return False
@@ -1258,7 +1319,6 @@ class AutoClosingTagHandler(TagHandler):
 
         # If we're starting a block element inside a formatting element
         if token.tag_name in BLOCK_ELEMENTS and self._find_formatting_ancestor(current):
-
             # Find all formatting elements up to the block
             formatting_elements = []
             temp = current
@@ -1845,4 +1905,63 @@ class DoctypeHandler(TagHandler):
         doctype_node.tag_name = "!DOCTYPE html"  # Set the full doctype
         self.parser.root.children.insert(0, doctype_node)
         context.doctype_seen = True
+        return True
+
+
+class PlaintextHandler(TagHandler):
+    """Handles plaintext element which switches to plaintext mode"""
+
+    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        # Handle all start tags in PLAINTEXT mode
+        return tag_name == "plaintext" or context.state == ParserState.PLAINTEXT
+
+    def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
+        # If we're already in PLAINTEXT mode, treat the tag as text
+        if context.state == ParserState.PLAINTEXT:
+            self.debug(f"PlaintextHandler: treating tag as text: <{token.tag_name}>")
+            text_node = Node("#text")
+            text_node.text_content = f"<{token.tag_name}>"
+            context.current_parent.append_child(text_node)
+            return True
+
+        self.debug("PlaintextHandler: handling plaintext")
+
+        # Create plaintext node
+        new_node = Node("plaintext", token.attributes)
+
+        # If we're in a table, foster parent the plaintext node
+        if context.state == ParserState.IN_TABLE:
+            self.debug("Foster parenting plaintext out of table")
+            table = context.current_table
+            if table and table.parent:
+                table_index = table.parent.children.index(table)
+                table.parent.children.insert(table_index, new_node)
+                context.current_parent = new_node
+        else:
+            context.current_parent.append_child(new_node)
+            context.current_parent = new_node
+
+        # Switch to PLAINTEXT mode
+        context.state = ParserState.PLAINTEXT
+        return True
+
+    def should_handle_text(self, text: str, context: "ParseContext") -> bool:
+        return context.state == ParserState.PLAINTEXT
+
+    def handle_text(self, text: str, context: "ParseContext") -> bool:
+        self.debug(f"PlaintextHandler: handling text in PLAINTEXT mode: {text}")
+        text_node = Node("#text")
+        text_node.text_content = text
+        context.current_parent.append_child(text_node)
+        return True
+
+    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        # Handle all end tags in PLAINTEXT mode
+        return context.state == ParserState.PLAINTEXT
+
+    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        self.debug(f"PlaintextHandler: treating end tag as text: </{token.tag_name}>")
+        text_node = Node("#text")
+        text_node.text_content = f"</{token.tag_name}>"
+        context.current_parent.append_child(text_node)
         return True

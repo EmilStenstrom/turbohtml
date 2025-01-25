@@ -20,6 +20,7 @@ from turbohtml.handlers import (
     FramesetTagHandler,
     BodyElementHandler,
     BoundaryElementHandler,
+    PlaintextHandler,
 )
 from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
@@ -54,6 +55,7 @@ class TurboHTML:
         # Initialize tag handlers in deterministic order
         self.tag_handlers = [
             DoctypeHandler(self),
+            PlaintextHandler(self),
             FramesetTagHandler(self),
             TableTagHandler(self),
             ListTagHandler(self),

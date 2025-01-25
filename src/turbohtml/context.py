@@ -22,6 +22,7 @@ class ParserState(Enum):
     IN_FRAMESET = auto()
     AFTER_FRAMESET = auto()
     AFTER_HTML = auto()
+    PLAINTEXT = auto()
 
 class ParseContext:
     """
