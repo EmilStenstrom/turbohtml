@@ -70,31 +70,56 @@ class TextHandler(TagHandler):
     def handle_text(self, text: str, context: "ParseContext") -> bool:
         self.debug(f"TextHandler: handling text '{text}' in state {context.state}")
         self.debug(f"TextHandler: current parent is {context.current_parent}")
+        
+        # If we have no current parent, ignore text
+        if context.current_parent is None:
+            self.debug("No current parent, ignoring text")
+            return True
+            
+        # In frameset mode, keep only whitespace
+        if context.state == ParserState.IN_FRAMESET:
+            whitespace = ''.join(c for c in text if c.isspace())
+            if whitespace:
+                self._append_text(whitespace, context)
+            self.debug("Keeping only whitespace in frameset mode")
+            return True
 
-        # In RAWTEXT mode, always append to current parent
+        # Rest of the method unchanged...
         if context.state == ParserState.RAWTEXT:
             self._append_text(text, context)
             return True
 
-        # In head, handle whitespace specially
-        if context.state == ParserState.IN_HEAD:
+        if context.state in (ParserState.INITIAL, ParserState.IN_HEAD):
             # Find the first non-whitespace character
             for i, char in enumerate(text):
                 if not char.isspace():
                     # If we have leading whitespace, keep it in head
                     if i > 0:
                         self.debug(f"Keeping leading whitespace '{text[:i]}' in head")
+                        head = self.parser._ensure_head_node()
+                        context.current_parent = head
                         self._append_text(text[:i], context)
                     
-                    # Switch to body for the rest
+                    # Switch to body for non-whitespace and remaining text
                     self.debug(f"Found non-whitespace at pos {i}, switching to body")
-                    context.state = ParserState.IN_BODY
-                    context.current_parent = self.parser.body_node
-                    self._append_text(text[i:], context)
+                    body = self.parser._ensure_body_node(context)
+                    if body:
+                        context.current_parent = body
+                        context.state = ParserState.IN_BODY
+                        self._append_text(text[i:], context)
                     return True
             
             # If we get here, it's all whitespace
-            self._append_text(text, context)
+            if context.state == ParserState.IN_HEAD:
+                self.debug("All whitespace, keeping in head")
+                self._append_text(text, context)
+                return True
+            
+            # If we're in INITIAL state with all whitespace, still move to body
+            body = self.parser._ensure_body_node(context)
+            if body:
+                context.current_parent = body
+                context.state = ParserState.IN_BODY
             return True
 
         # Handle other text normally
@@ -178,7 +203,7 @@ class FormattingElementHandler(TagHandler):
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
         return tag_name in FORMATTING_ELEMENTS
 
-    def handle_start(self, token: "HTMLToken", context: "ParseContext", end_tag_idx: int) -> bool:
+    def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         tag_name = token.tag_name
         self.debug(f"FormattingElementHandler: handling <{tag_name}>, context={context}")
 
@@ -198,7 +223,8 @@ class FormattingElementHandler(TagHandler):
         if current:
             self.debug(f"Found existing formatting element: {current}, closing it first")
             # Close current formatting element first
-            context.current_parent = current.parent or self.parser.body_node
+            body = self.parser._get_body_node()
+            context.current_parent = current.parent or body or self.parser.html_node
 
         # Handle table boundary crossing
         if context.state in (ParserState.IN_TABLE, ParserState.IN_TABLE_BODY, ParserState.IN_ROW, ParserState.IN_CELL):
@@ -225,6 +251,7 @@ class FormattingElementHandler(TagHandler):
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         tag_name = token.tag_name
         self.debug(f"FormattingElementHandler: handling end tag <{tag_name}>, context={context}")
+
         current = context.current_parent.find_ancestor(token.tag_name)
         if current:
             self.debug(f"Found matching formatting element: {current}")
@@ -243,7 +270,8 @@ class FormattingElementHandler(TagHandler):
                         context.current_parent = context.current_table
                 else:
                     self.debug(f"Moving to parent of formatting element: {current.parent}")
-                    context.current_parent = current.parent or self.parser.body_node
+                    body = self.parser._get_body_node()
+                    context.current_parent = current.parent or body or self.parser.html_node
             return True
         self.debug(f"No matching formatting element found for end tag: {tag_name}")
         return False
@@ -282,7 +310,7 @@ class SelectTagHandler(TagHandler):
             tag_name in ("option", "optgroup")
             and context.current_parent.tag_name == "option"
         ):
-            context.current_parent = context.current_parent.parent
+            context.current_parent = context.current_parent.parent or self.parser.html_node
 
         # Create the new node
         new_node = Node(tag_name, token.attributes)
@@ -301,7 +329,8 @@ class SelectTagHandler(TagHandler):
         current = context.current_parent.find_ancestor(tag_name)
 
         if current:
-            context.current_parent = current.parent or self.parser.body_node
+            body = self.parser._get_body_node()
+            context.current_parent = current.parent or body or self.parser.html_node
             return True
         return False
 
@@ -318,14 +347,16 @@ class ParagraphTagHandler(TagHandler):
         # If we're in head, implicitly close it and switch to body
         if context.state in (ParserState.INITIAL, ParserState.IN_HEAD):
             self.debug("Implicitly closing head and switching to body")
-            context.current_parent = self.parser.body_node
-            context.state = ParserState.IN_BODY
+            body = self.parser._ensure_body_node(context)
+            if body:
+                context.current_parent = body
+                context.state = ParserState.IN_BODY
         
         # Close any open paragraphs
         current_p = context.current_parent.find_ancestor("p")
         if current_p:
             self.debug(f"Found existing paragraph, moving to its parent")
-            context.current_parent = current_p.parent or self.parser.body_node
+            context.current_parent = current_p.parent or self.parser.html_node
 
         # Create new paragraph at the current level
         new_p = Node("p", token.attributes)
@@ -409,6 +440,14 @@ class TableTagHandler(TagHandler):
 
     def _handle_table(self, token: "HTMLToken", context: "ParseContext") -> bool:
         """Handle table element"""
+        # If we're in head, implicitly close it and switch to body
+        if context.state in (ParserState.INITIAL, ParserState.IN_HEAD):
+            self.debug("Implicitly closing head and switching to body")
+            body = self.parser._ensure_body_node(context)
+            if body:
+                context.current_parent = body
+                context.state = ParserState.IN_BODY
+
         new_table = Node(token.tag_name, token.attributes)
         context.current_parent.append_child(new_table)
         context.current_table = new_table
@@ -732,28 +771,35 @@ class TableTagHandler(TagHandler):
                         # Case like test #76 - create new <a> with the inner attributes
                         self.debug(f"Creating new <a> with inner attributes: {different_a.attributes}")
                         new_a = Node("a", different_a.attributes.copy())
-                        self.parser.body_node.append_child(new_a)
-                        context.current_parent = new_a
+                        body = self.parser._get_body_node()
+                        if body:
+                            body.append_child(new_a)
+                            context.current_parent = new_a
                     else:
                         # Case like test #77 - keep using original <a>
                         self.debug(f"Keeping original <a> tag: {original_a}")
                         context.current_parent = original_a
                 else:
                     # Find the first <a> tag in the document
+                    body = self.parser._get_body_node()
                     first_a = None
-                    for child in self.parser.body_node.children:
-                        if child.tag_name == "a":
-                            first_a = child
-                            break
+                    if body:
+                        for child in body.children:
+                            if child.tag_name == "a":
+                                first_a = child
+                                break
                     
                     if first_a:
                         # Create new <a> with same attributes as first one
                         self.debug(f"Creating new <a> with first <a> attributes: {first_a.attributes}")
                         new_a = Node("a", first_a.attributes.copy())
-                        self.parser.body_node.append_child(new_a)
-                        context.current_parent = new_a
+                        body = self.parser._get_body_node()
+                        if body:
+                            body.append_child(new_a)
+                            context.current_parent = new_a
                     else:
-                        context.current_parent = self.parser.body_node
+                        body = self.parser._get_body_node()
+                        context.current_parent = body or self.parser.html_node
                 
                 context.current_table = None
                 context.state = ParserState.IN_BODY
@@ -763,7 +809,8 @@ class TableTagHandler(TagHandler):
             # Find the matching <a> tag
             a_element = context.current_parent.find_ancestor("a")
             if a_element:
-                context.current_parent = a_element.parent or context.current_table or self.parser.body_node
+                body = self.parser._get_body_node()
+                context.current_parent = a_element.parent or context.current_table or body or self.parser.html_node
                 return True
 
         elif tag_name in TABLE_ELEMENTS:
@@ -797,6 +844,13 @@ class FormTagHandler(TagHandler):
     ) -> bool:
         tag_name = token.tag_name
 
+        # If we're in head, implicitly close it and switch to body
+        if context.state in (ParserState.INITIAL, ParserState.IN_HEAD):
+            body = self.parser._ensure_body_node(context)
+            if body:
+                context.current_parent = body
+                context.state = ParserState.IN_BODY
+
         if tag_name == "form":
             # Only one form element allowed
             if context.has_form:
@@ -822,7 +876,8 @@ class FormTagHandler(TagHandler):
         current = context.current_parent.find_ancestor(tag_name)
 
         if current:
-            context.current_parent = current.parent or self.parser.body_node
+            body = self.parser._get_body_node()
+            context.current_parent = current.parent or body or self.parser.html_node
             if tag_name == "form":
                 context.has_form = False
 
@@ -841,16 +896,24 @@ class ListTagHandler(TagHandler):
         self.debug(f"Current parent before: {context.current_parent}")
         tag_name = token.tag_name
         
+        # If we're in head, implicitly close it and switch to body
+        if context.state in (ParserState.INITIAL, ParserState.IN_HEAD):
+            body = self.parser._ensure_body_node(context)
+            if body:
+                context.current_parent = body
+                context.state = ParserState.IN_BODY
+        
         if tag_name == "li":
             self.debug(f"Handling li tag, current parent is {context.current_parent.tag_name}")
             
-            # If we're in another li, move up to its parent list or body
+            # If we're in another li, close it first
             if context.current_parent.tag_name == "li":
                 parent = context.current_parent.parent
                 if parent and parent.tag_name in ("ul", "ol"):
                     context.current_parent = parent
                 else:
-                    context.current_parent = self.parser.body_node
+                    body = self.parser._get_body_node()
+                    context.current_parent = body or self.parser.html_node
             
             new_node = Node(tag_name, token.attributes)
             context.current_parent.append_child(new_node)
@@ -869,6 +932,9 @@ class ListTagHandler(TagHandler):
             
         return False
 
+    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name in ("ul", "ol", "li")
+
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         self.debug(f"Current parent before end: {context.current_parent}")
         tag_name = token.tag_name
@@ -876,13 +942,18 @@ class ListTagHandler(TagHandler):
         if tag_name == "li":
             # Find the nearest li ancestor
             current = context.current_parent
-            while current and current != self.parser.root:
+            while current and current != self.parser.html_node:
                 if current.tag_name == "li":
-                    # Move to the list parent or body
+                    # Move to the list parent
                     if current.parent and current.parent.tag_name in ("ul", "ol"):
                         context.current_parent = current.parent
                     else:
-                        context.current_parent = self.parser.body_node
+                        body = self.parser._get_body_node()
+                        context.current_parent = body or self.parser.html_node
+                    return True
+                # If we hit a ul/ol before finding an li, ignore the end tag
+                if current.tag_name in ("ul", "ol"):
+                    self.debug(f"Found {current.tag_name} before li, ignoring end tag")
                     return True
                 current = current.parent
             return False
@@ -890,10 +961,15 @@ class ListTagHandler(TagHandler):
         elif tag_name in ("ul", "ol"):
             # Find the matching list container
             current = context.current_parent
-            while current and current != self.parser.root:
+            while current and current != self.parser.html_node:
                 if current.tag_name == tag_name:
-                    # Move to the parent
-                    context.current_parent = current.parent or self.parser.body_node
+                    # If we're inside an li, stay there
+                    if current.parent and current.parent.tag_name == "li":
+                        context.current_parent = current.parent
+                    else:
+                        # Otherwise move to the parent
+                        body = self.parser._get_body_node()
+                        context.current_parent = current.parent or body or self.parser.html_node
                     return True
                 current = current.parent
             return False
@@ -922,7 +998,7 @@ class HeadingTagHandler(TagHandler):
             
         # Outside table cells, close any existing heading
         current = context.current_parent
-        while current and current != self.parser.root:
+        while current and current != self.parser.html_node:
             if current.tag_name in HEADING_ELEMENTS:
                 context.current_parent = current.parent
                 break
@@ -941,7 +1017,7 @@ class HeadingTagHandler(TagHandler):
         
         # Find matching heading and move to its parent
         current = context.current_parent
-        while current and current != self.parser.root:
+        while current and current != self.parser.html_node:
             if current.tag_name == tag_name:
                 context.current_parent = current.parent
                 return True
@@ -954,67 +1030,84 @@ class RawtextTagHandler(TagHandler):
     """Handles rawtext elements like script, style, title, etc."""
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        self.debug(f"RawtextTagHandler.should_handle_start: checking {tag_name}")
         return tag_name in RAWTEXT_ELEMENTS
 
     def handle_start(
         self, token: "HTMLToken", context: "ParseContext", end_tag_idx: int
     ) -> bool:
         tag_name = token.tag_name
+        self.debug(f"RawtextTagHandler: handling start tag {tag_name}")
+        self.debug(f"Current state: {context.state}, current_parent: {context.current_parent}")
 
-        # HEAD_ELEMENTS should always be in head unless explicitly in body
-        if tag_name in HEAD_ELEMENTS and context.state != ParserState.IN_BODY:
-            new_node = Node(tag_name, token.attributes)
-            self.parser.head_node.append_child(new_node)
-            context.current_parent = new_node
-        else:
-            # Other elements stay in their current context
-            new_node = Node(tag_name, token.attributes)
-            context.current_parent.append_child(new_node)
-            context.current_parent = new_node
+        # Create node in current context
+        self.debug(f"Creating {tag_name} in current context")
+        new_node = Node(tag_name, token.attributes)
+        context.current_parent.append_child(new_node)
+        context.current_parent = new_node
 
         # Switch to RAWTEXT state and let tokenizer handle the content
+        self.debug(f"Switching to RAWTEXT state for {tag_name}")
         context.state = ParserState.RAWTEXT
         self.parser.tokenizer.start_rawtext(tag_name)
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        self.debug(f"RawtextTagHandler.should_handle_end: checking {tag_name} in state {context.state}")
         return tag_name in RAWTEXT_ELEMENTS
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
-        if (
-            context.state == ParserState.RAWTEXT
-            and token.tag_name == context.current_parent.tag_name
-        ):
-            # Move script/title to head if not explicitly in body
-            if token.tag_name in HEAD_ELEMENTS and context.state != ParserState.IN_BODY:
-                # Move the element to head if it's not already there
-                if context.current_parent.parent != self.parser.head_node:
-                    self.parser.head_node.append_child(context.current_parent)
-
-                # Add space in head only if we have trailing whitespace
-                if "trailing_space" in token.attributes:
-                    text_node = Node("#text")
-                    text_node.text_content = " "
-                    self.parser.head_node.append_child(text_node)
-
-                # For style, stay in head state to allow more head elements
-                if token.tag_name == "style":
-                    context.state = ParserState.IN_HEAD
-                    context.current_parent = self.parser.head_node
-                # For script, switch to body state for text handling
-                elif token.tag_name == "script":
+        self.debug(f"RawtextTagHandler: handling end tag {token.tag_name}")
+        self.debug(f"Current state: {context.state}, current_parent: {context.current_parent}")
+        
+        if (context.state == ParserState.RAWTEXT and 
+            token.tag_name == context.current_parent.tag_name):
+            
+            # Find the original parent before the RAWTEXT element
+            original_parent = context.current_parent.parent
+            self.debug(f"Original parent: {original_parent.tag_name if original_parent else None}")
+            
+            # Return to the original parent and state
+            if original_parent:
+                context.current_parent = original_parent
+                # If we were in body, stay in body
+                if original_parent.tag_name == "body":
                     context.state = ParserState.IN_BODY
-                    context.current_parent = self.parser.body_node
+                    self.debug("Returning to body state")
                 else:
-                    # Stay in head state for other head elements
                     context.state = ParserState.IN_HEAD
-                    context.current_parent = self.parser.head_node
+                    self.debug("Returning to head state")
             else:
-                # Switch to body state
+                # Fallback to body if no parent
+                body = self.parser._ensure_body_node(context)
+                context.current_parent = body
                 context.state = ParserState.IN_BODY
-                context.current_parent = self.parser.body_node
+                self.debug("Fallback to body state")
+            
             return True
+            
+        self.debug(f"Not handling end tag {token.tag_name} (state={context.state}, current={context.current_parent.tag_name})")
         return False
+
+    def should_handle_text(self, text: str, context: "ParseContext") -> bool:
+        self.debug(f"RawtextTagHandler.should_handle_text: checking in state {context.state}")
+        return context.state == ParserState.RAWTEXT
+
+    def handle_text(self, text: str, context: "ParseContext") -> bool:
+        self.debug(f"RawtextTagHandler: handling text in state {context.state}")
+        self.debug(f"Current parent: {context.current_parent}")
+        
+        if context.current_parent.children and context.current_parent.children[-1].tag_name == "#text":
+            self.debug("Appending to existing text node")
+            context.current_parent.children[-1].text_content += text
+        else:
+            self.debug("Creating new text node")
+            text_node = Node("#text")
+            text_node.text_content = text
+            context.current_parent.append_child(text_node)
+        
+        self.debug(f"Text node content: {text}")
+        return True
 
 
 class ButtonTagHandler(TagHandler):
@@ -1026,6 +1119,7 @@ class ButtonTagHandler(TagHandler):
     def handle_start(
         self, token: "HTMLToken", context: "ParseContext", end_tag_idx: int
     ) -> bool:
+        assert False
         self.debug(f"Current parent: {context.current_parent}", indent=0)
         new_node = Node(token.tag_name, token.attributes)
         context.current_parent.append_child(new_node)
@@ -1116,8 +1210,9 @@ class VoidElementHandler(TagHandler):
             if context.state != ParserState.IN_BODY:
                 self.debug(f"Moving {tag_name} to head")
                 new_node = Node(tag_name, token.attributes)
-                self.parser.head_node.append_child(new_node)
-                context.current_parent = self.parser.head_node
+                head = self.parser._ensure_head_node()
+                head.append_child(new_node)
+                context.current_parent = head
                 return True
             else:
                 self.debug(f"Keeping {tag_name} in body due to IN_BODY state")
@@ -1125,8 +1220,9 @@ class VoidElementHandler(TagHandler):
         # If we're in a paragraph and this is a block element, close the paragraph first
         if context.current_parent.tag_name == "p" and tag_name in BLOCK_ELEMENTS:
             self.debug(f"Closing paragraph for block element {tag_name}")
+            body = self.parser._get_body_node()
             context.current_parent = (
-                context.current_parent.parent or self.parser.body_node
+                context.current_parent.parent or body or self.parser.html_node
             )
 
         # Create the void element at the current level
@@ -1156,7 +1252,8 @@ class AutoClosingTagHandler(TagHandler):
         self.debug(f"Checking auto-closing rules for {token.tag_name}")
         current = context.current_parent
         if not current:
-            current = context.current_parent = self.parser.body_node
+            body = self.parser._ensure_body_node(context)
+            current = context.current_parent = body if body else self.parser.html_node
         self.debug(f"Current parent: {current}")
 
         # If we're starting a block element inside a formatting element
@@ -1225,7 +1322,8 @@ class AutoClosingTagHandler(TagHandler):
             tr = context.current_parent.find_ancestor("tr")
             if tr:
                 # Close everything up to the tr
-                context.current_parent = tr.parent or self.parser.body_node
+                body = self.parser._get_body_node()
+                context.current_parent = tr.parent or body or self.parser.html_node
                 context.state = ParserState.IN_TABLE
                 return True
 
@@ -1402,34 +1500,70 @@ class ForeignTagHandler(TagHandler):
 
 
 class HeadElementHandler(TagHandler):
-    """Handler for elements that belong in the head section (<base>, <link>, <meta>, <title>, etc)"""
-    
+    """Handles head element and its contents"""
+
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        self.debug(f"HeadElementHandler.should_handle_start: checking {tag_name} in state {context.state}")
         return tag_name in HEAD_ELEMENTS
-        
+
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         tag_name = token.tag_name
-        self.debug(f"HeadElementHandler: handling {tag_name} in {context.state}")
+        self.debug(f"HeadElementHandler: handling {tag_name}, has_more_content={has_more_content}")
+        self.debug(f"Current state: {context.state}, current_parent: {context.current_parent}")
         
-        # Create node and append to appropriate parent
-        new_node = Node(tag_name, token.attributes)
+        # Debug current parent details
+        if context.current_parent:
+            self.debug(f"Current parent tag: {context.current_parent.tag_name}")
+            self.debug(f"Current parent children: {len(context.current_parent.children)}")
+            if context.current_parent.children:
+                self.debug(f"Current parent's children: {[c.tag_name for c in context.current_parent.children]}")
+
+        # If we're in body after seeing real content
         if context.state == ParserState.IN_BODY:
-            # If we're in body, append to body
-            self.parser.body_node.append_child(new_node)
-        else:
-            # Otherwise append to head
-            self.parser.head_node.append_child(new_node)
+            self.debug("In body state with real content")
+            new_node = Node(tag_name, token.attributes)
+            context.current_parent.append_child(new_node)
+            self.debug(f"Added {tag_name} to body")
             
-        self.debug(f"Created and appended {tag_name} to {context.state}")
-        
-        # Special handling for rawtext elements to capture their content
-        if tag_name in RAWTEXT_ELEMENTS:
-            self.debug(f"Starting RAWTEXT mode for {tag_name}")
-            context.state = ParserState.RAWTEXT
-            context.current_parent = new_node
+            # For elements that can have content, update current parent
+            if tag_name not in VOID_ELEMENTS:
+                context.current_parent = new_node
+                if tag_name in RAWTEXT_ELEMENTS:
+                    context.state = ParserState.RAWTEXT
+                    self.debug(f"Switched to RAWTEXT state for {tag_name}")
             return True
-            
+
+        # Handle head elements in head normally
+        else:
+            self.debug("Handling element in head context")
+            # If we're not in head, switch to head
+            if context.state != ParserState.IN_HEAD:
+                head = self.parser._ensure_head_node()
+                context.current_parent = head
+                context.state = ParserState.IN_HEAD
+                self.debug("Switched to head state")
+
+            # Create and append the new element
+            new_node = Node(tag_name, token.attributes)
+            context.current_parent.append_child(new_node)
+            self.debug(f"Added {tag_name} to head")
+
+            # For elements that can have content, update current parent
+            if tag_name not in VOID_ELEMENTS:
+                context.current_parent = new_node
+                if tag_name in RAWTEXT_ELEMENTS:
+                    context.state = ParserState.RAWTEXT
+                    self.debug(f"Switched to RAWTEXT state for {tag_name}")
+
         return True
+
+    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name == "head"
+
+    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        if token.tag_name == "head":
+            return True
+        return False
 
     def should_handle_text(self, text: str, context: "ParseContext") -> bool:
         # Handle text in RAWTEXT mode or spaces in head
@@ -1459,7 +1593,8 @@ class HeadElementHandler(TagHandler):
             text_node = Node("#text")
             text_node.text_content = text
             context.current_parent.append_child(text_node)
-            self.debug(f"Added new text node: '{text}'")
+        
+        self.debug(f"Text node content: {text}")
         return True
 
     def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:
@@ -1472,142 +1607,242 @@ class HeadElementHandler(TagHandler):
         # In RAWTEXT mode, treat comments as text
         return self.handle_text(comment, context)
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
-        return (tag_name in HEAD_ELEMENTS and 
-                ((context.state == ParserState.RAWTEXT and
-                context.current_parent and 
-                context.current_parent.tag_name == tag_name) or
-                context.state == ParserState.IN_HEAD))
-
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
-        self.debug(f"HeadElementHandler: handling end tag {token.tag_name}")
-        
-        # For any head element, restore the previous state
-        if context.state == ParserState.RAWTEXT:
-            if token.tag_name == "script":
-                self.debug("Script ended, restoring state")
-                context.state = ParserState.IN_HEAD  # First go to IN_HEAD to handle whitespace
-                context.current_parent = self.parser.head_node
-            else:
-                # For non-script tags in RAWTEXT, go to IN_HEAD first
-                self.debug(f"Non-script tag {token.tag_name} ended in RAWTEXT")
-                context.state = ParserState.IN_HEAD  # First go to IN_HEAD to handle whitespace
-                context.current_parent = self.parser.head_node
-            
-            self.debug(f"New context: state={context.state}, parent={context.current_parent}")
-            return True
-            
-        return True
-
-
-class ImageTagHandler(TagHandler):
-    """Handles <image> tag normalization to <img>"""
-    
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
-        return tag_name == "image"
-        
-    def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
-        self.debug("Normalizing <image> to <img>")
-        # Create img node instead of image
-        new_node = Node("img", token.attributes)
-        context.current_parent.append_child(new_node)
-        return True
-
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
-        return tag_name == "image"
-        
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
-        # img is void element, no need to handle end tag
-        return True
-
 
 class HtmlTagHandler(TagHandler):
-    """Handles html tag - switches to body mode on end tag per spec"""
-    
+    """Handles html element"""
+
+    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name == "html"
+
+    def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
+        self.debug("HtmlTagHandler: handling start tag")
+        # Update html node attributes if it exists
+        if self.parser.html_node:
+            self.parser.html_node.attributes.update(token.attributes)
+        return True
+
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
         return tag_name == "html"
-        
+
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
-        self.debug("HtmlTagHandler: handling </html> end tag")
-        # Switch to body mode
-        context.state = ParserState.IN_BODY
-        context.current_parent = self.parser.body_node
+        self.debug(f"HtmlTagHandler: handling end tag, current state: {context.state}")
+        
+        # If we're in head, implicitly close it
+        if context.state == ParserState.IN_HEAD:
+            self.debug("Closing head and switching to body")
+            body = self.parser._ensure_body_node(context)
+            if body:
+                context.current_parent = body
+                context.state = ParserState.IN_BODY
+        
+        # Any content after </html> should be treated as body content
+        elif context.state == ParserState.AFTER_HTML:
+            self.debug("Content after </html>, switching to body mode")
+            body = self.parser._ensure_body_node(context)
+            if body:
+                context.current_parent = body
+                context.state = ParserState.IN_BODY
+        
         return True
 
 
 class FramesetTagHandler(TagHandler):
     """Handles frameset, frame, and noframes elements"""
-    
+
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
         return tag_name in ("frameset", "frame", "noframes")
-        
-    def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+
+    def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         tag_name = token.tag_name
-        self.debug(f"Handling {tag_name} tag")
-        
+        self.debug(f"FramesetTagHandler: handling {tag_name}")
+
         if tag_name == "frameset":
-            # If we're in initial state, replace body with frameset at HTML level
-            if context.state == ParserState.INITIAL:
+            # If we're not already in a frameset tree, replace body with it
+            if not context.current_parent.find_ancestor("frameset"):
+                self.debug("Creating root frameset")
+                new_node = Node(tag_name, token.attributes)
+                body = self.parser._get_body_node()
+                if body:
+                    body.parent.remove_child(body)
+                self.parser.html_node.append_child(new_node)
+                context.current_parent = new_node
                 context.state = ParserState.IN_FRAMESET
-                new_node = Node(tag_name, token.attributes)
-                
-                # Find body's index in html node's children
-                html_node = self.parser.root.children[0]  # html is always first child
-                for i, child in enumerate(html_node.children):
-                    if child == self.parser.body_node:
-                        # Replace body with frameset
-                        html_node.children[i] = new_node
-                        break
-                
-                context.current_parent = new_node
-                return True
-            
-            # Otherwise just create nested frameset
-            if context.current_parent.tag_name == "frameset":
+            else:
+                # Nested frameset
+                self.debug("Creating nested frameset")
                 new_node = Node(tag_name, token.attributes)
                 context.current_parent.append_child(new_node)
                 context.current_parent = new_node
-                return True
-                
+            return True
+
         elif tag_name == "frame":
-            # Frame can only appear inside frameset
+            # Frame must be inside frameset
             if context.current_parent.tag_name == "frameset":
+                self.debug("Creating frame in frameset")
                 new_node = Node(tag_name, token.attributes)
                 context.current_parent.append_child(new_node)
-                return True
-                
+                # frame is a void element, don't change current_parent
+            return True
+
         elif tag_name == "noframes":
-            # noframes can appear inside frameset
+            self.debug("Creating noframes element")
             new_node = Node(tag_name, token.attributes)
             context.current_parent.append_child(new_node)
             context.current_parent = new_node
             context.state = ParserState.RAWTEXT
             return True
-            
+
         return False
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
         return tag_name in ("frameset", "noframes")
-        
+
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         tag_name = token.tag_name
-        
+        self.debug(f"FramesetTagHandler: handling end tag {tag_name}")
+
         if tag_name == "frameset":
-            # Find matching frameset and move to its parent
-            current = context.current_parent
-            while current and current != self.parser.root:
-                if current.tag_name == "frameset":
-                    context.current_parent = current.parent or self.parser.root
-                    return True
+            # Find nearest frameset ancestor
+            target = context.current_parent.find_ancestor("frameset")
+            if target:
+                # Move to parent frameset if it exists
+                if target.parent and target.parent.tag_name == "frameset":
+                    context.current_parent = target.parent
+                else:
+                    # Otherwise stay at root level
+                    context.current_parent = self.parser.html_node
+                return True
+            return False
+
+        elif tag_name == "noframes":
+            if context.current_parent.tag_name == "noframes":
+                # Return to frameset
+                parent = context.current_parent.parent
+                if parent and parent.tag_name == "frameset":
+                    context.current_parent = parent
+                    context.state = ParserState.IN_FRAMESET
+                else:
+                    context.current_parent = self.parser.html_node
+                    context.state = ParserState.IN_FRAMESET
+            return True
+
+        return False
+
+
+class ImageTagHandler(TagHandler):
+    """Special handling for img tags"""
+
+    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name in ("img", "image")
+
+    def handle_start(
+        self, token: "HTMLToken", context: "ParseContext", end_tag_idx: int
+    ) -> bool:
+        # If we're in head, implicitly close it and switch to body
+        if context.state in (ParserState.INITIAL, ParserState.IN_HEAD):
+            body = self.parser._ensure_body_node(context)
+            if body:
+                context.current_parent = body
+                context.state = ParserState.IN_BODY
+
+        # Always create as "img" regardless of input tag
+        new_node = Node("img", token.attributes)
+        context.current_parent.append_child(new_node)
+        return True
+
+    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name in ("img", "image")
+
+    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        # Images are void elements, no need to handle end tag
+        return True
+
+
+class BodyElementHandler(TagHandler):
+    """Handles body element"""
+
+    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name == "body"
+
+    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        # If we're not in frameset mode, ensure we have a body
+        if context.state != ParserState.IN_FRAMESET:
+            body = self.parser._ensure_body_node(context)
+            if body:
+                context.current_parent = self.parser.html_node
+                context.state = ParserState.AFTER_BODY
+            return True
+        return False
+
+
+class BoundaryElementHandler(TagHandler):
+    """Handles elements that can affect formatting elements like marquee"""
+
+    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name in BOUNDARY_ELEMENTS
+
+    def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
+        new_node = Node(token.tag_name, token.attributes)
+        context.current_parent.append_child(new_node)
+        context.current_parent = new_node
+        return True
+
+    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name in BOUNDARY_ELEMENTS
+
+    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        # Find the boundary element we're trying to close
+        target = context.current_parent.find_ancestor(token.tag_name, stop_at_boundary=True)
+        if not target:
+            return False
+
+        # Check for any formatting elements that need to be closed
+        formatting_elements = []
+        current = context.current_parent
+        while current and current != target and current != self.parser.html_node:
+            if current.tag_name in FORMATTING_ELEMENTS:
+                formatting_elements.append(current)
+            current = current.parent
+
+        # Close any formatting elements inside the boundary element
+        if formatting_elements:
+            # Move back to the boundary element's parent
+            context.current_parent = target.parent or self.parser.html_node
+            
+            # If there was an outer formatting element of the same type,
+            # make it the current parent for subsequent content
+            outer_fmt = None
+            current = target.parent
+            while current and current != self.parser.html_node:
+                if (current.tag_name in FORMATTING_ELEMENTS and 
+                    current.tag_name == formatting_elements[0].tag_name):
+                    outer_fmt = current
+                    break
                 current = current.parent
                 
-        elif tag_name == "noframes":
-            # Move back to frameset mode
-            if context.current_parent.tag_name == "noframes":
-                context.state = ParserState.IN_FRAMESET
-                context.current_parent = context.current_parent.parent
-                return True
-                
-        return False
+            if outer_fmt:
+                context.current_parent = outer_fmt
+        else:
+            context.current_parent = target.parent or self.parser.html_node
+
+        return True
+
+
+class DoctypeHandler(TagHandler):
+    """Handles DOCTYPE declarations"""
+
+    def should_handle_doctype(self, doctype: str, context: "ParseContext") -> bool:
+        return True
+
+    def handle_doctype(self, doctype: str, context: "ParseContext") -> bool:
+        # If we've already seen a doctype, ignore additional ones
+        if context.doctype_seen:
+            self.debug("Ignoring duplicate DOCTYPE")
+            return True
+            
+        self.debug(f"DoctypeHandler: handling {doctype}")
+        doctype_node = Node("!DOCTYPE")
+        doctype_node.tag_name = "!DOCTYPE html"  # Set the full doctype
+        self.parser.root.children.insert(0, doctype_node)
+        context.doctype_seen = True
+        return True

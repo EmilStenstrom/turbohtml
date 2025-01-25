@@ -20,7 +20,8 @@ class ParserState(Enum):
     RAWTEXT = auto()
     IN_CAPTION = auto()
     IN_FRAMESET = auto()
-
+    AFTER_FRAMESET = auto()
+    AFTER_HTML = auto()
 
 class ParseContext:
     """
@@ -42,6 +43,7 @@ class ParseContext:
         self.current_table = None
         self.active_block = None
         self._debug = debug_callback
+        self.doctype_seen = False
 
     @property
     def state(self) -> ParserState:

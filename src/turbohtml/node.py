@@ -121,3 +121,24 @@ class Node:
                 return None
             current = current.parent
         return None
+
+    def remove_child(self, child: 'Node'):
+        """Remove a child node, updating all sibling links.
+        
+        Args:
+            child: The Node to remove
+        """
+        if child not in self.children:
+            return
+        
+        # Update sibling links
+        if child.previous_sibling:
+            child.previous_sibling.next_sibling = child.next_sibling
+        if child.next_sibling:
+            child.next_sibling.previous_sibling = child.previous_sibling
+        
+        # Remove from children list and clear parent
+        self.children.remove(child)
+        child.parent = None
+        child.next_sibling = None
+        child.previous_sibling = None

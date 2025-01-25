@@ -254,7 +254,16 @@ FORMATTING_ELEMENTS = [
     "cite",
 ]
 
-BOUNDARY_ELEMENTS = ["applet", "button", "marquee", "object", "table", "td", "th"]
+BOUNDARY_ELEMENTS = {
+    "marquee",
+    "object",
+    "template",
+    "math",
+    "svg",
+    "table",
+    "th",
+    "td",
+}
 
 HEADING_ELEMENTS = ["h1", "h2", "h3", "h4", "h5", "h6"]
 
