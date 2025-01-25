@@ -1,6 +1,7 @@
 import re
 from typing import Dict, Iterator, Optional
 from .constants import RAWTEXT_ELEMENTS
+import html  # Add to top of file
 
 TAG_OPEN_RE = re.compile(r"<(!?)(/)?([a-zA-Z0-9][-a-zA-Z0-9:]*)(.*?)>")
 ATTR_RE = re.compile(
@@ -268,7 +269,12 @@ class HTMLTokenizer:
 
         text = self.html[start : self.pos]
         # Only emit non-empty text tokens
-        return HTMLToken("Character", data=text) if text else None
+        if not text:
+            return None
+        
+        # Decode entities in text
+        decoded = self._decode_entities(text)
+        return HTMLToken("Character", data=decoded)
 
     def _parse_attributes(self, attr_string: str) -> Dict[str, str]:
         """Parse attributes from a string using the ATTR_RE pattern"""
@@ -338,3 +344,7 @@ class HTMLTokenizer:
         if from_end_tag:
             return None
         return HTMLToken("Comment", data=comment_text)
+
+    def _decode_entities(self, text: str) -> str:
+        """Decode HTML entities in text using Python's html module"""
+        return html.unescape(text)
