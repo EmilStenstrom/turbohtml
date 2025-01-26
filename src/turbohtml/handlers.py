@@ -1880,7 +1880,7 @@ class DoctypeHandler(TagHandler):
         self.debug(f"handling {doctype}")
         doctype_node = Node("!DOCTYPE")
         doctype_node.tag_name = "!DOCTYPE html"  # Set the full doctype
-        self.parser.root.children.insert(0, doctype_node)
+        self.parser.root.append_child(doctype_node)
         context.doctype_seen = True
         return True
 

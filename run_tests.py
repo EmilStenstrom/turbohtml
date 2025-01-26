@@ -125,8 +125,8 @@ def run_tests(test_dir, fail_fast=False, test_specs=None, debug=False, filter_fi
             if captured_output:  # This will only be non-empty when print_fails is True
                 test_details.append(captured_output)
             test_details.extend([
-                f'Expected:\n{expected_output}',
-                f'Actual:\n{actual_output}'
+                f'=== WHATWG HTML5 SPEC COMPLIANT TREE ===\n{expected_output}',
+                f'=== CURRENT PARSER OUTPUT TREE ===\n{actual_output}'
             ])
 
             # Print debug info and test details for failing tests

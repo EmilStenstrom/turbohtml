@@ -92,13 +92,18 @@ class TurboHTML:
     def _init_dom_structure(self) -> None:
         """Initialize the basic DOM structure"""
         self.root = Node("document")
+        # Create but don't append html node yet
         self.html_node = Node("html")
-        self.root.append_child(self.html_node)
         
-        # Always create head node during initialization
+        # Always create head node
         head = Node("head")
         self.html_node.append_child(head)
-        
+
+    def _ensure_html_node(self) -> None:
+        """Ensure html node is in the tree if it isn't already"""
+        if self.html_node not in self.root.children:
+            self.root.append_child(self.html_node)
+
     def _get_head_node(self) -> Optional[Node]:
         """Get head node from tree, if it exists"""
         return next((child for child in self.html_node.children if child.tag_name == "head"), None)
@@ -141,11 +146,9 @@ class TurboHTML:
 
         for token in self.tokenizer.tokenize():
             self.debug(f"_parse: {token}, context: {context}", indent=0)
-            if token.type == "Comment":
-                self._handle_comment(token.data, context)
-
-            # Handle DOCTYPE through the DoctypeHandler
-            elif token.type == "DOCTYPE":
+            
+            if token.type == "DOCTYPE":
+                # Handle DOCTYPE through the DoctypeHandler first
                 for handler in self.tag_handlers:
                     if handler.should_handle_doctype(token.data, context):
                         self.debug(f"{handler.__class__.__name__}: handling DOCTYPE")
@@ -153,8 +156,15 @@ class TurboHTML:
                             break
                 context.index = self.tokenizer.pos
                 continue
+            
+            if token.type == "Comment":
+                self._handle_comment(token.data, context)
+                continue
+            
+            # Ensure html node is in tree before processing any non-DOCTYPE/Comment token
+            self._ensure_html_node()
 
-            elif token.type == "StartTag":
+            if token.type == "StartTag":
                 # Handle special elements and state transitions first
                 if self._handle_special_element(
                     token, token.tag_name, context, self.tokenizer.pos
@@ -168,7 +178,7 @@ class TurboHTML:
                 )
                 context.index = self.tokenizer.pos
 
-            if token.type == "EndTag":
+            elif token.type == "EndTag":
                 self._handle_end_tag(token, token.tag_name, context)
                 context.index = self.tokenizer.pos
 
@@ -297,28 +307,37 @@ class TurboHTML:
         """
         comment_node = Node("#comment")
         comment_node.text_content = text
+        self.debug(f"Handling comment '{text}' in state {context.state}")
+        self.debug(f"Current parent: {context.current_parent}")
 
         # First comment should go in root if we're still in initial state
         if context.state == ParserState.INITIAL:
-            self.root.children.insert(0, comment_node)
+            self.debug("Adding comment to root in initial state")
+            self.root.append_child(comment_node)
+            self._ensure_html_node()  # Make sure html node is in tree
             context.state = ParserState.IN_BODY
             # Ensure body exists and set as current parent
             if context.state != ParserState.IN_FRAMESET:
                 body = self._ensure_body_node(context)
                 if body:
                     context.current_parent = body
+            self.debug(f"Root children after append: {[c.tag_name for c in self.root.children]}")
             return
 
         # Comments after </body> should go in html node
-        if context.current_parent == self._get_body_node():
+        if context.state == ParserState.AFTER_BODY:
+            self.debug("Adding comment to html in after body state")
             self.html_node.append_child(comment_node)
             return
 
+        # All other comments go in current parent
+        self.debug(f"Adding comment to current parent: {context.current_parent}")
         context.current_parent.append_child(comment_node)
+        self.debug(f"Current parent children: {[c.tag_name for c in context.current_parent.children]}")
 
     def _handle_doctype(self, token: HTMLToken) -> None:
         """
-        Handle DOCTYPE declarations by prepending them to the root's children.
+        Handle DOCTYPE declarations by appending them to the root's children.
         """
         doctype_node = Node("!doctype")
-        self.root.children.insert(0, doctype_node)
+        self.root.append_child(doctype_node)
