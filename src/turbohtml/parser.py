@@ -1,7 +1,6 @@
 from turbohtml.context import ParseContext, ParserState
 from turbohtml.handlers import (
     AutoClosingTagHandler,
-    ButtonTagHandler,
     DoctypeHandler,
     ForeignTagHandler,
     FormattingElementHandler,
@@ -73,7 +72,6 @@ class TurboHTML:
             FormTagHandler(self),
             HeadingTagHandler(self),
             ParagraphTagHandler(self),
-            ButtonTagHandler(self),
             ForeignTagHandler(self) if handle_foreign_elements else None,
         ]
         self.tag_handlers = [h for h in self.tag_handlers if h is not None]
@@ -194,9 +192,6 @@ class TurboHTML:
         self, token: HTMLToken, tag_name: str, context: ParseContext, end_tag_idx: int
     ) -> None:
         """Handle all opening HTML tags."""
-        self.debug(
-            f"_handle_start_tag: {tag_name}, current_parent={context.current_parent}"
-        )
 
         # Create body node if we're implicitly switching to body mode
         if (context.state == ParserState.INITIAL or 
@@ -213,12 +208,8 @@ class TurboHTML:
             return
 
         # Try tag handlers first
-        self.debug(f"Trying tag handlers for {tag_name}")
         for handler in self.tag_handlers:
             if handler.should_handle_start(tag_name, context):
-                self.debug(
-                    f"{handler.__class__.__name__}: handling {token}, context={context}"
-                )
                 if handler.handle_start(token, context, not token.is_last_token):
                     return
 
@@ -232,9 +223,6 @@ class TurboHTML:
         self, token: HTMLToken, tag_name: str, context: ParseContext
     ) -> None:
         """Handle all closing HTML tags."""
-        self.debug(
-            f"_handle_end_tag: {tag_name}, current_parent={context.current_parent}"
-        )
 
         # Create body node if needed and not in frameset mode
         if not context.current_parent and context.state != ParserState.IN_FRAMESET:
@@ -243,12 +231,8 @@ class TurboHTML:
                 context.current_parent = body
 
         # Try tag handlers first
-        self.debug(f"Trying tag handlers for end tag {tag_name}")
         for handler in self.tag_handlers:
             if handler.should_handle_end(tag_name, context):
-                self.debug(
-                    f"{handler.__class__.__name__}: handling {token}, context={context}"
-                )
                 if handler.handle_end(token, context):
                     return
 

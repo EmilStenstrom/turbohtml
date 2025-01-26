@@ -287,9 +287,12 @@ OPTIONAL_END_TAG_ELEMENTS = [
 ]
 
 AUTO_CLOSING_TAGS = {
+    "p": ["address", "article", "aside", "blockquote", "dl", "fieldset", 
+          "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr",
+          "menu", "nav", "ol", "p", "pre", "section", "table", "ul", "li"],
     "li": ["li"],
-    "dt": ["dt", "dd"],
-    "dd": ["dt", "dd"],
+    "dt": ["dt", "dd", "p"],
+    "dd": ["dt", "dd", "p"],
     "tr": ["tr", "td", "th"],
     "td": ["td", "th"],
     "th": ["td", "th"],
