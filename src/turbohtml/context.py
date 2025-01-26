@@ -17,6 +17,7 @@ class ParserState(Enum):
     IN_TABLE_BODY = auto()
     IN_ROW = auto()
     IN_CELL = auto()
+    IN_CAPTION = auto()
     RAWTEXT = auto()
     IN_CAPTION = auto()
     IN_FRAMESET = auto()
