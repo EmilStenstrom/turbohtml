@@ -347,13 +347,27 @@ class ParagraphTagHandler(TagHandler):
     """Handles paragraph elements"""
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
-        return tag_name == "p"
+        # Handle p tags directly
+        if tag_name == "p":
+            return True
+            
+        # Also handle any tag that would close a p
+        if context.current_parent.tag_name == "p":
+            return tag_name in AUTO_CLOSING_TAGS["p"]
+            
+        return False
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", end_tag_idx: int) -> bool:
-        self.debug(f"handling <StartTag: p>, context={context}")
+        self.debug(f"handling <StartTag: {token.tag_name}>, context={context}")
         self.debug(f"Current parent: {context.current_parent}")
 
-        # If we're in head, implicitly close it and switch to body
+        # If we're handling a tag that should close p
+        if token.tag_name != "p" and context.current_parent.tag_name == "p":
+            self.debug(f"Auto-closing p due to {token.tag_name}")
+            context.current_parent = context.current_parent.parent
+            return False  # Let the original handler handle the new tag
+
+        # Rest of the original p tag handling...
         if context.state in (ParserState.INITIAL, ParserState.IN_HEAD):
             body = self.parser._ensure_body_node(context)
             if body:
@@ -1532,8 +1546,36 @@ class HeadElementHandler(TagHandler):
         return tag_name == "head"
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
-        if token.tag_name == "head":
+        self.debug(f"handling end tag {token.tag_name}")
+        self.debug(f"current state: {context.state}, current parent: {context.current_parent}")
+        
+        # For template, only close up to the nearest template boundary
+        if token.tag_name == "template":
+            self.debug("handling template end tag")
+            self.debug(f"starting search at: {context.current_parent}")
+            
+            # Find nearest template ancestor, stopping at boundaries
+            template_ancestor = context.current_parent.find_ancestor(
+                "template",
+                stop_at_boundary=True
+            )
+            
+            if template_ancestor:
+                self.debug(f"found matching template, moving to parent: {template_ancestor.parent}")
+                context.current_parent = template_ancestor.parent
+                return True
+            
+            self.debug("no matching template found within boundaries")
+            return False
+
+        # For other head elements...
+        if context.state == ParserState.RAWTEXT:
+            self.debug(f"handling RAWTEXT end tag {token.tag_name}")
+            context.state = ParserState.IN_HEAD
+            context.current_parent = context.current_parent.parent
+            self.debug(f"returned to head state, new parent: {context.current_parent}")
             return True
+            
         return False
 
     def should_handle_text(self, text: str, context: "ParseContext") -> bool:
@@ -1762,39 +1804,46 @@ class BoundaryElementHandler(TagHandler):
         return tag_name in BOUNDARY_ELEMENTS
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        self.debug(f"handling end tag {token.tag_name}")
+        
         # Find the boundary element we're trying to close
         target = context.current_parent.find_ancestor(token.tag_name, stop_at_boundary=True)
         if not target:
+            self.debug("no matching boundary element found")
             return False
 
-        # Check for any formatting elements that need to be closed
+        self.debug(f"found matching boundary element: {target}")
+        
+        # Find any formatting elements between current position and target
         formatting_elements = []
         current = context.current_parent
         while current and current != target and current != self.parser.html_node:
             if current.tag_name in FORMATTING_ELEMENTS:
                 formatting_elements.append(current)
+                self.debug(f"found formatting element to close: {current.tag_name}")
             current = current.parent
 
         # Close any formatting elements inside the boundary element
         if formatting_elements:
+            self.debug(f"closing formatting elements: {[f.tag_name for f in formatting_elements]}")
             # Move back to the boundary element's parent
             context.current_parent = target.parent or self.parser.html_node
+            self.debug(f"moved to boundary parent: {context.current_parent}")
             
-            # If there was an outer formatting element of the same type,
-            # make it the current parent for subsequent content
-            outer_fmt = None
-            current = target.parent
-            while current and current != self.parser.html_node:
-                if (current.tag_name in FORMATTING_ELEMENTS and 
-                    current.tag_name == formatting_elements[0].tag_name):
-                    outer_fmt = current
-                    break
-                current = current.parent
-                
+            # Look for outer formatting element of same type
+            outer_fmt = target.parent.find_ancestor(
+                lambda n: (n.tag_name in FORMATTING_ELEMENTS and 
+                          n.tag_name == formatting_elements[0].tag_name)
+            )
+            
             if outer_fmt:
+                self.debug(f"found outer formatting element: {outer_fmt}")
                 context.current_parent = outer_fmt
+                self.debug(f"moved to outer formatting element: {context.current_parent}")
         else:
+            self.debug("no formatting elements to close")
             context.current_parent = target.parent or self.parser.html_node
+            self.debug(f"moved to boundary parent: {context.current_parent}")
 
         return True
 

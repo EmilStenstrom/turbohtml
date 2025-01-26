@@ -61,6 +61,7 @@ class TurboHTML:
             HeadElementHandler(self),
             BodyElementHandler(self),
             HtmlTagHandler(self),
+            ParagraphTagHandler(self),
             AutoClosingTagHandler(self),
             VoidElementHandler(self),
             RawtextTagHandler(self),
@@ -71,7 +72,6 @@ class TurboHTML:
             SelectTagHandler(self),
             FormTagHandler(self),
             HeadingTagHandler(self),
-            ParagraphTagHandler(self),
             ForeignTagHandler(self) if handle_foreign_elements else None,
         ]
         self.tag_handlers = [h for h in self.tag_handlers if h is not None]
