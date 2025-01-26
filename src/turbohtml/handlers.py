@@ -303,60 +303,112 @@ class FormattingElementHandler(TagHandler):
 
 
 class SelectTagHandler(TagHandler):
-    """Handles select, option, optgroup and hr elements"""
+    """Handles select elements and their children (option, optgroup)"""
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
-        # Handle these tags directly
-        if tag_name in ("select", "option", "optgroup"):
+        return tag_name in ("select", "option", "optgroup")
+
+    def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
+        tag_name = token.tag_name
+        self.debug(f"Handling {tag_name} in select context, current_parent={context.current_parent}")
+
+        if tag_name == "select":
+            # If we're already in a select, close it and ignore the nested select
+            if context.current_parent.find_ancestor("select"):
+                self.debug("Found nested select, closing outer select")
+                outer_select = context.current_parent.find_ancestor("select")
+                if outer_select and outer_select.parent:
+                    self.debug(f"Moving up to outer select's parent: {outer_select.parent}")
+                    context.current_parent = outer_select.parent
+                    # Don't create anything for the nested select itself
+                    self.debug("Ignoring nested select tag")
+                    return True
+
+            # Create new select
+            new_select = Node(tag_name, token.attributes)
+            context.current_parent.append_child(new_select)
+            context.current_parent = new_select
+            self.debug(f"Created new select: {new_select}, parent now: {context.current_parent}")
             return True
 
-        # Also handle hr if we're inside a select
-        if tag_name == "hr" and context.current_parent.find_ancestor("select"):
-            return True
+        elif tag_name in ("optgroup", "option"):
+            # Check if we're in a select
+            in_select = context.current_parent.find_ancestor("select")
+            self.debug(f"Checking for select ancestor: in_select={bool(in_select)}")
+
+            # If we're not in a select, create elements at body level
+            if not in_select:
+                self.debug(f"Creating {tag_name} outside select")
+                # Move up to body level if we're inside another option/optgroup
+                while context.current_parent.tag_name in ("option", "optgroup"):
+                    self.debug(f"Moving up from {context.current_parent.tag_name}")
+                    context.current_parent = context.current_parent.parent
+
+                new_node = Node(tag_name, token.attributes)
+                context.current_parent.append_child(new_node)
+                context.current_parent = new_node
+                self.debug(f"Created {tag_name}: {new_node}, parent now: {context.current_parent}")
+                return True
+
+            # Inside select, handle normally
+            if tag_name == "optgroup":
+                self.debug("Creating optgroup inside select")
+                # If we're inside an option, move up to select level
+                if context.current_parent.tag_name == "option":
+                    self.debug("Moving up from option to select level")
+                    select = context.current_parent.find_ancestor("select")
+                    if select:
+                        context.current_parent = select
+
+                new_optgroup = Node(tag_name, token.attributes)
+                context.current_parent.append_child(new_optgroup)
+                context.current_parent = new_optgroup
+                self.debug(f"Created optgroup: {new_optgroup}, parent now: {context.current_parent}")
+                return True
+            else:  # option
+                self.debug("Creating option inside select")
+                # If we're inside an optgroup, stay there, otherwise move to select level
+                if context.current_parent.tag_name not in ("select", "optgroup"):
+                    self.debug("Moving up to select/optgroup level")
+                    parent = context.current_parent.find_ancestor(lambda n: n.tag_name in ("select", "optgroup"))
+                    if parent:
+                        context.current_parent = parent
+
+                new_option = Node(tag_name, token.attributes)
+                context.current_parent.append_child(new_option)
+                context.current_parent = new_option
+                self.debug(f"Created option: {new_option}, parent now: {context.current_parent}")
+                return True
 
         return False
-
-    def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", end_tag_idx: int
-    ) -> bool:
-        tag_name = token.tag_name
-
-        if tag_name == "hr":
-            # Move back to select level
-            select = context.current_parent.find_ancestor("select")
-            if select:
-                new_node = Node(tag_name, token.attributes)
-                select.append_child(new_node)
-                return True
-            return False
-
-        # If we're in an option and get a new option/optgroup, close the current option first
-        if (
-            tag_name in ("option", "optgroup")
-            and context.current_parent.tag_name == "option"
-        ):
-            context.current_parent = context.current_parent.parent or self.parser.html_node
-
-        # Create the new node
-        new_node = Node(tag_name, token.attributes)
-        context.current_parent.append_child(new_node)
-
-        # Only update current_parent for non-void elements
-        if tag_name not in ("hr",):
-            context.current_parent = new_node
-        return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
         return tag_name in ("select", "option", "optgroup")
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         tag_name = token.tag_name
-        current = context.current_parent.find_ancestor(tag_name)
+        self.debug(f"Handling end tag {tag_name}, current_parent={context.current_parent}")
 
-        if current:
-            body = self.parser._get_body_node()
-            context.current_parent = current.parent or body or self.parser.html_node
+        if tag_name == "select":
+            # Find nearest select ancestor and move up to its parent
+            select = context.current_parent.find_ancestor("select")
+            if select and select.parent:
+                self.debug(f"Found select ancestor: {select}, moving to parent: {select.parent}")
+                context.current_parent = select.parent
+            else:
+                self.debug("No select ancestor found")
             return True
+
+        elif tag_name in ("optgroup", "option"):
+            # Find nearest matching ancestor and move up to its parent
+            ancestor = context.current_parent.find_ancestor(tag_name)
+            if ancestor and ancestor.parent:
+                self.debug(f"Found {tag_name} ancestor: {ancestor}, moving to parent: {ancestor.parent}")
+                context.current_parent = ancestor.parent
+            else:
+                self.debug(f"No {tag_name} ancestor found")
+            return True
+
         return False
 
 
@@ -1642,9 +1694,8 @@ class HeadElementHandler(TagHandler):
         # Try to combine with previous text node if it exists
         if context.current_parent.children and context.current_parent.children[-1].tag_name == "#text":
             self.debug("Found previous text node, combining")
-            prev_node = context.current_parent.children[-1]
-            prev_node.text_content += text
-            self.debug(f"Combined text: '{prev_node.text_content}'")
+            context.current_parent.children[-1].text_content += text
+            self.debug(f"Combined text: '{context.current_parent.children[-1].text_content}'")
         else:
             text_node = Node("#text")
             text_node.text_content = text
@@ -1847,10 +1898,11 @@ class BoundaryElementHandler(TagHandler):
         return tag_name in BOUNDARY_ELEMENTS
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
-        self.debug(f"handling end tag {token.tag_name}")
+        tag_name = token.tag_name
+        self.debug(f"handling end tag {tag_name}")
         
         # Find the boundary element we're trying to close
-        target = context.current_parent.find_ancestor(token.tag_name, stop_at_boundary=True)
+        target = context.current_parent.find_ancestor(tag_name, stop_at_boundary=True)
         if not target:
             self.debug("no matching boundary element found")
             return False
@@ -1860,7 +1912,7 @@ class BoundaryElementHandler(TagHandler):
         # Find any formatting elements between current position and target
         formatting_elements = []
         current = context.current_parent
-        while current and current != target and current != self.parser.html_node:
+        while current and current != target:
             if current.tag_name in FORMATTING_ELEMENTS:
                 formatting_elements.append(current)
                 self.debug(f"found formatting element to close: {current.tag_name}")
@@ -1952,10 +2004,17 @@ class PlaintextHandler(TagHandler):
         return context.state == ParserState.PLAINTEXT
 
     def handle_text(self, text: str, context: "ParseContext") -> bool:
-        self.debug(f"handling text in PLAINTEXT mode: {text}")
-        text_node = Node("#text")
-        text_node.text_content = text
-        context.current_parent.append_child(text_node)
+        self.debug(f"handling text in state {context.state}")
+        self.debug(f"Current parent: {context.current_parent}")
+        
+        if context.current_parent.children and context.current_parent.children[-1].tag_name == "#text":
+            self.debug("Appending to existing text node")
+            context.current_parent.children[-1].text_content += text
+        else:
+            self.debug("Creating new text node")
+            text_node = Node("#text")
+            text_node.text_content = text
+            context.current_parent.append_child(text_node)
         
         self.debug(f"Text node content: {text}")
         return True
