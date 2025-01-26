@@ -84,6 +84,23 @@ class TextHandler(TagHandler):
             self.debug("Keeping only whitespace in frameset mode")
             return True
 
+        # Handle text after </body>
+        if context.state == ParserState.AFTER_BODY:
+            if text.isspace():
+                self.debug("Processing whitespace after </body> in body")
+                body = self.parser._get_body_node()
+                if body:
+                    context.current_parent = body
+                    self._append_text(text, context)
+            else:
+                self.debug("Parse error: non-whitespace after </body>, switching back to in body")
+                context.state = ParserState.IN_BODY
+                body = self.parser._get_body_node()
+                if body:
+                    context.current_parent = body
+                    self._append_text(text, context)
+            return True
+
         # Rest of the method unchanged...
         if context.state == ParserState.RAWTEXT:
             self._append_text(text, context)
