@@ -446,7 +446,7 @@ class TableTagHandler(TagHandler):
         if context.current_context in ("math", "svg"):
             return False
             
-        return tag_name in ("table", "thead", "tbody", "tfoot", "tr", "td", "th")
+        return tag_name in ("table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption")
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         tag_name = token.tag_name
@@ -471,6 +471,7 @@ class TableTagHandler(TagHandler):
             
         # Handle each element type
         handlers = {
+            "caption": self._handle_caption,
             "colgroup": self._handle_colgroup,
             "col": self._handle_col,
             "tbody": self._handle_tbody,
@@ -482,6 +483,16 @@ class TableTagHandler(TagHandler):
         }
         
         return handlers[tag_name](token, context)
+
+    def _handle_caption(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        """Handle caption element"""
+        # Always create caption at table level
+        context.current_parent = context.current_table
+        new_caption = Node(token.tag_name, token.attributes)
+        context.current_table.append_child(new_caption)
+        context.current_parent = new_caption
+        context.state = ParserState.IN_CAPTION
+        return True
 
     def _handle_table(self, token: "HTMLToken", context: "ParseContext") -> bool:
         """Handle table element"""
@@ -681,6 +692,13 @@ class TableTagHandler(TagHandler):
 
         self.debug(f"handling text '{text}' in {context}")
 
+        # If we're inside a caption, handle text directly
+        if context.state == ParserState.IN_CAPTION:
+            text_node = Node("#text")
+            text_node.text_content = text
+            context.current_parent.append_child(text_node)
+            return True
+
         # If we're inside a table cell, append text directly
         current_cell = context.current_parent.find_ancestor(
             lambda n: n.tag_name in ["td", "th"]
@@ -794,11 +812,19 @@ class TableTagHandler(TagHandler):
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
         # Handle any end tag in table context to maintain proper structure
-        return context.state == ParserState.IN_TABLE
+        return context.state in (ParserState.IN_TABLE, ParserState.IN_CAPTION)
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         tag_name = token.tag_name
         self.debug(f"handling end tag {tag_name}")
+
+        if tag_name == "caption" and context.state == ParserState.IN_CAPTION:
+            # Find nearest caption ancestor
+            caption = context.current_parent.find_ancestor("caption")
+            if caption:
+                context.current_parent = caption.parent
+                context.state = ParserState.IN_TABLE
+            return True
 
         if tag_name == "table":
             if context.current_table:
