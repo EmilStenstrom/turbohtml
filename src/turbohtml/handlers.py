@@ -303,16 +303,16 @@ class FormattingElementHandler(TagHandler):
 
 
 class SelectTagHandler(TagHandler):
-    """Handles select elements and their children (option, optgroup)"""
+    """Handles select elements and their children (option, optgroup) and datalist"""
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
-        return tag_name in ("select", "option", "optgroup")
+        return tag_name in ("select", "option", "optgroup", "datalist")
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         tag_name = token.tag_name
         self.debug(f"Handling {tag_name} in select context, current_parent={context.current_parent}")
 
-        if tag_name == "select":
+        if tag_name in ("select", "datalist"):
             # If we're already in a select, close it and ignore the nested select
             if context.current_parent.find_ancestor("select"):
                 self.debug("Found nested select, closing outer select")
@@ -324,41 +324,41 @@ class SelectTagHandler(TagHandler):
                     self.debug("Ignoring nested select tag")
                     return True
 
-            # Create new select
-            new_select = Node(tag_name, token.attributes)
-            context.current_parent.append_child(new_select)
-            context.current_parent = new_select
-            self.debug(f"Created new select: {new_select}, parent now: {context.current_parent}")
+            # Create new select/datalist
+            new_node = Node(tag_name, token.attributes)
+            context.current_parent.append_child(new_node)
+            context.current_parent = new_node
+            self.debug(f"Created new {tag_name}: {new_node}, parent now: {context.current_parent}")
             return True
 
         elif tag_name in ("optgroup", "option"):
-            # Check if we're in a select
-            in_select = context.current_parent.find_ancestor("select")
-            self.debug(f"Checking for select ancestor: in_select={bool(in_select)}")
+            # Check if we're in a select or datalist
+            parent = context.current_parent.find_ancestor(lambda n: n.tag_name in ("select", "datalist"))
+            self.debug(f"Checking for select/datalist ancestor: found={bool(parent)}")
 
-            # If we're not in a select, create elements at body level
-            if not in_select:
-                self.debug(f"Creating {tag_name} outside select")
+            # If we're not in a select/datalist, create elements at body level
+            if not parent:
+                self.debug(f"Creating {tag_name} outside select/datalist")
                 # Move up to body level if we're inside another option/optgroup
                 while context.current_parent.tag_name in ("option", "optgroup"):
                     self.debug(f"Moving up from {context.current_parent.tag_name}")
                     context.current_parent = context.current_parent.parent
 
-                new_node = Node(tag_name, token.attributes)
+                new_node = Node(token.tag_name, token.attributes)
                 context.current_parent.append_child(new_node)
                 context.current_parent = new_node
                 self.debug(f"Created {tag_name}: {new_node}, parent now: {context.current_parent}")
                 return True
 
-            # Inside select, handle normally
+            # Inside select/datalist, handle normally
             if tag_name == "optgroup":
-                self.debug("Creating optgroup inside select")
-                # If we're inside an option, move up to select level
+                self.debug("Creating optgroup inside select/datalist")
+                # If we're inside an option, move up to select/datalist level
                 if context.current_parent.tag_name == "option":
-                    self.debug("Moving up from option to select level")
-                    select = context.current_parent.find_ancestor("select")
-                    if select:
-                        context.current_parent = select
+                    self.debug("Moving up from option to select/datalist level")
+                    parent = context.current_parent.find_ancestor(lambda n: n.tag_name in ("select", "datalist"))
+                    if parent:
+                        context.current_parent = parent
 
                 new_optgroup = Node(tag_name, token.attributes)
                 context.current_parent.append_child(new_optgroup)
@@ -366,15 +366,15 @@ class SelectTagHandler(TagHandler):
                 self.debug(f"Created optgroup: {new_optgroup}, parent now: {context.current_parent}")
                 return True
             else:  # option
-                self.debug("Creating option inside select")
-                # If we're inside an optgroup, stay there, otherwise move to select level
-                if context.current_parent.tag_name not in ("select", "optgroup"):
-                    self.debug("Moving up to select/optgroup level")
-                    parent = context.current_parent.find_ancestor(lambda n: n.tag_name in ("select", "optgroup"))
+                self.debug("Creating option inside select/datalist")
+                # If we're inside an optgroup, stay there, otherwise move to select/datalist level
+                if context.current_parent.tag_name not in ("select", "datalist", "optgroup"):
+                    self.debug("Moving up to select/datalist/optgroup level")
+                    parent = context.current_parent.find_ancestor(lambda n: n.tag_name in ("select", "datalist", "optgroup"))
                     if parent:
                         context.current_parent = parent
 
-                new_option = Node(tag_name, token.attributes)
+                new_option = Node(token.tag_name, token.attributes)
                 context.current_parent.append_child(new_option)
                 context.current_parent = new_option
                 self.debug(f"Created option: {new_option}, parent now: {context.current_parent}")
@@ -383,20 +383,20 @@ class SelectTagHandler(TagHandler):
         return False
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
-        return tag_name in ("select", "option", "optgroup")
+        return tag_name in ("select", "option", "optgroup", "datalist")
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         tag_name = token.tag_name
         self.debug(f"Handling end tag {tag_name}, current_parent={context.current_parent}")
 
-        if tag_name == "select":
-            # Find nearest select ancestor and move up to its parent
-            select = context.current_parent.find_ancestor("select")
-            if select and select.parent:
-                self.debug(f"Found select ancestor: {select}, moving to parent: {select.parent}")
-                context.current_parent = select.parent
+        if tag_name in ("select", "datalist"):
+            # Find nearest select/datalist ancestor and move up to its parent
+            ancestor = context.current_parent.find_ancestor(tag_name)
+            if ancestor and ancestor.parent:
+                self.debug(f"Found {tag_name} ancestor: {ancestor}, moving to parent: {ancestor.parent}")
+                context.current_parent = ancestor.parent
             else:
-                self.debug("No select ancestor found")
+                self.debug(f"No {tag_name} ancestor found")
             return True
 
         elif tag_name in ("optgroup", "option"):
