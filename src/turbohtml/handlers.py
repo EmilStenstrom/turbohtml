@@ -870,8 +870,19 @@ class TableTagHandler(TagHandler):
         tag_name = token.tag_name
         self.debug(f"handling end tag {tag_name}")
 
+        # If we're in a table cell
+        cell = context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th"))
+        if cell:
+            if tag_name == "p":
+                # Create an implicit p element in the cell
+                self.debug("Creating implicit p element in table cell")
+                new_p = Node("p")
+                cell.append_child(new_p)
+                context.current_parent = new_p
+                return True
+
+        # Rest of existing table end tag handling...
         if tag_name == "caption" and context.state == ParserState.IN_CAPTION:
-            # Find nearest caption ancestor
             caption = context.current_parent.find_ancestor("caption")
             if caption:
                 context.current_parent = caption.parent
