@@ -1,4 +1,4 @@
-from turbohtml.context import ParseContext, ParserState
+from turbohtml.context import ParseContext, DocumentState, ContentState
 from turbohtml.handlers import (
     AutoClosingTagHandler,
     DoctypeHandler,
@@ -48,7 +48,6 @@ class TurboHTML:
         self.html = html
 
         # Reset all state for each new parser instance
-        self.state = ParserState.INITIAL
         self._init_dom_structure()
 
         # Initialize tag handlers in deterministic order
@@ -122,7 +121,7 @@ class TurboHTML:
         
     def _ensure_body_node(self, context: ParseContext) -> Optional[Node]:
         """Get or create body node if not in frameset mode"""
-        if context.state == ParserState.IN_FRAMESET:
+        if context.document_state == DocumentState.IN_FRAMESET:
             return None
         body = self._get_body_node()
         if not body:
@@ -136,7 +135,12 @@ class TurboHTML:
         Main parsing loop using ParseContext and HTMLTokenizer.
         """
         # Initialize context with html_node as current_parent
-        context = ParseContext(len(self.html), self.html_node, self.html_node)
+        context = ParseContext(
+            len(self.html), 
+            self._get_body_node(), 
+            self.html_node, 
+            debug_callback=self.debug if self.env_debug else None
+        )
         self.tokenizer = HTMLTokenizer(self.html)
 
         # if self.env_debug:
@@ -192,10 +196,10 @@ class TurboHTML:
                             break
 
         # After all tokens are processed, ensure we have a body if not in frameset mode
-        if context.state != ParserState.IN_FRAMESET:
+        if context.document_state != DocumentState.IN_FRAMESET:
             body = self._ensure_body_node(context)
             if body:
-                context.state = ParserState.IN_BODY
+                context.document_state = DocumentState.IN_BODY
 
     # Tag Handling Methods
     def _handle_start_tag(
@@ -204,16 +208,17 @@ class TurboHTML:
         """Handle all opening HTML tags."""
 
         # Create body node if we're implicitly switching to body mode
-        if (context.state == ParserState.INITIAL or 
-            context.state == ParserState.IN_HEAD) and tag_name not in HEAD_ELEMENTS:
+        if ((context.document_state == DocumentState.INITIAL or 
+             context.document_state == DocumentState.IN_HEAD) and 
+            tag_name not in HEAD_ELEMENTS):
             self.debug("Implicitly creating body node")
-            if context.state != ParserState.IN_FRAMESET:
+            if context.document_state != DocumentState.IN_FRAMESET:
                 body = self._ensure_body_node(context)
                 if body:
                     context.current_parent = body
-                    context.state = ParserState.IN_BODY
+                    context.document_state = DocumentState.IN_BODY
 
-        if context.state == ParserState.RAWTEXT:
+        if context.content_state == ContentState.RAWTEXT:
             self.debug("In rawtext mode, ignoring start tag")
             return
 
@@ -235,7 +240,7 @@ class TurboHTML:
         """Handle all closing HTML tags."""
 
         # Create body node if needed and not in frameset mode
-        if not context.current_parent and context.state != ParserState.IN_FRAMESET:
+        if not context.current_parent and context.document_state != DocumentState.IN_FRAMESET:
             body = self._ensure_body_node(context)
             if body:
                 context.current_parent = body
@@ -256,44 +261,44 @@ class TurboHTML:
             context.current_parent = self.html_node
             
             # If we're not in frameset mode, ensure we have a body
-            if context.state != ParserState.IN_FRAMESET:
+            if context.document_state != DocumentState.IN_FRAMESET:
                 body = self._ensure_body_node(context)
                 if body:
-                    context.state = ParserState.IN_BODY
+                    context.document_state = DocumentState.IN_BODY
             return True
         elif tag_name == "head":
             # Don't create duplicate head elements
             head = self._ensure_head_node()
             context.current_parent = head
-            context.state = ParserState.IN_HEAD
+            context.document_state = DocumentState.IN_HEAD
             
             # If we're not in frameset mode, ensure we have a body
-            if context.state != ParserState.IN_FRAMESET:
+            if context.document_state != DocumentState.IN_FRAMESET:
                 body = self._ensure_body_node(context)
             return True
-        elif tag_name == "body" and context.state != ParserState.IN_FRAMESET:
+        elif tag_name == "body" and context.document_state != DocumentState.IN_FRAMESET:
             # Create body if needed
             body = self._ensure_body_node(context)
             if body:
                 # Update attributes and switch to body mode
                 body.attributes.update(token.attributes)
                 context.current_parent = body
-                context.state = ParserState.IN_BODY
+                context.document_state = DocumentState.IN_BODY
             return True
-        elif tag_name == "frameset" and context.state == ParserState.INITIAL:
+        elif tag_name == "frameset" and context.document_state == DocumentState.INITIAL:
             # Let the frameset handler handle this
             return False
-        elif tag_name not in HEAD_ELEMENTS and context.state != ParserState.IN_FRAMESET:
+        elif tag_name not in HEAD_ELEMENTS and context.document_state != DocumentState.IN_FRAMESET:
             # Handle implicit head/body transitions (but not in frameset mode)
-            if context.state == ParserState.INITIAL:
+            if context.document_state == DocumentState.INITIAL:
                 self.debug("Implicitly closing head and switching to body")
-                context.state = ParserState.IN_BODY
+                context.document_state = DocumentState.IN_BODY
                 body = self._ensure_body_node(context)
                 if body:
                     context.current_parent = body
             elif context.current_parent == self._get_head_node():
                 self.debug("Closing head and switching to body")
-                context.state = ParserState.IN_BODY
+                context.document_state = DocumentState.IN_BODY
                 body = self._ensure_body_node(context)
                 if body:
                     context.current_parent = body
@@ -307,17 +312,17 @@ class TurboHTML:
         """
         comment_node = Node("#comment")
         comment_node.text_content = text
-        self.debug(f"Handling comment '{text}' in state {context.state}")
+        self.debug(f"Handling comment '{text}' in document_state {context.document_state}")
         self.debug(f"Current parent: {context.current_parent}")
 
         # First comment should go in root if we're still in initial state
-        if context.state == ParserState.INITIAL:
+        if context.document_state == DocumentState.INITIAL:
             self.debug("Adding comment to root in initial state")
             self.root.append_child(comment_node)
             self._ensure_html_node()  # Make sure html node is in tree
-            context.state = ParserState.IN_BODY
+            context.document_state = DocumentState.IN_BODY
             # Ensure body exists and set as current parent
-            if context.state != ParserState.IN_FRAMESET:
+            if context.document_state != DocumentState.IN_FRAMESET:
                 body = self._ensure_body_node(context)
                 if body:
                     context.current_parent = body
@@ -325,7 +330,7 @@ class TurboHTML:
             return
 
         # Comments after </body> should go in html node
-        if context.state == ParserState.AFTER_BODY:
+        if context.document_state == DocumentState.AFTER_BODY:
             self.debug("Adding comment to html in after body state")
             self.html_node.append_child(comment_node)
             return
