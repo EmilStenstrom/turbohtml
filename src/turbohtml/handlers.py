@@ -1968,7 +1968,15 @@ class DoctypeHandler(TagHandler):
             
         self.debug(f"handling {doctype}")
         doctype_node = Node("!DOCTYPE")
-        doctype_node.tag_name = "!DOCTYPE html"  # Set the full doctype
+        
+        # Handle empty doctype
+        if not doctype.strip():
+            doctype_node.tag_name = "!DOCTYPE"
+        else:
+            # Split on first space and take first part, then lowercase it
+            content = doctype.split()[0].lower()
+            doctype_node.tag_name = f"!DOCTYPE {content}"
+        
         self.parser.root.append_child(doctype_node)
         context.doctype_seen = True
         return True
