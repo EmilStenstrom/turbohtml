@@ -301,6 +301,12 @@ class HTMLTokenizer:
         self.pos += 4  # Skip <!--
         start = self.pos
         
+        # Special case: <!--> is treated as <!-- -->
+        if self.pos < self.length and self.html[self.pos] == ">":
+            self.pos += 1
+            return HTMLToken("Comment", data="")
+        
+        # Look for end of comment
         while self.pos + 2 < self.length:
             if self.html[self.pos:self.pos + 3] == "-->":
                 comment_text = self.html[start:self.pos]
@@ -309,8 +315,12 @@ class HTMLTokenizer:
             self.pos += 1
         
         # If we reach here, no proper end to comment was found
-        # Consume the rest as comment data
         comment_text = self.html[start:]
+        
+        # Special case: if comment ends with --, remove them and add a space
+        if comment_text.endswith("--"):
+            comment_text = comment_text[:-2]
+        
         self.pos = self.length
         return HTMLToken("Comment", data=comment_text)
 
