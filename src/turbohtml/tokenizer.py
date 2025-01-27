@@ -284,7 +284,9 @@ class HTMLTokenizer:
         # Handle case where entire string is attribute name
         if attr_string and not any(c in attr_string for c in "='\""):
             self.debug("Single attribute without value")
-            return {attr_string: ""}
+            # Split on / and create empty attributes for each part
+            parts = [p.strip() for p in attr_string.split("/") if p.strip()]
+            return {part: "" for part in parts}
         
         matches = ATTR_RE.findall(attr_string)
         attributes = {}
