@@ -20,6 +20,7 @@ from turbohtml.handlers import (
     BodyElementHandler,
     BoundaryElementHandler,
     PlaintextHandler,
+    ButtonTagHandler,
 )
 from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
@@ -61,6 +62,7 @@ class TurboHTML:
             BodyElementHandler(self),
             HtmlTagHandler(self),
             ParagraphTagHandler(self),
+            ButtonTagHandler(self),
             AutoClosingTagHandler(self),
             VoidElementHandler(self),
             RawtextTagHandler(self),
