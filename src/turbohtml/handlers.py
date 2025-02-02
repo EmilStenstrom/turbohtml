@@ -222,6 +222,9 @@ class FormattingElementHandler(TagHandler):
     """Handles formatting elements like <b>, <i>, etc."""
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        # Don't handle formatting elements inside select
+        if context.current_parent.find_ancestor("select"):
+            return False
         return tag_name in FORMATTING_ELEMENTS
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
@@ -361,6 +364,9 @@ class SelectTagHandler(TagHandler):
     """Handles select elements and their children (option, optgroup) and datalist"""
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        # If we're in a select, handle all tags to prevent formatting elements
+        if context.current_parent.find_ancestor("select"):
+            return True
         return tag_name in ("select", "option", "optgroup", "datalist")
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
@@ -384,6 +390,11 @@ class SelectTagHandler(TagHandler):
             context.current_parent.append_child(new_node)
             context.current_parent = new_node
             self.debug(f"Created new {tag_name}: {new_node}, parent now: {context.current_parent}")
+            return True
+
+        # If we're in a select, ignore any formatting elements
+        if context.current_parent.find_ancestor("select") and tag_name in FORMATTING_ELEMENTS:
+            self.debug(f"Ignoring formatting element {tag_name} inside select")
             return True
 
         elif tag_name in ("optgroup", "option"):
@@ -422,8 +433,15 @@ class SelectTagHandler(TagHandler):
                 return True
             else:  # option
                 self.debug("Creating option inside select/datalist")
+                # If we're inside a formatting element, move up to select
+                formatting = context.current_parent.find_ancestor(lambda n: n.tag_name in FORMATTING_ELEMENTS)
+                if formatting:
+                    self.debug("Found formatting element, moving up to select")
+                    parent = formatting.find_ancestor(lambda n: n.tag_name in ("select", "datalist"))
+                    if parent:
+                        context.current_parent = parent
                 # If we're inside an optgroup, stay there, otherwise move to select/datalist level
-                if context.current_parent.tag_name not in ("select", "datalist", "optgroup"):
+                elif context.current_parent.tag_name not in ("select", "datalist", "optgroup"):
                     self.debug("Moving up to select/datalist/optgroup level")
                     parent = context.current_parent.find_ancestor(lambda n: n.tag_name in ("select", "datalist", "optgroup"))
                     if parent:
