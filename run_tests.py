@@ -1,165 +1,238 @@
 from turbohtml import TurboHTML
-import os
 import argparse
-import re
 from io import StringIO
-import sys
 from contextlib import redirect_stdout
+from dataclasses import dataclass
+from typing import List
+from pathlib import Path
 
-
-def parse_dat_file(content):
-    tests = []
-    for test in content.split('\n\n'):
-        lines = test.split('\n')
-        data = []
-        errors = []
-        document = []
-        mode = None
-
-        for line in lines:
-            if line.startswith('#'):
-                mode = line[1:]
-            else:
-                if mode == 'data':
-                    data.append(line)
-                elif mode == 'errors':
-                    errors.append(line)
-                elif mode == 'document':
-                    document.append(line)
-
-        if data and document:
-            tests.append({
-                'data': '\n'.join(data),
-                'errors': errors,
-                'document': '\n'.join(document)
-            })
-
-    return tests
-
-
-def compare_outputs(expected, actual):
-    return expected.strip() == actual.strip()
-
-def run_tests(test_dir, fail_fast=False, test_specs=None, debug=False, filter_files=None, quiet=False, exclude_errors=None, exclude_files=None, exclude_html=None, filter_html=None, filter_errors=None, print_fails=False):
-    passed = 0
-    failed = 0
-
-    # Parse test specs into a dictionary if provided
-    spec_dict = {}
-    if test_specs:
-        for spec in test_specs:
-            filename, indices = spec.split(':')
-            spec_dict[filename] = [int(i) for i in indices.split(',')]
-
-    # Collect and naturally sort all .dat files
-    all_files = []
-    for root, _, files in os.walk(test_dir):
-        for file in files:
-            if file.endswith('.dat'):
-                # Skip excluded files
-                if exclude_files and any(exclude in file for exclude in exclude_files):
-                    continue
-                # Add filter check
-                if filter_files and filter_files not in file:
-                    continue
-                if not test_specs or file in spec_dict:
-                    all_files.append((root, file))
+@dataclass
+class TestCase:
+    data: str
+    errors: List[str]
+    document: str
     
-    # Sort files naturally using a better natural sort implementation
-    def natural_sort_key(s):
-        return [int(text) if text.isdigit() else text.lower()
-                for text in re.split('([0-9]+)', s)]
+@dataclass
+class TestResult:
+    passed: bool
+    input_html: str
+    expected_errors: List[str]
+    expected_output: str
+    actual_output: str
+    debug_output: str = ""
+
+def compare_outputs(expected: str, actual: str) -> bool:
+    """Compare expected and actual outputs, normalizing whitespace"""
+    def normalize(text: str) -> str:
+        return '\n'.join(line.rstrip() for line in text.strip().splitlines())
+    return normalize(expected) == normalize(actual)
+
+class TestRunner:
+    def __init__(self, test_dir: Path, config: dict):
+        self.test_dir = test_dir
+        self.config = config
+        self.results = []
     
-    all_files.sort(key=lambda x: natural_sort_key(x[1]))
-
-    # Process sorted files
-    for root, file in all_files:
-        file_path = os.path.join(root, file)
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        tests = parse_dat_file(content)
-        for i, test in enumerate(tests):
-            # Skip tests not in the specified indices for this file
-            if test_specs and i not in spec_dict.get(file, []):
-                continue
-
-            # Skip tests with excluded error strings
-            if exclude_errors and any(error_str in error for error_str in exclude_errors for error in test['errors']):
-                continue
-
-            # Skip tests with excluded HTML content
-            if exclude_html and any(html_str in test['data'] for html_str in exclude_html):
-                continue
-
-            # Skip tests that don't contain the filtered HTML content
-            if filter_html and not any(html_str in test['data'] for html_str in filter_html):
-                continue
-
-            # Skip tests that don't contain the filtered error strings
-            if filter_errors and not any(error_str in error for error_str in filter_errors for error in test['errors']):
-                continue
-
-            html_input = test['data']
-            errors = test['errors']
-            expected_output = test['document']
-
-            # Capture output only if print_fails is enabled
-            if print_fails:
-                stdout_capture = StringIO()
-                with redirect_stdout(stdout_capture):
-                    parser = TurboHTML(html_input, debug=debug)
-                captured_output = stdout_capture.getvalue()
-            else:
-                parser = TurboHTML(html_input, debug=debug)
-                captured_output = ""
-                
-            actual_output = parser.root.to_test_format()
-            test_passed = compare_outputs(expected_output, actual_output)
+    def _natural_sort_key(self, path: Path):
+        """Convert string to list of string and number chunks for natural sorting
+        "z23a" -> ["z", 23, "a"]
+        """
+        def convert(text):
+            return int(text) if text.isdigit() else text.lower()
             
-            # Store test details for potential failure output
-            test_details = [
-                f'{"PASSED" if test_passed else "FAILED"}:',
-                f'HTML to parse: {html_input}',
-                f'Errors to handle when parsing: {errors}',
-            ]
-            if captured_output:  # This will only be non-empty when print_fails is True
-                test_details.append(captured_output)
-            test_details.extend([
-                f'=== WHATWG HTML5 SPEC COMPLIANT TREE ===\n{expected_output}',
-                f'=== CURRENT PARSER OUTPUT TREE ===\n{actual_output}'
-            ])
+        import re
+        return [convert(c) for c in re.split('([0-9]+)', str(path))]
 
-            # Print debug info and test details for failing tests
-            if not test_passed:
-                if debug:
-                    print(f'Test {file} #{i}: {html_input}')
-                if print_fails or fail_fast or (test_specs and i in spec_dict.get(file, [])):
-                    print('\n'.join(test_details))
-            elif not quiet:
-                print(".", end="", flush=True)
+    def _parse_dat_file(self, path: Path) -> List[TestCase]:
+        """Parse a .dat file into a list of TestCase objects"""
+        content = path.read_text(encoding='utf-8')
+        tests = []
+        for test in content.split('\n\n'):
+            if not test.strip():
+                continue
+                
+            lines = test.split('\n')
+            data = []
+            errors = []
+            document = []
+            mode = None
 
-            if not test_passed:
-                failed += 1
-                if fail_fast:
-                    return passed, failed
-            else:
-                passed += 1
+            for line in lines:
+                if line.startswith('#'):
+                    mode = line[1:]
+                else:
+                    if mode == 'data':
+                        data.append(line)
+                    elif mode == 'errors':
+                        errors.append(line)
+                    elif mode == 'document':
+                        document.append(line)
+
+            if data or document:
+                tests.append(TestCase(
+                    data='\n'.join(data),
+                    errors=errors,
+                    document='\n'.join(document)
+                ))
+
+        return tests
+
+    def _should_run_test(self, filename: str, index: int, test: TestCase) -> bool:
+        """Determine if a test should be run based on configuration"""
+        if self.config["test_specs"]:
+            spec_match = False
+            for spec in self.config["test_specs"]:
+                if ":" not in spec:
+                    continue
+                spec_file, indices = spec.split(":")
+                if filename == spec_file and str(index) in indices.split(","):
+                    spec_match = True
+                    break
+            if not spec_match:
+                return False
+
+        if self.config["exclude_html"]:
+            if any(exclude in test.data for exclude in self.config["exclude_html"]):
+                return False
+
+        if self.config["filter_html"]:
+            if not any(include in test.data for include in self.config["filter_html"]):
+                return False
+
+        if self.config["exclude_errors"]:
+            if any(exclude in error for exclude in self.config["exclude_errors"] 
+                  for error in test.errors):
+                return False
+
+        if self.config["filter_errors"]:
+            if not any(include in error for include in self.config["filter_errors"] 
+                      for error in test.errors):
+                return False
+
+        return True
+
+    def load_tests(self) -> List[tuple[Path, List[TestCase]]]:
+        """Load and filter test files based on configuration"""
+        test_files = self._collect_test_files()
+        return [(path, self._parse_dat_file(path)) for path in test_files]
     
-    return passed, failed
+    def _collect_test_files(self) -> List[Path]:
+        """Collect and filter .dat files based on configuration"""
+        files = list(self.test_dir.rglob("*.dat"))
+        
+        if self.config["exclude_files"]:
+            files = [f for f in files if not any(exclude in f.name 
+                    for exclude in self.config["exclude_files"])]
+            
+        if self.config["filter_files"]:
+            files = [f for f in files if self.config["filter_files"] in f.name]
+            
+        return sorted(files, key=self._natural_sort_key)
+    
+    def run(self) -> tuple[int, int]:
+        """Run all tests and return (passed, failed) counts"""
+        passed = failed = 0
+        
+        for file_path, tests in self.load_tests():
+            for i, test in enumerate(tests):
+                if not self._should_run_test(file_path.name, i, test):
+                    continue
+                    
+                result = self._run_single_test(test)
+                self.results.append(result)
+                
+                if result.passed:
+                    passed += 1
+                    self._print_progress(".")
+                else:
+                    failed += 1
+                    self._handle_failure(file_path, i, result)
+                    
+                if failed and self.config["fail_fast"]:
+                    return passed, failed
+                    
+        return passed, failed
+    
+    def _run_single_test(self, test: TestCase) -> TestResult:
+        """Run a single test and return the result"""
+        debug_output = ""
+        
+        # Capture debug output if debug mode is enabled
+        if self.config["debug"]:
+            f = StringIO()
+            with redirect_stdout(f):
+                parser = TurboHTML(test.data, debug=True)
+                actual_tree = parser.root.to_test_format()
+            debug_output = f.getvalue()
+        else:
+            parser = TurboHTML(test.data)
+            actual_tree = parser.root.to_test_format()
+            
+        # Compare the actual output with expected
+        passed = compare_outputs(test.document, actual_tree)
+        
+        return TestResult(
+            passed=passed,
+            input_html=test.data,
+            expected_errors=test.errors,
+            expected_output=test.document,
+            actual_output=actual_tree,
+            debug_output=debug_output
+        )
+        
+    def _print_progress(self, indicator: str):
+        """Print progress indicator unless in quiet mode"""
+        if not self.config["quiet"]:
+            print(indicator, end='', flush=True)
+            
+    def _handle_failure(self, file_path: Path, test_index: int, result: TestResult):
+        """Handle test failure - print indicator and report if configured"""
+        self._print_progress("x")
+        if self.config["print_fails"]:
+            print(f"\nTest failed in {file_path.name}:{test_index}")
+            TestReporter(self.config).print_test_result(result)
 
-def main(test_dir, fail_fast=False, test_specs=None, debug=False, filter_files=None, quiet=False, exclude_errors=None, exclude_files=None, exclude_html=None, filter_html=None, filter_errors=None, print_fails=False):
-    passed, failed = run_tests(test_dir, fail_fast, test_specs, debug, filter_files, quiet, exclude_errors, exclude_files, exclude_html, filter_html, filter_errors, print_fails)
-    total = passed + failed
-    summary = f'Tests passed: {passed}/{total}'
-    if not fail_fast:
-        summary += f' ({round(passed*100/total) if total else 0}%)'
-        # Save test results to file
-        with open('test-summary.txt', 'w') as f:
-            f.write(summary)
-    print(f'\n{summary}')
+class TestReporter:
+    def __init__(self, config: dict):
+        self.config = config
+        
+    def print_test_result(self, result: TestResult):
+        """Print detailed test result based on configuration"""
+        if not result.passed or self.config["print_fails"]:
+            lines = [
+                f'{"PASSED" if result.passed else "FAILED"}:',
+                f'=== INCOMING HTML ===\n{result.input_html}\n',
+                f'Errors to handle when parsing: {result.expected_errors}\n',
+            ]
+            
+            if result.debug_output:
+                lines.extend([
+                    f'=== DEBUG PRINTS WHEN PARSING ===',
+                    f'{result.debug_output.rstrip()}\n'  # Remove trailing whitespace and add linebreak
+                ])
+                
+            lines.extend([
+                f'=== WHATWG HTML5 SPEC COMPLIANT TREE ===\n{result.expected_output}\n',
+                f'=== CURRENT PARSER OUTPUT TREE ===\n{result.actual_output}'
+            ])
+            
+            print('\n'.join(lines))
+    
+    def print_summary(self, passed: int, failed: int):
+        """Print test summary and optionally save to file"""
+        total = passed + failed
+        summary = f'Tests passed: {passed}/{total}'
+        
+        if not self.config["fail_fast"]:
+            percentage = round(passed*100/total) if total else 0
+            summary += f' ({percentage}%)'
+            
+            # Save to file
+            Path('test-summary.txt').write_text(summary)
+            
+        print(f'\n{summary}')
 
-
-if __name__ == '__main__':
+def parse_args() -> dict:
     parser = argparse.ArgumentParser()
     parser.add_argument('-x', '--fail-fast', action='store_true',
                        help='Break on first test failure')
@@ -198,6 +271,29 @@ if __name__ == '__main__':
     filter_html = args.filter_html.split(',') if args.filter_html else None
     filter_errors = args.filter_errors.split(',') if args.filter_errors else None
     
-    main('../html5lib-tests/tree-construction', args.fail_fast, test_specs, args.debug, 
-         args.filter_files, args.quiet, exclude_errors, exclude_files, exclude_html, filter_html,
-         filter_errors, args.print_fails)
+    return {
+        'fail_fast': args.fail_fast,
+        'test_specs': test_specs,
+        'debug': args.debug,
+        'filter_files': args.filter_files,
+        'quiet': args.quiet,
+        'exclude_errors': exclude_errors,
+        'exclude_files': exclude_files,
+        'exclude_html': exclude_html,
+        'filter_html': filter_html,
+        'filter_errors': filter_errors,
+        'print_fails': args.print_fails
+    }
+
+def main():
+    config = parse_args()
+    test_dir = Path('../html5lib-tests/tree-construction')
+    
+    runner = TestRunner(test_dir, config)
+    reporter = TestReporter(config)
+    
+    passed, failed = runner.run()
+    reporter.print_summary(passed, failed)
+
+if __name__ == '__main__':
+    main()
