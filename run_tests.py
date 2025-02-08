@@ -137,16 +137,21 @@ class TestRunner:
             for i, test in enumerate(tests):
                 if not self._should_run_test(file_path.name, i, test):
                     continue
-                    
-                result = self._run_single_test(test)
-                self.results.append(result)
                 
-                if result.passed:
-                    passed += 1
-                    self._print_progress(".")
-                else:
-                    failed += 1
-                    self._handle_failure(file_path, i, result)
+                try:
+                    result = self._run_single_test(test)
+                    self.results.append(result)
+                    
+                    if result.passed:
+                        passed += 1
+                        self._print_progress(".")
+                    else:
+                        failed += 1
+                        self._handle_failure(file_path, i, result)
+                except Exception as e:
+                    print(f"\nError in test {file_path.name}:{i}")
+                    print(f"Input HTML:\n{test.data}\n")
+                    raise  # Re-raise the exception to show the full traceback
                     
                 if failed and self.config["fail_fast"]:
                     return passed, failed
