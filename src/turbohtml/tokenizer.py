@@ -312,9 +312,17 @@ class HTMLTokenizer:
 
         # Look for end of comment
         while self.pos + 2 < self.length:
-            if self.html[self.pos : self.pos + 3] == "-->":
-                comment_text = self.html[start : self.pos]
+            if self.html[self.pos:self.pos + 3] == "-->":
+                comment_text = self.html[start:self.pos]
                 self.pos += 3  # Skip -->
+                return HTMLToken("Comment", data=comment_text)
+            # Handle --!> ending (spec says to ignore the !)
+            elif (self.pos + 3 < self.length and
+                  self.html[self.pos:self.pos + 2] == "--" and
+                  self.html[self.pos + 2] == "!" and
+                  self.html[self.pos + 3] == ">"):
+                comment_text = self.html[start:self.pos]
+                self.pos += 4  # Skip --!>
                 return HTMLToken("Comment", data=comment_text)
             self.pos += 1
 
