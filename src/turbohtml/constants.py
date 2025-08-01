@@ -239,6 +239,7 @@ AUTO_CLOSING_TAGS = {
     "th": ["td", "th"],
     "rt": ["rt", "rp"],
     "rp": ["rt", "rp"],
+    "button": ["button"],
     "h1": ["h1", "h2", "h3", "h4", "h5", "h6"],
     "h2": ["h1", "h2", "h3", "h4", "h5", "h6"],
     "h3": ["h1", "h2", "h3", "h4", "h5", "h6"],
