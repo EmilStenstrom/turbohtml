@@ -1,6 +1,6 @@
 import re
 from typing import Dict, Iterator, Optional
-from .constants import RAWTEXT_ELEMENTS
+from .constants import RAWTEXT_ELEMENTS, HTML5_NUMERIC_REPLACEMENTS
 import html  # Add to top of file
 
 TAG_OPEN_RE = re.compile(r"<(!?)(/)?([a-zA-Z0-9][-a-zA-Z0-9:]*)(.*?)>")
@@ -217,7 +217,7 @@ class HTMLTokenizer:
             if tag_match:
                 self.debug(f"Found unclosed tag: {tag_match.groups()}")
                 bang, is_end_tag, tag_name = tag_match.groups()
-                # Get rest of input as attributes
+                # Get rest of the input as attributes
                 tag_prefix_len = len(tag_match.group(0))
                 attributes = self.html[self.pos + tag_prefix_len :]
                 self.pos = self.length
@@ -296,6 +296,8 @@ class HTMLTokenizer:
         attributes = {}
         for attr_name, val1, val2, val3 in matches:
             attr_value = val1 or val2 or val3 or ""
+            # Decode HTML entities in attribute values per HTML5 spec
+            attr_value = self._decode_entities(attr_value, in_attribute=True)
             attributes[attr_name] = attr_value
         return attributes
 
@@ -354,7 +356,7 @@ class HTMLTokenizer:
         # Look for next > to end the comment
         while self.pos < self.length:
             if self.html[self.pos] == ">":
-                comment_text = self.html[start : self.pos]
+                comment_text = self.html[start:self.pos]
                 self.pos += 1  # Skip >
                 # Return None for bogus comments from end tags with attributes
                 if from_end_tag:
@@ -369,6 +371,151 @@ class HTMLTokenizer:
             return None
         return HTMLToken("Comment", data=comment_text)
 
-    def _decode_entities(self, text: str) -> str:
-        """Decode HTML entities in text using Python's html module"""
-        return html.unescape(text)
+    def _decode_entities(self, text: str, in_attribute: bool = False) -> str:
+        """Decode HTML entities in text according to HTML5 spec."""
+        if '&' not in text:
+            return text
+
+        result = []
+        i = 0
+        while i < len(text):
+            if text[i] == '&':
+                # Find the end of the potential entity name using HTML5 rules
+                end_pos = i + 1
+
+                # Check if it's a numeric entity
+                if end_pos < len(text) and text[end_pos] == '#':
+                    # Numeric entity
+                    end_pos += 1
+                    if end_pos < len(text) and text[end_pos].lower() == 'x':
+                        end_pos += 1  # hex prefix
+                    # Include hex/decimal digits
+                    while end_pos < len(text) and text[end_pos].isalnum():
+                        end_pos += 1
+                else:
+                    # Named entity - find longest sequence of alphanumeric chars
+                    # This may include invalid entity names, we'll validate later
+                    while end_pos < len(text) and text[end_pos].isalnum():
+                        end_pos += 1
+
+                # Now we have the full potential entity name
+                full_entity = text[i:end_pos]
+                entity = full_entity
+                has_semicolon = False
+
+                # Check for semicolon
+                if end_pos < len(text) and text[end_pos] == ';':
+                    entity += ';'
+                    end_pos += 1
+                    has_semicolon = True
+
+                # Try to decode the entity
+                decoded = None
+                try:
+                    if (entity.startswith('&#x') or entity.startswith('&#X')) and has_semicolon:
+                        # Hexadecimal numeric entity
+                        hex_part = entity[3:-1]
+                        if hex_part:
+                            codepoint = int(hex_part, 16)
+                            decoded = self._codepoint_to_char(codepoint)
+                    elif entity.startswith('&#') and has_semicolon:
+                        # Decimal numeric entity
+                        dec_part = entity[2:-1]
+                        if dec_part.isdigit():
+                            codepoint = int(dec_part)
+                            decoded = self._codepoint_to_char(codepoint)
+                    elif has_semicolon:
+                        # Named entity with semicolon - always decode
+                        decoded = html.unescape(entity)
+                        if decoded == entity:
+                            decoded = None  # Not a valid entity
+                    else:
+                        # Named entity without semicolon - find the real entity boundary
+                        best_entity = None
+                        best_decoded = None
+                        best_end_pos = None
+
+                        # Find the shortest valid entity by growing from minimum length
+                        for try_len in range(2, len(full_entity) + 1):  # Start from &X minimum
+                            try_entity = full_entity[:try_len]
+                            test_decoded = html.unescape(try_entity)
+
+                            if test_decoded != try_entity:
+                                # This is a valid entity, but check if adding more chars
+                                # just adds literal text (indicating we found the boundary)
+                                if try_len < len(full_entity):
+                                    longer_entity = full_entity[:try_len + 1]
+                                    longer_decoded = html.unescape(longer_entity)
+
+                                    # If adding the next char just adds literal text, we found the boundary
+                                    if longer_decoded == test_decoded + full_entity[try_len]:
+                                        best_entity = try_entity
+                                        best_decoded = test_decoded
+                                        best_end_pos = i + try_len
+                                        break
+                                    # If longer version doesn't decode, this is the boundary
+                                    elif longer_decoded == longer_entity:
+                                        best_entity = try_entity
+                                        best_decoded = test_decoded
+                                        best_end_pos = i + try_len
+                                        break
+                                    # Otherwise keep trying longer versions
+                                else:
+                                    # End of string - use this entity
+                                    best_entity = try_entity
+                                    best_decoded = test_decoded
+                                    best_end_pos = i + try_len
+                                    break
+
+                        if best_entity is not None:
+                            # Check HTML5 attribute context rules
+                            should_decode = True
+                            if in_attribute:
+                                next_char = text[best_end_pos] if best_end_pos < len(text) else ''
+                                if next_char == '=' or next_char.isalnum():
+                                    should_decode = False
+
+                            if should_decode:
+                                decoded = best_decoded
+                                entity = best_entity
+                                end_pos = best_end_pos
+
+                    if decoded is not None:
+                        result.append(decoded)
+                    else:
+                        result.append(entity)
+
+                    i = end_pos
+                except (ValueError, OverflowError):
+                    result.append(text[i])
+                    i += 1
+            else:
+                result.append(text[i])
+                i += 1
+
+        return ''.join(result)
+
+    def _codepoint_to_char(self, codepoint: int) -> str:
+        """Convert a numeric codepoint to character with HTML5 replacements."""
+        # Handle invalid codepoints
+        if codepoint > 0x10FFFF:
+            return '\uFFFD'
+        
+        # Handle surrogates (0xD800-0xDFFF) - these are invalid in UTF-8
+        if 0xD800 <= codepoint <= 0xDFFF:
+            return '\uFFFD'
+        
+        # Apply HTML5 numeric character reference replacements
+        if codepoint in HTML5_NUMERIC_REPLACEMENTS:
+            return HTML5_NUMERIC_REPLACEMENTS[codepoint]
+        
+        # Handle special cases
+        if codepoint == 0x10FFFE:
+            return '\U0010FFFE'
+        elif codepoint == 0x10FFFF:
+            return '\U0010FFFF'
+        else:
+            try:
+                return chr(codepoint)
+            except ValueError:
+                return '\uFFFD'

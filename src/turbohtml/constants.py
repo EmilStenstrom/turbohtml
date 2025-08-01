@@ -292,3 +292,42 @@ SVG_CASE_SENSITIVE_ELEMENTS = {
     "femerge": "feMerge",
     "glyphref": "glyphRef",
 }
+
+# HTML5 Numeric Character Reference Replacements
+# Per HTML5 spec section 13.2.5.73, certain codepoints have special replacements
+# when found in numeric character references
+HTML5_NUMERIC_REPLACEMENTS = {
+    0x00: '\uFFFD',  # NULL -> REPLACEMENT CHARACTER
+    0x80: '\u20AC',  # 0x80 -> EURO SIGN
+    0x81: '\u0081',  # 0x81 -> <control>
+    0x82: '\u201A',  # 0x82 -> SINGLE LOW-9 QUOTATION MARK
+    0x83: '\u0192',  # 0x83 -> LATIN SMALL LETTER F WITH HOOK
+    0x84: '\u201E',  # 0x84 -> DOUBLE LOW-9 QUOTATION MARK
+    0x85: '\u2026',  # 0x85 -> HORIZONTAL ELLIPSIS
+    0x86: '\u2020',  # 0x86 -> DAGGER
+    0x87: '\u2021',  # 0x87 -> DOUBLE DAGGER
+    0x88: '\u02C6',  # 0x88 -> MODIFIER LETTER CIRCUMFLEX ACCENT
+    0x89: '\u2030',  # 0x89 -> PER MILLE SIGN
+    0x8A: '\u0160',  # 0x8A -> LATIN CAPITAL LETTER S WITH CARON
+    0x8B: '\u2039',  # 0x8B -> SINGLE LEFT-POINTING ANGLE QUOTATION MARK
+    0x8C: '\u0152',  # 0x8C -> LATIN CAPITAL LIGATURE OE
+    0x8D: '\u008D',  # 0x8D -> <control>
+    0x8E: '\u017D',  # 0x8E -> LATIN CAPITAL LETTER Z WITH CARON
+    0x8F: '\u008F',  # 0x8F -> <control>
+    0x90: '\u0090',  # 0x90 -> <control>
+    0x91: '\u2018',  # 0x91 -> LEFT SINGLE QUOTATION MARK
+    0x92: '\u2019',  # 0x92 -> RIGHT SINGLE QUOTATION MARK
+    0x93: '\u201C',  # 0x93 -> LEFT DOUBLE QUOTATION MARK
+    0x94: '\u201D',  # 0x94 -> RIGHT DOUBLE QUOTATION MARK
+    0x95: '\u2022',  # 0x95 -> BULLET
+    0x96: '\u2013',  # 0x96 -> EN DASH
+    0x97: '\u2014',  # 0x97 -> EM DASH
+    0x98: '\u02DC',  # 0x98 -> SMALL TILDE
+    0x99: '\u2122',  # 0x99 -> TRADE MARK SIGN
+    0x9A: '\u0161',  # 0x9A -> LATIN SMALL LETTER S WITH CARON
+    0x9B: '\u203A',  # 0x9B -> SINGLE RIGHT-POINTING ANGLE QUOTATION MARK
+    0x9C: '\u0153',  # 0x9C -> LATIN SMALL LIGATURE OE
+    0x9D: '\u009D',  # 0x9D -> <control>
+    0x9E: '\u017E',  # 0x9E -> LATIN SMALL LETTER Z WITH CARON
+    0x9F: '\u0178',  # 0x9F -> LATIN CAPITAL LETTER Y WITH DIAERESIS
+}
