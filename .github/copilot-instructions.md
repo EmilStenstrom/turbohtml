@@ -35,4 +35,6 @@ Focus on failing test cases, ensure HTML5 spec compliance, maintain handler modu
 
 Run tests with `python run_tests.py`. Use `--debug` for detailed output, `--filter-files` to target specific test files, and `--print-fails` to see failing test details.
 
+Use `--debug` to understand why something fails, do not create new test files.
+
 The `tests/` directory contains html5lib test data files (`.dat` format) with test cases for HTML parsing conformance. Each test includes input HTML, expected errors, and expected DOM tree output in a specific format that must be matched exactly.
