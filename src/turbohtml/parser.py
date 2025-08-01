@@ -335,4 +335,5 @@ class TurboHTML:
         Handle DOCTYPE declarations by appending them to the root's children.
         """
         doctype_node = Node("!doctype")
+        doctype_node.text_content = token.data  # Store the DOCTYPE content
         self.root.append_child(doctype_node)

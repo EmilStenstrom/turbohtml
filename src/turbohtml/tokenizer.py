@@ -151,10 +151,8 @@ class HTMLTokenizer:
             self.pos += 1
             return HTMLToken("Character", data="<")
 
-        # Handle DOCTYPE first
-        if self.html.startswith("<!DOCTYPE", self.pos, self.pos + 9) or self.html.startswith(
-            "<!doctype", self.pos, self.pos + 9
-        ):
+        # Handle DOCTYPE first (case-insensitive per HTML5 spec)
+        if self.html[self.pos:self.pos + 9].upper() == "<!DOCTYPE":
             self.pos += 9  # Skip <!DOCTYPE
             # Skip whitespace
             while self.pos < self.length and self.html[self.pos].isspace():

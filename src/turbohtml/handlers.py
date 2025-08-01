@@ -2155,15 +2155,16 @@ class DoctypeHandler(TagHandler):
             return True
 
         self.debug(f"handling {doctype}")
-        doctype_node = Node("!DOCTYPE")
+        doctype_node = Node("!doctype")
 
-        # Handle empty doctype
+        # Parse and normalize the DOCTYPE according to HTML5 spec
         if not doctype.strip():
-            doctype_node.tag_name = "!DOCTYPE"
+            # Empty DOCTYPE should result in space after DOCTYPE
+            doctype_node.text_content = ""
         else:
             # Parse the full DOCTYPE declaration according to HTML5 spec
             parsed_doctype = self._parse_doctype_declaration(doctype)
-            doctype_node.tag_name = f"!DOCTYPE {parsed_doctype}"
+            doctype_node.text_content = parsed_doctype
 
         self.parser.root.append_child(doctype_node)
         context.doctype_seen = True
@@ -2190,18 +2191,21 @@ class DoctypeHandler(TagHandler):
         # Join the rest and look for PUBLIC/SYSTEM keywords
         rest = " ".join(parts[1:])
 
-        # Look for PUBLIC keyword
-        public_match = re.search(r'PUBLIC\s*["\']([^"\']*)["\'](?:\s*["\']([^"\']*)["\'])?', rest, re.IGNORECASE)
+        # Look for PUBLIC keyword with careful quote handling
+        public_pattern = r'PUBLIC\s*(["\'])(.*?)(?:\1|$)(?:\s*(["\'])(.*?)(?:\3|$))?'
+        public_match = re.search(public_pattern, rest, re.IGNORECASE | re.DOTALL)
         if public_match:
-            public_id = public_match.group(1)
-            system_id = public_match.group(2) if public_match.group(2) else ""
+            public_id = public_match.group(2)
+            system_id = public_match.group(4) if public_match.group(4) is not None else ""
             return f'{name} "{public_id}" "{system_id}"'
 
-        # Look for SYSTEM keyword
-        system_match = re.search(r'SYSTEM\s*["\']([^"\']*)["\']', rest, re.IGNORECASE)
+        # Look for SYSTEM keyword with more careful quote handling
+        system_match = re.search(r'SYSTEM\s*(["\'])(.*?)(?:\1|$)', rest, re.IGNORECASE | re.DOTALL)
         if system_match:
-            system_id = system_match.group(1)
-            return f'{name} "" "{system_id}"'
+            quote_char = system_match.group(1)
+            content = system_match.group(2)
+            # Handle unclosed quotes or mixed quotes by keeping everything until the matching quote or end
+            return f'{name} "" "{content}"'
 
         # If no PUBLIC/SYSTEM found, just return the name
         return name

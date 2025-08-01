@@ -84,7 +84,12 @@ class Node:
         if self.tag_name == '#comment':
             return f'| {" " * indent}<!-- {self.text_content} -->'
         if self.tag_name == '!doctype':
-            return '| <!DOCTYPE html>'
+            # Format DOCTYPE with the actual content, adding space if content is empty
+            content = self.text_content if self.text_content is not None else ''
+            if content.strip():
+                return f'| <!DOCTYPE {content}>'
+            else:
+                return '| <!DOCTYPE >'
 
         # Start with the tag name
         result = f'| {" " * indent}<{self.tag_name}>'
