@@ -36,9 +36,7 @@ class TurboHTML:
     - Provides a root Node that represents the DOM tree.
     """
 
-    def __init__(
-        self, html: str, handle_foreign_elements: bool = True, debug: bool = False
-    ):
+    def __init__(self, html: str, handle_foreign_elements: bool = True, debug: bool = False):
         """
         Args:
             html: The HTML string to parse
@@ -95,7 +93,7 @@ class TurboHTML:
         self.root = Node("document")
         # Create but don't append html node yet
         self.html_node = Node("html")
-        
+
         # Always create head node
         head = Node("head")
         self.html_node.append_child(head)
@@ -108,11 +106,11 @@ class TurboHTML:
     def _get_head_node(self) -> Optional[Node]:
         """Get head node from tree, if it exists"""
         return next((child for child in self.html_node.children if child.tag_name == "head"), None)
-        
+
     def _get_body_node(self) -> Optional[Node]:
         """Get body node from tree, if it exists"""
         return next((child for child in self.html_node.children if child.tag_name == "body"), None)
-        
+
     def _ensure_head_node(self) -> Node:
         """Get or create head node"""
         head = self._get_head_node()
@@ -120,7 +118,7 @@ class TurboHTML:
             head = Node("head")
             self.html_node.append_child(head)
         return head
-        
+
     def _ensure_body_node(self, context: ParseContext) -> Optional[Node]:
         """Get or create body node if not in frameset mode"""
         if context.document_state == DocumentState.IN_FRAMESET:
@@ -138,10 +136,10 @@ class TurboHTML:
         """
         # Initialize context with html_node as current_parent
         context = ParseContext(
-            len(self.html), 
-            self._get_body_node(), 
-            self.html_node, 
-            debug_callback=self.debug if self.env_debug else None
+            len(self.html),
+            self._get_body_node(),
+            self.html_node,
+            debug_callback=self.debug if self.env_debug else None,
         )
         self.tokenizer = HTMLTokenizer(self.html)
 
@@ -152,7 +150,7 @@ class TurboHTML:
 
         for token in self.tokenizer.tokenize():
             self.debug(f"_parse: {token}, context: {context}", indent=0)
-            
+
             if token.type == "DOCTYPE":
                 # Handle DOCTYPE through the DoctypeHandler first
                 for handler in self.tag_handlers:
@@ -162,26 +160,22 @@ class TurboHTML:
                             break
                 context.index = self.tokenizer.pos
                 continue
-            
+
             if token.type == "Comment":
                 self._handle_comment(token.data, context)
                 continue
-            
+
             # Ensure html node is in tree before processing any non-DOCTYPE/Comment token
             self._ensure_html_node()
 
             if token.type == "StartTag":
                 # Handle special elements and state transitions first
-                if self._handle_special_element(
-                    token, token.tag_name, context, self.tokenizer.pos
-                ):
+                if self._handle_special_element(token, token.tag_name, context, self.tokenizer.pos):
                     context.index = self.tokenizer.pos
                     continue
 
                 # Then handle the actual tag
-                self._handle_start_tag(
-                    token, token.tag_name, context, self.tokenizer.pos
-                )
+                self._handle_start_tag(token, token.tag_name, context, self.tokenizer.pos)
                 context.index = self.tokenizer.pos
 
             elif token.type == "EndTag":
@@ -191,9 +185,7 @@ class TurboHTML:
             elif token.type == "Character":
                 for handler in self.tag_handlers:
                     if handler.should_handle_text(token.data, context):
-                        self.debug(
-                            f"{handler.__class__.__name__}: handling {token}, context={context}"
-                        )
+                        self.debug(f"{handler.__class__.__name__}: handling {token}, context={context}")
                         if handler.handle_text(token.data, context):
                             break
 
@@ -204,15 +196,13 @@ class TurboHTML:
                 context.document_state = DocumentState.IN_BODY
 
     # Tag Handling Methods
-    def _handle_start_tag(
-        self, token: HTMLToken, tag_name: str, context: ParseContext, end_tag_idx: int
-    ) -> None:
+    def _handle_start_tag(self, token: HTMLToken, tag_name: str, context: ParseContext, end_tag_idx: int) -> None:
         """Handle all opening HTML tags."""
 
         # Create body node if we're implicitly switching to body mode
-        if ((context.document_state == DocumentState.INITIAL or 
-             context.document_state == DocumentState.IN_HEAD) and 
-            tag_name not in HEAD_ELEMENTS):
+        if (
+            context.document_state == DocumentState.INITIAL or context.document_state == DocumentState.IN_HEAD
+        ) and tag_name not in HEAD_ELEMENTS:
             self.debug("Implicitly creating body node")
             if context.document_state != DocumentState.IN_FRAMESET:
                 body = self._ensure_body_node(context)
@@ -236,9 +226,7 @@ class TurboHTML:
         context.current_parent.append_child(new_node)
         context.current_parent = new_node
 
-    def _handle_end_tag(
-        self, token: HTMLToken, tag_name: str, context: ParseContext
-    ) -> None:
+    def _handle_end_tag(self, token: HTMLToken, tag_name: str, context: ParseContext) -> None:
         """Handle all closing HTML tags."""
 
         # Create body node if needed and not in frameset mode
@@ -261,7 +249,7 @@ class TurboHTML:
             # Just update attributes, don't create a new node
             self.html_node.attributes.update(token.attributes)
             context.current_parent = self.html_node
-            
+
             # If we're not in frameset mode, ensure we have a body
             if context.document_state != DocumentState.IN_FRAMESET:
                 body = self._ensure_body_node(context)
@@ -273,7 +261,7 @@ class TurboHTML:
             head = self._ensure_head_node()
             context.current_parent = head
             context.document_state = DocumentState.IN_HEAD
-            
+
             # If we're not in frameset mode, ensure we have a body
             if context.document_state != DocumentState.IN_FRAMESET:
                 body = self._ensure_body_node(context)
