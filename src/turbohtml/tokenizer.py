@@ -312,6 +312,12 @@ class HTMLTokenizer:
             self.pos += 1
             return HTMLToken("Comment", data="")
 
+        # Special case: <!--- followed by > should end the comment
+        if (self.pos < self.length and self.html[self.pos] == "-" and
+            self.pos + 1 < self.length and self.html[self.pos + 1] == ">"):
+            self.pos += 2  # Skip ->
+            return HTMLToken("Comment", data="")
+
         # Look for end of comment
         while self.pos + 2 < self.length:
             if self.html[self.pos:self.pos + 3] == "-->":
