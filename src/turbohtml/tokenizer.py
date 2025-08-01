@@ -13,15 +13,15 @@ class HTMLToken:
     def __init__(
         self,
         type_: str,
-        data: str,
-        tag_name: str,
+        data: str = "",
+        tag_name: str = "",
         attributes: Optional[Dict[str, str]] = None,
         is_self_closing: bool = False,
         is_last_token: bool = False,
     ):
         self.type = type_  # 'DOCTYPE', 'StartTag', 'EndTag', 'Comment', 'Character'
         self.data = data
-        self.tag_name = tag_name.lower()
+        self.tag_name = tag_name.lower() if tag_name else ""
         self.attributes = attributes or {}
         self.is_self_closing = is_self_closing
         self.is_last_token = is_last_token
