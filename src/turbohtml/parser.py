@@ -189,8 +189,13 @@ class TurboHTML:
                         if handler.handle_text(token.data, context):
                             break
 
-        # After all tokens are processed, ensure we have a body if not in frameset mode
+        # After all tokens are processed, ensure we have proper HTML structure if not in frameset mode
         if context.document_state != DocumentState.IN_FRAMESET:
+            # Ensure HTML node is in the tree
+            self._ensure_html_node()
+            # Ensure head exists first
+            self._ensure_head_node()
+            # Then ensure body exists
             body = self._ensure_body_node(context)
             if body:
                 context.document_state = DocumentState.IN_BODY

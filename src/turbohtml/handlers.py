@@ -76,7 +76,10 @@ class TextHandler(TagHandler):
             if body:
                 context.current_parent = body
                 context.document_state = DocumentState.IN_BODY
-                self._append_text(text, context)
+                # Strip leading whitespace when transitioning from INITIAL state (no parent)
+                text = text.lstrip()
+                if text:  # Only append if there's content after stripping
+                    self._append_text(text, context)
             return True
 
         # In frameset mode, keep only whitespace
@@ -109,11 +112,14 @@ class TextHandler(TagHandler):
             return True
 
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
+            # Store the original state before modification
+            was_initial = context.document_state == DocumentState.INITIAL
+
             # Find the first non-whitespace character
             for i, char in enumerate(text):
                 if not char.isspace():
-                    # If we have leading whitespace, keep it in head
-                    if i > 0:
+                    # If we're in head state, keep leading whitespace in head
+                    if i > 0 and not was_initial:
                         self.debug(f"Keeping leading whitespace '{text[:i]}' in head")
                         head = self.parser._ensure_head_node()
                         context.current_parent = head
@@ -125,7 +131,10 @@ class TextHandler(TagHandler):
                     if body:
                         context.current_parent = body
                         context.document_state = DocumentState.IN_BODY
-                        self._append_text(text[i:], context)
+                        # For INITIAL state, ignore leading whitespace; for IN_HEAD, start from i
+                        start_pos = i if was_initial else 0
+                        if start_pos < len(text):
+                            self._append_text(text[start_pos:], context)
                     return True
 
             # If we get here, it's all whitespace
@@ -2177,34 +2186,37 @@ class DoctypeHandler(TagHandler):
         # Basic parsing to extract name, public, and system identifiers
         # This is a simplified version of the full HTML5 DOCTYPE parsing
 
-        # First, normalize the basic name
-        parts = doctype.strip().split()
-        if not parts:
+        # First, normalize the basic name but preserve content
+        doctype_stripped = doctype.strip()
+        if not doctype_stripped:
             return ""
 
-        name = parts[0].lower()
+        # Extract just the name (first word)
+        match = re.match(r'(\S+)', doctype_stripped)
+        if not match:
+            return ""
 
-        # If it's just the name, return it
-        if len(parts) == 1:
+        name = match.group(1).lower()
+        rest = doctype_stripped[len(match.group(1)):].lstrip()
+
+        # If nothing after name, return just the name
+        if not rest:
             return name
 
-        # Join the rest and look for PUBLIC/SYSTEM keywords
-        rest = " ".join(parts[1:])
-
-        # Look for PUBLIC keyword with careful quote handling
-        public_pattern = r'PUBLIC\s*(["\'])(.*?)(?:\1|$)(?:\s*(["\'])(.*?)(?:\3|$))?'
+        # Look for PUBLIC keyword with careful quote handling, preserving whitespace
+        public_pattern = (r'PUBLIC\s*(["\'])([^"\']*(?:["\'][^"\']*)*?)'
+                         r'(?:\1|$)(?:\s*(["\'])([^"\']*(?:["\'][^"\']*)*?)(?:\3|$))?')
         public_match = re.search(public_pattern, rest, re.IGNORECASE | re.DOTALL)
         if public_match:
             public_id = public_match.group(2)
             system_id = public_match.group(4) if public_match.group(4) is not None else ""
             return f'{name} "{public_id}" "{system_id}"'
 
-        # Look for SYSTEM keyword with more careful quote handling
-        system_match = re.search(r'SYSTEM\s*(["\'])(.*?)(?:\1|$)', rest, re.IGNORECASE | re.DOTALL)
+        # Look for SYSTEM keyword with more careful quote handling, preserving whitespace
+        system_pattern = r'SYSTEM\s*(["\'])([^"\']*(?:["\'][^"\']*)*?)(?:\1|$)'
+        system_match = re.search(system_pattern, rest, re.IGNORECASE | re.DOTALL)
         if system_match:
-            quote_char = system_match.group(1)
             content = system_match.group(2)
-            # Handle unclosed quotes or mixed quotes by keeping everything until the matching quote or end
             return f'{name} "" "{content}"'
 
         # If no PUBLIC/SYSTEM found, just return the name
