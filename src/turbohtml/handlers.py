@@ -1447,13 +1447,6 @@ class VoidElementHandler(TagHandler):
         new_node = Node(tag_name, token.attributes)
         context.current_parent.append_child(new_node)
 
-        # If this is an hr, create a new paragraph after it
-        if tag_name == "hr":
-            self.debug("Creating new paragraph after hr")
-            new_p = Node("p", {})
-            context.current_parent.append_child(new_p)
-            context.current_parent = new_p
-
         return True
 
 
