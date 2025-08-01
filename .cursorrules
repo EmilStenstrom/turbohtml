@@ -1,3 +1,0 @@
-We are implementing the full html5 spec. When answering questions, refer to the specification and pick solutions that will take us towards 100% compliance.
-
-I will post failing testcases, and your job is to improve the code (tokenizer, parser, constants, node) so that we increase test coverage. When making changes, make sure you don't break previously passing testcases. Refer to both the Expected (correct according to spec) parse trees, the Actual (where our parser is failing) parse trees, and the debug printouts when understanding what the core problem is, and then suggest improvements to the code.
