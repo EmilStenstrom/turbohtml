@@ -330,6 +330,29 @@ class TurboHTML:
             self.html_node.append_child(comment_node)
             return
 
+        # Comments in IN_BODY state should go as children of html, positioned before head
+        if (context.document_state == DocumentState.IN_BODY
+            and context.current_parent.tag_name == "html"):
+            # If we're in body state but current parent is html, place comment before head
+            self.debug(f"Adding comment to html in body state")
+            # Find head element and insert comment before it
+            head_node = None
+            for child in context.current_parent.children:
+                if child.tag_name == "head":
+                    head_node = child
+                    break
+
+            if head_node:
+                context.current_parent.insert_before(comment_node, head_node)
+                self.debug(f"Inserted comment before head")
+            else:
+                # If no head found, just append
+                context.current_parent.append_child(comment_node)
+                self.debug("No head found, appended comment")
+
+            self.debug(f"Current parent children: {[c.tag_name for c in context.current_parent.children]}")
+            return
+
         # All other comments go in current parent
         self.debug(f"Adding comment to current parent: {context.current_parent}")
         context.current_parent.append_child(comment_node)

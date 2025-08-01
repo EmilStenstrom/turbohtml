@@ -1391,10 +1391,19 @@ class RawtextTagHandler(TagHandler):
         if not self.should_handle_text(text, context):
             return False
 
-        # Create text node
-        text_node = Node("#text")
-        text_node.text_content = text
-        context.current_parent.append_child(text_node)
+        # Try to merge with previous text node if it exists
+        if context.current_parent.children and context.current_parent.children[-1].tag_name == "#text":
+            prev_node = context.current_parent.children[-1]
+            self.debug(f"merging with previous text node '{prev_node.text_content}'")
+            prev_node.text_content += text
+            self.debug(f"merged result '{prev_node.text_content}'")
+        else:
+            # Create new text node
+            self.debug("creating new text node")
+            text_node = Node("#text")
+            text_node.text_content = text
+            context.current_parent.append_child(text_node)
+            self.debug(f"created node with content '{text}'")
         return True
 
 
@@ -1755,6 +1764,18 @@ class ForeignTagHandler(TagHandler):
 class HeadElementHandler(TagHandler):
     """Handles head element and its contents"""
 
+    def _has_body_content(self, html_node):
+        """Check if body has actual content or if we just have a body element"""
+        for child in html_node.children:
+            if child.tag_name == "body":
+                # Body exists, check if it has non-whitespace content or child elements
+                return len(child.children) > 0 or (
+                    hasattr(child, 'text_content') and
+                    child.text_content and
+                    child.text_content.strip()
+                )
+        return False
+
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
         return tag_name in HEAD_ELEMENTS
 
@@ -1773,6 +1794,25 @@ class HeadElementHandler(TagHandler):
         # If we're in body after seeing real content
         if context.document_state == DocumentState.IN_BODY:
             self.debug("In body state with real content")
+            # Check if we're still at html level with no body content yet
+            if (context.current_parent.tag_name == "html" and
+                not self._has_body_content(context.current_parent)):
+                # Head elements appearing before body content should go to head
+                head = self.parser._ensure_head_node()
+                if head:
+                    new_node = Node(tag_name, token.attributes)
+                    head.append_child(new_node)
+                    self.debug(f"Added {tag_name} to head (no body content yet)")
+
+                    # For elements that can have content, update current parent
+                    if tag_name not in VOID_ELEMENTS:
+                        context.current_parent = new_node
+                        if tag_name in RAWTEXT_ELEMENTS:
+                            context.content_state = ContentState.RAWTEXT
+                            self.debug(f"Switched to RAWTEXT state for {tag_name}")
+                    return True
+
+            # Head elements appearing after body content should stay in body
             new_node = Node(tag_name, token.attributes)
             context.current_parent.append_child(new_node)
             self.debug(f"Added {tag_name} to body")
@@ -2225,6 +2265,10 @@ class DoctypeHandler(TagHandler):
 
 class PlaintextHandler(TagHandler):
     """Handles plaintext element which switches to plaintext mode"""
+
+    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        # Handle plaintext start tag, or any tag when already in PLAINTEXT mode
+        return tag_name == "plaintext" or context.content_state == ContentState.PLAINTEXT
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         # If we're already in PLAINTEXT mode, treat the tag as text
