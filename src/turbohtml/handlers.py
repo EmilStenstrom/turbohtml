@@ -2161,13 +2161,50 @@ class DoctypeHandler(TagHandler):
         if not doctype.strip():
             doctype_node.tag_name = "!DOCTYPE"
         else:
-            # Split on first space and take first part, then lowercase it
-            content = doctype.split()[0].lower()
-            doctype_node.tag_name = f"!DOCTYPE {content}"
+            # Parse the full DOCTYPE declaration according to HTML5 spec
+            parsed_doctype = self._parse_doctype_declaration(doctype)
+            doctype_node.tag_name = f"!DOCTYPE {parsed_doctype}"
 
         self.parser.root.append_child(doctype_node)
         context.doctype_seen = True
         return True
+
+    def _parse_doctype_declaration(self, doctype: str) -> str:
+        """Parse DOCTYPE declaration and normalize it according to HTML5 spec"""
+        import re
+
+        # Basic parsing to extract name, public, and system identifiers
+        # This is a simplified version of the full HTML5 DOCTYPE parsing
+
+        # First, normalize the basic name
+        parts = doctype.strip().split()
+        if not parts:
+            return ""
+
+        name = parts[0].lower()
+
+        # If it's just the name, return it
+        if len(parts) == 1:
+            return name
+
+        # Join the rest and look for PUBLIC/SYSTEM keywords
+        rest = " ".join(parts[1:])
+
+        # Look for PUBLIC keyword
+        public_match = re.search(r'PUBLIC\s*["\']([^"\']*)["\'](?:\s*["\']([^"\']*)["\'])?', rest, re.IGNORECASE)
+        if public_match:
+            public_id = public_match.group(1)
+            system_id = public_match.group(2) if public_match.group(2) else ""
+            return f'{name} "{public_id}" "{system_id}"'
+
+        # Look for SYSTEM keyword
+        system_match = re.search(r'SYSTEM\s*["\']([^"\']*)["\']', rest, re.IGNORECASE)
+        if system_match:
+            system_id = system_match.group(1)
+            return f'{name} "" "{system_id}"'
+
+        # If no PUBLIC/SYSTEM found, just return the name
+        return name
 
 
 class PlaintextHandler(TagHandler):

@@ -1,1 +1,1 @@
-Tests passed: 708/1774 (40%)
+Tests passed: 12/16 (75%)
