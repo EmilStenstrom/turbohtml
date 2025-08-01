@@ -85,8 +85,10 @@ BLOCK_ELEMENTS = [
     "article",
     "aside",
     "blockquote",
+    "center",
     "details",
     "dialog",
+    "dir",
     "dd",
     "div",
     "dl",
@@ -106,6 +108,7 @@ BLOCK_ELEMENTS = [
     "hgroup",
     "hr",
     "li",
+    "listing",
     "main",
     "nav",
     "ol",
@@ -222,9 +225,10 @@ OPTIONAL_END_TAG_ELEMENTS = [
 ]
 
 AUTO_CLOSING_TAGS = {
-    "p": ["address", "article", "aside", "blockquote", "dl", "dt", "dd",
-          "fieldset", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", 
-          "header", "hr", "menu", "nav", "ol", "p", "pre", "section", "table", "ul", "li"],
+    "p": ["address", "article", "aside", "blockquote", "center", "details", "dialog", "dir", "div", "dl", "dt", "dd",
+          "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6",
+          "header", "hgroup", "hr", "listing", "menu", "nav", "ol", "p", "pre", "section", "summary",
+          "table", "ul", "li"],
     "li": ["li"],
     "menuitem": [],
     "dt": ["dt", "dd"],
