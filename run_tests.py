@@ -232,10 +232,23 @@ class TestReporter:
             percentage = round(passed*100/total) if total else 0
             summary += f' ({percentage}%)'
             
-            # Save to file
-            Path('test-summary.txt').write_text(summary)
+            # Only save to file if no filters are applied (running all tests)
+            if self._is_running_all_tests():
+                Path('test-summary.txt').write_text(summary)
             
         print(f'\n{summary}')
+
+    def _is_running_all_tests(self) -> bool:
+        """Check if we're running all tests (no filters applied)"""
+        return not any([
+            self.config.get("test_specs"),
+            self.config.get("filter_files"),
+            self.config.get("exclude_errors"),
+            self.config.get("exclude_files"),
+            self.config.get("exclude_html"),
+            self.config.get("filter_html"),
+            self.config.get("filter_errors")
+        ])
 
 def parse_args() -> dict:
     parser = argparse.ArgumentParser()
