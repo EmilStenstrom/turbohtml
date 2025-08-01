@@ -226,6 +226,7 @@ AUTO_CLOSING_TAGS = {
           "fieldset", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", 
           "header", "hr", "menu", "nav", "ol", "p", "pre", "section", "table", "ul", "li"],
     "li": ["li"],
+    "menuitem": [],
     "dt": ["dt", "dd"],
     "dd": ["dt", "dd"],
     "tr": ["tr", "td", "th"],

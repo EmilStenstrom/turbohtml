@@ -578,7 +578,14 @@ class ParagraphTagHandler(TagHandler):
                 return True
             current = current.parent
 
-        return False
+        # HTML5 spec: If no p element is in scope, create an implicit p element
+        # and immediately close it (this creates an empty p element)
+        self.debug("No open p element found, creating implicit p element")
+        p_node = Node("p")
+        context.current_parent.append_child(p_node)
+        # Don't change current_parent - the implicit p is immediately closed
+
+        return True
 
 
 class TableTagHandler(TagHandler):
@@ -2357,4 +2364,84 @@ class ButtonTagHandler(TagHandler):
         button = context.current_parent.find_ancestor("button")
         if button:
             context.current_parent = button.parent
+        return True
+
+
+class MenuitemElementHandler(TagHandler):
+    """Handles menuitem elements with special behaviors"""
+
+    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        # Handle li tags when inside menuitem to auto-close menuitem
+        if tag_name == "li":
+            # Check if we're anywhere inside a menuitem
+            menuitem_ancestor = context.current_parent.find_ancestor("menuitem")
+            if menuitem_ancestor:
+                return True
+        return tag_name == "menuitem"
+
+    def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
+        tag_name = token.tag_name
+        self.debug(f"handling {tag_name}")
+
+        # Special case: li tag when inside menuitem should auto-close menuitem
+        if tag_name == "li":
+            menuitem_ancestor = context.current_parent.find_ancestor("menuitem")
+            if menuitem_ancestor:
+                # Check if the menuitem is inside an li - if so, auto-close
+                li_ancestor = menuitem_ancestor.find_ancestor("li")
+                if li_ancestor:
+                    self.debug(f"Auto-closing menuitem {menuitem_ancestor} for new li (menuitem inside li)")
+                    # Move up to menuitem's parent
+                    context.current_parent = menuitem_ancestor.parent or context.current_parent
+                    # Don't handle the li here, let ListTagHandler handle it
+                    return False
+                else:
+                    self.debug("Menuitem not inside li, allowing li inside menuitem")
+                    # Don't handle this, let ListTagHandler create the li inside menuitem
+                    return False
+
+        # If we're inside a select, ignore menuitem (stray tag)
+        if context.current_parent.find_ancestor("select"):
+            self.debug("Ignoring menuitem inside select")
+            return True
+
+        # Create the menuitem element
+        new_node = Node(tag_name, token.attributes)
+        context.current_parent.append_child(new_node)
+        context.current_parent = new_node  # Set as current parent to contain children
+        self.debug(f"Created menuitem: {new_node}")
+
+        return True
+
+    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name == "menuitem"
+
+    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        self.debug(f"handling end tag {token.tag_name}")
+
+        # Find the nearest menuitem ancestor
+        menuitem = context.current_parent.find_ancestor("menuitem")
+        if menuitem:
+            self.debug(f"Found menuitem ancestor: {menuitem}")
+
+            # Check if we're directly inside the menuitem or nested deeper
+            if context.current_parent == menuitem:
+                # We're directly inside menuitem, close it
+                context.current_parent = menuitem.parent or context.current_parent
+                return True
+            else:
+                # We're nested inside menuitem, check the current element
+                current_tag = context.current_parent.tag_name
+                if current_tag == "p":
+                    # Special case for <p> - treat </menuitem> as stray to keep content flowing
+                    self.debug("Inside <p>, treating </menuitem> as stray end tag - ignoring")
+                    return True
+                else:
+                    # For other elements, close the menuitem normally
+                    self.debug(f"Inside <{current_tag}>, closing menuitem")
+                    context.current_parent = menuitem.parent or context.current_parent
+                    return True
+
+        # No menuitem found, treat as stray end tag
+        self.debug("No menuitem ancestor found, treating as stray end tag")
         return True
