@@ -237,16 +237,38 @@ class Node:
             current = current.parent
         return None
 
-    def has_ancestor_with_tag(self, tag_name: str, stop_at: Optional['Node'] = None) -> bool:
-        """Check if this node has an ancestor with the given tag name.
-        
-        Args:
-            tag_name: Tag name to search for
-            stop_at: Optional node to stop searching at (exclusive)
-        Returns:
-            True if ancestor found, False otherwise
-        """
-        return self.find_ancestor_until(tag_name, stop_at) is not None
+    def has_ancestor_with_tag(self, tag: str) -> bool:
+        """Check if this node has an ancestor with the given tag"""
+        current = self.parent
+        while current:
+            if current.tag == tag:
+                return True
+            current = current.parent
+        return False
+
+    def safe_parent(self) -> Optional["Node"]:
+        """Safely get the parent node, returns None if this node doesn't exist or has no parent"""
+        return self.parent if self else None
+
+    def move_to_parent(self) -> Optional["Node"]:
+        """Return the parent node, useful for chaining parent navigation"""
+        return self.parent
+
+    def parent_has_tag(self, tag: str) -> bool:
+        """Check if this node's parent has the given tag"""
+        return self.parent and self.parent.tag == tag
+
+    def parent_has_tag_in(self, tags: Union[list, tuple]) -> bool:
+        """Check if this node's parent has a tag in the given list"""
+        return self.parent and self.parent.tag_name in tags
+
+    def has_tag(self, tag: str) -> bool:
+        """Check if this node has the given tag"""
+        return self.tag_name == tag
+
+    def last_child_is_text(self) -> bool:
+        """Check if the last child is a text node"""
+        return self.children and self.children[-1].tag_name == "#text"
 
     def get_path_to_ancestor(self, ancestor: 'Node') -> List['Node']:
         """Get list of nodes from this node up to (but not including) the ancestor.
