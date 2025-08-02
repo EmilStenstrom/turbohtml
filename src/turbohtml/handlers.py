@@ -42,6 +42,13 @@ class TagHandler:
         prefixed_message = f"{class_name}: {message}"
         self.parser.debug(prefixed_message, indent=indent)
 
+    def _is_in_template_content(self, context: "ParseContext") -> bool:
+        """Check if we're inside actual template content (not just a user <content> tag)"""
+        return (context.current_parent and 
+                context.current_parent.tag_name == "content" and 
+                context.current_parent.parent and 
+                context.current_parent.parent.tag_name == "template")
+
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
         return False
 
@@ -114,7 +121,7 @@ class TextHandler(TagHandler):
             return True
 
         # Check if we're inside template content
-        if context.current_parent and context.current_parent.tag_name == "content":
+        if self._is_in_template_content(context):
             self.debug("Text inside template content, keeping in content")
             self._append_text(text, context)
             return True
@@ -234,6 +241,10 @@ class FormattingElementHandler(TagHandler):
     """Handles formatting elements like <b>, <i>, etc."""
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        # Don't handle elements inside template content - let them be handled by default
+        if self._is_in_template_content(context):
+            return False
+            
         # Don't handle formatting elements inside select
         if context.current_parent.find_ancestor("select"):
             return False
@@ -375,6 +386,10 @@ class SelectTagHandler(TagHandler):
     """Handles select elements and their children (option, optgroup) and datalist"""
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        # Don't handle elements inside template content - let them be handled by default
+        if self._is_in_template_content(context):
+            return False
+            
         # If we're in a select, handle all tags to prevent formatting elements
         if context.current_parent.find_ancestor("select"):
             return True
@@ -507,6 +522,10 @@ class ParagraphTagHandler(TagHandler):
     """Handles paragraph elements"""
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        # Don't handle elements inside template content - let them be handled by default
+        if self._is_in_template_content(context):
+            return False
+            
         # Handle p tags directly
         if tag_name == "p":
             return True
@@ -605,6 +624,11 @@ class TableTagHandler(TagHandler):
     """Handles table-related elements"""
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        # Handle td/th elements even inside template content, but handle other table elements carefully
+        if self._is_in_template_content(context):
+            # Only handle cell elements inside template content
+            return tag_name in ("td", "th")
+            
         # Always handle col/colgroup to prevent them being handled by VoidElementHandler
         if tag_name in ("col", "colgroup"):
             # But only process them if in table context
@@ -812,6 +836,14 @@ class TableTagHandler(TagHandler):
 
     def _handle_cell(self, token: "HTMLToken", context: "ParseContext") -> bool:
         """Handle td/th elements"""
+        # Check if we're inside template content
+        if self._is_in_template_content(context):
+            # Inside template content, just create the cell directly without table structure
+            new_cell = Node(token.tag_name, token.attributes)
+            context.current_parent.append_child(new_cell)
+            context.current_parent = new_cell
+            return True
+            
         tr = self._find_or_create_tr(context)
         new_cell = Node(token.tag_name, token.attributes)
         tr.append_child(new_cell)
@@ -990,6 +1022,10 @@ class TableTagHandler(TagHandler):
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        # Don't handle end tags inside template content that would affect document state
+        if self._is_in_template_content(context):
+            return False
+            
         # Handle any end tag in table context to maintain proper structure
         return context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_CAPTION)
 
@@ -1594,7 +1630,7 @@ class AutoClosingTagHandler(TagHandler):
             if boundary:
                 self.debug(f"Inside boundary element {boundary.tag_name}, staying inside")
                 # Special case: if we're in template content, stay in content
-                if context.current_parent.tag_name == "content" and boundary.tag_name == "template":
+                if self._is_in_template_content(context):
                     self.debug("Staying in template content")
                     # Don't change current_parent, stay in content
                 else:
