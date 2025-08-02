@@ -33,6 +33,7 @@ class TestRunner:
         self.test_dir = test_dir
         self.config = config
         self.results = []
+        self.file_results = {}  # Track results per file
     
     def _natural_sort_key(self, path: Path):
         """Convert string to list of string and number chunks for natural sorting
@@ -139,6 +140,9 @@ class TestRunner:
         passed = failed = 0
         
         for file_path, tests in self.load_tests():
+            file_passed = file_failed = 0
+            file_test_indices = []
+            
             for i, test in enumerate(tests):
                 if not self._should_run_test(file_path.name, i, test):
                     continue
@@ -149,9 +153,13 @@ class TestRunner:
                     
                     if result.passed:
                         passed += 1
+                        file_passed += 1
+                        file_test_indices.append(('pass', i))
                         self._print_progress(".")
                     else:
                         failed += 1
+                        file_failed += 1
+                        file_test_indices.append(('fail', i))
                         self._handle_failure(file_path, i, result)
                 except Exception as e:
                     print(f"\nError in test {file_path.name}:{i}")
@@ -160,6 +168,15 @@ class TestRunner:
                     
                 if failed and self.config["fail_fast"]:
                     return passed, failed
+            
+            # Store file results if any tests were run for this file
+            if file_test_indices:
+                self.file_results[file_path.name] = {
+                    'passed': file_passed,
+                    'failed': file_failed,
+                    'total': file_passed + file_failed,
+                    'test_indices': file_test_indices
+                }
                     
         return passed, failed
     
@@ -228,7 +245,7 @@ class TestReporter:
             
             print('\n'.join(lines))
     
-    def print_summary(self, passed: int, failed: int):
+    def print_summary(self, passed: int, failed: int, file_results: dict = None):
         """Print test summary and optionally save to file"""
         total = passed + failed
         summary = f'Tests passed: {passed}/{total}'
@@ -238,10 +255,56 @@ class TestReporter:
             summary += f' ({percentage}%)'
             
             # Only save to file if no filters are applied (running all tests)
-            if self._is_running_all_tests():
+            if self._is_running_all_tests() and file_results:
+                detailed_summary = self._generate_detailed_summary(summary, file_results)
+                Path('test-summary.txt').write_text(detailed_summary)
+            elif self._is_running_all_tests():
                 Path('test-summary.txt').write_text(summary)
             
         print(f'\n{summary}')
+    
+    def _generate_detailed_summary(self, overall_summary: str, file_results: dict) -> str:
+        """Generate a detailed summary with per-file breakdown"""
+        lines = [overall_summary, ""]
+        
+        # Sort files naturally (tests1.dat, tests2.dat, etc.)
+        import re
+        def natural_sort_key(filename):
+            return [int(text) if text.isdigit() else text.lower() 
+                    for text in re.split('([0-9]+)', filename)]
+        
+        sorted_files = sorted(file_results.keys(), key=natural_sort_key)
+        
+        for filename in sorted_files:
+            result = file_results[filename]
+            
+            # Format: "filename: 15/16 (94%) [.....x]"
+            percentage = round(result['passed']*100/result['total']) if result['total'] else 0
+            status_line = f"{filename}: {result['passed']}/{result['total']} ({percentage}%)"
+            
+            # Generate compact test pattern
+            pattern = self._generate_test_pattern(result['test_indices'])
+            if pattern:
+                status_line += f" [{pattern}]"
+                
+            lines.append(status_line)
+        
+        return '\n'.join(lines)
+    
+    def _generate_test_pattern(self, test_indices: list) -> str:
+        """Generate a compact pattern showing pass/fail for each test"""
+        if not test_indices:
+            return ""
+            
+        # Sort by test index to maintain order
+        sorted_tests = sorted(test_indices, key=lambda x: x[1])
+        
+        # Always show the actual pattern with . and x
+        pattern = ""
+        for status, idx in sorted_tests:
+            pattern += "." if status == 'pass' else "x"
+        
+        return pattern
 
     def _is_running_all_tests(self) -> bool:
         """Check if we're running all tests (no filters applied)"""
@@ -316,7 +379,7 @@ def main():
     reporter = TestReporter(config)
     
     passed, failed = runner.run()
-    reporter.print_summary(passed, failed)
+    reporter.print_summary(passed, failed, runner.file_results)
 
 if __name__ == '__main__':
     main()
