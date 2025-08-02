@@ -33,8 +33,10 @@ Focus on failing test cases, ensure HTML5 spec compliance, maintain handler modu
 
 ## Testing
 
-Run tests with `python run_tests.py`. Use `--debug` for detailed output, `--filter-files` to target specific test files, and `--print-fails` to see failing test details.
+The current focus is to get to 100% test coverage.
 
-Use `--debug --print-fails` to understand why something fails, do not create new test files.
+Run tests with `python run_tests.py`. Use `--debug` for detailed output, `--filter-files` to target specific test files, and `--print-fails` to see failing test details. Do no create random test files, use `run_tests.py` or `python -c "command"` to troubleshoot.
 
 The `tests/` directory contains html5lib test data files (`.dat` format) with test cases for HTML parsing conformance. Each test includes input HTML, expected errors, and expected DOM tree output in a specific format that must be matched exactly.
+
+Each time run_tests.py is run without filters, it writes an automated summary of which tests passed and failed to a file called test-summary.txt. You can use `git diff test-summary.txt` to see which tests were affected since last checkin.
