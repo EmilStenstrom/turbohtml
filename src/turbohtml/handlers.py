@@ -761,12 +761,12 @@ class ParagraphTagHandler(TagHandler):
                 # Found p within button scope, close it
                 context.current_parent = p_in_button.parent or context.current_parent
                 self.debug(f"Closed p within button scope, current_parent now: {context.current_parent.tag_name}")
-                return True
             
-            # No p element found within button scope, create implicit p inside button
-            self.debug("No open p element found within button scope, creating implicit p inside button")
+            # Always create implicit p inside button when </p> is encountered in button scope
+            self.debug("Creating implicit p inside button due to </p> end tag")
             p_node = Node("p")
-            context.current_parent.append_child(p_node)
+            button_ancestor.append_child(p_node)
+            self.debug(f"Created implicit p inside button: {p_node}")
             # Don't change current_parent - the implicit p is immediately closed
             return True
 
@@ -2226,10 +2226,13 @@ class ForeignTagHandler(TagHandler):
                     context.current_parent = new_node
                 return True            # Handle HTML elements inside foreignObject, desc, or title (integration points)
             elif tag_name_lower in HTML_ELEMENTS:
-                if context.current_parent.has_ancestor_matching(
-                    lambda n: n.tag_name in ("svg foreignObject", "svg desc", "svg title")
-                ):
+                # Check if current parent is integration point or has integration point ancestor
+                if (context.current_parent.tag_name in ("svg foreignObject", "svg desc", "svg title") or
+                    context.current_parent.has_ancestor_matching(
+                        lambda n: n.tag_name in ("svg foreignObject", "svg desc", "svg title")
+                    )):
                     # We're in an integration point - let normal HTML handlers handle this
+                    self.debug(f"HTML element {tag_name_lower} in SVG integration point, delegating to HTML handlers")
                     return False  # Let other handlers (TableTagHandler, ParagraphTagHandler, etc.) handle it
 
             new_node = Node(f"svg {tag_name_lower}", self._fix_svg_attribute_case(token.attributes))
@@ -3084,6 +3087,10 @@ class MenuitemElementHandler(TagHandler):
             self.debug("Ignoring menuitem inside select")
             return True
 
+        # Reconstruct active formatting elements before creating menuitem
+        # This is required by HTML5 spec for most element insertions
+        self.parser.reconstruct_active_formatting_elements(context)
+
         # Create the menuitem element
         new_node = Node(tag_name, token.attributes)
         context.current_parent.append_child(new_node)
@@ -3200,12 +3207,18 @@ class RubyElementHandler(TagHandler):
         """Auto-close conflicting ruby elements according to HTML5 spec"""
         elements_to_close = []
         
-        if tag_name in ("rb", "rt", "rp"):
-            # rb, rt, rp auto-close each other
+        if tag_name == "rb":
+            # rb auto-closes rb, rt, rp, rtc (all other ruby elements)
             elements_to_close = ["rb", "rt", "rp", "rtc"]
+        elif tag_name == "rt":
+            # rt auto-closes rb, rp but NOT rtc (rt can be inside rtc)
+            elements_to_close = ["rb", "rp"]
+        elif tag_name == "rp":
+            # rp auto-closes rb, rt but NOT rtc (rp can be inside rtc)
+            elements_to_close = ["rb", "rt"]
         elif tag_name == "rtc":
-            # rtc auto-closes rb, rt, rp
-            elements_to_close = ["rb", "rt", "rp"]
+            # rtc auto-closes rb, rt, rp, and other rtc elements
+            elements_to_close = ["rb", "rt", "rp", "rtc"]
         
         # Look for elements to auto-close in current context
         element_to_close = context.current_parent.find_ancestor_until(
