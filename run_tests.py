@@ -12,6 +12,7 @@ class TestCase:
     errors: List[str]
     document: str
     fragment_context: Optional[str] = None  # Context element for fragment parsing
+    script_directive: Optional[str] = None  # Either "script-on", "script-off", or None
     
 @dataclass
 class TestResult:
@@ -58,11 +59,16 @@ class TestRunner:
             errors = []
             document = []
             fragment_context = None
+            script_directive = None
             mode = None
 
             for line in lines:
                 if line.startswith('#'):
-                    mode = line[1:]
+                    directive = line[1:]
+                    if directive in ('script-on', 'script-off'):
+                        script_directive = directive
+                    else:
+                        mode = directive
                 else:
                     if mode == 'data':
                         data.append(line)
@@ -78,13 +84,18 @@ class TestRunner:
                     data='\n'.join(data),
                     errors=errors,
                     document='\n'.join(document),
-                    fragment_context=fragment_context
+                    fragment_context=fragment_context,
+                    script_directive=script_directive
                 ))
 
         return tests
 
     def _should_run_test(self, filename: str, index: int, test: TestCase) -> bool:
         """Determine if a test should be run based on configuration"""
+        # Skip script-dependent tests since HTML parsers don't execute JavaScript
+        if test.script_directive in ('script-on', 'script-off'):
+            return False
+            
         if self.config["test_specs"]:
             spec_match = False
             for spec in self.config["test_specs"]:
@@ -135,16 +146,22 @@ class TestRunner:
             
         return sorted(files, key=self._natural_sort_key)
     
-    def run(self) -> tuple[int, int]:
-        """Run all tests and return (passed, failed) counts"""
-        passed = failed = 0
+    def run(self) -> tuple[int, int, int]:
+        """Run all tests and return (passed, failed, skipped) counts"""
+        passed = failed = skipped = 0
         
         for file_path, tests in self.load_tests():
-            file_passed = file_failed = 0
+            file_passed = file_failed = file_skipped = 0
             file_test_indices = []
             
             for i, test in enumerate(tests):
                 if not self._should_run_test(file_path.name, i, test):
+                    # Check if it was skipped due to script dependency
+                    if test.script_directive in ('script-on', 'script-off'):
+                        skipped += 1
+                        file_skipped += 1
+                        file_test_indices.append(('skip', i))
+                        self._print_progress("s")
                     continue
                 
                 try:
@@ -167,18 +184,19 @@ class TestRunner:
                     raise  # Re-raise the exception to show the full traceback
                     
                 if failed and self.config["fail_fast"]:
-                    return passed, failed
+                    return passed, failed, skipped
             
             # Store file results if any tests were run for this file
             if file_test_indices:
                 self.file_results[file_path.name] = {
                     'passed': file_passed,
                     'failed': file_failed,
-                    'total': file_passed + file_failed,
+                    'skipped': file_skipped,
+                    'total': file_passed + file_failed + file_skipped,
                     'test_indices': file_test_indices
                 }
                     
-        return passed, failed
+        return passed, failed, skipped
     
     def _run_single_test(self, test: TestCase) -> TestResult:
         """Run a single test and return the result"""
@@ -245,14 +263,15 @@ class TestReporter:
             
             print('\n'.join(lines))
     
-    def print_summary(self, passed: int, failed: int, file_results: dict = None):
+    def print_summary(self, passed: int, failed: int, skipped: int = 0, file_results: dict = None):
         """Print test summary and optionally save to file"""
         total = passed + failed
+        total_with_skipped = total + skipped
         summary = f'Tests passed: {passed}/{total}'
         
         if not self.config["fail_fast"]:
             percentage = round(passed*100/total) if total else 0
-            summary += f' ({percentage}%)'
+            summary += f' ({percentage}%) (skipped: {skipped} script-dependent)'
             
             # Only save to file if no filters are applied (running all tests)
             if self._is_running_all_tests() and file_results:
@@ -260,7 +279,7 @@ class TestReporter:
                 Path('test-summary.txt').write_text(detailed_summary)
             elif self._is_running_all_tests():
                 Path('test-summary.txt').write_text(summary)
-            
+
         print(f'\n{summary}')
     
     def _generate_detailed_summary(self, overall_summary: str, file_results: dict) -> str:
@@ -278,31 +297,48 @@ class TestReporter:
         for filename in sorted_files:
             result = file_results[filename]
             
-            # Format: "filename: 15/16 (94%) [.....x]"
-            percentage = round(result['passed']*100/result['total']) if result['total'] else 0
-            status_line = f"{filename}: {result['passed']}/{result['total']} ({percentage}%)"
+            # Calculate percentage based on runnable tests (excluding skipped)
+            runnable_tests = result['passed'] + result['failed']
+            total_tests = result['total']
+            skipped_tests = result.get('skipped', 0)
+            
+            # Format: "filename: 15/16 (94%) [.....x] (2 skipped)"
+            if runnable_tests > 0:
+                percentage = round(result['passed']*100/runnable_tests)
+                status_line = f"{filename}: {result['passed']}/{runnable_tests} ({percentage}%)"
+            else:
+                status_line = f"{filename}: 0/0 (N/A)"
             
             # Generate compact test pattern
             pattern = self._generate_test_pattern(result['test_indices'])
             if pattern:
                 status_line += f" [{pattern}]"
+            
+            # Add skipped count if any
+            if skipped_tests > 0:
+                status_line += f" ({skipped_tests} skipped)"
                 
             lines.append(status_line)
         
         return '\n'.join(lines)
     
     def _generate_test_pattern(self, test_indices: list) -> str:
-        """Generate a compact pattern showing pass/fail for each test"""
+        """Generate a compact pattern showing pass/fail/skip for each test"""
         if not test_indices:
             return ""
             
         # Sort by test index to maintain order
         sorted_tests = sorted(test_indices, key=lambda x: x[1])
         
-        # Always show the actual pattern with . and x
+        # Always show the actual pattern with ., x, and s
         pattern = ""
         for status, idx in sorted_tests:
-            pattern += "." if status == 'pass' else "x"
+            if status == 'pass':
+                pattern += "."
+            elif status == 'fail':
+                pattern += "x"
+            elif status == 'skip':
+                pattern += "s"
         
         return pattern
 
@@ -378,8 +414,8 @@ def main():
     runner = TestRunner(test_dir, config)
     reporter = TestReporter(config)
     
-    passed, failed = runner.run()
-    reporter.print_summary(passed, failed, runner.file_results)
+    passed, failed, skipped = runner.run()
+    reporter.print_summary(passed, failed, skipped, runner.file_results)
 
 if __name__ == '__main__':
     main()
