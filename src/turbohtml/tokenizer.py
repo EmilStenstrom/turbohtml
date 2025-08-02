@@ -224,9 +224,8 @@ class HTMLTokenizer:
                 if is_end_tag:
                     return HTMLToken("EndTag", tag_name=tag_name)
                 else:
-                    # Check for self-closing syntax
-                    is_self_closing = attributes and attributes.rstrip().endswith("/")
-                    attrs = self._parse_attributes(attributes)
+                    # Parse attributes and check for self-closing syntax
+                    is_self_closing, attrs = self._parse_attributes_and_check_self_closing(attributes)
                     return HTMLToken("StartTag", tag_name=tag_name, attributes=attrs, is_self_closing=is_self_closing)
 
         # Handle normal closed tags
@@ -247,9 +246,8 @@ class HTMLTokenizer:
             if is_end_tag:
                 return HTMLToken("EndTag", tag_name=tag_name)
             else:
-                # Check for self-closing syntax (ends with /)
-                is_self_closing = attributes and attributes.rstrip().endswith("/")
-                attrs = self._parse_attributes(attributes)
+                # Parse attributes and check for self-closing syntax
+                is_self_closing, attrs = self._parse_attributes_and_check_self_closing(attributes)
                 return HTMLToken("StartTag", tag_name=tag_name, attributes=attrs, is_self_closing=is_self_closing)
 
         # If we get here, we found a < that isn't part of a valid tag
@@ -282,10 +280,65 @@ class HTMLTokenizer:
         decoded = self._decode_entities(text)
         return HTMLToken("Character", data=decoded)
 
+    def _parse_attributes_and_check_self_closing(self, attr_string: str) -> tuple[bool, Dict[str, str]]:
+        """
+        Parse attributes and determine if tag is self-closing.
+        
+        Returns (is_self_closing, attributes_dict)
+        """
+        if not attr_string:
+            return False, {}
+        
+        # Trim leading/trailing whitespace
+        trimmed = attr_string.strip()
+        
+        # Simple cases first
+        if not trimmed:
+            return False, {}
+        
+        if trimmed == "/":
+            return True, {}
+        
+        if trimmed.endswith(" /"):
+            # Clear case: attributes followed by space and slash
+            return True, self._parse_attributes(attr_string.rstrip().rstrip("/"))
+        
+        # More complex case: check if the trailing / is part of an attribute value
+        # or self-closing syntax
+        if trimmed.endswith("/"):
+            # Try parsing without the trailing /
+            without_slash = attr_string.rstrip("/")
+            attrs_without_slash = self._parse_attributes(without_slash)
+            
+            # Also try parsing with the slash
+            attrs_with_slash = self._parse_attributes(attr_string)
+            
+            # If parsing without slash gives a quoted attribute value in the last attribute,
+            # and parsing with slash gives an unquoted value with quotes and slash,
+            # then the slash was self-closing syntax
+            if attrs_without_slash and attrs_with_slash:
+                # Get the last attribute from each parse
+                last_key_without = list(attrs_without_slash.keys())[-1] if attrs_without_slash else None
+                last_key_with = list(attrs_with_slash.keys())[-1] if attrs_with_slash else None
+                
+                if (last_key_without == last_key_with and 
+                    last_key_without and
+                    not attrs_without_slash[last_key_without].startswith('"') and  # Clean value
+                    attrs_with_slash[last_key_with].startswith('"') and          # Malformed with quotes
+                    attrs_with_slash[last_key_with].endswith('/')):              # And ends with slash
+                    # The slash was self-closing syntax
+                    return True, attrs_without_slash
+            
+            # Default: treat as part of attribute value
+            return False, attrs_with_slash
+        
+        # No trailing slash
+        return False, self._parse_attributes(attr_string)
+
     def _parse_attributes(self, attr_string: str) -> Dict[str, str]:
         """Parse attributes from a string using the ATTR_RE pattern"""
         self.debug(f"Parsing attributes: {attr_string[:50]}...")
-        attr_string = attr_string.strip().rstrip("/")
+        attr_string = attr_string.strip()  # Remove only leading/trailing whitespace
 
         # Handle case where entire string is attribute name
         if attr_string and not any(c in attr_string for c in "='\""):

@@ -1698,11 +1698,15 @@ class ForeignTagHandler(TagHandler):
         if not attributes:
             return attributes
         
+        from .constants import SVG_CASE_SENSITIVE_ATTRIBUTES, MATHML_CASE_SENSITIVE_ATTRIBUTES
+        
         fixed_attrs = {}
         for name, value in attributes.items():
             name_lower = name.lower()
             if name_lower in SVG_CASE_SENSITIVE_ATTRIBUTES:
                 fixed_attrs[SVG_CASE_SENSITIVE_ATTRIBUTES[name_lower]] = value
+            elif name_lower in MATHML_CASE_SENSITIVE_ATTRIBUTES:
+                fixed_attrs[MATHML_CASE_SENSITIVE_ATTRIBUTES[name_lower]] = value
             else:
                 # All other attributes should be lowercased in foreign contexts
                 fixed_attrs[name_lower] = value

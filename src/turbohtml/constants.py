@@ -176,8 +176,7 @@ RAWTEXT_ELEMENTS = [
     "xmp",
     "iframe",
     "noembed",
-    "noframes",
-    "noscript"
+    "noframes"
 ]
 
 FORMATTING_ELEMENTS = [
@@ -380,6 +379,11 @@ SVG_CASE_SENSITIVE_ATTRIBUTES = {
     "contentstyletype": "contentStyleType",
     "externalresourcesrequired": "externalResourcesRequired",
     "filterres": "filterRes",
+}
+
+# MathML case-sensitive attribute adjustments per HTML5 spec
+MATHML_CASE_SENSITIVE_ATTRIBUTES = {
+    "definitionurl": "definitionURL",
 }
 
 # HTML5 Numeric Character Reference Replacements
