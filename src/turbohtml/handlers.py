@@ -688,16 +688,35 @@ class ParagraphTagHandler(TagHandler):
         current = context.current_parent
         while current and current != self.parser.html_node:
             if current.tag_name == "p":
-                # If we're inside formatting elements inside the p,
-                # we need to close up to the p's parent
+                # Special case: if we're in table context, also create implicit p
+                if context.document_state == DocumentState.IN_TABLE:
+                    self.debug("Found p ancestor in table context, creating implicit p as sibling")
+                    # Create implicit p as sibling to current content in the paragraph
+                    # Insert it before the table for correct order
+                    if context.current_table and context.current_table.parent == current:
+                        table_index = current.children.index(context.current_table)
+                        p_node = Node("p")
+                        current.children.insert(table_index, p_node)
+                        p_node.parent = current
+                    else:
+                        # Fallback: append at end
+                        p_node = Node("p")
+                        current.append_child(p_node)
+                    # Then close the paragraph normally
+                    context.current_parent = current.parent
+                    return True
+                
+                # Normal case: close up to the p's parent
                 context.current_parent = current.parent
                 return True
             current = current.parent
 
         # HTML5 spec: If no p element is in scope, check for special contexts
-        if context.document_state != DocumentState.IN_BODY:
+        # But we still need to handle implicit p creation in table context
+        if (context.document_state != DocumentState.IN_BODY and 
+            context.document_state != DocumentState.IN_TABLE):
             # Invalid context for p elements - ignore the end tag
-            self.debug("No open p element found and not in body context, ignoring end tag")
+            self.debug("No open p element found and not in body/table context, ignoring end tag")
             return True
         
         # Special case: if we're inside a button, create implicit p inside the button
@@ -715,6 +734,20 @@ class ParagraphTagHandler(TagHandler):
             # Cannot create p elements directly in html or head - ignore the end tag
             self.debug("No open p element found and in invalid parent context, ignoring end tag")
             return True
+        
+        # Special case: if we're in table context, foster parent the implicit p in the same paragraph
+        if context.document_state == DocumentState.IN_TABLE and context.current_table:
+            self.debug("No open p element found in table context, creating implicit p in paragraph context")
+            table = context.current_table
+            # Look for paragraph ancestor of the table
+            paragraph_ancestor = table.find_ancestor("p")
+            if paragraph_ancestor:
+                # The table is inside a paragraph, create the implicit p as sibling to the table
+                p_node = Node("p")
+                paragraph_ancestor.append_child(p_node)
+                self.debug(f"Created implicit p as child of paragraph {paragraph_ancestor}")
+                # Don't change current_parent - the implicit p is immediately closed
+                return True
 
         # In valid body context with valid parent - create implicit p (rare case)
         self.debug("No open p element found, creating implicit p element in valid context")
@@ -805,8 +838,22 @@ class TableTagHandler(TagHandler):
                 context.current_parent = body
                 context.document_state = DocumentState.IN_BODY
 
+        # Special case: if we're inside a paragraph, don't auto-close it immediately
+        # Instead, the table should be foster parented according to HTML5 spec
+        paragraph_ancestor = None
+        if (context.current_parent and 
+            context.current_parent.tag_name == "p"):
+            paragraph_ancestor = context.current_parent
+            self.debug(f"Table inside paragraph {paragraph_ancestor}, using foster parenting")
+
         new_table = Node(token.tag_name, token.attributes)
-        context.current_parent.append_child(new_table)
+        
+        if paragraph_ancestor:
+            # Foster parent: add table as child of the paragraph (HTML5 behavior)
+            paragraph_ancestor.append_child(new_table)
+        else:
+            context.current_parent.append_child(new_table)
+            
         context.current_table = new_table
         context.current_parent = new_table
         context.document_state = DocumentState.IN_TABLE
@@ -1131,8 +1178,22 @@ class TableTagHandler(TagHandler):
         if self._is_in_template_content(context):
             return False
             
-        # Handle any end tag in table context to maintain proper structure
-        return context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_CAPTION)
+        # Handle table-related end tags in table context
+        if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_CAPTION):
+            # Handle table structure elements
+            if tag_name in ("table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption"):
+                return True
+            
+            # Handle p end tags only when inside table cells
+            if tag_name == "p":
+                cell = context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th"))
+                return cell is not None
+            
+            # Handle formatting elements that might interact with tables
+            if tag_name in FORMATTING_ELEMENTS:
+                return True
+                
+        return False
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         tag_name = token.tag_name
