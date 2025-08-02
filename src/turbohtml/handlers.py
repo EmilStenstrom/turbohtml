@@ -881,7 +881,15 @@ class TableTagHandler(TagHandler):
             context.current_parent.append_child(text_node)
             return True
 
-        # Foster parent text nodes
+        # If it's whitespace-only text, allow it in table
+        if text.isspace():
+            self.debug("Whitespace text in table, keeping in table")
+            text_node = Node("#text")
+            text_node.text_content = text
+            context.current_parent.append_child(text_node)
+            return True
+
+        # Foster parent non-whitespace text nodes
         table = context.current_table
         if not table or not table.parent:
             self.debug("No table or table parent found")
@@ -1585,7 +1593,12 @@ class AutoClosingTagHandler(TagHandler):
             boundary = context.current_parent.find_ancestor(lambda n: n.tag_name in BOUNDARY_ELEMENTS)
             if boundary:
                 self.debug(f"Inside boundary element {boundary.tag_name}, staying inside")
-                context.current_parent = boundary
+                # Special case: if we're in template content, stay in content
+                if context.current_parent.tag_name == "content" and boundary.tag_name == "template":
+                    self.debug("Staying in template content")
+                    # Don't change current_parent, stay in content
+                else:
+                    context.current_parent = boundary
                 return True
 
             # Move up to block element's parent

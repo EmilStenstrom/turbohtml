@@ -357,6 +357,15 @@ class TurboHTML:
 
         # Default handling for unhandled tags
         self.debug(f"No handler found, using default handling for {tag_name}")
+        
+        # Check if we need table foster parenting
+        if (context.document_state == DocumentState.IN_TABLE and 
+            tag_name not in self._get_table_elements() and 
+            tag_name not in self._get_head_elements()):
+            self.debug(f"Foster parenting {tag_name} out of table")
+            self._foster_parent_element(tag_name, token.attributes, context)
+            return
+            
         new_node = Node(tag_name, token.attributes)
         context.current_parent.append_child(new_node)
         context.current_parent = new_node
@@ -502,3 +511,33 @@ class TurboHTML:
         doctype_node = Node("!doctype")
         doctype_node.text_content = token.data  # Store the DOCTYPE content
         self.root.append_child(doctype_node)
+
+    def _get_table_elements(self):
+        """Get list of elements allowed in tables"""
+        from .constants import TABLE_ELEMENTS
+        return TABLE_ELEMENTS
+    
+    def _get_head_elements(self):
+        """Get list of head elements (templates can appear in tables)"""
+        from .constants import HEAD_ELEMENTS  
+        return HEAD_ELEMENTS
+    
+    def _foster_parent_element(self, tag_name: str, attributes: dict, context: "ParseContext"):
+        """Foster parent an element outside of table context"""
+        # Find the table
+        table = context.current_parent.find_ancestor("table")
+        if not table or not table.parent:
+            # No table found, use default handling
+            new_node = Node(tag_name, attributes)
+            context.current_parent.append_child(new_node)
+            context.current_parent = new_node
+            return
+            
+        # Insert the element before the table
+        foster_parent = table.parent
+        table_index = foster_parent.children.index(table)
+        
+        new_node = Node(tag_name, attributes)
+        foster_parent.children.insert(table_index, new_node)
+        context.current_parent = new_node
+        self.debug(f"Foster parented {tag_name} before table")
