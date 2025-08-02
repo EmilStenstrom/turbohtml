@@ -611,6 +611,17 @@ class ParagraphTagHandler(TagHandler):
         # Check if we're inside another p tag
         p_ancestor = context.current_parent.find_ancestor("p")
         if p_ancestor:
+            # Special case: if we're inside a button, create p inside the button
+            # rather than closing the outer p (HTML5 button scope behavior)
+            button_ancestor = context.current_parent.find_ancestor("button")
+            if button_ancestor:
+                self.debug(f"Inside button {button_ancestor}, creating p inside button instead of closing outer p")
+                # Create new p node inside the button
+                new_node = Node("p", token.attributes)
+                context.current_parent.append_child(new_node)
+                context.current_parent = new_node
+                return True
+            
             self.debug(f"Found <p> ancestor: {p_ancestor}, closing it")
             if p_ancestor.parent:
                 context.current_parent = p_ancestor.parent
@@ -649,7 +660,27 @@ class ParagraphTagHandler(TagHandler):
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         self.debug(f"handling <EndTag: p>, context={context}")
 
-        # Find nearest p ancestor and move up to its parent
+        # Check if we're inside a button first - special button scope behavior
+        button_ancestor = context.current_parent.find_ancestor("button")
+        if button_ancestor:
+            # Look for p element only within the button scope
+            current = context.current_parent
+            while current and current != button_ancestor:
+                if current.tag_name == "p":
+                    # Found p within button scope, close it
+                    context.current_parent = current.parent or context.current_parent
+                    self.debug(f"Closed p within button scope, current_parent now: {context.current_parent.tag_name}")
+                    return True
+                current = current.parent
+            
+            # No p element found within button scope, create implicit p inside button
+            self.debug("No open p element found within button scope, creating implicit p inside button")
+            p_node = Node("p")
+            context.current_parent.append_child(p_node)
+            # Don't change current_parent - the implicit p is immediately closed
+            return True
+
+        # Standard behavior: Find nearest p ancestor and move up to its parent
         current = context.current_parent
         while current and current != self.parser.html_node:
             if current.tag_name == "p":
@@ -659,12 +690,19 @@ class ParagraphTagHandler(TagHandler):
                 return True
             current = current.parent
 
-        # HTML5 spec: If no p element is in scope, ignore the end tag
-        # (treat as parse error but don't create elements)
-        # Only create implicit p elements in specific contexts where p elements are valid
+        # HTML5 spec: If no p element is in scope, check for special contexts
         if context.document_state != DocumentState.IN_BODY:
             # Invalid context for p elements - ignore the end tag
             self.debug("No open p element found and not in body context, ignoring end tag")
+            return True
+        
+        # Special case: if we're inside a button, create implicit p inside the button
+        button_ancestor = context.current_parent.find_ancestor("button")
+        if button_ancestor:
+            self.debug("No open p element found but inside button, creating implicit p inside button")
+            p_node = Node("p")
+            context.current_parent.append_child(p_node)
+            # Don't change current_parent - the implicit p is immediately closed
             return True
         
         # Even in body context, only create implicit p if we're in a container that can hold p elements
@@ -2938,3 +2976,80 @@ class UnknownElementHandler(TagHandler):
             return True
             
         return False
+
+
+class RubyElementHandler(TagHandler):
+    """Handles ruby annotation elements with proper auto-closing behavior"""
+
+    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name in ("ruby", "rb", "rt", "rp", "rtc")
+
+    def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
+        tag_name = token.tag_name
+        self.debug(f"handling {tag_name}")
+
+        # If we're in head, implicitly close it and switch to body
+        if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
+            self.debug("Implicitly closing head and switching to body for ruby element")
+            body = self.parser._ensure_body_node(context)
+            if body:
+                context.current_parent = body
+                context.document_state = DocumentState.IN_BODY
+
+        # Handle auto-closing behavior for ruby elements
+        if tag_name in ("rb", "rt", "rp"):
+            # These elements auto-close each other and rtc
+            self._auto_close_ruby_elements(tag_name, context)
+        elif tag_name == "rtc":
+            # rtc auto-closes rb, rt, rp
+            self._auto_close_ruby_elements(tag_name, context)
+
+        # Create the new element
+        new_node = Node(tag_name, token.attributes)
+        context.current_parent.append_child(new_node)
+        context.current_parent = new_node
+        return True
+
+    def _auto_close_ruby_elements(self, tag_name: str, context: "ParseContext") -> None:
+        """Auto-close conflicting ruby elements according to HTML5 spec"""
+        elements_to_close = []
+        
+        if tag_name in ("rb", "rt", "rp"):
+            # rb, rt, rp auto-close each other
+            elements_to_close = ["rb", "rt", "rp", "rtc"]
+        elif tag_name == "rtc":
+            # rtc auto-closes rb, rt, rp
+            elements_to_close = ["rb", "rt", "rp"]
+        
+        # Look for elements to auto-close in current context
+        current = context.current_parent
+        while current and current.tag_name != "ruby":
+            if current.tag_name in elements_to_close:
+                self.debug(f"Auto-closing {current.tag_name} for new {tag_name}")
+                context.current_parent = current.parent or context.current_parent
+                return
+            current = current.parent
+
+    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name in ("ruby", "rb", "rt", "rp", "rtc")
+
+    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        tag_name = token.tag_name
+        self.debug(f"handling end tag {tag_name}")
+
+        # Find the nearest matching element
+        current = context.current_parent
+        while current:
+            if current.tag_name == tag_name:
+                # Found matching element, move to its parent
+                context.current_parent = current.parent or context.current_parent
+                self.debug(f"Closed {tag_name}, current_parent now: {context.current_parent.tag_name}")
+                return True
+            # Stop at ruby boundary for non-ruby elements  
+            if current.tag_name == "ruby" and tag_name != "ruby":
+                break
+            current = current.parent
+
+        # If no matching element found, ignore the end tag
+        self.debug(f"No matching {tag_name} found, ignoring end tag")
+        return True

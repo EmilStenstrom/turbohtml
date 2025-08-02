@@ -23,6 +23,7 @@ from turbohtml.handlers import (
     ButtonTagHandler,
     PlaintextHandler,
     UnknownElementHandler,
+    RubyElementHandler,
 )
 from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
@@ -64,13 +65,13 @@ class TurboHTML:
             FramesetTagHandler(self),
             ForeignTagHandler(self) if handle_foreign_elements else None,  # Move before other handlers
             TableTagHandler(self),
+            ParagraphTagHandler(self),  # Move before AutoClosingTagHandler for special button logic
             AutoClosingTagHandler(self),
             MenuitemElementHandler(self),
             ListTagHandler(self),
             HeadElementHandler(self),
             BodyElementHandler(self),
             HtmlTagHandler(self),
-            ParagraphTagHandler(self),
             ButtonTagHandler(self),
             VoidElementHandler(self),
             RawtextTagHandler(self),
@@ -81,6 +82,7 @@ class TurboHTML:
             SelectTagHandler(self),
             FormTagHandler(self),
             HeadingTagHandler(self),
+            RubyElementHandler(self),  # Handle ruby annotation elements
             UnknownElementHandler(self),  # Handle unknown/namespace elements
         ]
         self.tag_handlers = [h for h in self.tag_handlers if h is not None]
@@ -507,11 +509,12 @@ class TurboHTML:
             self.html_node.attributes.update(token.attributes)
             context.current_parent = self.html_node
 
-            # If we're not in frameset mode, ensure we have a body
+            # If we're not in frameset mode, ensure we have a body and switch to it
             if context.document_state != DocumentState.IN_FRAMESET:
                 body = self._ensure_body_node(context)
                 if body:
                     context.document_state = DocumentState.IN_BODY
+                    context.current_parent = body  # Switch to body as current parent
             return True
         elif tag_name == "head":
             # Don't create duplicate head elements
