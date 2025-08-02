@@ -1547,6 +1547,14 @@ class ListTagHandler(TagHandler):
                 self.debug("No list parent found, moving to body")
                 body = self.parser._get_body_node()
                 context.current_parent = body or self.parser.html_node
+        else:
+            # Look for the nearest list container (ul, ol, menu) ancestor
+            list_ancestor = context.current_parent.find_ancestor(lambda n: n.tag_name in ("ul", "ol", "menu"))
+            if list_ancestor:
+                self.debug(f"Found list ancestor: {list_ancestor.tag_name}, moving to it")
+                context.current_parent = list_ancestor
+            else:
+                self.debug("No list ancestor found - creating li in current context")
 
         new_node = self._create_element(token)
         context.current_parent.append_child(new_node)
@@ -1690,6 +1698,9 @@ class HeadingTagHandler(SimpleElementHandler):
 
 class RawtextTagHandler(TagHandler):
     """Handles rawtext elements like script, style, title, etc."""
+
+    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name in RAWTEXT_ELEMENTS
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         tag_name = token.tag_name
@@ -2561,6 +2572,16 @@ class HeadElementHandler(TagHandler):
         if context.document_state == DocumentState.IN_HEAD and not text.isspace():
             self.debug("Non-space text in head, not handling")
             return False
+
+        # Special handling for textarea: ignore first newline if present and it's the first content
+        if (context.current_parent.tag_name == "textarea" and 
+            not context.current_parent.children and 
+            text.startswith("\n")):
+            self.debug("Removing initial newline from textarea")
+            text = text[1:]
+            # If the text was only a newline, don't create a text node
+            if not text:
+                return True
 
         # Try to combine with previous text node if it exists
         if context.current_parent.children and context.current_parent.children[-1].tag_name == "#text":

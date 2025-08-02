@@ -401,7 +401,7 @@ class TurboHTML:
             # But don't do this if we're inside template content
             if (
                 context.document_state == DocumentState.INITIAL or context.document_state == DocumentState.IN_HEAD
-            ) and tag_name not in HEAD_ELEMENTS and not (
+            ) and tag_name not in HEAD_ELEMENTS and tag_name != "html" and not (
                 context.current_parent and context.current_parent.tag_name == "content"
             ):
                 self.debug("Implicitly creating body node")
@@ -508,13 +508,9 @@ class TurboHTML:
             # Just update attributes, don't create a new node
             self.html_node.attributes.update(token.attributes)
             context.current_parent = self.html_node
-
-            # If we're not in frameset mode, ensure we have a body and switch to it
-            if context.document_state != DocumentState.IN_FRAMESET:
-                body = self._ensure_body_node(context)
-                if body:
-                    context.document_state = DocumentState.IN_BODY
-                    context.current_parent = body  # Switch to body as current parent
+            
+            # Don't immediately switch to IN_BODY - let the normal flow handle that
+            # The HTML tag should not automatically transition states
             return True
         elif tag_name == "head":
             # Don't create duplicate head elements
