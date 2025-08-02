@@ -43,6 +43,49 @@ class Node:
         child.next_sibling = None
         self.children.append(child)
 
+    def insert_child_at(self, index: int, child: 'Node'):
+        """Insert a child at the specified index"""
+        if child.parent:
+            # Remove from old location
+            if child.previous_sibling:
+                child.previous_sibling.next_sibling = child.next_sibling
+            if child.next_sibling:
+                child.next_sibling.previous_sibling = child.previous_sibling
+            child.parent.children.remove(child)
+        
+        # Insert at the specified position
+        if index < 0 or index >= len(self.children):
+            # Append at end if index is out of bounds
+            self.append_child(child)
+            return
+        
+        # Update child's parent
+        child.parent = self
+        
+        # Insert into children list
+        self.children.insert(index, child)
+        
+        # Update sibling links
+        if index == 0:
+            # Inserting at beginning
+            child.previous_sibling = None
+            if len(self.children) > 1:
+                child.next_sibling = self.children[1]
+                self.children[1].previous_sibling = child
+            else:
+                child.next_sibling = None
+        else:
+            # Inserting in middle or end
+            child.previous_sibling = self.children[index - 1]
+            if index < len(self.children) - 1:
+                child.next_sibling = self.children[index + 1]
+                self.children[index + 1].previous_sibling = child
+            else:
+                child.next_sibling = None
+            
+            # Update previous sibling's next link
+            self.children[index - 1].next_sibling = child
+
     def insert_before(self, new_node: 'Node', reference_node: 'Node'):
         if reference_node not in self.children:
             return

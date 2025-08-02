@@ -25,6 +25,7 @@ from turbohtml.handlers import (
 )
 from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
+from turbohtml.adoption import AdoptionAgencyAlgorithm
 
 from .constants import HEAD_ELEMENTS
 from typing import Optional
@@ -51,6 +52,9 @@ class TurboHTML:
 
         # Reset all state for each new parser instance
         self._init_dom_structure()
+
+        # Initialize adoption agency algorithm
+        self.adoption_agency = AdoptionAgencyAlgorithm(self)
 
         # Initialize tag handlers in deterministic order
         self.tag_handlers = [
@@ -369,6 +373,9 @@ class TurboHTML:
         new_node = Node(tag_name, token.attributes)
         context.current_parent.append_child(new_node)
         context.current_parent = new_node
+        
+        # Add to open elements stack
+        context.open_elements.push(new_node)
 
     def _handle_end_tag(self, token: HTMLToken, tag_name: str, context: ParseContext) -> None:
         """Handle all closing HTML tags."""
@@ -382,6 +389,12 @@ class TurboHTML:
                 body = self._ensure_body_node(context)
                 if body:
                     context.current_parent = body
+
+        # Check if adoption agency algorithm should run
+        if self.adoption_agency.should_run_adoption(tag_name, context):
+            self.debug(f"Running adoption agency algorithm for {tag_name}")
+            if self.adoption_agency.run_algorithm(tag_name, context):
+                return
 
         # Try tag handlers first
         for handler in self.tag_handlers:
@@ -468,6 +481,12 @@ class TurboHTML:
                 if body:
                     context.current_parent = body
             self.debug(f"Root children after append: {[c.tag_name for c in self.root.children]}")
+            return
+
+        # Comments after </head> should go in html node after head
+        if context.document_state == DocumentState.AFTER_HEAD:
+            self.debug("Adding comment to html in after head state")
+            self.html_node.append_child(comment_node)
             return
 
         # Comments after </body> should go in html node

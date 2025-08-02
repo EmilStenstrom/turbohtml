@@ -54,6 +54,12 @@ class ParseContext:
         self.active_block = None
         self._debug = debug_callback
         self.doctype_seen = False
+        
+        # Adoption Agency Algorithm data structures
+        from turbohtml.adoption import ActiveFormattingElements, OpenElementsStack
+        self.active_formatting_elements = ActiveFormattingElements()
+        self.open_elements = OpenElementsStack()
+        self.adoption_agency_counter = 0
 
     @property
     def document_state(self) -> DocumentState:
