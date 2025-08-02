@@ -10,6 +10,7 @@ from turbohtml.constants import (
     HEADING_ELEMENTS,
     HTML_ELEMENTS,
     MATHML_ELEMENTS,
+    SVG_CASE_SENSITIVE_ATTRIBUTES,
     RAWTEXT_ELEMENTS,
     SVG_CASE_SENSITIVE_ELEMENTS,
     TABLE_ELEMENTS,
@@ -1652,6 +1653,20 @@ class AdoptionAgencyHelper:
 class ForeignTagHandler(TagHandler):
     """Handles SVG and other foreign element contexts"""
 
+    def _fix_svg_attribute_case(self, attributes):
+        """Fix case for SVG attributes"""
+        if not attributes:
+            return attributes
+        
+        fixed_attrs = {}
+        for name, value in attributes.items():
+            name_lower = name.lower()
+            if name_lower in SVG_CASE_SENSITIVE_ATTRIBUTES:
+                fixed_attrs[SVG_CASE_SENSITIVE_ATTRIBUTES[name_lower]] = value
+            else:
+                fixed_attrs[name] = value
+        return fixed_attrs
+
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
         # Don't handle foreign elements in restricted contexts
         if tag_name in ("svg", "math"):
@@ -1679,30 +1694,66 @@ class ForeignTagHandler(TagHandler):
 
         # Check if this is an HTML element that should break out of foreign content
         if context.current_context in ("svg", "math") and tag_name_lower in HTML_ELEMENTS:
-            # Special case: font element only breaks out if it has attributes
-            if tag_name_lower == "font" and not token.attributes:
-                # font with no attributes stays in foreign context
-                pass
-            else:
-                # HTML elements break out of foreign content and are processed as regular HTML
-                self.debug(f"HTML element {tag_name_lower} breaks out of foreign content")
-                context.current_context = None  # Exit foreign context
-                # Move current_parent up to the appropriate level, but never make it None
-                if context.current_parent:
-                    # In fragment parsing, go to document-fragment
-                    # In document parsing, go to html_node (or stay if we're already there)
-                    if self.parser.fragment_context:
-                        while (context.current_parent and 
-                               context.current_parent.tag_name != "document-fragment" and
-                               context.current_parent.parent):
-                            context.current_parent = context.current_parent.parent
-                    else:
-                        # In document parsing, go back to the HTML node or body
-                        while (context.current_parent and 
-                               context.current_parent.tag_name not in ("html", "body") and
-                               context.current_parent.parent):
-                            context.current_parent = context.current_parent.parent
-                return False  # Let other handlers process this element
+            # Check if we're in an integration point where HTML is allowed
+            in_integration_point = False
+            
+            # Check for MathML integration points
+            if context.current_context == "math":
+                # Check if we're inside annotation-xml with HTML encoding
+                annotation_xml = context.current_parent
+                while annotation_xml:
+                    if annotation_xml.tag_name == "math annotation-xml":
+                        encoding = annotation_xml.attributes.get("encoding", "").lower()
+                        if encoding in ("application/xhtml+xml", "text/html"):
+                            in_integration_point = True
+                            break
+                    annotation_xml = annotation_xml.parent
+                
+                # Check if we're inside mtext/mi/mo/mn/ms which allow formatting elements
+                if not in_integration_point and tag_name_lower in ("b", "i", "strong", "em", "small", "s", "sub", "sup"):
+                    mtext_parent = context.current_parent
+                    while mtext_parent:
+                        if mtext_parent.tag_name in ("math mtext", "math mi", "math mo", "math mn", "math ms"):
+                            # These are integration points - HTML formatting elements should remain HTML
+                            return False  # Let other handlers process as regular HTML
+                        mtext_parent = mtext_parent.parent
+            
+            # Check for SVG integration points  
+            elif context.current_context == "svg":
+                # Check if we're inside foreignObject
+                foreign_obj = context.current_parent
+                while foreign_obj:
+                    if foreign_obj.tag_name == "svg foreignObject":
+                        in_integration_point = True
+                        break
+                    foreign_obj = foreign_obj.parent
+            
+            # Only break out if not in an integration point
+            if not in_integration_point:
+                # Special case: font element only breaks out if it has attributes
+                if tag_name_lower == "font" and not token.attributes:
+                    # font with no attributes stays in foreign context
+                    pass
+                else:
+                    # HTML elements break out of foreign content and are processed as regular HTML
+                    self.debug(f"HTML element {tag_name_lower} breaks out of foreign content")
+                    context.current_context = None  # Exit foreign context
+                    # Move current_parent up to the appropriate level, but never make it None
+                    if context.current_parent:
+                        # In fragment parsing, go to document-fragment
+                        # In document parsing, go to html_node (or stay if we're already there)
+                        if self.parser.fragment_context:
+                            while (context.current_parent and 
+                                   context.current_parent.tag_name != "document-fragment" and
+                                   context.current_parent.parent):
+                                context.current_parent = context.current_parent.parent
+                        else:
+                            # In document parsing, go back to the HTML node or body
+                            while (context.current_parent and 
+                                   context.current_parent.tag_name not in ("html", "body") and
+                                   context.current_parent.parent):
+                                context.current_parent = context.current_parent.parent
+                    return False  # Let other handlers process this element
 
         if context.current_context == "math":
             # Auto-close certain MathML elements when encountering table elements
@@ -1742,6 +1793,14 @@ class ForeignTagHandler(TagHandler):
                     context.current_parent.append_child(new_node)
                     context.current_parent = new_node
                     return True
+                # Handle SVG inside annotation-xml (switch to SVG context)
+                if tag_name_lower == "svg":
+                    fixed_attrs = self._fix_svg_attribute_case(token.attributes)
+                    new_node = Node("svg svg", fixed_attrs)
+                    context.current_parent.append_child(new_node)
+                    context.current_parent = new_node
+                    context.current_context = "svg"
+                    return True
                 if tag_name_lower in HTML_ELEMENTS:
                     new_node = Node(tag_name_lower, token.attributes)
                     context.current_parent.append_child(new_node)
@@ -1766,7 +1825,8 @@ class ForeignTagHandler(TagHandler):
             # In foreign contexts, RAWTEXT elements behave as normal elements
             if tag_name_lower in RAWTEXT_ELEMENTS:
                 self.debug(f"Treating {tag_name_lower} as normal element in foreign context")
-                new_node = Node(f"svg {tag_name}", token.attributes)
+                fixed_attrs = self._fix_svg_attribute_case(token.attributes)
+                new_node = Node(f"svg {tag_name}", fixed_attrs)
                 context.current_parent.append_child(new_node)
                 context.current_parent = new_node
                 # Reset tokenizer if it entered RAWTEXT mode
@@ -1778,7 +1838,8 @@ class ForeignTagHandler(TagHandler):
             # Handle case-sensitive SVG elements
             if tag_name_lower in SVG_CASE_SENSITIVE_ELEMENTS:
                 correct_case = SVG_CASE_SENSITIVE_ELEMENTS[tag_name_lower]
-                new_node = Node(f"svg {correct_case}", token.attributes)
+                fixed_attrs = self._fix_svg_attribute_case(token.attributes)
+                new_node = Node(f"svg {correct_case}", fixed_attrs)
                 context.current_parent.append_child(new_node)
                 context.current_parent = new_node
                 return True
@@ -1794,7 +1855,7 @@ class ForeignTagHandler(TagHandler):
                         return True
                     temp_parent = temp_parent.parent
 
-            new_node = Node(f"svg {tag_name_lower}", token.attributes)
+            new_node = Node(f"svg {tag_name_lower}", self._fix_svg_attribute_case(token.attributes))
             context.current_parent.append_child(new_node)
             context.current_parent = new_node
             return True
@@ -1808,7 +1869,8 @@ class ForeignTagHandler(TagHandler):
             return True
 
         if tag_name_lower == "svg":
-            new_node = Node(f"svg {tag_name}", token.attributes)
+            fixed_attrs = self._fix_svg_attribute_case(token.attributes)
+            new_node = Node(f"svg {tag_name}", fixed_attrs)
             context.current_parent.append_child(new_node)
             context.current_parent = new_node
             context.current_context = "svg"
