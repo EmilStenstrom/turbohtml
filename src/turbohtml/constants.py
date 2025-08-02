@@ -181,7 +181,8 @@ RAWTEXT_ELEMENTS = [
     "xmp",
     "iframe",
     "noembed",
-    "noframes"
+    "noframes",
+    "plaintext"
 ]
 
 FORMATTING_ELEMENTS = [

@@ -165,7 +165,32 @@ class TurboHTML:
     def _ensure_body_node(self, context: ParseContext) -> Optional[Node]:
         """Get or create body node if not in frameset mode"""
         if self.fragment_context:
-            return None
+            # Special case: html fragment context should create document structure
+            if self.fragment_context == "html":
+                # Create head and body in the fragment
+                head = None
+                body = None
+                
+                # Look for existing head/body in fragment
+                for child in self.root.children:
+                    if child.tag_name == "head":
+                        head = child
+                    elif child.tag_name == "body":
+                        body = child
+                
+                # Create head if it doesn't exist
+                if not head:
+                    head = Node("head")
+                    self.root.append_child(head)
+                
+                # Create body if it doesn't exist
+                if not body:
+                    body = Node("body")
+                    self.root.append_child(body)
+                
+                return body
+            else:
+                return None
         if context.document_state == DocumentState.IN_FRAMESET:
             return None
         body = self._get_body_node()

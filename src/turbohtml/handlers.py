@@ -967,8 +967,26 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         new_table = self._create_element(token)
         
         if paragraph_ancestor:
-            # Foster parent: add table as child of the paragraph (HTML5 behavior)
-            paragraph_ancestor.append_child(new_table)
+            # Determine if we should foster parent based on DOCTYPE
+            should_foster_parent = self._should_foster_parent_table(context)
+            
+            if should_foster_parent:
+                # Foster parent: close the paragraph and add table as sibling
+                # This follows HTML5 foster parenting rules for standards mode
+                self.debug(f"Foster parenting table: closing paragraph and adding table as sibling")
+                paragraph_parent = paragraph_ancestor.parent
+                if paragraph_parent:
+                    # Add table as child of paragraph's parent (making it a sibling to p)
+                    paragraph_parent.append_child(new_table)
+                    # Set current parent to the paragraph's parent for subsequent content
+                    context.current_parent = paragraph_parent
+                else:
+                    # Fallback: add to current context if no parent found
+                    context.current_parent.append_child(new_table)
+            else:
+                # Legacy/quirks mode: allow table inside paragraph
+                self.debug(f"Quirks mode: allowing table inside paragraph")
+                paragraph_ancestor.append_child(new_table)
         else:
             context.current_parent.append_child(new_table)
             
@@ -1412,6 +1430,44 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     return True
 
         return False
+
+    def _should_foster_parent_table(self, context: "ParseContext") -> bool:
+        """
+        Determine if table should be foster parented based on DOCTYPE.
+        
+        HTML5 spec: Foster parenting should happen in standards mode.
+        Legacy/quirks mode allows tables inside paragraphs.
+        """
+        # Look for a DOCTYPE in the document root
+        if hasattr(self, 'parser') and self.parser and hasattr(self.parser, 'root'):
+            for child in self.parser.root.children:
+                if child.tag_name == "!doctype":
+                    doctype = child.text_content.lower() if child.text_content else ""
+                    self.debug(f"Found DOCTYPE: '{doctype}'")
+                    
+                    # HTML5 standard DOCTYPE triggers foster parenting
+                    if doctype == "html" or not doctype:
+                        self.debug("DOCTYPE is HTML5 standard - using foster parenting")
+                        return True
+                    
+                    # Legacy DOCTYPEs (HTML 3.2, HTML 4.0, etc.) use quirks mode
+                    # Check for specific legacy patterns first (before XHTML check)
+                    if any(legacy in doctype for legacy in ["html 3.2", "html 4.0", "transitional", "system", '"html"']):
+                        self.debug("DOCTYPE is legacy - using quirks mode (no foster parenting)")
+                        return False
+                    
+                    # XHTML DOCTYPEs that are not transitional trigger foster parenting
+                    if "xhtml" in doctype and "strict" in doctype:
+                        self.debug("DOCTYPE is strict XHTML - using foster parenting")
+                        return True
+                    
+                    # Default for unknown DOCTYPEs: use standards mode
+                    self.debug("DOCTYPE is unknown - defaulting to foster parenting")
+                    return True
+        
+        # No DOCTYPE found: assume standards mode (HTML5)
+        self.debug("No DOCTYPE found - defaulting to foster parenting")
+        return True
 
 
 class FormTagHandler(TagHandler):
