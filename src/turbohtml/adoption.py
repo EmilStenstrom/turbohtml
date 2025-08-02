@@ -415,6 +415,17 @@ class AdoptionAgencyAlgorithm:
             if self.debug_enabled:
                 print(f"    Adoption Agency: Formatting element not in open elements, removing from active formatting")
             context.active_formatting_elements.remove(formatting_element)
+            
+            # The formatting element was likely reconstructed in a previous adoption agency run
+            # We need to "close" the current formatting context and update the current parent
+            if context.current_parent and context.current_parent.tag_name == tag_name:
+                # We're currently inside a reconstructed version of this element
+                # Move current parent to the parent of the current formatting element
+                if context.current_parent.parent:
+                    context.current_parent = context.current_parent.parent
+                    if self.debug_enabled:
+                        print(f"    Adoption Agency: Updated current parent to {context.current_parent.tag_name}")
+            
             return True
         
         # Step 4: If formatting element is in stack but not in scope
@@ -553,12 +564,10 @@ class AdoptionAgencyAlgorithm:
                 print(f"    Adoption Agency: Indices - formatting: {formatting_index}, furthest: {furthest_block_index}")
             
             # Get the elements between formatting element and furthest block (exclusive)
-            # But exclude the element immediately after the formatting element in the reconstruction
-            # This follows HTML5 spec where common ancestor helps determine reconstruction scope
+            # These are elements that were implicitly closed and need to be reconstructed
             elements_to_reconstruct = []
-            start_reconstruction_from = formatting_index + 2  # Skip the element right after formatting element
             
-            for i in range(start_reconstruction_from, furthest_block_index):
+            for i in range(formatting_index + 1, furthest_block_index):
                 element = context.open_elements._stack[i]
                 # Only reconstruct formatting elements
                 if context.active_formatting_elements.find_element(element):
@@ -567,67 +576,141 @@ class AdoptionAgencyAlgorithm:
             if self.debug_enabled:
                 print(f"    Adoption Agency: Elements to reconstruct: {[e.tag_name for e in elements_to_reconstruct]}")
                 print(f"    Adoption Agency: Common ancestor: {common_ancestor.tag_name}")
+                print(f"    Adoption Agency: Furthest block parent before: {furthest_block.parent.tag_name if furthest_block.parent else 'None'}")
             
-            # Step 1: Create the first reconstruction element as sibling to common ancestor
-            # This creates the "big" as a sibling to "a" in our test case
-            current_parent = common_ancestor
-            reconstruction_root = None
+            # Step 0: Move furthest block to be a child of common ancestor if needed
+            if furthest_block.parent != common_ancestor:
+                if furthest_block.parent:
+                    furthest_block.parent.remove_child(furthest_block)
+                common_ancestor.append_child(furthest_block)
+                if self.debug_enabled:
+                    print(f"    Adoption Agency: Moved furthest block to common ancestor")
             
+            # Step 1: Create empty reconstructed elements as siblings before furthest block
+            # These represent elements that were implicitly closed
             for element in elements_to_reconstruct:
                 if self.debug_enabled:
-                    print(f"    Adoption Agency: Reconstructing element: {element.tag_name}")
-                
-                clone = Node(element.tag_name, element.attributes.copy())
-                if reconstruction_root is None:
-                    # First reconstruction - add as child of common ancestor (not sibling)
+                    print(f"    Adoption Agency: Creating empty sibling {element.tag_name} before furthest block")
+                sibling_clone = Node(element.tag_name, element.attributes.copy())
+                # Insert as sibling before furthest block
+                if furthest_block.parent:
                     if self.debug_enabled:
-                        print(f"    Adoption Agency: Adding {clone.tag_name} as child of {common_ancestor.tag_name}")
-                    common_ancestor.append_child(clone)
-                    reconstruction_root = clone
-                    current_parent = clone
+                        print(f"    Adoption Agency: Inserting {sibling_clone.tag_name} before {furthest_block.tag_name} in {furthest_block.parent.tag_name}")
+                        print(f"    Adoption Agency: Parent children before: {[c.tag_name for c in furthest_block.parent.children]}")
+                    furthest_block.parent.insert_before(sibling_clone, furthest_block)
+                    if self.debug_enabled:
+                        print(f"    Adoption Agency: Parent children after: {[c.tag_name for c in furthest_block.parent.children]}")
                 else:
-                    # Subsequent reconstructions - nest inside previous
                     if self.debug_enabled:
-                        print(f"    Adoption Agency: Nesting {clone.tag_name} inside {current_parent.tag_name}")
-                    current_parent.append_child(clone)
-                    current_parent = clone
+                        print(f"    Adoption Agency: ERROR - furthest block has no parent!")
             
-            # Step 2: Move the furthest block (and its children) into the reconstruction chain
-            if furthest_block.parent:
-                furthest_block.parent.remove_child(furthest_block)
-            if current_parent:
-                current_parent.append_child(furthest_block)
+            # Step 2: Create nested reconstruction inside furthest block
+            # Build the nesting from outermost to innermost
+            current_container = furthest_block
             
-            # Step 3: Create a clone of the original formatting element inside furthest block
+            # Create reconstructed elements inside furthest block (reverse order for nesting)
+            for element in reversed(elements_to_reconstruct):
+                if self.debug_enabled:
+                    print(f"    Adoption Agency: Creating nested {element.tag_name} inside furthest block")
+                nested_clone = Node(element.tag_name, element.attributes.copy())
+                # Insert at the beginning of furthest block
+                if current_container.children:
+                    current_container.insert_before(current_container.children[0], nested_clone)
+                else:
+                    current_container.append_child(nested_clone)
+                current_container = nested_clone
+            
+            # Step 3: Create the formatting element clone inside the deepest nested element
+            if self.debug_enabled:
+                print(f"    Adoption Agency: Creating formatting clone {formatting_element.tag_name}")
+                print(f"    Adoption Agency: Current container for formatting clone: {current_container.tag_name}")
+                print(f"    Adoption Agency: Current container children before: {[c.tag_name for c in current_container.children]}")
             formatting_clone = Node(formatting_element.tag_name, formatting_element.attributes.copy())
             
-            # Step 4: Move all children of furthest block to the formatting clone
-            children_to_move = furthest_block.children[:]  # Copy the list
+            # Move all existing children of the container into the formatting clone
+            children_to_move = current_container.children[:]  # Copy the list
             for child in children_to_move:
-                if child != formatting_clone:  # Don't move the clone we just created
-                    furthest_block.remove_child(child)
-                    formatting_clone.append_child(child)
+                current_container.remove_child(child)
+                formatting_clone.append_child(child)
             
-            # Step 5: Add the formatting clone to furthest block
-            furthest_block.append_child(formatting_clone)
+            # Add the formatting clone to the container
+            current_container.append_child(formatting_clone)
             
-            # Step 6: Clean up stacks - remove elements that were closed
-            elements_to_remove = elements_to_reconstruct + [formatting_element]
+            if self.debug_enabled:
+                print(f"    Adoption Agency: Current container children after: {[c.tag_name for c in current_container.children]}")
+                print(f"    Adoption Agency: Formatting clone children: {[c.tag_name for c in formatting_clone.children]}")
+                print(f"    Adoption Agency: Formatting clone parent: {formatting_clone.parent.tag_name if formatting_clone.parent else 'None'}")
             
-            for element in elements_to_remove:
+            # Step 4: Update the current parent to the deepest reconstructed element
+            # This ensures subsequent content goes into the correct place
+            if elements_to_reconstruct:
+                context.current_parent = formatting_clone
+                if self.debug_enabled:
+                    print(f"    Adoption Agency: Setting current parent to formatting clone {formatting_clone.tag_name}")
+            else:
+                # Even with no reconstruction, content should go into the formatting clone
+                context.current_parent = formatting_clone
+                if self.debug_enabled:
+                    print(f"    Adoption Agency: No reconstruction, but setting current parent to formatting clone {formatting_clone.tag_name}")
+            
+            # Step 6: Clean up stacks - only remove the formatting element being closed
+            # Do NOT remove elements_to_reconstruct from active formatting - they'll be handled by their own end tags
+            if formatting_element in context.open_elements._stack:
+                context.open_elements.remove_element(formatting_element)
+            
+            formatting_entry = context.active_formatting_elements.find_element(formatting_element)
+            if formatting_entry:
+                context.active_formatting_elements.remove(formatting_element)
+            
+            # Remove reconstructed elements from open elements stack only
+            # (they remain in active formatting for their own end tags)
+            for element in elements_to_reconstruct:
                 if element in context.open_elements._stack:
                     context.open_elements.remove_element(element)
-                entry = context.active_formatting_elements.find_element(element)
-                if entry:
-                    context.active_formatting_elements.remove(element)
             
-            # Step 7: Update current parent to the furthest block for subsequent parsing
-            context.current_parent = furthest_block
+            # Step 7: Set current parent based on the formatting element that was closed
+            # The current parent should be the container where subsequent content should go
+            if elements_to_reconstruct:
+                # Find the reconstructed element that matches the formatting element being closed
+                # Content should go into the parent of that element
+                reconstructed_formatting = None
+                current = furthest_block
+                while current:
+                    for child in current.children:
+                        if child.tag_name == formatting_element.tag_name:
+                            reconstructed_formatting = child
+                            break
+                    if reconstructed_formatting:
+                        break
+                    # Look deeper
+                    if current.children:
+                        current = current.children[0]
+                    else:
+                        break
+                
+                if reconstructed_formatting and reconstructed_formatting.parent:
+                    context.current_parent = reconstructed_formatting.parent
+                    if self.debug_enabled:
+                        print(f"    Adoption Agency: Setting current parent to {context.current_parent.tag_name} (parent of reconstructed {formatting_element.tag_name})")
+                else:
+                    context.current_parent = furthest_block
+                    if self.debug_enabled:
+                        print(f"    Adoption Agency: Fallback: setting current parent to furthest block {furthest_block.tag_name}")
+            else:
+                context.current_parent = furthest_block
+                if self.debug_enabled:
+                    print(f"    Adoption Agency: No reconstruction, setting current parent to furthest block {furthest_block.tag_name}")
             
             if self.debug_enabled:
                 print(f"    Adoption Agency: Stack after: {[e.tag_name for e in context.open_elements._stack]}")
                 print(f"    Adoption Agency: Active formatting after: {[e.element.tag_name for e in context.active_formatting_elements]}")
                 print(f"    Adoption Agency: Current parent now: {context.current_parent.tag_name}")
+                print(f"    Adoption Agency: DOM structure after reconstruction:")
+                if hasattr(context, 'html_node') and context.html_node:
+                    for child in context.html_node.children:
+                        if child.tag_name == "body":
+                            print(f"      {child.to_test_format()}")
+                            break
             
             return True
             

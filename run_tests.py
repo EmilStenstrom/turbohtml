@@ -50,45 +50,70 @@ class TestRunner:
         """Parse a .dat file into a list of TestCase objects"""
         content = path.read_text(encoding='utf-8')
         tests = []
-        for test in content.split('\n\n'):
-            if not test.strip():
-                continue
+        
+        # Split content into lines for proper parsing
+        lines = content.split('\n')
+        
+        current_test_lines = []
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            
+            # Add line to current test
+            current_test_lines.append(line)
+            
+            # Check if we've reached the end of a test (next line starts a new test or is EOF)
+            if (i + 1 >= len(lines) or 
+                (i + 1 < len(lines) and lines[i + 1] == '#data')):
                 
-            lines = test.split('\n')
-            data = []
-            errors = []
-            document = []
-            fragment_context = None
-            script_directive = None
-            mode = None
-
-            for line in lines:
-                if line.startswith('#'):
-                    directive = line[1:]
-                    if directive in ('script-on', 'script-off'):
-                        script_directive = directive
-                    else:
-                        mode = directive
-                else:
-                    if mode == 'data':
-                        data.append(line)
-                    elif mode == 'errors':
-                        errors.append(line)
-                    elif mode == 'document':
-                        document.append(line)
-                    elif mode == 'document-fragment':
-                        fragment_context = line.strip()
-
-            if data or document:
-                tests.append(TestCase(
-                    data='\n'.join(data),
-                    errors=errors,
-                    document='\n'.join(document),
-                    fragment_context=fragment_context,
-                    script_directive=script_directive
-                ))
-
+                # Process the current test if it's not empty
+                if current_test_lines and any(line.strip() for line in current_test_lines):
+                    test = self._parse_single_test(current_test_lines)
+                    if test:
+                        tests.append(test)
+                
+                current_test_lines = []
+            
+            i += 1
+        
         return tests
+    
+    def _parse_single_test(self, lines: List[str]) -> Optional[TestCase]:
+        """Parse a single test from a list of lines"""
+        data = []
+        errors = []
+        document = []
+        fragment_context = None
+        script_directive = None
+        mode = None
+
+        for line in lines:
+            if line.startswith('#'):
+                directive = line[1:]
+                if directive in ('script-on', 'script-off'):
+                    script_directive = directive
+                else:
+                    mode = directive
+            else:
+                if mode == 'data':
+                    data.append(line)
+                elif mode == 'errors':
+                    errors.append(line)
+                elif mode == 'document':
+                    document.append(line)
+                elif mode == 'document-fragment':
+                    fragment_context = line.strip()
+
+        if data or document:
+            return TestCase(
+                data='\n'.join(data),
+                errors=errors,
+                document='\n'.join(document),
+                fragment_context=fragment_context,
+                script_directive=script_directive
+            )
+        
+        return None
 
     def _should_run_test(self, filename: str, index: int, test: TestCase) -> bool:
         """Determine if a test should be run based on configuration"""
