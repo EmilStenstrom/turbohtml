@@ -224,8 +224,10 @@ class HTMLTokenizer:
                 if is_end_tag:
                     return HTMLToken("EndTag", tag_name=tag_name)
                 else:
+                    # Check for self-closing syntax
+                    is_self_closing = attributes and attributes.rstrip().endswith("/")
                     attrs = self._parse_attributes(attributes)
-                    return HTMLToken("StartTag", tag_name=tag_name, attributes=attrs)
+                    return HTMLToken("StartTag", tag_name=tag_name, attributes=attrs, is_self_closing=is_self_closing)
 
         # Handle normal closed tags
         if match:
@@ -245,8 +247,10 @@ class HTMLTokenizer:
             if is_end_tag:
                 return HTMLToken("EndTag", tag_name=tag_name)
             else:
+                # Check for self-closing syntax (ends with /)
+                is_self_closing = attributes and attributes.rstrip().endswith("/")
                 attrs = self._parse_attributes(attributes)
-                return HTMLToken("StartTag", tag_name=tag_name, attributes=attrs)
+                return HTMLToken("StartTag", tag_name=tag_name, attributes=attrs, is_self_closing=is_self_closing)
 
         # If we get here, we found a < that isn't part of a valid tag
         self.debug("No valid tag found, treating as character")

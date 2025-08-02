@@ -379,6 +379,7 @@ SVG_CASE_SENSITIVE_ATTRIBUTES = {
     "contentscripttype": "contentScriptType",
     "contentstyletype": "contentStyleType",
     "externalresourcesrequired": "externalResourcesRequired",
+    "filterres": "filterRes",
 }
 
 # HTML5 Numeric Character Reference Replacements
