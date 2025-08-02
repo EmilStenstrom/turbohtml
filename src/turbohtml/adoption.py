@@ -474,6 +474,18 @@ class AdoptionAgencyAlgorithm:
         if not context.open_elements.is_empty():
             context.current_parent = context.open_elements.current()
         else:
+            # Check if we're in a foreign content context
+            if hasattr(context, 'current_context') and context.current_context in ("math", "svg"):
+                # In foreign content, find the nearest foreign element to stay within context
+                current = formatting_element.parent
+                while current:
+                    if (current.tag_name.startswith("math ") or 
+                        current.tag_name.startswith("svg ") or
+                        current.tag_name in ("math math", "svg svg")):
+                        context.current_parent = current
+                        return True
+                    current = current.parent
+            
             # Fallback to body or html
             body_node = None
             if hasattr(context, 'html_node') and context.html_node:

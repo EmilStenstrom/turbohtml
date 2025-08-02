@@ -772,9 +772,30 @@ class TableTagHandler(TagHandler):
             # But only process them if in table context
             return True
 
-        # Don't handle table elements in foreign contexts
+        # Don't handle table elements in foreign contexts unless in integration point
         if context.current_context in ("math", "svg"):
-            return False
+            # Check if we're in an integration point
+            in_integration_point = False
+            if context.current_context == "svg":
+                temp_parent = context.current_parent
+                while temp_parent:
+                    if temp_parent.tag_name in ("svg foreignObject", "svg desc", "svg title"):
+                        in_integration_point = True
+                        break
+                    temp_parent = temp_parent.parent
+            elif context.current_context == "math":
+                # Check if we're inside annotation-xml with HTML encoding
+                temp_parent = context.current_parent
+                while temp_parent:
+                    if temp_parent.tag_name == "math annotation-xml":
+                        encoding = temp_parent.attributes.get("encoding", "").lower()
+                        if encoding in ("application/xhtml+xml", "text/html"):
+                            in_integration_point = True
+                            break
+                    temp_parent = temp_parent.parent
+                    
+            if not in_integration_point:
+                return False
 
         return tag_name in ("table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption")
 
@@ -1937,15 +1958,15 @@ class ForeignTagHandler(TagHandler):
             
             # Check for SVG integration points  
             elif context.current_context == "svg":
-                # Check if we're inside foreignObject
-                foreign_obj = context.current_parent
-                while foreign_obj:
-                    if foreign_obj.tag_name == "svg foreignObject":
+                # Check if we're inside foreignObject, desc, or title
+                integration_parent = context.current_parent
+                while integration_parent:
+                    if integration_parent.tag_name in ("svg foreignObject", "svg desc", "svg title"):
                         in_integration_point = True
                         break
-                    foreign_obj = foreign_obj.parent
+                    integration_parent = integration_parent.parent
             
-            # Only break out if not in an integration point
+            # Only break out if NOT in an integration point
             if not in_integration_point:
                 # Special case: font element only breaks out if it has attributes
                 if tag_name_lower == "font" and not token.attributes:
@@ -2107,16 +2128,13 @@ class ForeignTagHandler(TagHandler):
                 # Only set as current parent if not self-closing
                 if not token.is_self_closing:
                     context.current_parent = new_node
-                return True            # Handle HTML elements inside foreignObject
+                return True            # Handle HTML elements inside foreignObject, desc, or title (integration points)
             elif tag_name_lower in HTML_ELEMENTS:
                 temp_parent = context.current_parent
                 while temp_parent:
-                    if temp_parent.tag_name == "svg foreignObject":
-                        new_node = Node(tag_name_lower, self._fix_svg_attribute_case(token.attributes))
-                        context.current_parent.append_child(new_node)
-                        if not token.is_self_closing:
-                            context.current_parent = new_node
-                        return True
+                    if temp_parent.tag_name in ("svg foreignObject", "svg desc", "svg title"):
+                        # We're in an integration point - let normal HTML handlers handle this
+                        return False  # Let other handlers (TableTagHandler, ParagraphTagHandler, etc.) handle it
                     temp_parent = temp_parent.parent
 
             new_node = Node(f"svg {tag_name_lower}", self._fix_svg_attribute_case(token.attributes))
@@ -2325,8 +2343,11 @@ class HeadElementHandler(TagHandler):
 
             # Create and append the new element
             new_node = Node(tag_name, token.attributes)
-            context.current_parent.append_child(new_node)
-            self.debug(f"Added {tag_name} to {context.current_parent.tag_name}")
+            if context.current_parent is not None:
+                context.current_parent.append_child(new_node)
+                self.debug(f"Added {tag_name} to {context.current_parent.tag_name}")
+            else:
+                self.debug(f"No current parent for {tag_name} in fragment context, skipping")
 
             # For elements that can have content, update current parent
             if tag_name not in VOID_ELEMENTS:
@@ -2866,6 +2887,8 @@ class PlaintextHandler(TagHandler):
                 table.parent.children.insert(table_index, new_node)
                 context.current_parent = new_node
                 context.document_state = DocumentState.IN_BODY
+                # Switch to PLAINTEXT mode
+                context.content_state = ContentState.PLAINTEXT
                 return True
         else:
             context.current_parent.append_child(new_node)
