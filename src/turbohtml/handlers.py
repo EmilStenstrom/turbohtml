@@ -113,6 +113,12 @@ class TextHandler(TagHandler):
             self._append_text(text, context)
             return True
 
+        # Check if we're inside template content
+        if context.current_parent and context.current_parent.tag_name == "content":
+            self.debug("Text inside template content, keeping in content")
+            self._append_text(text, context)
+            return True
+
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
             # Store the original state before modification
             was_initial = context.document_state == DocumentState.INITIAL
@@ -1970,6 +1976,10 @@ class HeadElementHandler(TagHandler):
             if context.current_parent.children:
                 self.debug(f"Current parent's children: {[c.tag_name for c in context.current_parent.children]}")
 
+        # Special handling for template elements
+        if tag_name == "template":
+            return self._handle_template_start(token, context)
+
         # If we're in body after seeing real content
         if context.document_state == DocumentState.IN_BODY:
             self.debug("In body state with real content")
@@ -2028,8 +2038,59 @@ class HeadElementHandler(TagHandler):
 
         return True
 
+    def _handle_template_start(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        """Handle template element start tag with special content document fragment"""
+        self.debug("handling template start tag")
+        
+        # Create the template element
+        template_node = Node("template", token.attributes)
+        
+        # Create the special "content" document fragment
+        content_node = Node("content", {})
+        template_node.append_child(content_node)
+        
+        # Add template to the appropriate parent
+        if context.document_state == DocumentState.IN_BODY:
+            # If we're in body after seeing real content
+            if (context.current_parent.tag_name == "html" and
+                not self._has_body_content(context.current_parent)):
+                # Template appearing before body content should go to head
+                head = self.parser._ensure_head_node()
+                if head:
+                    head.append_child(template_node)
+                    self.debug("Added template to head (no body content yet)")
+                else:
+                    context.current_parent.append_child(template_node)
+                    self.debug("Added template to current parent (head not available)")
+            else:
+                # Template appearing after body content should stay in body
+                context.current_parent.append_child(template_node)
+                self.debug("Added template to body")
+        elif context.document_state == DocumentState.INITIAL:
+            # Template at document start should go to head
+            head = self.parser._ensure_head_node()
+            context.current_parent = head
+            context.document_state = DocumentState.IN_HEAD
+            self.debug("Switched to head state for template at document start")
+            context.current_parent.append_child(template_node)
+            self.debug("Added template to head")
+        elif context.document_state == DocumentState.IN_HEAD:
+            # Template in head context stays in head
+            context.current_parent.append_child(template_node)
+            self.debug("Added template to head")
+        else:
+            # For other states (IN_TABLE, etc.), template stays in current context
+            context.current_parent.append_child(template_node)
+            self.debug(f"Added template to current parent in {context.document_state} state")
+        
+        # Set current parent to the content document fragment
+        context.current_parent = content_node
+        self.debug("Set current parent to template content")
+        
+        return True
+
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
-        return tag_name == "head"
+        return tag_name == "head" or tag_name == "template"
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         self.debug(f"handling end tag {token.tag_name}")

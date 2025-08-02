@@ -332,9 +332,12 @@ class TurboHTML:
         # Skip implicit body creation for fragments
         if not self.fragment_context:
             # Create body node if we're implicitly switching to body mode
+            # But don't do this if we're inside template content
             if (
                 context.document_state == DocumentState.INITIAL or context.document_state == DocumentState.IN_HEAD
-            ) and tag_name not in HEAD_ELEMENTS:
+            ) and tag_name not in HEAD_ELEMENTS and not (
+                context.current_parent and context.current_parent.tag_name == "content"
+            ):
                 self.debug("Implicitly creating body node")
                 if context.document_state != DocumentState.IN_FRAMESET:
                     body = self._ensure_body_node(context)

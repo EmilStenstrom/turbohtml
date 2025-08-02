@@ -79,6 +79,12 @@ class Node:
             for child in self.children:
                 result.append(child.to_test_format(0))
             return '\n'.join(result)
+        if self.tag_name == 'content':
+            # Template content should be displayed without angle brackets
+            result = f'| {" " * indent}content'
+            for child in self.children:
+                result += '\n' + child.to_test_format(indent + 2)
+            return result
         if self.tag_name == '#text':
             return f'| {" " * indent}"{self.text_content}"'
         if self.tag_name == '#comment':
