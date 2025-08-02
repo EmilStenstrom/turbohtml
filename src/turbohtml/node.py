@@ -196,3 +196,155 @@ class Node:
         child.parent = None
         child.next_sibling = None
         child.previous_sibling = None
+
+    def find_ancestor_until(self, tag_name_or_predicate: Union[str, Callable[['Node'], bool]], 
+                           stop_at: 'Node') -> Optional['Node']:
+        """Find ancestor matching criteria, stopping at a specific node.
+        
+        Args:
+            tag_name_or_predicate: Tag name or callable that takes a Node and returns bool
+            stop_at: Node to stop searching at (exclusive - won't check this node)
+        Returns:
+            The matching ancestor Node or None if not found before stop_at
+        """
+        current = self
+        while current and current != stop_at:
+            if callable(tag_name_or_predicate):
+                if tag_name_or_predicate(current):
+                    return current
+            elif current.tag_name == tag_name_or_predicate:
+                return current
+            current = current.parent
+        return None
+
+    def find_first_ancestor_in_tags(self, tag_names: Union[str, list], 
+                                   stop_at: Optional['Node'] = None) -> Optional['Node']:
+        """Find the first ancestor whose tag matches any in the given list.
+        
+        Args:
+            tag_names: Single tag name or list of tag names to match
+            stop_at: Optional node to stop searching at (exclusive)
+        Returns:
+            The first matching ancestor Node or None if not found
+        """
+        if isinstance(tag_names, str):
+            tag_names = [tag_names]
+        
+        current = self
+        while current and current != stop_at:
+            if current.tag_name in tag_names:
+                return current
+            current = current.parent
+        return None
+
+    def has_ancestor_with_tag(self, tag_name: str, stop_at: Optional['Node'] = None) -> bool:
+        """Check if this node has an ancestor with the given tag name.
+        
+        Args:
+            tag_name: Tag name to search for
+            stop_at: Optional node to stop searching at (exclusive)
+        Returns:
+            True if ancestor found, False otherwise
+        """
+        return self.find_ancestor_until(tag_name, stop_at) is not None
+
+    def get_path_to_ancestor(self, ancestor: 'Node') -> List['Node']:
+        """Get list of nodes from this node up to (but not including) the ancestor.
+        
+        Args:
+            ancestor: The ancestor node to stop at
+        Returns:
+            List of nodes from self to parent of ancestor, or empty list if not found
+        """
+        path = []
+        current = self
+        while current and current != ancestor:
+            path.append(current)
+            current = current.parent
+        return path if current == ancestor else []
+
+    def move_to_ancestor(self, ancestor: 'Node') -> Optional['Node']:
+        """Move up the tree to the specified ancestor.
+        
+        Args:
+            ancestor: The ancestor node to move to
+        Returns:
+            The ancestor node if found, None otherwise
+        """
+        current = self
+        while current and current != ancestor:
+            current = current.parent
+        return current
+
+    def is_inside_tag(self, tag_name: str) -> bool:
+        """Check if this node is inside an element with the given tag name.
+        
+        Args:
+            tag_name: Tag name to check for
+        Returns:
+            True if inside the tag, False otherwise
+        """
+        return self.find_ancestor(tag_name) is not None
+
+    def find_or_create_child(self, tag_name: str, attributes: Optional[Dict[str, str]] = None) -> 'Node':
+        """Find existing child with tag name or create a new one.
+        
+        Args:
+            tag_name: Tag name to find or create
+            attributes: Optional attributes for new node if created
+        Returns:
+            Existing or newly created child node
+        """
+        # Look for existing child
+        for child in self.children:
+            if child.tag_name == tag_name:
+                return child
+        
+        # Create new child
+        new_child = Node(tag_name, attributes or {})
+        self.append_child(new_child)
+        return new_child
+
+    def find_child_by_tag(self, tag_name: str) -> Optional['Node']:
+        """Find first child with the given tag name.
+        
+        Args:
+            tag_name: Tag name to search for
+        Returns:
+            First matching child or None if not found
+        """
+        for child in self.children:
+            if child.tag_name == tag_name:
+                return child
+        return None
+
+    def get_last_child_with_tag(self, tag_name: str) -> Optional['Node']:
+        """Get the last child with the given tag name.
+        
+        Args:
+            tag_name: Tag name to search for
+        Returns:
+            Last matching child or None if not found
+        """
+        for child in reversed(self.children):
+            if child.tag_name == tag_name:
+                return child
+        return None
+
+    def collect_ancestors_until(self, stop_at: 'Node', 
+                               predicate: Optional[Callable[['Node'], bool]] = None) -> List['Node']:
+        """Collect ancestors from this node up to (but not including) stop_at.
+        
+        Args:
+            stop_at: Node to stop at (exclusive)
+            predicate: Optional filter function - only nodes matching this are included
+        Returns:
+            List of ancestors in reverse order (outermost first)
+        """
+        ancestors = []
+        current = self
+        while current and current != stop_at:
+            if predicate is None or predicate(current):
+                ancestors.insert(0, current)  # Insert at beginning for reverse order
+            current = current.parent
+        return ancestors

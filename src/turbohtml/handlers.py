@@ -67,25 +67,13 @@ class TagHandler:
         """Create a new element node from a token"""
         return Node(token.tag_name, token.attributes)
 
-    def _find_ancestor_by_tag(self, context: "ParseContext", tag_name: str) -> Optional["Node"]:
-        """Find ancestor by tag name"""
-        return context.current_parent.find_ancestor(tag_name)
-
-    def _find_ancestor_by_tags(self, context: "ParseContext", tag_names: tuple) -> Optional["Node"]:
-        """Find ancestor by any of the given tag names"""
-        return context.current_parent.find_ancestor(lambda n: n.tag_name in tag_names)
-
-    def _find_ancestor_by_predicate(self, context: "ParseContext", predicate: Callable) -> Optional["Node"]:
-        """Find ancestor by predicate function"""
-        return context.current_parent.find_ancestor(predicate)
-
     def _is_in_select(self, context: "ParseContext") -> bool:
         """Check if we're inside a select element"""
-        return self._find_ancestor_by_tag(context, "select") is not None
+        return context.current_parent.is_inside_tag("select")
 
     def _is_in_table_cell(self, context: "ParseContext") -> bool:
         """Check if we're inside a table cell (td or th)"""
-        return self._find_ancestor_by_tags(context, ("td", "th")) is not None
+        return context.current_parent.find_first_ancestor_in_tags(["td", "th"]) is not None
 
     def _move_to_parent_of_ancestor(self, context: "ParseContext", ancestor: "Node") -> None:
         """Move current_parent to the parent of the given ancestor"""
@@ -162,7 +150,7 @@ class SimpleElementHandler(TagHandler):
         return True
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
-        ancestor = self._find_ancestor_by_tag(context, token.tag_name)
+        ancestor = context.current_parent.find_ancestor(token.tag_name)
         if ancestor:
             self._move_to_parent_of_ancestor(context, ancestor)
         return True
@@ -376,7 +364,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
 
         # Special handling for nobr tags to prevent infinite loops
         if tag_name == "nobr":
-            current = self._find_ancestor_by_tag(context, "nobr")
+            current = context.current_parent.find_ancestor("nobr")
             if current:
                 self.debug("Found existing nobr, closing it and creating new one at same level")
                 if current.parent:
@@ -401,7 +389,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         # If we're in a table but not in a cell, foster parent
         if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
             # First try to find a cell to put the element in
-            cell = self._find_ancestor_by_tags(context, ("td", "th"))
+            cell = context.current_parent.find_first_ancestor_in_tags(["td", "th"])
             if cell:
                 self.debug(f"Found table cell {cell.tag_name}, placing formatting element inside")
                 cell.append_child(new_element)
@@ -460,13 +448,13 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
 
         # If we're in a table cell, ignore the end tag
         if self._is_in_table_cell(context):
-            cell = self._find_ancestor_by_tags(context, ("td", "th"))
+            cell = context.current_parent.find_first_ancestor_in_tags(["td", "th"])
             self.debug(f"Inside table cell {cell.tag_name}, ignoring end tag")
             return True
 
         # Check if we're inside a boundary element (except table cells)
-        boundary = self._find_ancestor_by_predicate(
-            context, lambda n: n.tag_name in BOUNDARY_ELEMENTS and n.tag_name not in ("td", "th")
+        boundary = context.current_parent.find_ancestor(
+            lambda n: n.tag_name in BOUNDARY_ELEMENTS and n.tag_name not in ("td", "th")
         )
         if boundary:
             self.debug(f"Inside boundary element {boundary.tag_name}")
@@ -490,7 +478,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
             return True
 
         # Find matching formatting element
-        current = self._find_ancestor_by_tag(context, token.tag_name)
+        current = context.current_parent.find_ancestor(token.tag_name)
         if not current:
             self.debug(f"No matching formatting element found for end tag: {tag_name}")
             return False
@@ -525,7 +513,7 @@ class SelectTagHandler(TemplateAwareHandler):
             # If we're already in a select, close it and ignore the nested select
             if self._is_in_select(context):
                 self.debug("Found nested select, closing outer select")
-                outer_select = self._find_ancestor_by_tag(context, "select")
+                outer_select = context.current_parent.find_ancestor("select")
                 if outer_select and outer_select.parent:
                     self.debug(f"Moving up to outer select's parent: {outer_select.parent}")
                     context.current_parent = outer_select.parent
@@ -552,7 +540,7 @@ class SelectTagHandler(TemplateAwareHandler):
 
         elif tag_name in ("optgroup", "option"):
             # Check if we're in a select or datalist
-            parent = self._find_ancestor_by_predicate(context, lambda n: n.tag_name in ("select", "datalist"))
+            parent = context.current_parent.find_ancestor(lambda n: n.tag_name in ("select", "datalist"))
             self.debug(f"Checking for select/datalist ancestor: found={bool(parent)}")
 
             # If we're not in a select/datalist, create elements at body level
@@ -575,7 +563,7 @@ class SelectTagHandler(TemplateAwareHandler):
                 # If we're inside an option, move up to select/datalist level
                 if context.current_parent.tag_name == "option":
                     self.debug("Moving up from option to select/datalist level")
-                    parent = self._find_ancestor_by_predicate(context, lambda n: n.tag_name in ("select", "datalist"))
+                    parent = context.current_parent.find_ancestor(lambda n: n.tag_name in ("select", "datalist"))
                     if parent:
                         context.current_parent = parent
 
@@ -587,7 +575,7 @@ class SelectTagHandler(TemplateAwareHandler):
             else:  # option
                 self.debug("Creating option inside select/datalist")
                 # If we're inside a formatting element, move up to select
-                formatting = self._find_ancestor_by_predicate(context, lambda n: n.tag_name in FORMATTING_ELEMENTS)
+                formatting = context.current_parent.find_ancestor(lambda n: n.tag_name in FORMATTING_ELEMENTS)
                 if formatting:
                     self.debug("Found formatting element, moving up to select")
                     parent = formatting.find_ancestor(lambda n: n.tag_name in ("select", "datalist"))
@@ -596,8 +584,8 @@ class SelectTagHandler(TemplateAwareHandler):
                 # If we're inside an optgroup, stay there, otherwise move to select/datalist level
                 elif context.current_parent.tag_name not in ("select", "datalist", "optgroup"):
                     self.debug("Moving up to select/datalist/optgroup level")
-                    parent = self._find_ancestor_by_predicate(
-                        context, lambda n: n.tag_name in ("select", "datalist", "optgroup")
+                    parent = context.current_parent.find_ancestor(
+                        lambda n: n.tag_name in ("select", "datalist", "optgroup")
                     )
                     if parent:
                         context.current_parent = parent
@@ -619,7 +607,7 @@ class SelectTagHandler(TemplateAwareHandler):
 
         if tag_name in ("select", "datalist"):
             # Find nearest select/datalist ancestor and move up to its parent
-            ancestor = self._find_ancestor_by_tag(context, tag_name)
+            ancestor = context.current_parent.find_ancestor(tag_name)
             if ancestor:
                 self._move_to_parent_of_ancestor(context, ancestor)
                 self.debug(f"Found {tag_name} ancestor: {ancestor}, moved to parent")
@@ -629,7 +617,7 @@ class SelectTagHandler(TemplateAwareHandler):
 
         elif tag_name in ("optgroup", "option"):
             # Find nearest matching ancestor and move up to its parent
-            ancestor = self._find_ancestor_by_tag(context, tag_name)
+            ancestor = context.current_parent.find_ancestor(tag_name)
             if ancestor:
                 self._move_to_parent_of_ancestor(context, ancestor)
                 self.debug(f"Found {tag_name} ancestor: {ancestor}, moved to parent")
@@ -770,15 +758,13 @@ class ParagraphTagHandler(TagHandler):
         # Check if we're inside a button first - special button scope behavior
         button_ancestor = context.current_parent.find_ancestor("button")
         if button_ancestor:
-            # Look for p element only within the button scope
-            current = context.current_parent
-            while current and current != button_ancestor:
-                if current.tag_name == "p":
-                    # Found p within button scope, close it
-                    context.current_parent = current.parent or context.current_parent
-                    self.debug(f"Closed p within button scope, current_parent now: {context.current_parent.tag_name}")
-                    return True
-                current = current.parent
+            # Look for p element only within the button scope using new Node method
+            p_in_button = context.current_parent.find_ancestor_until("p", button_ancestor)
+            if p_in_button:
+                # Found p within button scope, close it
+                context.current_parent = p_in_button.parent or context.current_parent
+                self.debug(f"Closed p within button scope, current_parent now: {context.current_parent.tag_name}")
+                return True
             
             # No p element found within button scope, create implicit p inside button
             self.debug("No open p element found within button scope, creating implicit p inside button")
@@ -788,31 +774,29 @@ class ParagraphTagHandler(TagHandler):
             return True
 
         # Standard behavior: Find nearest p ancestor and move up to its parent
-        current = context.current_parent
-        while current and current != self.parser.html_node:
-            if current.tag_name == "p":
-                # Special case: if we're in table context, also create implicit p
-                if context.document_state == DocumentState.IN_TABLE:
-                    self.debug("Found p ancestor in table context, creating implicit p as sibling")
-                    # Create implicit p as sibling to current content in the paragraph
-                    # Insert it before the table for correct order
-                    if context.current_table and context.current_table.parent == current:
-                        table_index = current.children.index(context.current_table)
-                        p_node = Node("p")
-                        current.children.insert(table_index, p_node)
-                        p_node.parent = current
-                    else:
-                        # Fallback: append at end
-                        p_node = Node("p")
-                        current.append_child(p_node)
-                    # Then close the paragraph normally
-                    context.current_parent = current.parent
-                    return True
-                
-                # Normal case: close up to the p's parent
-                context.current_parent = current.parent
+        p_ancestor = context.current_parent.find_ancestor_until("p", self.parser.html_node)
+        if p_ancestor:
+            # Special case: if we're in table context, also create implicit p
+            if context.document_state == DocumentState.IN_TABLE:
+                self.debug("Found p ancestor in table context, creating implicit p as sibling")
+                # Create implicit p as sibling to current content in the paragraph
+                # Insert it before the table for correct order
+                if context.current_table and context.current_table.parent == p_ancestor:
+                    table_index = p_ancestor.children.index(context.current_table)
+                    p_node = Node("p")
+                    p_ancestor.children.insert(table_index, p_node)
+                    p_node.parent = p_ancestor
+                else:
+                    # Fallback: append at end
+                    p_node = Node("p")
+                    p_ancestor.append_child(p_node)
+                # Then close the paragraph normally
+                context.current_parent = p_ancestor.parent
                 return True
-            current = current.parent
+            
+            # Normal case: close up to the p's parent
+            context.current_parent = p_ancestor.parent
+            return True
 
         # HTML5 spec: If no p element is in scope, check for special contexts
         # But we still need to handle implicit p creation in table context
@@ -902,21 +886,17 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             # Check if we're in an integration point
             in_integration_point = False
             if context.current_context == "svg":
-                temp_parent = context.current_parent
-                while temp_parent:
-                    if temp_parent.tag_name in ("svg foreignObject", "svg desc", "svg title"):
-                        in_integration_point = True
-                        break
-                    temp_parent = temp_parent.parent
+                svg_integration_ancestor = context.current_parent.find_ancestor(
+                    lambda n: n.tag_name in ("svg foreignObject", "svg desc", "svg title"))
+                if svg_integration_ancestor:
+                    in_integration_point = True
             elif context.current_context == "math":
                 # Check if we're inside annotation-xml with HTML encoding
-                temp_parent = context.current_parent
-                while temp_parent:
-                    if temp_parent.tag_name == "math annotation-xml":
-                        encoding = temp_parent.attributes.get("encoding", "").lower()
-                        if encoding in ("application/xhtml+xml", "text/html"):
-                            in_integration_point = True
-                            break
+                annotation_ancestor = context.current_parent.find_ancestor("math annotation-xml")
+                if annotation_ancestor:
+                    encoding = annotation_ancestor.attributes.get("encoding", "").lower()
+                    if encoding in ("application/xhtml+xml", "text/html"):
+                        in_integration_point = True
                     temp_parent = temp_parent.parent
                     
             if not in_integration_point:
@@ -1015,20 +995,20 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         context.current_table.append_child(new_colgroup)
 
         # Rule 3: Check context and create new tbody if needed
-        current = context.current_parent
-        while current and current != context.current_table:
-            self.debug(f"Checking ancestor: {current}")
-            if current.tag_name == "td":
-                self.debug("Found td ancestor, staying in current context")
-                return True
-            if current.tag_name in ("tbody", "tr", "colgroup"):
-                self.debug("Found tbody/tr/colgroup ancestor, creating new tbody")
-                # Create new empty tbody after the colgroup
-                new_tbody = Node("tbody")
-                context.current_table.append_child(new_tbody)
-                context.current_parent = new_tbody
-                return True
-            current = current.parent
+        td_ancestor = context.current_parent.find_ancestor_until("td", context.current_table)
+        if td_ancestor:
+            self.debug("Found td ancestor, staying in current context")
+            return True
+            
+        tbody_ancestor = context.current_parent.find_first_ancestor_in_tags(
+            ["tbody", "tr", "colgroup"], context.current_table)
+        if tbody_ancestor:
+            self.debug("Found tbody/tr/colgroup ancestor, creating new tbody")
+            # Create new empty tbody after the colgroup
+            new_tbody = Node("tbody")
+            context.current_table.append_child(new_tbody)
+            context.current_parent = new_tbody
+            return True
 
         # Rule 4: Otherwise stay at table level
         self.debug("No tbody/tr/td ancestors, staying at table level")
@@ -1076,20 +1056,20 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         self.debug(f"Added col to colgroup: {new_col}")
 
         # Rule 5: Check context and create new tbody if needed
-        current = context.current_parent
-        while current and current != context.current_table:
-            self.debug(f"Checking ancestor: {current}")
-            if current.tag_name == "td":
-                self.debug("Found td ancestor, staying in current context")
-                return True
-            if current.tag_name in ("tbody", "tr"):
-                self.debug("Found tbody/tr ancestor, creating new tbody")
-                # Create new empty tbody after the colgroup
-                new_tbody = Node("tbody")
-                context.current_table.append_child(new_tbody)
-                context.current_parent = new_tbody
-                return True
-            current = current.parent
+        td_ancestor = context.current_parent.find_ancestor_until("td", context.current_table)
+        if td_ancestor:
+            self.debug("Found td ancestor, staying in current context")
+            return True
+            
+        tbody_ancestor = context.current_parent.find_first_ancestor_in_tags(
+            ["tbody", "tr"], context.current_table)
+        if tbody_ancestor:
+            self.debug("Found tbody/tr ancestor, creating new tbody")
+            # Create new empty tbody after the colgroup
+            new_tbody = Node("tbody")
+            context.current_table.append_child(new_tbody)
+            context.current_parent = new_tbody
+            return True
 
         # Rule 6: Otherwise stay at table level
         self.debug("No tbody/tr/td ancestors, staying at table level")
@@ -1143,17 +1123,15 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
     def _find_or_create_tbody(self, context: "ParseContext") -> "Node":
         """Find existing tbody or create new one"""
-        # First check current context
-        current = context.current_parent
-        while current and current != context.current_table:
-            if current.tag_name == "tbody":
-                return current
-            current = current.parent
+        # First check current context using new Node method
+        tbody_ancestor = context.current_parent.find_ancestor_until("tbody", context.current_table)
+        if tbody_ancestor:
+            return tbody_ancestor
 
-        # Look for existing tbody in table
-        for child in context.current_table.children:
-            if child.tag_name == "tbody":
-                return child
+        # Look for existing tbody in table using new Node method
+        existing_tbody = context.current_table.find_child_by_tag("tbody")
+        if existing_tbody:
+            return existing_tbody
 
         # Create new tbody
         tbody = Node("tbody")
@@ -1162,17 +1140,16 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
     def _find_or_create_tr(self, context: "ParseContext") -> "Node":
         """Find existing tr or create new one in tbody"""
-        # First check if we're in a tr
-        current = context.current_parent
-        while current and current != context.current_table:
-            if current.tag_name == "tr":
-                return current
-            current = current.parent
+        # First check if we're in a tr using new Node method
+        tr_ancestor = context.current_parent.find_ancestor_until("tr", context.current_table)
+        if tr_ancestor:
+            return tr_ancestor
 
         # Get tbody and look for last tr
         tbody = self._find_or_create_tbody(context)
-        if tbody.children and tbody.children[-1].tag_name == "tr":
-            return tbody.children[-1]
+        last_tr = tbody.get_last_child_with_tag("tr")
+        if last_tr:
+            return last_tr
 
         # Create new tr
         tr = Node("tr")
@@ -1243,12 +1220,9 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             return True
 
         # Check for other formatting context
-        formatting_elements = []
-        current = context.current_parent
-        while current and current != foster_parent:
-            if current.tag_name in FORMATTING_ELEMENTS:
-                formatting_elements.insert(0, current)
-            current = current.parent
+        # Collect formatting elements from current position up to foster parent
+        formatting_elements = context.current_parent.collect_ancestors_until(
+            foster_parent, lambda n: n.tag_name in FORMATTING_ELEMENTS)
         self.debug(f"Found formatting elements: {formatting_elements}")
 
         # If we have formatting elements, maintain their nesting
@@ -1538,7 +1512,7 @@ class ListTagHandler(TagHandler):
         self.debug(f"Handling {tag_name} tag")
         
         # Find any existing dt/dd ancestor
-        ancestor = self._find_ancestor_by_tags(context, ("dt", "dd"))
+        ancestor = context.current_parent.find_first_ancestor_in_tags(["dt", "dd"])
         if ancestor:
             self.debug(f"Found existing {ancestor.tag_name} ancestor")
             # Close everything up to the dl parent
@@ -1618,20 +1592,19 @@ class ListTagHandler(TagHandler):
         self.debug(f"Handling end tag for {tag_name}")
         
         # Find the nearest dt/dd ancestor
-        current = context.current_parent
-        while current and current != self.parser.html_node:
-            if current.tag_name in ("dt", "dd"):
-                self.debug(f"Found matching {current.tag_name}")
-                # Move to the dl parent
-                if current.parent and current.parent.tag_name == "dl":
-                    self.debug("Moving to dl parent")
-                    context.current_parent = current.parent
-                else:
-                    self.debug("No dl parent found, moving to body")
-                    body = self.parser._get_body_node()
-                    context.current_parent = body or self.parser.html_node
-                return True
-            current = current.parent
+        dt_dd_ancestor = context.current_parent.find_ancestor_until(
+            lambda n: n.tag_name in ("dt", "dd"), self.parser.html_node)
+        if dt_dd_ancestor:
+            self.debug(f"Found matching {dt_dd_ancestor.tag_name}")
+            # Move to the dl parent
+            if dt_dd_ancestor.parent and dt_dd_ancestor.parent.tag_name == "dl":
+                self.debug("Moving to dl parent")
+                context.current_parent = dt_dd_ancestor.parent
+            else:
+                self.debug("No dl parent found, moving to body")
+                body = self.parser._get_body_node()
+                context.current_parent = body or self.parser.html_node
+            return True
         self.debug(f"No matching {tag_name} found")
         return False
 
@@ -1639,7 +1612,7 @@ class ListTagHandler(TagHandler):
         """Handle end tags for li"""
         self.debug("Handling end tag for li")
         
-        # Find the nearest li ancestor
+        # Find the nearest li ancestor, but stop if we hit a ul/ol first
         current = context.current_parent
         while current and current != self.parser.html_node:
             if current.tag_name == "li":
@@ -1702,7 +1675,7 @@ class HeadingTagHandler(SimpleElementHandler):
             return super().handle_start(token, context, has_more_content)
 
         # Outside table cells, close any existing heading
-        existing_heading = self._find_ancestor_by_predicate(context, lambda n: n.tag_name in HEADING_ELEMENTS)
+        existing_heading = context.current_parent.find_ancestor(lambda n: n.tag_name in HEADING_ELEMENTS)
         if existing_heading:
             self._move_to_parent_of_ancestor(context, existing_heading)
 
@@ -1993,11 +1966,8 @@ class ForeignTagHandler(TagHandler):
         # Don't handle foreign elements in restricted contexts
         if tag_name in ("svg", "math"):
             # Check if we're inside a select element (foreign elements not allowed)
-            temp_parent = context.current_parent
-            while temp_parent:
-                if temp_parent.tag_name == "select":
-                    return False
-                temp_parent = temp_parent.parent
+            if context.current_parent.is_inside_tag("select"):
+                return False
         
         # Handle any tag when in SVG or MathML context
         if context.current_context in ("svg", "math"):
@@ -2071,22 +2041,19 @@ class ForeignTagHandler(TagHandler):
                 
                 # Check if we're inside mtext/mi/mo/mn/ms which allow formatting elements
                 if not in_integration_point and tag_name_lower in ("b", "i", "strong", "em", "small", "s", "sub", "sup"):
-                    mtext_parent = context.current_parent
-                    while mtext_parent:
-                        if mtext_parent.tag_name in ("math mtext", "math mi", "math mo", "math mn", "math ms"):
-                            # These are integration points - HTML formatting elements should remain HTML
-                            return False  # Let other handlers process as regular HTML
-                        mtext_parent = mtext_parent.parent
+                    mtext_ancestor = context.current_parent.find_ancestor(
+                        lambda n: n.tag_name in ("math mtext", "math mi", "math mo", "math mn", "math ms"))
+                    if mtext_ancestor:
+                        # These are integration points - HTML formatting elements should remain HTML
+                        return False  # Let other handlers process as regular HTML
             
             # Check for SVG integration points  
             elif context.current_context == "svg":
                 # Check if we're inside foreignObject, desc, or title
-                integration_parent = context.current_parent
-                while integration_parent:
-                    if integration_parent.tag_name in ("svg foreignObject", "svg desc", "svg title"):
-                        in_integration_point = True
-                        break
-                    integration_parent = integration_parent.parent
+                integration_ancestor = context.current_parent.find_ancestor(
+                    lambda n: n.tag_name in ("svg foreignObject", "svg desc", "svg title"))
+                if integration_ancestor:
+                    in_integration_point = True
             
             # Only break out if NOT in an integration point
             if not in_integration_point:
