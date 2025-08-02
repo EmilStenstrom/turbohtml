@@ -242,15 +242,35 @@ class TextHandler(TagHandler):
 
         # Handle text in AFTER_HEAD state - should transition to body
         if context.document_state == DocumentState.AFTER_HEAD:
-            self.debug("In AFTER_HEAD state, transitioning to body for text")
-            body = self.parser._ensure_body_node(context)
-            if body:
-                context.current_parent = body
+            self.debug("In AFTER_HEAD state, handling text placement")
+            
+            # If it's only whitespace, place it at html level before body
+            if text.isspace():
+                self.debug("Whitespace-only text in AFTER_HEAD, placing at html level")
+                # Check if body already exists
+                body = self.parser._get_body_node()
+                if body:
+                    # Insert text before existing body
+                    text_node = Node("#text")
+                    text_node.text_content = text
+                    self.parser.html_node.insert_before(text_node, body)
+                    self.debug(f"Inserted whitespace before existing body: '{text}'")
+                else:
+                    # Add whitespace to html level, body will be created after
+                    context.current_parent = self.parser.html_node
+                    self._append_text(text, context)
+                    self.debug(f"Added whitespace to html level: '{text}'")
                 context.document_state = DocumentState.IN_BODY
-                # Only append non-whitespace text
-                stripped = text.lstrip()
-                if stripped:
-                    self._append_text(stripped, context)
+            else:
+                # Non-whitespace text should trigger body creation and go there
+                self.debug("Non-whitespace text in AFTER_HEAD, transitioning to body")
+                body = self.parser._ensure_body_node(context)
+                if body:
+                    context.current_parent = body
+                    context.document_state = DocumentState.IN_BODY
+                    self._append_text(text, context)
+                    self.debug(f"Added text to body: '{text}'")
+            
             return True
 
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
@@ -1187,6 +1207,10 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         return tr
 
     def should_handle_text(self, text: str, context: "ParseContext") -> bool:
+        # Don't handle text if we're in a special content state (rawtext, plaintext, etc.)
+        # Those should be handled by their respective handlers
+        if context.content_state != ContentState.NONE:
+            return False
         return context.document_state == DocumentState.IN_TABLE
 
     def handle_text(self, text: str, context: "ParseContext") -> bool:
@@ -2484,6 +2508,24 @@ class HeadElementHandler(TagHandler):
         if tag_name == "template":
             return self._handle_template_start(token, context)
 
+        # If we're in table context, foster parent head elements to body
+        if context.document_state == DocumentState.IN_TABLE:
+            self.debug(f"Head element {tag_name} in table context, foster parenting to body")
+            table = context.current_table
+            if table and table.parent:
+                # Foster parent before the table
+                new_node = Node(tag_name, token.attributes)
+                table_index = table.parent.children.index(table)
+                table.parent.children.insert(table_index, new_node)
+                
+                # For elements that can have content, update current parent
+                if tag_name not in VOID_ELEMENTS:
+                    context.current_parent = new_node
+                    if tag_name in RAWTEXT_ELEMENTS:
+                        context.content_state = ContentState.RAWTEXT
+                        self.debug(f"Switched to RAWTEXT state for {tag_name}")
+                return True
+
         # If we're in body after seeing real content
         if context.document_state == DocumentState.IN_BODY:
             self.debug("In body state with real content")
@@ -2528,11 +2570,11 @@ class HeadElementHandler(TagHandler):
                 context.document_state = DocumentState.IN_HEAD
                 self.debug("Switched to head state")
             elif context.document_state == DocumentState.AFTER_HEAD:
-                # Head elements after </head> should be foster parented back into head
-                self.debug("Head element appearing after </head>, foster parenting into head")
+                # Head elements after </head> should go back to head (foster parenting)
+                self.debug("Head element appearing after </head>, foster parenting to head")
                 head = self.parser._ensure_head_node()
-                context.current_parent = head
-                # Don't change document state - stay in AFTER_HEAD
+                if head:
+                    context.current_parent = head
 
             # Create and append the new element
             new_node = Node(tag_name, token.attributes)
@@ -2622,6 +2664,14 @@ class HeadElementHandler(TagHandler):
                         # If head has no parent, set to html node
                         context.current_parent = context.html_node
                 self.debug(f"transitioned to AFTER_HEAD, current parent: {context.current_parent}")
+            elif context.document_state == DocumentState.INITIAL:
+                # If we see </head> in INITIAL state, transition to AFTER_HEAD
+                # This handles cases like <!doctype html></head> where no <head> was opened
+                context.document_state = DocumentState.AFTER_HEAD
+                # Ensure html structure exists and move to html parent
+                self.parser._ensure_html_node()
+                context.current_parent = self.parser.html_node
+                self.debug(f"transitioned from INITIAL to AFTER_HEAD, current parent: {context.current_parent}")
             return True
 
         # For template, only close up to the nearest template boundary
@@ -3077,11 +3127,19 @@ class PlaintextHandler(TagHandler):
 
         self.debug("handling plaintext")
 
+        # If we're in INITIAL, AFTER_HEAD, or AFTER_BODY state, ensure we have body
+        if context.document_state in (DocumentState.INITIAL, DocumentState.AFTER_HEAD, DocumentState.AFTER_BODY):
+            body = self.parser._ensure_body_node(context)
+            if body:
+                context.current_parent = body
+                context.document_state = DocumentState.IN_BODY
+
         # Create plaintext node
         new_node = Node("plaintext", token.attributes)
 
-        # If we're in a table, foster parent the plaintext node
-        if context.document_state == DocumentState.IN_TABLE:
+        # If we're in a table but NOT in a valid content area (td, th, caption), foster parent
+        if (context.document_state == DocumentState.IN_TABLE and 
+            context.current_parent.tag_name not in ("td", "th", "caption")):
             self.debug("Foster parenting plaintext out of table")
             table = context.current_table
             if table and table.parent:

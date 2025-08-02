@@ -1,4 +1,4 @@
-Tests passed: 1133/1729 (66%) (skipped: 39 script-dependent)
+Tests passed: 1142/1729 (66%) (skipped: 39 script-dependent)
 
 adoption01.dat: 0/0 (N/A) [s] (1 skipped)
 adoption02.dat: 0/2 (0%) [xx]
@@ -33,18 +33,18 @@ tests2.dat: 63/63 (100%) [......................................................
 tests3.dat: 24/24 (100%) [........................]
 tests4.dat: 9/9 (100%) [.........]
 tests5.dat: 9/15 (60%) [.x....xx..x.xx.ss] (2 skipped)
-tests6.dat: 36/52 (69%) [xxxx..x..x................x.xx...xx.x.x..x.xx.......]
-tests7.dat: 19/34 (56%) [.x.....xx..xxxxxx.....xx...x.xx..x]
+tests6.dat: 37/52 (71%) [.xxx..x..x................x.xx...xx.x.x..x.xx.......]
+tests7.dat: 22/34 (65%) [...........xxxxxx.....xx...x.xx..x]
 tests8.dat: 5/10 (50%) [....xx.xxx]
 tests9.dat: 15/27 (56%) [...............xxxxxxxxxxxx]
 tests10.dat: 30/54 (56%) [..............xxxxxxxxxxxx...xxxxxxx.xx............xxx]
 tests11.dat: 7/13 (54%) [..xxxxxx.....]
 tests12.dat: 0/2 (0%) [xx]
 tests14.dat: 6/7 (86%) [...x...]
-tests15.dat: 4/14 (29%) [xxxxxxx...xx.x]
+tests15.dat: 5/14 (36%) [xxxxxx....xx.x]
 tests16.dat: 141/185 (76%) [..........x......x..........x..........x.....xx...........xx...xxxxxxx.x.........x.ssssssxx.xxx..............x......x..........x..........x.....xx.........xx...xxxxxxx.x.........x.ssssssxx.x.....xx] (12 skipped)
 tests17.dat: 4/13 (31%) [xx...xxxxxxx.]
-tests18.dat: 17/35 (49%) [....s.....x..xxxxxxxxxxxxxx.xx...x..] (1 skipped)
+tests18.dat: 20/35 (57%) [....s........xxx.xx.xxxxxxx.xx...x..] (1 skipped)
 tests19.dat: 50/103 (49%) [.....x..x.xx.x...x...x.x......xxxxx...x..x.xx.x.xxxxxxxxxxx..xxxxxxxxxxx...x.xx.x.x......xxxxxx......xx]
 tests20.dat: 64/64 (100%) [................................................................]
 tests21.dat: 6/23 (26%) [...xxxxxxx...xxxxxxxxxx]
@@ -55,5 +55,5 @@ tests25.dat: 26/26 (100%) [..........................]
 tests26.dat: 1/20 (5%) [xxxxxxxxxxxxxx.xxxxx]
 tests_innerHTML_1.dat: 33/81 (41%) [...x...xxx.xxxxxxxxx........xxxxxx.xxx......xxxxxxxxxxxxxxx..xx.xx.......x.xxxxxx]
 tricky01.dat: 1/9 (11%) [.xxxxxxxx]
-webkit01.dat: 25/52 (48%) [...x...x.x.x....xx.xxxx.xx.x..x..xxxxx..x.xxxx.xx..x]
+webkit01.dat: 26/52 (50%) [...x...x.x.x....xx.xxxx.xx.x..x..x.xxx..x.xxxx.xx..x]
 webkit02.dat: 7/33 (21%) [.ss.x.xxx.xxx.xxxxxxxxxx..xxxxxxxxx] (2 skipped)
