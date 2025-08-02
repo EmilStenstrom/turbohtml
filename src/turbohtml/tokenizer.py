@@ -110,6 +110,14 @@ class HTMLTokenizer:
             while i < self.length and self.html[i].isspace():
                 i += 1
 
+            # Skip any "/" characters (self-closing syntax on end tags should be ignored)
+            while i < self.length and self.html[i] == "/":
+                i += 1
+
+            # Skip more whitespace after /
+            while i < self.length and self.html[i].isspace():
+                i += 1
+
             # Check if it's our end tag
             if potential_tag == self.rawtext_tag and i < self.length and self.html[i] == ">":
                 self.debug(f"  found matching end tag")

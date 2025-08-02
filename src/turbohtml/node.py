@@ -143,9 +143,9 @@ class Node:
         # Start with the tag name
         result = f'| {" " * indent}<{self.tag_name}>'
 
-        # Add attributes on their own line if present
+        # Add attributes on their own line if present (sorted alphabetically)
         if self.attributes:
-            for key, value in self.attributes.items():
+            for key, value in sorted(self.attributes.items()):
                 result += f'\n| {" " * (indent+2)}{key}="{value}"'
 
         # Add children
