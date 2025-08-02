@@ -2104,6 +2104,10 @@ class BoundaryElementHandler(TagHandler):
     """Handles elements that can affect formatting elements like marquee"""
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        # Don't handle foreign elements (svg, math) as boundary elements
+        # since they should be handled by ForeignTagHandler
+        if tag_name in ("svg", "math"):
+            return False
         return tag_name in BOUNDARY_ELEMENTS
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
@@ -2144,6 +2148,9 @@ class BoundaryElementHandler(TagHandler):
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        # Don't handle foreign elements (svg, math) as boundary elements
+        if tag_name in ("svg", "math"):
+            return False
         return tag_name in BOUNDARY_ELEMENTS
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:

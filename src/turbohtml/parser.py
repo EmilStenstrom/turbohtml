@@ -55,6 +55,7 @@ class TurboHTML:
             DoctypeHandler(self),
             PlaintextHandler(self),
             FramesetTagHandler(self),
+            ForeignTagHandler(self) if handle_foreign_elements else None,  # Move before other handlers
             TableTagHandler(self),
             AutoClosingTagHandler(self),
             MenuitemElementHandler(self),
@@ -73,7 +74,6 @@ class TurboHTML:
             SelectTagHandler(self),
             FormTagHandler(self),
             HeadingTagHandler(self),
-            ForeignTagHandler(self) if handle_foreign_elements else None,
         ]
         self.tag_handlers = [h for h in self.tag_handlers if h is not None]
 
