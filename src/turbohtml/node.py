@@ -237,78 +237,9 @@ class Node:
             current = current.parent
         return None
 
-    def has_ancestor_with_tag(self, tag: str) -> bool:
-        """Check if this node has an ancestor with the given tag"""
-        current = self.parent
-        while current:
-            if current.tag == tag:
-                return True
-            current = current.parent
-        return False
-
-    def parent_has_tag_in(self, tags: Union[list, tuple]) -> bool:
-        """Check if this node's parent has a tag in the given list"""
-        return self.parent and self.parent.tag_name in tags
-
-    def has_tag(self, tag: str) -> bool:
-        """Check if this node has the given tag"""
-        return self.tag_name == tag
-
     def last_child_is_text(self) -> bool:
         """Check if the last child is a text node"""
         return self.children and self.children[-1].tag_name == "#text"
-
-    def safe_parent(self) -> Optional["Node"]:
-        """Safely get the parent node, returns None if this node doesn't exist or has no parent"""
-        return self.parent if self else None
-
-    def move_to_parent(self) -> Optional["Node"]:
-        """Return the parent node, useful for chaining parent navigation"""
-        return self.parent
-
-    def parent_has_tag(self, tag: str) -> bool:
-        """Check if this node's parent has the given tag"""
-        return self.parent and self.parent.tag == tag
-
-    def parent_has_tag_in(self, tags: Union[list, tuple]) -> bool:
-        """Check if this node's parent has a tag in the given list"""
-        return self.parent and self.parent.tag_name in tags
-
-    def has_tag(self, tag: str) -> bool:
-        """Check if this node has the given tag"""
-        return self.tag_name == tag
-
-    def last_child_is_text(self) -> bool:
-        """Check if the last child is a text node"""
-        return self.children and self.children[-1].tag_name == "#text"
-
-    def get_path_to_ancestor(self, ancestor: 'Node') -> List['Node']:
-        """Get list of nodes from this node up to (but not including) the ancestor.
-        
-        Args:
-            ancestor: The ancestor node to stop at
-        Returns:
-            List of nodes from self to parent of ancestor, or empty list if not found
-        """
-        path = []
-        current = self
-        while current and current != ancestor:
-            path.append(current)
-            current = current.parent
-        return path if current == ancestor else []
-
-    def move_to_ancestor(self, ancestor: 'Node') -> Optional['Node']:
-        """Move up the tree to the specified ancestor.
-        
-        Args:
-            ancestor: The ancestor node to move to
-        Returns:
-            The ancestor node if found, None otherwise
-        """
-        current = self
-        while current and current != ancestor:
-            current = current.parent
-        return current
 
     def is_inside_tag(self, tag_name: str) -> bool:
         """Check if this node is inside an element with the given tag name.
@@ -319,25 +250,6 @@ class Node:
             True if inside the tag, False otherwise
         """
         return self.find_ancestor(tag_name) is not None
-
-    def find_or_create_child(self, tag_name: str, attributes: Optional[Dict[str, str]] = None) -> 'Node':
-        """Find existing child with tag name or create a new one.
-        
-        Args:
-            tag_name: Tag name to find or create
-            attributes: Optional attributes for new node if created
-        Returns:
-            Existing or newly created child node
-        """
-        # Look for existing child
-        for child in self.children:
-            if child.tag_name == tag_name:
-                return child
-        
-        # Create new child
-        new_child = Node(tag_name, attributes or {})
-        self.append_child(new_child)
-        return new_child
 
     def find_child_by_tag(self, tag_name: str) -> Optional['Node']:
         """Find first child with the given tag name.
@@ -382,3 +294,52 @@ class Node:
                 ancestors.insert(0, current)  # Insert at beginning for reverse order
             current = current.parent
         return ancestors
+
+    def move_up_while_in_tags(self, tags: Union[list, tuple, str]) -> Optional["Node"]:
+        """Move up the tree while current node has tag in the given list"""
+        if isinstance(tags, str):
+            tags = [tags]
+        current = self
+        while current and current.tag_name in tags:
+            if current.parent:
+                current = current.parent
+            else:
+                break
+        return current
+
+    def has_ancestor_matching(self, predicate: Callable[['Node'], bool]) -> bool:
+        """Check if any ancestor matches the given predicate"""
+        current = self.parent
+        while current:
+            if predicate(current):
+                return True
+            current = current.parent
+        return False
+
+    def find_ancestor_safe(self, predicate: Callable[['Node'], bool], max_depth: int = 100) -> Optional['Node']:
+        """Find ancestor matching predicate with cycle detection"""
+        seen = set()
+        current = self.parent
+        depth = 0
+        while current and current not in seen and depth < max_depth:
+            seen.add(current)
+            if predicate(current):
+                return current
+            current = current.parent
+            depth += 1
+        return None
+
+    def find_ancestor_with_early_stop(self, target_tag: str, stop_tags: Union[list, tuple, str], 
+                                     stop_at: Optional["Node"] = None) -> tuple[Optional["Node"], Optional["Node"]]:
+        """Find ancestor with target tag, but stop early if hitting stop tags"""
+        if isinstance(stop_tags, str):
+            stop_tags = [stop_tags]
+        
+        current = self.parent
+        while current and current != stop_at:
+            if current.tag_name == target_tag:
+                return current, None  # Found target, no early stop
+            if current.tag_name in stop_tags:
+                return None, current  # Early stop found
+            current = current.parent
+        return None, None  # Nothing found

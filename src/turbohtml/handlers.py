@@ -52,15 +52,12 @@ class TagHandler:
             return True
         
         # Check if any ancestor is template content
-        current = context.current_parent
-        while current:
-            if (current.tag_name == "content" and 
-                current.parent and 
-                current.parent.tag_name == "template"):
-                return True
-            current = current.parent
-        
-        return False
+        return (context.current_parent and 
+                context.current_parent.has_ancestor_matching(
+                    lambda n: (n.tag_name == "content" and 
+                              n.parent and 
+                              n.parent.tag_name == "template")
+                ))
 
     # Common helper methods to reduce duplication
     def _create_element(self, token: "HTMLToken") -> "Node":
@@ -323,14 +320,7 @@ class TextHandler(TagHandler):
 
     def _is_in_head(self, node: Node) -> bool:
         """Check if node is inside the head element"""
-        seen = set()  # Track nodes we've seen to detect cycles
-        current = node
-        while current and current not in seen:
-            seen.add(current)
-            if current.tag_name == "head":
-                return True
-            current = current.parent
-        return False
+        return node.find_ancestor_safe(lambda n: n.tag_name == "head") is not None
 
     def _handle_normal_text(self, text: str, context: "ParseContext") -> bool:
         """Handle normal text content"""
@@ -570,9 +560,10 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             if not parent:
                 self.debug(f"Creating {tag_name} outside select/datalist")
                 # Move up to body level if we're inside another option/optgroup
-                while context.current_parent.tag_name in ("option", "optgroup"):
-                    self.debug(f"Moving up from {context.current_parent.tag_name}")
-                    context.current_parent = context.current_parent.parent
+                target_parent = context.current_parent.move_up_while_in_tags(("option", "optgroup"))
+                if target_parent != context.current_parent:
+                    self.debug(f"Moved up from {context.current_parent.tag_name} to {target_parent.tag_name}")
+                    context.current_parent = target_parent
 
                 new_node = self._create_element(token)
                 context.current_parent.append_child(new_node)
@@ -684,12 +675,11 @@ class ParagraphTagHandler(TagHandler):
             formatting_elements_to_close = []
             
             # Find any active formatting elements that are ancestors
-            current = context.current_parent
-            while current:
-                if (current.tag_name in FORMATTING_ELEMENTS and 
-                    context.active_formatting_elements.find(current.tag_name)):
-                    formatting_elements_to_close.append(current)
-                current = current.parent
+            formatting_elements_to_close = context.current_parent.collect_ancestors_until(
+                stop_at=None,
+                predicate=lambda n: (n.tag_name in FORMATTING_ELEMENTS and 
+                          context.active_formatting_elements.find(n.tag_name))
+            )
             
             # Close the formatting elements (move current_parent out of them)
             if formatting_elements_to_close:
@@ -766,7 +756,7 @@ class ParagraphTagHandler(TagHandler):
         button_ancestor = context.current_parent.find_ancestor("button")
         if button_ancestor:
             # Look for p element only within the button scope using new Node method
-            p_in_button = context.current_parent.find_ancestor_until("p", button_ancestor)
+            p_in_button = context.current_parent.find_ancestor("p")
             if p_in_button:
                 # Found p within button scope, close it
                 context.current_parent = p_in_button.parent or context.current_parent
@@ -781,7 +771,7 @@ class ParagraphTagHandler(TagHandler):
             return True
 
         # Standard behavior: Find nearest p ancestor and move up to its parent
-        p_ancestor = context.current_parent.find_ancestor_until("p", self.parser.html_node)
+        p_ancestor = context.current_parent.find_ancestor("p")
         if p_ancestor:
             # Special case: if we're in table context, also create implicit p
             if context.document_state == DocumentState.IN_TABLE:
@@ -1002,7 +992,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         context.current_table.append_child(new_colgroup)
 
         # Rule 3: Check context and create new tbody if needed
-        td_ancestor = context.current_parent.find_ancestor_until("td", context.current_table)
+        td_ancestor = context.current_parent.find_ancestor("td")
         if td_ancestor:
             self.debug("Found td ancestor, staying in current context")
             return True
@@ -1063,7 +1053,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         self.debug(f"Added col to colgroup: {new_col}")
 
         # Rule 5: Check context and create new tbody if needed
-        td_ancestor = context.current_parent.find_ancestor_until("td", context.current_table)
+        td_ancestor = context.current_parent.find_ancestor("td")
         if td_ancestor:
             self.debug("Found td ancestor, staying in current context")
             return True
@@ -1131,7 +1121,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
     def _find_or_create_tbody(self, context: "ParseContext") -> "Node":
         """Find existing tbody or create new one"""
         # First check current context using new Node method
-        tbody_ancestor = context.current_parent.find_ancestor_until("tbody", context.current_table)
+        tbody_ancestor = context.current_parent.find_ancestor("tbody")
         if tbody_ancestor:
             return tbody_ancestor
 
@@ -1148,7 +1138,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
     def _find_or_create_tr(self, context: "ParseContext") -> "Node":
         """Find existing tr or create new one in tbody"""
         # First check if we're in a tr using new Node method
-        tr_ancestor = context.current_parent.find_ancestor_until("tr", context.current_table)
+        tr_ancestor = context.current_parent.find_ancestor("tr")
         if tr_ancestor:
             return tr_ancestor
 
@@ -1620,24 +1610,25 @@ class ListTagHandler(TagHandler):
         self.debug("Handling end tag for li")
         
         # Find the nearest li ancestor, but stop if we hit a ul/ol first
-        current = context.current_parent
-        while current and current != self.parser.html_node:
-            if current.tag_name == "li":
-                self.debug("Found matching li")
-                # Move to the list parent
-                if current.parent and current.parent.tag_name in ("ul", "ol"):
-                    self.debug("Moving to list parent")
-                    context.current_parent = current.parent
-                else:
-                    self.debug("No list parent found, moving to body")
-                    body = self.parser._get_body_node()
-                    context.current_parent = body or self.parser.html_node
-                return True
-            # If we hit a ul/ol before finding an li, ignore the end tag
-            if current.tag_name in ("ul", "ol"):
-                self.debug(f"Found {current.tag_name} before li, ignoring end tag")
-                return True
-            current = current.parent
+        li_ancestor, stop_element = context.current_parent.find_ancestor_with_early_stop(
+            "li", ("ul", "ol"), self.parser.html_node
+        )
+        
+        if li_ancestor:
+            self.debug("Found matching li")
+            # Move to the list parent
+            if li_ancestor.parent and li_ancestor.parent.tag_name in ("ul", "ol"):
+                self.debug("Moving to list parent")
+                context.current_parent = li_ancestor.parent
+            else:
+                self.debug("No list parent found, moving to body")
+                body = self.parser._get_body_node()
+                context.current_parent = body or self.parser.html_node
+            return True
+        elif stop_element:
+            self.debug(f"Found {stop_element.tag_name} before li, ignoring end tag")
+            return True
+        
         self.debug("No matching li found")
         return False
 
@@ -1647,20 +1638,22 @@ class ListTagHandler(TagHandler):
         self.debug(f"Handling end tag for {tag_name}")
         
         # Find the matching list container
-        current = context.current_parent
-        while current and current != self.parser.html_node:
-            if current.tag_name == tag_name:
-                self.debug(f"Found matching {tag_name}")
-                # If we're inside an li/dt/dd, stay there
-                if current.parent and current.parent.tag_name in ("li", "dt", "dd"):
-                    self.debug(f"Staying in {current.parent.tag_name}")
-                    context.current_parent = current.parent
-                else:
-                    self.debug("Moving to parent")
-                    body = self.parser._get_body_node()
-                    context.current_parent = current.parent or body or self.parser.html_node
-                return True
-            current = current.parent
+        matching_container = context.current_parent.find_ancestor_until(
+            lambda n: n.tag_name == tag_name, self.parser.html_node
+        )
+        
+        if matching_container:
+            self.debug(f"Found matching {tag_name}")
+            # If we're inside an li/dt/dd, stay there
+            if matching_container.parent and matching_container.parent.tag_name in ("li", "dt", "dd"):
+                self.debug(f"Staying in {matching_container.parent.tag_name}")
+                context.current_parent = matching_container.parent
+            else:
+                self.debug("Moving to parent")
+                body = self.parser._get_body_node()
+                context.current_parent = matching_container.parent or body or self.parser.html_node
+            return True
+        
         self.debug(f"No matching {tag_name} found")
         return False
 
@@ -2037,14 +2030,15 @@ class ForeignTagHandler(TagHandler):
             # Check for MathML integration points
             if context.current_context == "math":
                 # Check if we're inside annotation-xml with HTML encoding
-                annotation_xml = context.current_parent
-                while annotation_xml:
-                    if annotation_xml.tag_name == "math annotation-xml":
-                        encoding = annotation_xml.attributes.get("encoding", "").lower()
-                        if encoding in ("application/xhtml+xml", "text/html"):
-                            in_integration_point = True
-                            break
-                    annotation_xml = annotation_xml.parent
+                annotation_xml = context.current_parent.find_ancestor_until(
+                    lambda n: (
+                        n.tag_name == "math annotation-xml" and 
+                        n.attributes.get("encoding", "").lower() in ("application/xhtml+xml", "text/html")
+                    ),
+                    None
+                )
+                if annotation_xml:
+                    in_integration_point = True
                 
                 # Check if we're inside mtext/mi/mo/mn/ms which allow formatting elements
                 if not in_integration_point and tag_name_lower in ("b", "i", "strong", "em", "small", "s", "sub", "sup"):
@@ -2074,13 +2068,7 @@ class ForeignTagHandler(TagHandler):
                     context.current_context = None  # Exit foreign context
                 
                 # Look for the nearest table in the document tree that's still open
-                table = None
-                current = context.current_parent
-                while current:
-                    if current.tag_name == "table":
-                        table = current
-                        break
-                    current = current.parent
+                table = context.current_parent.find_ancestor("table")
                 
                 # Also check context.current_table
                 if not table and context.current_table:
@@ -2118,16 +2106,17 @@ class ForeignTagHandler(TagHandler):
                     # In fragment parsing, go to document-fragment
                     # In document parsing, go to html_node (or stay if we're already there)
                     if self.parser.fragment_context:
-                        while (context.current_parent and 
-                               context.current_parent.tag_name != "document-fragment" and
-                               context.current_parent.parent):
-                            context.current_parent = context.current_parent.parent
+                        target = context.current_parent.find_ancestor("document-fragment")
+                        if target:
+                            context.current_parent = target
                     else:
                         # In document parsing, go back to the HTML node or body
-                        while (context.current_parent and 
-                               context.current_parent.tag_name not in ("html", "body") and
-                               context.current_parent.parent):
-                            context.current_parent = context.current_parent.parent
+                        target = context.current_parent.find_ancestor_until(
+                            lambda n: n.tag_name in ("html", "body"),
+                            stop_at=None
+                        )
+                        if target:
+                            context.current_parent = target
                 return False  # Let other handlers process this element
 
         if context.current_context == "math":
@@ -2226,12 +2215,11 @@ class ForeignTagHandler(TagHandler):
                     context.current_parent = new_node
                 return True            # Handle HTML elements inside foreignObject, desc, or title (integration points)
             elif tag_name_lower in HTML_ELEMENTS:
-                temp_parent = context.current_parent
-                while temp_parent:
-                    if temp_parent.tag_name in ("svg foreignObject", "svg desc", "svg title"):
-                        # We're in an integration point - let normal HTML handlers handle this
-                        return False  # Let other handlers (TableTagHandler, ParagraphTagHandler, etc.) handle it
-                    temp_parent = temp_parent.parent
+                if context.current_parent.has_ancestor_matching(
+                    lambda n: n.tag_name in ("svg foreignObject", "svg desc", "svg title")
+                ):
+                    # We're in an integration point - let normal HTML handlers handle this
+                    return False  # Let other handlers (TableTagHandler, ParagraphTagHandler, etc.) handle it
 
             new_node = Node(f"svg {tag_name_lower}", self._fix_svg_attribute_case(token.attributes))
             context.current_parent.append_child(new_node)
@@ -2290,22 +2278,16 @@ class ForeignTagHandler(TagHandler):
                 return True
 
         # For foreign content, look for the first matching element and close to there
-        search_parent = context.current_parent
-        while search_parent:
-            # Check if this element matches (remove namespace prefix for comparison)
-            element_name = search_parent.tag_name
-            if " " in element_name:
-                element_name = element_name.split(" ", 1)[1]
-            
-            if element_name == tag_name:
-                # Found matching element, close up to its parent
-                if search_parent.parent:
-                    context.current_parent = search_parent.parent
-                else:
-                    # No parent, stay at current level
-                    pass
-                return True
-            search_parent = search_parent.parent
+        matching_element = context.current_parent.find_ancestor(
+            lambda n: (n.tag_name.split(" ", 1)[-1] if " " in n.tag_name else n.tag_name) == tag_name
+        )
+        
+        if matching_element:
+            # Found matching element, close up to its parent
+            if matching_element.parent:
+                context.current_parent = matching_element.parent
+            # No parent, stay at current level
+            return True
 
         # No matching element found, ignore the end tag
         return True
@@ -2849,13 +2831,12 @@ class BoundaryElementHandler(TagHandler):
         self.debug(f"found matching boundary element: {target}")
 
         # Find any formatting elements between current position and target
-        formatting_elements = []
-        current = context.current_parent
-        while current and current != target:
-            if current.tag_name in FORMATTING_ELEMENTS:
-                formatting_elements.append(current)
-                self.debug(f"found formatting element to close: {current.tag_name}")
-            current = current.parent
+        formatting_elements = context.current_parent.collect_ancestors_until(
+            stop_at=target,
+            predicate=lambda n: n.tag_name in FORMATTING_ELEMENTS
+        )
+        for fmt_elem in formatting_elements:
+            self.debug(f"found formatting element to close: {fmt_elem.tag_name}")
 
         # Close any formatting elements inside the boundary element
         if formatting_elements:
@@ -3206,13 +3187,14 @@ class RubyElementHandler(TagHandler):
             elements_to_close = ["rb", "rt", "rp"]
         
         # Look for elements to auto-close in current context
-        current = context.current_parent
-        while current and current.tag_name != "ruby":
-            if current.tag_name in elements_to_close:
-                self.debug(f"Auto-closing {current.tag_name} for new {tag_name}")
-                context.current_parent = current.parent or context.current_parent
-                return
-            current = current.parent
+        element_to_close = context.current_parent.find_ancestor_until(
+            lambda n: n.tag_name in elements_to_close,
+            stop_at=context.current_parent.find_ancestor("ruby")
+        )
+        
+        if element_to_close:
+            self.debug(f"Auto-closing {element_to_close.tag_name} for new {tag_name}")
+            context.current_parent = element_to_close.parent or context.current_parent
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
         return tag_name in ("ruby", "rb", "rt", "rp", "rtc")
@@ -3222,17 +3204,16 @@ class RubyElementHandler(TagHandler):
         self.debug(f"handling end tag {tag_name}")
 
         # Find the nearest matching element
-        current = context.current_parent
-        while current:
-            if current.tag_name == tag_name:
-                # Found matching element, move to its parent
-                context.current_parent = current.parent or context.current_parent
-                self.debug(f"Closed {tag_name}, current_parent now: {context.current_parent.tag_name}")
-                return True
-            # Stop at ruby boundary for non-ruby elements  
-            if current.tag_name == "ruby" and tag_name != "ruby":
-                break
-            current = current.parent
+        matching_element = context.current_parent.find_ancestor_until(
+            lambda n: n.tag_name == tag_name,
+            context.current_parent.find_ancestor("ruby") if tag_name != "ruby" else None
+        )
+        
+        if matching_element:
+            # Found matching element, move to its parent
+            context.current_parent = matching_element.parent or context.current_parent
+            self.debug(f"Closed {tag_name}, current_parent now: {context.current_parent.tag_name}")
+            return True
 
         # If no matching element found, ignore the end tag
         self.debug(f"No matching {tag_name} found, ignoring end tag")
