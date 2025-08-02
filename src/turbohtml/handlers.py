@@ -197,8 +197,10 @@ class TextHandler(TagHandler):
             if body:
                 context.current_parent = body
                 context.document_state = DocumentState.IN_BODY
-                # Strip leading whitespace when transitioning from INITIAL state (no parent)
-                text = text.lstrip()
+                # Strip only ASCII whitespace when transitioning from INITIAL state (no parent)
+                # Preserve Unicode whitespace entities like &ThickSpace;, &nbsp;, etc.
+                ascii_whitespace = " \t\n\r\f"
+                text = text.lstrip(ascii_whitespace)
                 if text:  # Only append if there's content after stripping
                     self._append_text(text, context)
             return True

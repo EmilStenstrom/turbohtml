@@ -1,4 +1,4 @@
-Tests passed: 1126/1729 (65%) (skipped: 39 script-dependent)
+Tests passed: 1128/1729 (65%) (skipped: 39 script-dependent)
 
 adoption01.dat: 0/0 (N/A) [s] (1 skipped)
 adoption02.dat: 0/2 (0%) [xx]
@@ -50,7 +50,7 @@ tests20.dat: 64/64 (100%) [.....................................................
 tests21.dat: 6/23 (26%) [...xxxxxxx...xxxxxxxxxx]
 tests22.dat: 0/5 (0%) [xxxxx]
 tests23.dat: 0/5 (0%) [xxxxx]
-tests24.dat: 6/8 (75%) [..xx....]
+tests24.dat: 8/8 (100%) [........]
 tests25.dat: 26/26 (100%) [..........................]
 tests26.dat: 1/20 (5%) [xxxxxxxxxxxxxx.xxxxx]
 tests_innerHTML_1.dat: 33/81 (41%) [...x...xxx.xxxxxxxxx........xxxxxx.xxx......xxxxxxxxxxxxxxx..xx.xx.......x.xxxxxx]
