@@ -1,4 +1,4 @@
-Tests passed: 1142/1774 (64%)
+Tests passed: 1145/1774 (65%)
 
 adoption01.dat: 0/1 (0%) [x]
 adoption02.dat: 0/2 (0%) [xx]
@@ -10,7 +10,7 @@ domjs-unsafe.dat: 21/49 (43%) [...xxxxx.....xxxxxxxx......xxxxxxxx.x....xxxxx..x
 entities01.dat: 75/75 (100%) [...........................................................................]
 entities02.dat: 26/26 (100%) [..........................]
 foreign-fragment.dat: 47/66 (71%) [..x...............x..xx..xx..xx..xx..x.....x.xx............xxxx..x]
-html5test-com.dat: 19/24 (79%) [xx.x...............xx...]
+html5test-com.dat: 20/24 (83%) [xx.x................x...]
 inbody01.dat: 4/4 (100%) [....]
 isindex.dat: 4/4 (100%) [....]
 main-element.dat: 2/3 (67%) [..x]
@@ -30,7 +30,7 @@ tables01.dat: 10/19 (53%) [......xxxxx..x..xxx]
 template.dat: 51/112 (46%) [..........................x.x...xxxxxxxx.xxxxxxxxxxxx.xxx..xxxxxxxxxx.x.xx.xxxxx...x..x...xx...xxx.x..xxxxxxxxxx]
 tests1.dat: 76/112 (68%) [....................x.x..x...xxxx.................x.xx..x.xx........xxxxxxxx.x.xxx....x...x..x.x.x.x.xxx.....xx.]
 tests2.dat: 63/63 (100%) [...............................................................]
-tests3.dat: 21/26 (81%) [......xx...........xx....x]
+tests3.dat: 22/26 (85%) [......xx...........xx.....]
 tests4.dat: 9/9 (100%) [.........]
 tests5.dat: 10/17 (59%) [.x....xx..x.xx.x.]
 tests6.dat: 36/52 (69%) [xxxx..x..x................x.xx...xx.x.x..x.xx.......]
@@ -46,7 +46,7 @@ tests16.dat: 146/198 (74%) [..........x......x..........x..........x.....xx.....
 tests17.dat: 4/13 (31%) [xx...xxxxxxx.]
 tests18.dat: 18/36 (50%) [..........x..xxxxxxxxxxxxxx.xx...x..]
 tests19.dat: 50/103 (49%) [.....x..x.xx.x...x...x.x......xxxxx...x..x.xx.x.xxxxxxxxxxx..xxxxxxxxxxx...x.xx.x.x......xxxxxx......xx]
-tests20.dat: 63/64 (98%) [.........................................x......................]
+tests20.dat: 64/64 (100%) [................................................................]
 tests21.dat: 6/23 (26%) [...xxxxxxx...xxxxxxxxxx]
 tests22.dat: 1/5 (20%) [.xxxx]
 tests23.dat: 0/5 (0%) [xxxxx]

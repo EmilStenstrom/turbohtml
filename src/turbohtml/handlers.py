@@ -819,17 +819,30 @@ class ParagraphTagHandler(TagHandler):
             self.debug("No open p element found and in invalid parent context, ignoring end tag")
             return True
         
-        # Special case: if we're in table context, foster parent the implicit p in the same paragraph
+        # Special case: if we're in table context, handle implicit p creation correctly
         if context.document_state == DocumentState.IN_TABLE and context.current_table:
-            self.debug("No open p element found in table context, creating implicit p in paragraph context")
+            self.debug("No open p element found in table context, creating implicit p")
             table = context.current_table
-            # Look for paragraph ancestor of the table
+            
+            # Check if table has a paragraph ancestor (indicating it's inside a p, not foster parented)
             paragraph_ancestor = table.find_ancestor("p")
             if paragraph_ancestor:
                 # The table is inside a paragraph, create the implicit p as sibling to the table
+                # within the same paragraph
                 p_node = Node("p")
                 paragraph_ancestor.append_child(p_node)
-                self.debug(f"Created implicit p as child of paragraph {paragraph_ancestor}")
+                self.debug(f"Created implicit p as sibling to table within paragraph {paragraph_ancestor}")
+                # Don't change current_parent - the implicit p is immediately closed
+                return True
+            
+            # Check if table has a paragraph sibling (indicating it was foster parented from a p)
+            elif table.parent and table.previous_sibling and table.previous_sibling.tag_name == "p":
+                # The table was foster parented from a paragraph, create the implicit p as 
+                # a child of the original paragraph
+                original_paragraph = table.previous_sibling
+                p_node = Node("p")
+                original_paragraph.append_child(p_node)
+                self.debug(f"Created implicit p as child of original paragraph {original_paragraph}")
                 # Don't change current_parent - the implicit p is immediately closed
                 return True
 
@@ -1465,9 +1478,9 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     self.debug("DOCTYPE is unknown - defaulting to foster parenting")
                     return True
         
-        # No DOCTYPE found: assume standards mode (HTML5)
-        self.debug("No DOCTYPE found - defaulting to foster parenting")
-        return True
+        # No DOCTYPE found: assume quirks mode (matches html5lib test expectations)
+        self.debug("No DOCTYPE found - defaulting to quirks mode (no foster parenting)")
+        return False
 
 
 class FormTagHandler(TagHandler):
@@ -1864,6 +1877,36 @@ class VoidElementHandler(SelectAwareHandler):
             self.debug(f"Closing paragraph for block element {tag_name}")
             body = self.parser._get_body_node()
             context.current_parent = context.current_parent.parent or body or self.parser.html_node
+
+        # Special handling for input elements in table context
+        if tag_name == "input" and context.document_state == DocumentState.IN_TABLE:
+            # In table context, inputs should generally be foster parented
+            # Check if we're in a form within a table
+            form_ancestor = context.current_parent.find_ancestor("form")
+            table_ancestor = context.current_parent.find_ancestor("table")
+            
+            if form_ancestor and table_ancestor:
+                # Input is inside a form which is inside a table
+                input_type = token.attributes.get("type", "").lower()
+                if input_type == "hidden":
+                    # Hidden inputs should be siblings to the form, not children
+                    self.debug(f"Making hidden input a sibling to form in table")
+                    new_node = self._create_element(token)
+                    form_parent = form_ancestor.parent
+                    if form_parent:
+                        form_index = form_parent.children.index(form_ancestor)
+                        form_parent.children.insert(form_index + 1, new_node)
+                        new_node.parent = form_parent
+                        return True
+                else:
+                    # Non-hidden inputs should be foster parented outside the table
+                    self.debug(f"Foster parenting non-hidden input outside table")
+                    if table_ancestor.parent:
+                        new_node = self._create_element(token)
+                        table_index = table_ancestor.parent.children.index(table_ancestor)
+                        table_ancestor.parent.children.insert(table_index, new_node)
+                        new_node.parent = table_ancestor.parent
+                        return True
 
         # Create the void element at the current level
         self.debug(f"Creating void element {tag_name} at current level")
