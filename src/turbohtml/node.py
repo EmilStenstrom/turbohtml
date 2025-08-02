@@ -246,6 +246,18 @@ class Node:
             current = current.parent
         return False
 
+    def parent_has_tag_in(self, tags: Union[list, tuple]) -> bool:
+        """Check if this node's parent has a tag in the given list"""
+        return self.parent and self.parent.tag_name in tags
+
+    def has_tag(self, tag: str) -> bool:
+        """Check if this node has the given tag"""
+        return self.tag_name == tag
+
+    def last_child_is_text(self) -> bool:
+        """Check if the last child is a text node"""
+        return self.children and self.children[-1].tag_name == "#text"
+
     def safe_parent(self) -> Optional["Node"]:
         """Safely get the parent node, returns None if this node doesn't exist or has no parent"""
         return self.parent if self else None
