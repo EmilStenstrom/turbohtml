@@ -44,10 +44,23 @@ class TagHandler:
 
     def _is_in_template_content(self, context: "ParseContext") -> bool:
         """Check if we're inside actual template content (not just a user <content> tag)"""
-        return (context.current_parent and 
-                context.current_parent.tag_name == "content" and 
-                context.current_parent.parent and 
-                context.current_parent.parent.tag_name == "template")
+        # Check if current parent is content node
+        if (context.current_parent and 
+            context.current_parent.tag_name == "content" and 
+            context.current_parent.parent and 
+            context.current_parent.parent.tag_name == "template"):
+            return True
+        
+        # Check if any ancestor is template content
+        current = context.current_parent
+        while current:
+            if (current.tag_name == "content" and 
+                current.parent and 
+                current.parent.tag_name == "template"):
+                return True
+            current = current.parent
+        
+        return False
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
         return False
@@ -646,9 +659,23 @@ class ParagraphTagHandler(TagHandler):
                 return True
             current = current.parent
 
-        # HTML5 spec: If no p element is in scope, create an implicit p element
-        # and immediately close it (this creates an empty p element)
-        self.debug("No open p element found, creating implicit p element")
+        # HTML5 spec: If no p element is in scope, ignore the end tag
+        # (treat as parse error but don't create elements)
+        # Only create implicit p elements in specific contexts where p elements are valid
+        if context.document_state != DocumentState.IN_BODY:
+            # Invalid context for p elements - ignore the end tag
+            self.debug("No open p element found and not in body context, ignoring end tag")
+            return True
+        
+        # Even in body context, only create implicit p if we're in a container that can hold p elements
+        current_parent = context.current_parent
+        if current_parent and current_parent.tag_name in ("html", "head"):
+            # Cannot create p elements directly in html or head - ignore the end tag
+            self.debug("No open p element found and in invalid parent context, ignoring end tag")
+            return True
+
+        # In valid body context with valid parent - create implicit p (rare case)
+        self.debug("No open p element found, creating implicit p element in valid context")
         p_node = Node("p")
         context.current_parent.append_child(p_node)
         # Don't change current_parent - the implicit p is immediately closed
@@ -1627,6 +1654,10 @@ class AutoClosingTagHandler(TagHandler):
         return False
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        # Don't handle end tags inside template content that would affect document state
+        if self._is_in_template_content(context):
+            return False
+            
         # Handle end tags for block elements and elements that close when their parent closes
         return (
             tag_name in CLOSE_ON_PARENT_CLOSE

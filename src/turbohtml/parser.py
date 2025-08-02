@@ -171,6 +171,15 @@ class TurboHTML:
         
         # Set up fragment context based on the context element
         context = self._create_fragment_context()
+        
+        # Special handling for RAWTEXT contexts - treat everything as text
+        if self.fragment_context in self._get_rawtext_elements():
+            text_node = Node("#text")
+            text_node.text_content = self.html
+            context.current_parent.append_child(text_node)
+            self.debug(f"Fragment: Treated all content as raw text in {self.fragment_context} context")
+            return
+        
         self.tokenizer = HTMLTokenizer(self.html)
 
         for token in self.tokenizer.tokenize():
@@ -185,6 +194,11 @@ class TurboHTML:
                 continue
 
             if token.type == "StartTag":
+                # In fragment parsing, ignore certain start tags based on context
+                if self._should_ignore_fragment_start_tag(token.tag_name, context):
+                    self.debug(f"Fragment: Ignoring {token.tag_name} start tag in {self.fragment_context} context")
+                    continue
+                
                 self._handle_start_tag(token, token.tag_name, context, self.tokenizer.pos)
                 context.index = self.tokenizer.pos
 
@@ -235,6 +249,28 @@ class TurboHTML:
             context.document_state = DocumentState.IN_TABLE_BODY
             context.current_parent = self.root
             
+        elif self.fragment_context == "html":
+            # HTML fragment context - allow document structure
+            context = ParseContext(
+                len(self.html),
+                self.root,
+                None,
+                debug_callback=self.debug if self.env_debug else None,
+            )
+            context.document_state = DocumentState.INITIAL
+            context.current_parent = self.root
+            
+        elif self.fragment_context in self._get_rawtext_elements():
+            # RAWTEXT fragment context - treat all content as raw text
+            context = ParseContext(
+                len(self.html),
+                self.root,
+                None,
+                debug_callback=self.debug if self.env_debug else None,
+            )
+            context.document_state = DocumentState.IN_BODY
+            context.current_parent = self.root
+            
         else:
             # Default fragment context (body-like)
             context = ParseContext(
@@ -254,6 +290,28 @@ class TurboHTML:
                 self.debug(f"Set foreign context to {namespace_elem}")
             
         return context
+
+    def _should_ignore_fragment_start_tag(self, tag_name: str, context: "ParseContext") -> bool:
+        """Check if a start tag should be ignored in fragment parsing context"""
+        # HTML5 Fragment parsing rules
+        
+        # In html context, allow document structure
+        if self.fragment_context == "html":
+            return False  # Don't ignore anything in html context
+            
+        # In non-document contexts, ignore document structure elements
+        if tag_name in ("html", "head", "body", "frameset"):
+            return True
+        
+        # Also ignore context element start tags
+        if self.fragment_context == tag_name:
+            return True
+        elif self.fragment_context in ("td", "th") and tag_name in ("td", "th"):
+            return True
+        elif self.fragment_context in ("thead", "tbody", "tfoot") and tag_name in ("thead", "tbody", "tfoot"):
+            return True
+        
+        return False
 
     def _handle_fragment_comment(self, text: str, context: "ParseContext") -> None:
         """Handle comments in fragment parsing"""
@@ -362,10 +420,11 @@ class TurboHTML:
         # Default handling for unhandled tags
         self.debug(f"No handler found, using default handling for {tag_name}")
         
-        # Check if we need table foster parenting
+        # Check if we need table foster parenting (but not inside template content)
         if (context.document_state == DocumentState.IN_TABLE and 
             tag_name not in self._get_table_elements() and 
-            tag_name not in self._get_head_elements()):
+            tag_name not in self._get_head_elements() and
+            not self._is_in_template_content(context)):
             self.debug(f"Foster parenting {tag_name} out of table")
             self._foster_parent_element(tag_name, token.attributes, context)
             return
@@ -483,10 +542,23 @@ class TurboHTML:
             self.debug(f"Root children after append: {[c.tag_name for c in self.root.children]}")
             return
 
-        # Comments after </head> should go in html node after head
+        # Comments after </head> should go in html node after head but before body
         if context.document_state == DocumentState.AFTER_HEAD:
             self.debug("Adding comment to html in after head state")
-            self.html_node.append_child(comment_node)
+            # Find body element and insert comment before it
+            body_node = None
+            for child in self.html_node.children:
+                if child.tag_name == "body":
+                    body_node = child
+                    break
+            
+            if body_node:
+                self.html_node.insert_before(comment_node, body_node)
+                self.debug(f"Inserted comment before body")
+            else:
+                # If no body found, just append
+                self.html_node.append_child(comment_node)
+                self.debug("No body found, appended comment to html")
             return
 
         # Comments after </body> should go in html node
@@ -541,6 +613,11 @@ class TurboHTML:
         from .constants import HEAD_ELEMENTS  
         return HEAD_ELEMENTS
     
+    def _get_rawtext_elements(self):
+        """Get list of RAWTEXT elements"""
+        from .constants import RAWTEXT_ELEMENTS
+        return RAWTEXT_ELEMENTS
+    
     def _foster_parent_element(self, tag_name: str, attributes: dict, context: "ParseContext"):
         """Foster parent an element outside of table context"""
         # Find the table
@@ -560,3 +637,23 @@ class TurboHTML:
         foster_parent.children.insert(table_index, new_node)
         context.current_parent = new_node
         self.debug(f"Foster parented {tag_name} before table")
+
+    def _is_in_template_content(self, context: "ParseContext") -> bool:
+        """Check if we're inside actual template content (not just a user <content> tag)"""
+        # Check if current parent is content node
+        if (context.current_parent and 
+            context.current_parent.tag_name == "content" and 
+            context.current_parent.parent and 
+            context.current_parent.parent.tag_name == "template"):
+            return True
+        
+        # Check if any ancestor is template content
+        current = context.current_parent
+        while current:
+            if (current.tag_name == "content" and 
+                current.parent and 
+                current.parent.tag_name == "template"):
+                return True
+            current = current.parent
+        
+        return False
