@@ -400,6 +400,11 @@ class SelectTagHandler(TagHandler):
             self.debug(f"Ignoring formatting element {tag_name} inside select")
             return True
 
+        # If we're in a select, ignore any foreign elements (svg, math)
+        if context.current_parent.find_ancestor("select") and tag_name in ("svg", "math"):
+            self.debug(f"Ignoring foreign element {tag_name} inside select")
+            return True
+
         elif tag_name in ("optgroup", "option"):
             # Check if we're in a select or datalist
             parent = context.current_parent.find_ancestor(lambda n: n.tag_name in ("select", "datalist"))
@@ -1643,6 +1648,15 @@ class ForeignTagHandler(TagHandler):
     """Handles SVG and other foreign element contexts"""
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        # Don't handle foreign elements in restricted contexts
+        if tag_name in ("svg", "math"):
+            # Check if we're inside a select element (foreign elements not allowed)
+            temp_parent = context.current_parent
+            while temp_parent:
+                if temp_parent.tag_name == "select":
+                    return False
+                temp_parent = temp_parent.parent
+        
         # Handle any tag when in SVG or MathML context
         if context.current_context in ("svg", "math"):
             return True
@@ -1654,6 +1668,15 @@ class ForeignTagHandler(TagHandler):
         tag_name_lower = tag_name.lower()
 
         if context.current_context == "math":
+            # Auto-close certain MathML elements when encountering table elements
+            if tag_name_lower in ("tr", "td", "th") and context.current_parent.tag_name.startswith("math "):
+                # Find if we're inside a MathML operator/leaf element that should auto-close
+                auto_close_elements = ["math mo", "math mi", "math mn", "math mtext", "math ms"]
+                if context.current_parent.tag_name in auto_close_elements:
+                    self.debug(f"Auto-closing {context.current_parent.tag_name} for {tag_name_lower}")
+                    if context.current_parent.parent:
+                        context.current_parent = context.current_parent.parent
+            
             # Handle MathML elements
             if tag_name_lower == "annotation-xml":
                 new_node = Node("math annotation-xml", token.attributes)
