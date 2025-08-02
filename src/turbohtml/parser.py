@@ -702,3 +702,40 @@ class TurboHTML:
             current = current.parent
         
         return False
+    
+    def reconstruct_active_formatting_elements(self, context: "ParseContext") -> None:
+        """
+        Reconstruct active formatting elements inside the current parent.
+        
+        This implements the "reconstruct the active formatting elements" 
+        algorithm from the HTML5 specification. When a block element 
+        interrupts formatting elements, those formatting elements must
+        be reconstructed inside the new block.
+        """
+        if context.active_formatting_elements.is_empty():
+            return
+            
+        self.debug("Reconstructing active formatting elements")
+        
+        # Get all active formatting elements in order
+        entries = list(context.active_formatting_elements)
+        if not entries:
+            return
+            
+        # Reconstruct each formatting element as nested children
+        current_parent = context.current_parent
+        
+        for entry in entries:
+            # Clone the formatting element
+            clone = Node(entry.element.tag_name, entry.element.attributes.copy())
+            
+            # Add as child of current parent
+            current_parent.append_child(clone)
+            
+            # Update current parent to be the clone for nesting
+            current_parent = clone
+            
+            self.debug(f"Reconstructed {clone.tag_name} inside {clone.parent.tag_name}")
+        
+        # Update context's current parent to the innermost reconstructed element
+        context.current_parent = current_parent

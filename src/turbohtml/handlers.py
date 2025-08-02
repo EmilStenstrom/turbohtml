@@ -139,6 +139,19 @@ class TextHandler(TagHandler):
             self._append_text(text, context)
             return True
 
+        # Handle text in AFTER_HEAD state - should transition to body
+        if context.document_state == DocumentState.AFTER_HEAD:
+            self.debug("In AFTER_HEAD state, transitioning to body for text")
+            body = self.parser._ensure_body_node(context)
+            if body:
+                context.current_parent = body
+                context.document_state = DocumentState.IN_BODY
+                # Only append non-whitespace text
+                stripped = text.lstrip()
+                if stripped:
+                    self._append_text(stripped, context)
+            return True
+
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
             # Store the original state before modification
             was_initial = context.document_state == DocumentState.INITIAL
@@ -301,21 +314,6 @@ class FormattingElementHandler(TagHandler):
             context.active_formatting_elements.push(new_element, token)
             return True
 
-        # First check for existing instance of same formatting element (except nobr)
-        current = context.current_parent.find_ancestor(token.tag_name)
-        if current:
-            self.debug(f"Found existing formatting element: {current}, adopting content")
-            # Move up to the parent of the existing formatting element
-            if current.parent:
-                context.current_parent = current.parent
-                # Create new formatting element at same level
-                current.parent.append_child(new_element)
-                context.current_parent = new_element
-                
-                # Add to active formatting elements
-                context.active_formatting_elements.push(new_element, token)
-                return True
-
         # If we're in a table but not in a cell, foster parent
         if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
             # First try to find a cell to put the element in
@@ -350,7 +348,10 @@ class FormattingElementHandler(TagHandler):
             body = self.parser._ensure_body_node(context)
             context.current_parent = body
 
+        # Add the new formatting element as a child of current parent
         context.current_parent.append_child(new_element)
+        
+        # Update current parent to the new formatting element for nesting
         context.current_parent = new_element
         
         # Add to active formatting elements
@@ -650,6 +651,9 @@ class ParagraphTagHandler(TagHandler):
         new_node = Node("p", token.attributes)
         context.current_parent.append_child(new_node)
         context.current_parent = new_node
+
+        # Reconstruct active formatting elements inside the new paragraph
+        self.parser.reconstruct_active_formatting_elements(context)
 
         self.debug(f"Created new paragraph node: {new_node} under {new_node.parent}")
         return True
