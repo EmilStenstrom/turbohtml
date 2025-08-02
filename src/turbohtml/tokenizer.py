@@ -3,8 +3,8 @@ from typing import Dict, Iterator, Optional
 from .constants import RAWTEXT_ELEMENTS, HTML5_NUMERIC_REPLACEMENTS
 import html  # Add to top of file
 
-TAG_OPEN_RE = re.compile(r"<(!?)(/)?([a-zA-Z0-9][-a-zA-Z0-9:]*)(.*?)>")
-ATTR_RE = re.compile(r'([a-zA-Z_:][-a-zA-Z0-9_:.]*)(?:\s*=\s*"([^"]*)"|\s*=\s*\'([^\']*)\'|\s*=\s*([^>\s]+)|)(?=\s|$)')
+TAG_OPEN_RE = re.compile(r"<(!?)(/)?([^\s/>]+)(.*?)>")
+ATTR_RE = re.compile(r'([^\s=/>]+)(?:\s*=\s*"([^"]*)"|\s*=\s*\'([^\']*)\'|\s*=\s*([^>\s]+)|)(?=\s|$|>)')
 
 
 class HTMLToken:
@@ -216,10 +216,10 @@ class HTMLTokenizer:
         match = TAG_OPEN_RE.match(self.html[self.pos :])
         self.debug(f"Trying to match tag: {match and match.groups()}")
 
-        # If no match with >, try to match without it
+        # If no match with >, try to match without it for unclosed tags
         if not match:
-            # Look for tag name
-            tag_match = re.match(r"<(!?)(/)?([a-zA-Z0-9][-a-zA-Z0-9:]*)", self.html[self.pos :])
+            # Look for tag name - be more permissive about what constitutes a tag
+            tag_match = re.match(r"<(!?)(/)?([^\s/>]+)", self.html[self.pos :])
             if tag_match:
                 self.debug(f"Found unclosed tag: {tag_match.groups()}")
                 bang, is_end_tag, tag_name = tag_match.groups()
@@ -262,6 +262,8 @@ class HTMLTokenizer:
         self.debug("No valid tag found, treating as character")
         self.pos += 1
         return HTMLToken("Character", data="<")
+
+
 
     def _try_text(self) -> Optional[HTMLToken]:
         """Try to match text at current position"""

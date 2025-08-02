@@ -1,4 +1,4 @@
-Tests passed: 1128/1729 (65%) (skipped: 39 script-dependent)
+Tests passed: 1133/1729 (66%) (skipped: 39 script-dependent)
 
 adoption01.dat: 0/0 (N/A) [s] (1 skipped)
 adoption02.dat: 0/2 (0%) [xx]
@@ -10,7 +10,7 @@ domjs-unsafe.dat: 21/49 (43%) [...xxxxx.....xxxxxxxx......xxxxxxxx.x....xxxxx..x
 entities01.dat: 75/75 (100%) [...........................................................................]
 entities02.dat: 26/26 (100%) [..........................]
 foreign-fragment.dat: 47/66 (71%) [..x...............x..xx..xx..xx..xx..x.....x.xx............xxxx..x]
-html5test-com.dat: 21/24 (88%) [xx.x....................]
+html5test-com.dat: 24/24 (100%) [........................]
 inbody01.dat: 4/4 (100%) [....]
 isindex.dat: 4/4 (100%) [....]
 main-element.dat: 2/3 (67%) [..x]
@@ -28,7 +28,7 @@ search-element.dat: 2/3 (67%) [..x]
 svg.dat: 0/8 (0%) [xxxxxxxx]
 tables01.dat: 10/19 (53%) [......xxxxx..x..xxx]
 template.dat: 51/112 (46%) [..........................x.x...xxxxxxxx.xxxxxxxxxxxx.xxx..xxxxxxxxxx.x.xx.xxxxx...x..x...xx...xxx.x..xxxxxxxxxx]
-tests1.dat: 75/112 (67%) [....................x.x..x...xxxx.................x.xx..x.xxx.......xxxxxxxx.x.xxx....x...x..x.x.x.x.xxx.....xx.]
+tests1.dat: 74/112 (66%) [....................x.x..x...xxxx...x.............x.xx..x.xxx.......xxxxxxxx.x.xxx....x...x..x.x.x.x.xxx.....xx.]
 tests2.dat: 63/63 (100%) [...............................................................]
 tests3.dat: 24/24 (100%) [........................]
 tests4.dat: 9/9 (100%) [.........]
@@ -40,7 +40,7 @@ tests9.dat: 15/27 (56%) [...............xxxxxxxxxxxx]
 tests10.dat: 30/54 (56%) [..............xxxxxxxxxxxx...xxxxxxx.xx............xxx]
 tests11.dat: 7/13 (54%) [..xxxxxx.....]
 tests12.dat: 0/2 (0%) [xx]
-tests14.dat: 3/7 (43%) [...xxxx]
+tests14.dat: 6/7 (86%) [...x...]
 tests15.dat: 4/14 (29%) [xxxxxxx...xx.x]
 tests16.dat: 141/185 (76%) [..........x......x..........x..........x.....xx...........xx...xxxxxxx.x.........x.ssssssxx.xxx..............x......x..........x..........x.....xx.........xx...xxxxxxx.x.........x.ssssssxx.x.....xx] (12 skipped)
 tests17.dat: 4/13 (31%) [xx...xxxxxxx.]
