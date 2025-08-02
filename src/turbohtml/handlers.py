@@ -2110,6 +2110,31 @@ class ForeignTagHandler(TagHandler):
             context.current_parent.append_child(text_node)
         return True
 
+    def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:
+        """Handle CDATA sections in foreign elements (SVG/MathML)"""
+        return (
+            context.current_context in ("svg", "math") and
+            comment.startswith("[CDATA[") and comment.endswith("]]")
+        )
+
+    def handle_comment(self, comment: str, context: "ParseContext") -> bool:
+        """Convert CDATA sections to text content in foreign elements"""
+        if not self.should_handle_comment(comment, context):
+            return False
+        
+        # Extract text content from CDATA: [CDATA[foo]] -> foo
+        cdata_content = comment[7:-2]  # Remove [CDATA[ and ]]
+        self.debug(f"Converting CDATA to text: '{cdata_content}' in {context.current_context} context")
+        
+        # Add as text content (similar to handle_text)
+        if context.current_parent.children and context.current_parent.children[-1].tag_name == "#text":
+            context.current_parent.children[-1].text_content += cdata_content
+        else:
+            text_node = Node("#text")
+            text_node.text_content = cdata_content
+            context.current_parent.append_child(text_node)
+        return True
+
 
 class HeadElementHandler(TagHandler):
     """Handles head element and its contents"""
@@ -2875,3 +2900,41 @@ class MenuitemElementHandler(TagHandler):
         # No menuitem found, treat as stray end tag
         self.debug("No menuitem ancestor found, treating as stray end tag")
         return True
+
+
+class UnknownElementHandler(TagHandler):
+    """Handle unknown/namespace elements with basic start/end tag matching"""
+
+    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        """Only handle unknown elements that contain colons (namespace) or are truly unknown"""
+        # Handle namespace elements (contain colon) that aren't handled by other handlers
+        if ":" in tag_name:
+            return True
+        return False
+
+    def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
+        """Handle unknown element start tags with default element creation"""
+        # This will be handled by default element creation in parser
+        return False  # Let default handling create the element
+
+    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        """Handle end tags for unknown elements if current parent matches"""
+        if ":" in tag_name and context.current_parent and context.current_parent.tag_name == tag_name:
+            return True
+        return False
+
+    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        """Handle unknown element end tags by closing the current element"""
+        tag_name = token.tag_name
+        
+        if context.current_parent and context.current_parent.tag_name == tag_name:
+            # Close the matching element
+            if context.current_parent.parent:
+                context.current_parent = context.current_parent.parent
+                self.debug(f"UnknownElementHandler: closed {tag_name}, current_parent now: {context.current_parent.tag_name}")
+            else:
+                # At root level, don't change current_parent to avoid issues
+                self.debug(f"UnknownElementHandler: {tag_name} at root level, leaving current_parent unchanged")
+            return True
+            
+        return False

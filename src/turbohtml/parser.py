@@ -20,8 +20,9 @@ from turbohtml.handlers import (
     FramesetTagHandler,
     BodyElementHandler,
     BoundaryElementHandler,
-    PlaintextHandler,
     ButtonTagHandler,
+    PlaintextHandler,
+    UnknownElementHandler,
 )
 from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
@@ -80,6 +81,7 @@ class TurboHTML:
             SelectTagHandler(self),
             FormTagHandler(self),
             HeadingTagHandler(self),
+            UnknownElementHandler(self),  # Handle unknown/namespace elements
         ]
         self.tag_handlers = [h for h in self.tag_handlers if h is not None]
 
@@ -464,6 +466,38 @@ class TurboHTML:
                         context.current_parent = self.root
                     return
 
+        # Default end tag handling - close matching element if found
+        # self._handle_default_end_tag(tag_name, context)  # Temporarily disabled
+
+    def _handle_default_end_tag(self, tag_name: str, context: "ParseContext") -> None:
+        """Handle end tags that don't have specific handlers by finding and closing matching element"""
+        if not context.current_parent:
+            return
+            
+        # Only handle end tags for simple elements - avoid handling complex elements
+        # that might have special semantics
+        if tag_name in ("html", "head", "body", "table", "tr", "td", "th", "tbody", "thead", "tfoot"):
+            self.debug(f"Default end tag: skipping complex element {tag_name}")
+            return
+            
+        # Look for the matching element in current parent only (immediate closure)
+        if context.current_parent.tag_name == tag_name:
+            # Found matching element, set current_parent to its parent
+            if context.current_parent.parent:
+                old_parent = context.current_parent
+                context.current_parent = context.current_parent.parent
+                self.debug(f"Default end tag: closed {tag_name}, current_parent now: {context.current_parent.tag_name}")
+            else:
+                # At root level, restore to appropriate context
+                if self.fragment_context:
+                    context.current_parent = self.root
+                else:
+                    context.current_parent = self.body_node or self.html_node
+                self.debug(f"Default end tag: closed {tag_name}, restored to root context")
+        else:
+            # If no immediate match, ignore the end tag (don't search ancestry)
+            self.debug(f"Default end tag: no immediate match for {tag_name}, ignoring")
+
     def _handle_special_element(
         self, token: HTMLToken, tag_name: str, context: ParseContext, end_tag_idx: int
     ) -> bool:
@@ -523,6 +557,14 @@ class TurboHTML:
         """
         Create and append a comment node with proper placement based on parser state.
         """
+        # First check if any handler wants to process this comment (e.g., CDATA in foreign elements)
+        for handler in self.tag_handlers:
+            if hasattr(handler, 'should_handle_comment') and handler.should_handle_comment(text, context):
+                if hasattr(handler, 'handle_comment') and handler.handle_comment(text, context):
+                    self.debug(f"Comment '{text}' handled by {handler.__class__.__name__}")
+                    return
+        
+        # Default comment handling
         comment_node = Node("#comment")
         comment_node.text_content = text
         self.debug(f"Handling comment '{text}' in document_state {context.document_state}")
