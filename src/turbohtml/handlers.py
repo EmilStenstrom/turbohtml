@@ -9,6 +9,7 @@ from turbohtml.constants import (
     HEAD_ELEMENTS,
     HEADING_ELEMENTS,
     HTML_ELEMENTS,
+    MATHML_ELEMENTS,
     RAWTEXT_ELEMENTS,
     SVG_CASE_SENSITIVE_ELEMENTS,
     TABLE_ELEMENTS,
@@ -504,7 +505,7 @@ class ParagraphTagHandler(TagHandler):
             return True
 
         # Also handle any tag that would close a p
-        if context.current_parent.tag_name == "p":
+        if context.current_parent and context.current_parent.tag_name == "p":
             return tag_name in AUTO_CLOSING_TAGS["p"]
 
         return False
@@ -624,6 +625,10 @@ class TableTagHandler(TagHandler):
         # For other table elements, we need a current table
         if not context.current_table:
             new_table = Node("table")
+            # Ensure we have a valid parent
+            if not context.current_parent:
+                # This shouldn't happen, but if it does, skip table creation
+                return False
             context.current_parent.append_child(new_table)
             context.current_table = new_table
             context.current_parent = new_table
@@ -1424,7 +1429,7 @@ class VoidElementHandler(TagHandler):
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
         # Don't handle void elements inside select
-        if context.current_parent.find_ancestor("select"):
+        if context.current_parent and context.current_parent.find_ancestor("select"):
             return False
 
         return tag_name in VOID_ELEMENTS
@@ -1661,11 +1666,43 @@ class ForeignTagHandler(TagHandler):
         if context.current_context in ("svg", "math"):
             return True
         # Also handle svg and math tags to enter those contexts
-        return tag_name in ("svg", "math")
+        if tag_name in ("svg", "math"):
+            return True
+        # Handle MathML elements that should automatically enter MathML context
+        if tag_name in MATHML_ELEMENTS:
+            return True
+        return False
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         tag_name = token.tag_name
         tag_name_lower = tag_name.lower()
+
+        # Check if this is an HTML element that should break out of foreign content
+        if context.current_context in ("svg", "math") and tag_name_lower in HTML_ELEMENTS:
+            # Special case: font element only breaks out if it has attributes
+            if tag_name_lower == "font" and not token.attributes:
+                # font with no attributes stays in foreign context
+                pass
+            else:
+                # HTML elements break out of foreign content and are processed as regular HTML
+                self.debug(f"HTML element {tag_name_lower} breaks out of foreign content")
+                context.current_context = None  # Exit foreign context
+                # Move current_parent up to the appropriate level, but never make it None
+                if context.current_parent:
+                    # In fragment parsing, go to document-fragment
+                    # In document parsing, go to html_node (or stay if we're already there)
+                    if self.parser.fragment_context:
+                        while (context.current_parent and 
+                               context.current_parent.tag_name != "document-fragment" and
+                               context.current_parent.parent):
+                            context.current_parent = context.current_parent.parent
+                    else:
+                        # In document parsing, go back to the HTML node or body
+                        while (context.current_parent and 
+                               context.current_parent.tag_name not in ("html", "body") and
+                               context.current_parent.parent):
+                            context.current_parent = context.current_parent.parent
+                return False  # Let other handlers process this element
 
         if context.current_context == "math":
             # Auto-close certain MathML elements when encountering table elements
@@ -1676,6 +1713,18 @@ class ForeignTagHandler(TagHandler):
                     self.debug(f"Auto-closing {context.current_parent.tag_name} for {tag_name_lower}")
                     if context.current_parent.parent:
                         context.current_parent = context.current_parent.parent
+            
+            # In foreign contexts, RAWTEXT elements behave as normal elements
+            if tag_name_lower in RAWTEXT_ELEMENTS:
+                self.debug(f"Treating {tag_name_lower} as normal element in foreign context")
+                new_node = Node(f"math {tag_name}", token.attributes)
+                context.current_parent.append_child(new_node)
+                context.current_parent = new_node
+                # Reset tokenizer if it entered RAWTEXT mode
+                if hasattr(self.parser, 'tokenizer') and self.parser.tokenizer.state == "RAWTEXT":
+                    self.parser.tokenizer.state = "DATA"
+                    self.parser.tokenizer.rawtext_tag = None
+                return True
             
             # Handle MathML elements
             if tag_name_lower == "annotation-xml":
@@ -1705,6 +1754,27 @@ class ForeignTagHandler(TagHandler):
             return True
 
         elif context.current_context == "svg":
+            # Auto-close certain SVG elements when encountering table elements
+            if tag_name_lower in ("tr", "td", "th") and context.current_parent.tag_name.startswith("svg "):
+                # Find if we're inside an SVG element that should auto-close
+                auto_close_elements = ["svg title", "svg desc"]
+                if context.current_parent.tag_name in auto_close_elements:
+                    self.debug(f"Auto-closing {context.current_parent.tag_name} for {tag_name_lower}")
+                    if context.current_parent.parent:
+                        context.current_parent = context.current_parent.parent
+                        
+            # In foreign contexts, RAWTEXT elements behave as normal elements
+            if tag_name_lower in RAWTEXT_ELEMENTS:
+                self.debug(f"Treating {tag_name_lower} as normal element in foreign context")
+                new_node = Node(f"svg {tag_name}", token.attributes)
+                context.current_parent.append_child(new_node)
+                context.current_parent = new_node
+                # Reset tokenizer if it entered RAWTEXT mode
+                if hasattr(self.parser, 'tokenizer') and self.parser.tokenizer.state == "RAWTEXT":
+                    self.parser.tokenizer.state = "DATA"
+                    self.parser.tokenizer.rawtext_tag = None
+                return True
+                
             # Handle case-sensitive SVG elements
             if tag_name_lower in SVG_CASE_SENSITIVE_ELEMENTS:
                 correct_case = SVG_CASE_SENSITIVE_ELEMENTS[tag_name_lower]
@@ -1744,6 +1814,14 @@ class ForeignTagHandler(TagHandler):
             context.current_context = "svg"
             return True
 
+        # Handle MathML elements outside of MathML context (re-enter MathML)
+        if tag_name_lower in MATHML_ELEMENTS:
+            new_node = Node(f"math {tag_name}", token.attributes)
+            context.current_parent.append_child(new_node)
+            context.current_parent = new_node
+            context.current_context = "math"
+            return True
+
         return False
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
@@ -1766,9 +1844,25 @@ class ForeignTagHandler(TagHandler):
                     context.current_context = None
                 return True
 
-        # For other end tags, just move up the tree if possible
-        if context.current_parent.parent:
-            context.current_parent = context.current_parent.parent
+        # For foreign content, look for the first matching element and close to there
+        search_parent = context.current_parent
+        while search_parent:
+            # Check if this element matches (remove namespace prefix for comparison)
+            element_name = search_parent.tag_name
+            if " " in element_name:
+                element_name = element_name.split(" ", 1)[1]
+            
+            if element_name == tag_name:
+                # Found matching element, close up to its parent
+                if search_parent.parent:
+                    context.current_parent = search_parent.parent
+                else:
+                    # No parent, stay at current level
+                    pass
+                return True
+            search_parent = search_parent.parent
+
+        # No matching element found, ignore the end tag
         return True
 
     def should_handle_text(self, text: str, context: "ParseContext") -> bool:
@@ -2007,6 +2101,10 @@ class FramesetTagHandler(TagHandler):
                 return False
 
         if tag_name == "frameset":
+            # Skip frameset handling in fragment mode
+            if not self.parser.html_node:
+                return False
+                
             # If we're not already in a frameset tree, replace body with it
             if not context.current_parent.find_ancestor("frameset"):
                 self.debug("Creating root frameset")

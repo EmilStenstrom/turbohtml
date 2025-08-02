@@ -37,15 +37,17 @@ class TurboHTML:
     - Provides a root Node that represents the DOM tree.
     """
 
-    def __init__(self, html: str, handle_foreign_elements: bool = True, debug: bool = False):
+    def __init__(self, html: str, handle_foreign_elements: bool = True, debug: bool = False, fragment_context: Optional[str] = None):
         """
         Args:
             html: The HTML string to parse
             handle_foreign_elements: Whether to handle SVG/MathML elements
             debug: Whether to enable debug prints
+            fragment_context: Context element for fragment parsing (e.g., 'td', 'tr')
         """
         self.env_debug = debug
         self.html = html
+        self.fragment_context = fragment_context
 
         # Reset all state for each new parser instance
         self._init_dom_structure()
@@ -92,29 +94,45 @@ class TurboHTML:
     # DOM Structure Methods
     def _init_dom_structure(self) -> None:
         """Initialize the basic DOM structure"""
-        self.root = Node("document")
-        # Create but don't append html node yet
-        self.html_node = Node("html")
+        if self.fragment_context:
+            # For fragment parsing, create a simplified structure
+            self.root = Node("document-fragment")
+            # Don't create html/head/body structure for fragments
+            self.html_node = None
+        else:
+            # Regular document parsing
+            self.root = Node("document")
+            # Create but don't append html node yet
+            self.html_node = Node("html")
 
-        # Always create head node
-        head = Node("head")
-        self.html_node.append_child(head)
+            # Always create head node
+            head = Node("head")
+            self.html_node.append_child(head)
 
     def _ensure_html_node(self) -> None:
         """Ensure html node is in the tree if it isn't already"""
+        # Skip for fragment parsing
+        if self.fragment_context:
+            return
         if self.html_node not in self.root.children:
             self.root.append_child(self.html_node)
 
     def _get_head_node(self) -> Optional[Node]:
         """Get head node from tree, if it exists"""
+        if self.fragment_context:
+            return None
         return next((child for child in self.html_node.children if child.tag_name == "head"), None)
 
     def _get_body_node(self) -> Optional[Node]:
         """Get body node from tree, if it exists"""
+        if self.fragment_context:
+            return None
         return next((child for child in self.html_node.children if child.tag_name == "body"), None)
 
     def _ensure_head_node(self) -> Node:
         """Get or create head node"""
+        if self.fragment_context:
+            return None
         head = self._get_head_node()
         if not head:
             head = Node("head")
@@ -123,6 +141,8 @@ class TurboHTML:
 
     def _ensure_body_node(self, context: ParseContext) -> Optional[Node]:
         """Get or create body node if not in frameset mode"""
+        if self.fragment_context:
+            return None
         if context.document_state == DocumentState.IN_FRAMESET:
             return None
         body = self._get_body_node()
@@ -136,6 +156,109 @@ class TurboHTML:
         """
         Main parsing loop using ParseContext and HTMLTokenizer.
         """
+        if self.fragment_context:
+            self._parse_fragment()
+        else:
+            self._parse_document()
+
+    def _parse_fragment(self) -> None:
+        """Parse HTML as a document fragment in the given context"""
+        self.debug(f"Parsing fragment in context: {self.fragment_context}")
+        
+        # Set up fragment context based on the context element
+        context = self._create_fragment_context()
+        self.tokenizer = HTMLTokenizer(self.html)
+
+        for token in self.tokenizer.tokenize():
+            self.debug(f"_parse_fragment: {token}, context: {context}", indent=0)
+
+            # Skip DOCTYPE in fragments
+            if token.type == "DOCTYPE":
+                continue
+
+            if token.type == "Comment":
+                self._handle_fragment_comment(token.data, context)
+                continue
+
+            if token.type == "StartTag":
+                self._handle_start_tag(token, token.tag_name, context, self.tokenizer.pos)
+                context.index = self.tokenizer.pos
+
+            elif token.type == "EndTag":
+                self._handle_end_tag(token, token.tag_name, context)
+                context.index = self.tokenizer.pos
+
+            elif token.type == "Character":
+                for handler in self.tag_handlers:
+                    if handler.should_handle_text(token.data, context):
+                        self.debug(f"{handler.__class__.__name__}: handling {token}, context={context}")
+                        if handler.handle_text(token.data, context):
+                            break
+
+    def _create_fragment_context(self) -> "ParseContext":
+        """Create parsing context for fragment parsing"""
+        from turbohtml.context import DocumentState, ContentState
+        
+        # Create context based on the fragment context element
+        if self.fragment_context in ("td", "th"):
+            # Fragment is parsed as if inside a table cell
+            context = ParseContext(
+                len(self.html),
+                self.root,  # Fragment root
+                None,  # No html node in fragments
+                debug_callback=self.debug if self.env_debug else None,
+            )
+            context.document_state = DocumentState.IN_CELL
+            context.current_parent = self.root
+                
+        elif self.fragment_context in ("tr",):
+            context = ParseContext(
+                len(self.html),
+                self.root,
+                None,
+                debug_callback=self.debug if self.env_debug else None,
+            )
+            context.document_state = DocumentState.IN_ROW
+            context.current_parent = self.root
+            
+        elif self.fragment_context in ("thead", "tbody", "tfoot"):
+            context = ParseContext(
+                len(self.html),
+                self.root,
+                None,
+                debug_callback=self.debug if self.env_debug else None,
+            )
+            context.document_state = DocumentState.IN_TABLE_BODY
+            context.current_parent = self.root
+            
+        else:
+            # Default fragment context (body-like)
+            context = ParseContext(
+                len(self.html),
+                self.root,
+                None,
+                debug_callback=self.debug if self.env_debug else None,
+            )
+            context.document_state = DocumentState.IN_BODY
+            context.current_parent = self.root
+            
+        # Set foreign context if fragment context is within a foreign element
+        if self.fragment_context and " " in self.fragment_context:
+            namespace_elem = self.fragment_context.split(" ")[0]
+            if namespace_elem in ("math", "svg"):
+                context.current_context = namespace_elem
+                self.debug(f"Set foreign context to {namespace_elem}")
+            
+        return context
+
+    def _handle_fragment_comment(self, text: str, context: "ParseContext") -> None:
+        """Handle comments in fragment parsing"""
+        comment_node = Node("#comment")
+        comment_node.text_content = text
+        context.current_parent.append_child(comment_node)
+
+    def _parse_document(self) -> None:
+        """Parse HTML as a full document (original logic)"""
         # Initialize context with html_node as current_parent
         context = ParseContext(
             len(self.html),
@@ -206,16 +329,18 @@ class TurboHTML:
     def _handle_start_tag(self, token: HTMLToken, tag_name: str, context: ParseContext, end_tag_idx: int) -> None:
         """Handle all opening HTML tags."""
 
-        # Create body node if we're implicitly switching to body mode
-        if (
-            context.document_state == DocumentState.INITIAL or context.document_state == DocumentState.IN_HEAD
-        ) and tag_name not in HEAD_ELEMENTS:
-            self.debug("Implicitly creating body node")
-            if context.document_state != DocumentState.IN_FRAMESET:
-                body = self._ensure_body_node(context)
-                if body:
-                    context.current_parent = body
-                    context.document_state = DocumentState.IN_BODY
+        # Skip implicit body creation for fragments
+        if not self.fragment_context:
+            # Create body node if we're implicitly switching to body mode
+            if (
+                context.document_state == DocumentState.INITIAL or context.document_state == DocumentState.IN_HEAD
+            ) and tag_name not in HEAD_ELEMENTS:
+                self.debug("Implicitly creating body node")
+                if context.document_state != DocumentState.IN_FRAMESET:
+                    body = self._ensure_body_node(context)
+                    if body:
+                        context.current_parent = body
+                        context.document_state = DocumentState.IN_BODY
 
         if context.content_state == ContentState.RAWTEXT:
             self.debug("In rawtext mode, ignoring start tag")
@@ -238,14 +363,21 @@ class TurboHTML:
 
         # Create body node if needed and not in frameset mode
         if not context.current_parent and context.document_state != DocumentState.IN_FRAMESET:
-            body = self._ensure_body_node(context)
-            if body:
-                context.current_parent = body
+            if self.fragment_context:
+                # In fragment mode, restore current_parent to fragment root
+                context.current_parent = self.root
+            else:
+                body = self._ensure_body_node(context)
+                if body:
+                    context.current_parent = body
 
         # Try tag handlers first
         for handler in self.tag_handlers:
             if handler.should_handle_end(tag_name, context):
                 if handler.handle_end(token, context):
+                    # Ensure current_parent is never None in fragment mode
+                    if self.fragment_context and not context.current_parent:
+                        context.current_parent = self.root
                     return
 
     def _handle_special_element(

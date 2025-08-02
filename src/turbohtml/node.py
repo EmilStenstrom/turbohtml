@@ -74,7 +74,7 @@ class Node:
         return f"Node(<{self.tag_name}>, children={len(self.children)})"
 
     def to_test_format(self, indent=0):
-        if self.tag_name == 'document':
+        if self.tag_name in ('document', 'document-fragment'):
             result = []
             for child in self.children:
                 result.append(child.to_test_format(0))

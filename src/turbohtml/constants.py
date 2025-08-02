@@ -48,6 +48,7 @@ HTML_ELEMENTS = [
     "dt",
     "em",
     "embed",
+    "font",
     "h1",
     "h2",
     "h3",
@@ -66,6 +67,7 @@ HTML_ELEMENTS = [
     "ol",
     "p",
     "pre",
+    "ruby",
     "s",
     "small",
     "span",
@@ -302,6 +304,14 @@ SVG_CASE_SENSITIVE_ELEMENTS = {
     "femerge": "feMerge",
     "glyphref": "glyphRef",
 }
+
+# MathML elements that should automatically enter MathML context
+MATHML_ELEMENTS = [
+    "math", "mi", "mo", "mn", "ms", "mtext", "mspace", "merror", "mfrac", "msup", "msub", "msubsup",
+    "mover", "munder", "munderover", "mmultiscripts", "mtable", "mtr", "mtd", "maligngroup", "malignmark",
+    "mfenced", "menclose", "mrow", "mstyle", "msqrt", "mroot", "mpadded", "mphantom", "mglyph",
+    "annotation-xml"
+]
 
 # HTML5 Numeric Character Reference Replacements
 # Per HTML5 spec section 13.2.5.73, certain codepoints have special replacements

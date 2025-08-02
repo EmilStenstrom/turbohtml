@@ -3,7 +3,7 @@ import argparse
 from io import StringIO
 from contextlib import redirect_stdout
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 from pathlib import Path
 
 @dataclass
@@ -11,6 +11,7 @@ class TestCase:
     data: str
     errors: List[str]
     document: str
+    fragment_context: Optional[str] = None  # Context element for fragment parsing
     
 @dataclass
 class TestResult:
@@ -55,6 +56,7 @@ class TestRunner:
             data = []
             errors = []
             document = []
+            fragment_context = None
             mode = None
 
             for line in lines:
@@ -67,12 +69,15 @@ class TestRunner:
                         errors.append(line)
                     elif mode == 'document':
                         document.append(line)
+                    elif mode == 'document-fragment':
+                        fragment_context = line.strip()
 
             if data or document:
                 tests.append(TestCase(
                     data='\n'.join(data),
                     errors=errors,
-                    document='\n'.join(document)
+                    document='\n'.join(document),
+                    fragment_context=fragment_context
                 ))
 
         return tests
@@ -166,11 +171,11 @@ class TestRunner:
         if self.config["debug"]:
             f = StringIO()
             with redirect_stdout(f):
-                parser = TurboHTML(test.data, debug=True)
+                parser = TurboHTML(test.data, debug=True, fragment_context=test.fragment_context)
                 actual_tree = parser.root.to_test_format()
             debug_output = f.getvalue()
         else:
-            parser = TurboHTML(test.data)
+            parser = TurboHTML(test.data, fragment_context=test.fragment_context)
             actual_tree = parser.root.to_test_format()
             
         # Compare the actual output with expected
