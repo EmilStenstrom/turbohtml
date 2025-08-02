@@ -1631,6 +1631,18 @@ class ListTagHandler(TagHandler):
         """Handle li elements"""
         self.debug(f"Handling li tag, current parent is {context.current_parent.tag_name}")
 
+        # If we're in table context, foster parent the li element
+        if context.document_state == DocumentState.IN_TABLE:
+            self.debug("Foster parenting li out of table")
+            table = context.current_table
+            if table and table.parent:
+                new_node = self._create_element(token)
+                table_index = table.parent.children.index(table)
+                table.parent.children.insert(table_index, new_node)
+                context.current_parent = new_node
+                self.debug(f"Foster parented li before table: {new_node}")
+                return True
+
         # If we're in another li, close it first
         if context.current_parent.tag_name == "li":
             self.debug("Inside another li, closing it first")
