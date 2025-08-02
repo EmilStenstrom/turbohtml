@@ -213,7 +213,9 @@ class TestRunner:
             
             # Store file results if any tests were run for this file
             if file_test_indices:
-                self.file_results[file_path.name] = {
+                # Use relative path to handle duplicate filenames in different directories
+                relative_path = file_path.relative_to(self.test_dir)
+                self.file_results[str(relative_path)] = {
                     'passed': file_passed,
                     'failed': file_failed,
                     'skipped': file_skipped,
