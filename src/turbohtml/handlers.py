@@ -216,7 +216,6 @@ class TextHandler(TagHandler):
 
     def handle_text(self, text: str, context: "ParseContext") -> bool:
         self.debug(f"handling text '{text}' in state {context.document_state}")
-        self.debug(f"current parent is {context.current_parent}")
 
         # If we have no current parent, create body and add text there
         if context.current_parent is None:
@@ -365,7 +364,6 @@ class TextHandler(TagHandler):
 
     def _append_text(self, text: str, context: "ParseContext") -> None:
         """Helper to append text, either as new node or merged with previous"""
-        self.debug(f"last child is {context.current_parent.children[-1] if context.current_parent.children else None}")
         
         # Special handling for pre elements
         if context.current_parent.tag_name == "pre":
@@ -835,7 +833,13 @@ class ParagraphTagHandler(TagHandler):
         # If we're handling a tag that should close p
         if token.tag_name != "p" and context.current_parent.tag_name == "p":
             self.debug(f"Auto-closing p due to {token.tag_name}")
-            context.current_parent = context.current_parent.parent
+            if context.current_parent.parent:
+                context.current_parent = context.current_parent.parent
+            else:
+                # Fallback to body if p has no parent
+                body = self.parser._ensure_body_node(context)
+                if body:
+                    context.current_parent = body
             return False  # Let the original handler handle the new tag
 
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
@@ -963,7 +967,13 @@ class ParagraphTagHandler(TagHandler):
         # Standard behavior: Find nearest p ancestor and move up to its parent
         if context.current_parent.tag_name == "p":
             # Current parent is the p element being closed
-            context.current_parent = context.current_parent.parent
+            if context.current_parent.parent:
+                context.current_parent = context.current_parent.parent
+            else:
+                # Fallback to body if p has no parent
+                body = self.parser._ensure_body_node(context)
+                if body:
+                    context.current_parent = body
             
             # Reconstruct active formatting elements after closing the paragraph
             if context.active_formatting_elements._stack:
@@ -975,7 +985,13 @@ class ParagraphTagHandler(TagHandler):
         p_ancestor = context.current_parent.find_ancestor("p")
         if p_ancestor:
             # Normal case: close up to the p's parent
-            context.current_parent = p_ancestor.parent
+            if p_ancestor.parent:
+                context.current_parent = p_ancestor.parent
+            else:
+                # Fallback to body if p has no parent
+                body = self.parser._ensure_body_node(context)
+                if body:
+                    context.current_parent = body
             
             # Reconstruct active formatting elements after closing the paragraph
             # This ensures formatting elements that were inside the paragraph continue their scope
@@ -2396,8 +2412,6 @@ class ForeignTagHandler(TagHandler):
                         fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
                         new_node = Node(f"svg {tag_name}", fixed_attrs)
                         context.current_context = "svg"
-                    else:
-                        return False  # Should not be reached
 
                     table.parent.children.insert(table_index, new_node)
                     new_node.parent = table.parent
@@ -2453,10 +2467,10 @@ class ForeignTagHandler(TagHandler):
             if tag_name_lower == "font" and not token.attributes:
                 # font with no attributes stays in foreign context
                 return False
-            else:
-                # HTML elements break out of foreign content and are processed as regular HTML
-                self.debug(f"HTML element {tag_name_lower} breaks out of foreign content")
-                context.current_context = None  # Exit foreign context
+            
+            # HTML elements break out of foreign content and are processed as regular HTML
+            self.debug(f"HTML element {tag_name_lower} breaks out of foreign content")
+            context.current_context = None  # Exit foreign context
             
             # Look for the nearest table in the document tree that's still open
             table = context.current_parent.find_ancestor("table")
@@ -3221,7 +3235,11 @@ class BodyElementHandler(TagHandler):
         if context.document_state != DocumentState.IN_FRAMESET:
             body = self.parser._ensure_body_node(context)
             if body:
-                context.current_parent = self.parser.html_node
+                if self.parser.html_node:
+                    context.current_parent = self.parser.html_node
+                else:
+                    # Fallback to context.html_node if parser's html_node is None
+                    context.current_parent = context.html_node or body
                 context.document_state = DocumentState.AFTER_BODY
             return True
         return False

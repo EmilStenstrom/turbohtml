@@ -42,7 +42,7 @@ class ParseContext:
     ):
         self.index = 0
         self.length = length
-        self.current_parent = body_node
+        self._current_parent = body_node
         self.current_context = None
         self.has_form = False
         self.in_rawtext = False
@@ -60,6 +60,27 @@ class ParseContext:
         self.active_formatting_elements = ActiveFormattingElements()
         self.open_elements = OpenElementsStack()
         self.adoption_agency_counter = 0
+
+    @property
+    def current_parent(self) -> "Node":
+        return self._current_parent
+
+    @current_parent.setter
+    def current_parent(self, new_parent: "Node") -> None:
+        if new_parent is None:
+            # This is a serious parsing error - we should never have a None parent
+            error_msg = f"Attempt to set current_parent to None! Current state: {self}"
+            if self._debug:
+                self._debug(f"ERROR: {error_msg}")
+            raise ValueError(error_msg)
+        
+        if new_parent != self._current_parent:
+            if self._debug:
+                old_name = self._current_parent.tag_name if self._current_parent else "None"
+                new_name = new_parent.tag_name if new_parent else "None"
+                self._debug(f"Parent change: {old_name} -> {new_name}")
+        
+        self._current_parent = new_parent
 
     @property
     def document_state(self) -> DocumentState:
@@ -88,5 +109,5 @@ class ParseContext:
             self._debug(message)
 
     def __repr__(self):
-        parent_name = self.current_parent.tag_name if self.current_parent else "None"
+        parent_name = self._current_parent.tag_name if self._current_parent else "None"
         return f"<ParseContext: doc_state={self.document_state.name}, content_state={self.content_state.name}, parent={parent_name}>"
