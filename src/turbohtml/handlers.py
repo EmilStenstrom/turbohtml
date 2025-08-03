@@ -2219,16 +2219,22 @@ class AutoClosingTagHandler(TemplateAwareHandler):
                                           if e.tag_name in FORMATTING_ELEMENTS]
             
             if len(formatting_elements_in_stack) <= 2:  # Simple case - reconstruct
-                # Reconstruct active formatting elements inside the block element
-                active_elements = []
-                for entry in context.active_formatting_elements:
-                    active_elements.append(entry.element)
-                
-                if active_elements:
-                    self.debug(f"Simple case: reconstructing active formatting elements inside block: {[e.tag_name for e in active_elements]}")
-                    self.parser.adoption_agency._reconstruct_formatting_elements(active_elements, context)
-                
-                self.debug(f"Created new block {new_block.tag_name}, with simple formatting element reconstruction")
+                # Check if this is a very simple case (like <a><div>) vs nested case (like <b><em>...<aside>)
+                # For nested formatting elements, let adoption agency handle everything
+                if len(formatting_elements_in_stack) == 1:
+                    # Very simple case like <a><div> - reconstruct the single formatting element
+                    active_elements = []
+                    for entry in context.active_formatting_elements:
+                        active_elements.append(entry.element)
+                    
+                    if active_elements:
+                        self.debug(f"Very simple case: reconstructing single formatting element: {[e.tag_name for e in active_elements]}")
+                        self.parser.adoption_agency._reconstruct_formatting_elements(active_elements, context)
+                    
+                    self.debug(f"Created new block {new_block.tag_name}, with simple formatting element reconstruction")
+                else:
+                    # Multiple formatting elements - let adoption agency handle it
+                    self.debug(f"Multiple formatting elements case: created new block {new_block.tag_name}, letting adoption agency handle reconstruction")
             else:  # Complex case - let adoption agency handle it
                 self.debug(f"Complex case: created new block {new_block.tag_name}, letting adoption agency handle reconstruction")
 

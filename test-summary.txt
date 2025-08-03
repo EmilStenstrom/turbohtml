@@ -1,4 +1,4 @@
-Tests passed: 1170/1729 (68%) (skipped: 39 script-dependent)
+Tests passed: 1171/1729 (68%) (skipped: 39 script-dependent)
 
 adoption01.dat: 16/18 (89%) [.............x...x]
 adoption02.dat: 2/2 (100%) [..]
@@ -58,4 +58,4 @@ tests26.dat: 2/20 (10%) [xxxxxxxxx.xxxx.xxxxx]
 tests_innerHTML_1.dat: 33/81 (41%) [...x...xxx.xxxxxxxxx........xxxxxx.xxx......xxxxxxxxxxxxxxx..xx.xx.......x.xxxxxx]
 tricky01.dat: 1/9 (11%) [.xxxxxxxx]
 webkit01.dat: 29/52 (56%) [...x...x.x.x....xx.xxxx.xx.x..x..x.x.x....xxxx.x...x]
-webkit02.dat: 5/33 (15%) [.ss.x.xxx.xxxxxxxxxxxxxx.xxxxxxxxxx] (2 skipped)
+webkit02.dat: 6/33 (18%) [.ss.x.xxx.xx.xxxxxxxxxxx.xxxxxxxxxx] (2 skipped)
