@@ -436,7 +436,7 @@ class AdoptionAgencyAlgorithm:
                 # We're currently inside a reconstructed version of this element
                 # Move current parent to the parent of the current formatting element
                 if context.current_parent.parent:
-                    context.current_parent = context.current_parent.parent
+                    context.move_up_one_level()
                     if self.debug_enabled:
                         print(f"    Adoption Agency: Updated current parent to {context.current_parent.tag_name}")
             
@@ -511,7 +511,7 @@ class AdoptionAgencyAlgorithm:
         
         # Update current_parent to the new top of stack or appropriate fallback
         if not context.open_elements.is_empty():
-            context.current_parent = context.open_elements.current()
+            context.move_to_element(context.open_elements.current())
         else:
             # Check if we're in a foreign content context
             if hasattr(context, 'current_context') and context.current_context in ("math", "svg"):
@@ -521,15 +521,15 @@ class AdoptionAgencyAlgorithm:
                     if (current.tag_name.startswith("math ") or 
                         current.tag_name.startswith("svg ") or
                         current.tag_name in ("math math", "svg svg")):
-                        context.current_parent = current
+                        context.move_to_element(current)
                         break
                     current = current.parent
                 else:
                     # Fallback if no foreign context found
-                    context.current_parent = self._get_body_or_root(context)
+                    context.move_to_element(self._get_body_or_root(context))
             else:
                 # Regular case - use body or root
-                context.current_parent = self._get_body_or_root(context)
+                context.move_to_element(self._get_body_or_root(context))
         
         # Reconstruct formatting elements that were implicitly closed
         if elements_to_reconstruct:
@@ -545,7 +545,7 @@ class AdoptionAgencyAlgorithm:
             
             # Temporarily adjust current_parent for reconstruction
             original_parent = context.current_parent
-            context.current_parent = reconstruction_parent
+            context.move_to_element(reconstruction_parent)
             
             self._reconstruct_formatting_elements(elements_to_reconstruct, context)
             
@@ -554,7 +554,7 @@ class AdoptionAgencyAlgorithm:
                 # We're now inside the last reconstructed element, which is correct
                 pass
             else:
-                context.current_parent = original_parent
+                context.move_to_element(original_parent)
         
         return True
     
@@ -608,7 +608,7 @@ class AdoptionAgencyAlgorithm:
                 print(f"    Adoption Agency: Reconstructed {clone.tag_name} inside {clone.parent.tag_name}")
         
         # Update context's current parent to the innermost reconstructed element
-        context.current_parent = current_parent
+        context.move_to_element(current_parent)
         
         if self.debug_enabled:
             print(f"    Adoption Agency: Current parent after reconstruction: {context.current_parent.tag_name}")
@@ -920,12 +920,12 @@ class AdoptionAgencyAlgorithm:
             # Step 4: Update the current parent to the deepest reconstructed element
             # This ensures subsequent content goes into the correct place
             if elements_to_reconstruct:
-                context.current_parent = formatting_clone
+                context.move_to_element(formatting_clone)
                 if self.debug_enabled:
                     print(f"    Adoption Agency: Setting current parent to formatting clone {formatting_clone.tag_name}")
             else:
                 # Even with no reconstruction, content should go into the formatting clone
-                context.current_parent = formatting_clone
+                context.move_to_element(formatting_clone)
                 if self.debug_enabled:
                     print(f"    Adoption Agency: No reconstruction, but setting current parent to formatting clone {formatting_clone.tag_name}")
             
@@ -988,15 +988,15 @@ class AdoptionAgencyAlgorithm:
                         break
                 
                 if reconstructed_formatting and reconstructed_formatting.parent:
-                    context.current_parent = reconstructed_formatting.parent
+                    context.move_to_element(reconstructed_formatting.parent)
                     if self.debug_enabled:
                         print(f"    Adoption Agency: Setting current parent to {context.current_parent.tag_name} (parent of reconstructed {formatting_element.tag_name})")
                 else:
-                    context.current_parent = furthest_block
+                    context.move_to_element(furthest_block)
                     if self.debug_enabled:
                         print(f"    Adoption Agency: Fallback: setting current parent to furthest block {furthest_block.tag_name}")
             else:
-                context.current_parent = furthest_block
+                context.move_to_element(furthest_block)
                 if self.debug_enabled:
                     print(f"    Adoption Agency: No reconstruction, setting current parent to furthest block {furthest_block.tag_name}")
             

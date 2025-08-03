@@ -81,8 +81,7 @@ class TagHandler:
 
     def _move_to_parent_of_ancestor(self, context: "ParseContext", ancestor: "Node") -> None:
         """Move current_parent to the parent of the given ancestor"""
-        if ancestor and ancestor.parent:
-            context.current_parent = ancestor.parent
+        context.move_to_ancestor_parent(ancestor)
 
     def _should_foster_parent_in_table(self, context: "ParseContext") -> bool:
         """Check if element should be foster parented due to table context"""
@@ -169,7 +168,7 @@ class SimpleElementHandler(TagHandler):
         new_node = self._create_and_append_element(token, context)
         
         if not self._is_void_element(token.tag_name):
-            context.current_parent = new_node
+            context.enter_element(new_node)
         return True
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
@@ -192,7 +191,7 @@ class AncestorCloseHandler(TagHandler):
         search_tag = tag_name or token.tag_name
         ancestor = context.current_parent.find_ancestor(search_tag, stop_at_boundary=stop_at_boundary)
         if ancestor:
-            context.current_parent = ancestor.parent or context.current_parent
+            context.move_to_element_with_fallback(ancestor.parent, context.current_parent)
             self.debug(f"Found {search_tag} ancestor, moved to parent")
             return True
         self.debug(f"No {search_tag} ancestor found")
@@ -230,7 +229,7 @@ class TextHandler(TagHandler):
                 self.debug("Processing whitespace after </body> in body")
                 body = self.parser._get_body_node()
                 if body:
-                    context.current_parent = body
+                    context.move_to_element(body)
                     self._append_text(text, context)
             else:
                 self.debug("Parse error: non-whitespace after </body>, switching back to in body")
@@ -266,7 +265,7 @@ class TextHandler(TagHandler):
                     self.debug(f"Inserted whitespace before existing body: '{text}'")
                 else:
                     # Add whitespace to html level, body will be created after
-                    context.current_parent = self.parser.html_node
+                    context.move_to_element(self.parser.html_node)
                     self._append_text(text, context)
                     self.debug(f"Added whitespace to html level: '{text}'")
                 self.parser.transition_to_state(context, DocumentState.IN_BODY)
@@ -291,7 +290,7 @@ class TextHandler(TagHandler):
                     if i > 0 and not was_initial:
                         self.debug(f"Keeping leading whitespace '{text[:i]}' in head")
                         head = self.parser._ensure_head_node()
-                        context.current_parent = head
+                        context.move_to_element(head)
                         self._append_text(text[:i], context)
 
                     # Switch to body for non-whitespace and remaining text
@@ -440,9 +439,9 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
             if current:
                 self.debug("Found existing nobr, closing it and creating new one at same level")
                 if current.parent:
-                    context.current_parent = current.parent
+                    context.move_to_element(current.parent)
                     current.parent.append_child(new_element)
-                    context.current_parent = new_element
+                    context.enter_element(new_element)
                     
                     # Add to active formatting elements
                     context.active_formatting_elements.push(new_element, token)
@@ -452,7 +451,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         if self._is_in_table_cell(context):
             self.debug("Inside table cell, creating formatting element normally")
             context.current_parent.append_child(new_element)
-            context.current_parent = new_element
+            context.enter_element(new_element)
             
             # Add to active formatting elements
             context.active_formatting_elements.push(new_element, token)
@@ -465,7 +464,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
             if cell:
                 self.debug(f"Found table cell {cell.tag_name}, placing formatting element inside")
                 cell.append_child(new_element)
-                context.current_parent = new_element
+                context.enter_element(new_element)
                 
                 # Add to active formatting elements
                 context.active_formatting_elements.push(new_element, token)
@@ -478,7 +477,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 table_index = table.parent.children.index(table)
                 table.parent.children.insert(table_index, new_element)
                 new_element.parent = table.parent
-                context.current_parent = new_element
+                context.enter_element(new_element)
                 
                 # Add to active formatting elements
                 context.active_formatting_elements.push(new_element, token)
@@ -491,7 +490,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         context.current_parent.append_child(new_element)
         
         # Update current parent to the new formatting element for nesting
-        context.current_parent = new_element
+        context.enter_element(new_element)
         
         # Add to active formatting elements
         context.active_formatting_elements.push(new_element, token)
@@ -540,7 +539,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 if outer_formatting:
                     self.debug(f"Found outer formatting element: {outer_formatting}")
                     # Stay inside the boundary element
-                    context.current_parent = boundary
+                    context.move_to_element(boundary)
                     return True
 
             # If no formatting element found, ignore the end tag
@@ -561,7 +560,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
 
         # Otherwise close normally
         self.debug(f"Moving to parent of formatting element: {current.parent}")
-        context.current_parent = current.parent or self.parser._get_body_node()
+        context.move_to_element_with_fallback(current.parent, self.parser._get_body_node())
         return True
 
 
@@ -585,7 +584,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                 self.debug("Foster parenting select out of table")
                 new_node = self._foster_parent_before_table(token, context)
                 if new_node:
-                    context.current_parent = new_node
+                    context.enter_element(new_node)
                     self.debug(f"Foster parented select before table: {new_node}")
                     return True
 
@@ -595,14 +594,14 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                 outer_select = context.current_parent.find_ancestor("select")
                 if outer_select and outer_select.parent:
                     self.debug(f"Moving up to outer select's parent: {outer_select.parent}")
-                    context.current_parent = outer_select.parent
+                    context.move_to_element(outer_select.parent)
                     # Don't create anything for the nested select itself
                     self.debug("Ignoring nested select tag")
                     return True
 
             # Create new select/datalist
             new_node = self._create_and_append_element(token, context)
-            context.current_parent = new_node
+            context.enter_element(new_node)
             self.debug(f"Created new {tag_name}: {new_node}, parent now: {context.current_parent}")
             return True
 
@@ -640,7 +639,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                             # Create the new table element
                             new_node = Node(tag_name, token.attributes)
                             foster_parent.append_child(new_node)
-                            context.current_parent = new_node
+                            context.enter_element(new_node)
                             
                             self.debug(f"Foster parented {tag_name} to {foster_parent.tag_name}: {new_node}")
                             return True
@@ -669,11 +668,11 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                 target_parent = context.current_parent.move_up_while_in_tags(("option", "optgroup"))
                 if target_parent != context.current_parent:
                     self.debug(f"Moved up from {context.current_parent.tag_name} to {target_parent.tag_name}")
-                    context.current_parent = target_parent
+                    context.move_to_element(target_parent)
 
                 new_node = self._create_element(token)
                 context.current_parent.append_child(new_node)
-                context.current_parent = new_node
+                context.enter_element(new_node)
                 self.debug(f"Created {tag_name}: {new_node}, parent now: {context.current_parent}")
                 return True
 
@@ -685,11 +684,11 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                     self.debug("Moving up from option to select/datalist level")
                     parent = context.current_parent.find_ancestor(lambda n: n.tag_name in ("select", "datalist"))
                     if parent:
-                        context.current_parent = parent
+                        context.move_to_element(parent)
 
                 new_optgroup = self._create_element(token)
                 context.current_parent.append_child(new_optgroup)
-                context.current_parent = new_optgroup
+                context.enter_element(new_optgroup)
                 self.debug(f"Created optgroup: {new_optgroup}, parent now: {context.current_parent}")
                 return True
             else:  # option
@@ -700,7 +699,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                     self.debug("Found formatting element, moving up to select")
                     parent = formatting.find_ancestor(lambda n: n.tag_name in ("select", "datalist"))
                     if parent:
-                        context.current_parent = parent
+                        context.move_to_element(parent)
                 # If we're inside an optgroup, stay there, otherwise move to select/datalist level
                 elif context.current_parent.tag_name not in ("select", "datalist", "optgroup"):
                     self.debug("Moving up to select/datalist/optgroup level")
@@ -708,11 +707,11 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                         lambda n: n.tag_name in ("select", "datalist", "optgroup")
                     )
                     if parent:
-                        context.current_parent = parent
+                        context.move_to_element(parent)
 
                 new_option = self._create_element(token)
                 context.current_parent.append_child(new_option)
-                context.current_parent = new_option
+                context.enter_element(new_option)
                 self.debug(f"Created option: {new_option}, parent now: {context.current_parent}")
                 return True
 
@@ -811,11 +810,11 @@ class ParagraphTagHandler(TagHandler):
         if token.tag_name != "p" and context.current_parent.tag_name == "p":
             self.debug(f"Auto-closing p due to {token.tag_name}")
             if context.current_parent.parent:
-                context.current_parent = context.current_parent.parent
+                context.move_up_one_level()
             else:
                 # Fallback to body if p has no parent
                 body = self.parser._ensure_body_node(context)
-                context.current_parent = body
+                context.move_to_element(body)
             return False  # Let the original handler handle the new tag
 
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
@@ -840,11 +839,11 @@ class ParagraphTagHandler(TagHandler):
                 # Move to the parent of the outermost formatting element
                 outermost_formatting = formatting_elements_to_close[-1]
                 if outermost_formatting.parent:
-                    context.current_parent = outermost_formatting.parent
+                    context.move_to_element(outermost_formatting.parent)
                 else:
                     # Fallback - should not happen normally
                     body = self.parser._ensure_body_node(context)
-                    context.current_parent = body if body else context.root
+                    context.move_to_element(body) if body else context.root
 
         # Check if we're inside another p tag
         p_ancestor = context.current_parent.find_ancestor("p")
@@ -857,12 +856,12 @@ class ParagraphTagHandler(TagHandler):
                 # Create new p node inside the button
                 new_node = self._create_element(token)
                 context.current_parent.append_child(new_node)
-                context.current_parent = new_node
+                context.enter_element(new_node)
                 return True
             
             self.debug(f"Found <p> ancestor: {p_ancestor}, closing it")
             if p_ancestor.parent:
-                context.current_parent = p_ancestor.parent
+                context.move_to_element(p_ancestor.parent)
             # If p_ancestor.parent is None, keep current_parent as is
 
         # Check if we're inside a container element
@@ -873,7 +872,7 @@ class ParagraphTagHandler(TagHandler):
             self.debug(f"Inside container element {container_ancestor.tag_name}, keeping p nested")
             new_node = Node("p", token.attributes)
             context.current_parent.append_child(new_node)
-            context.current_parent = new_node
+            context.enter_element(new_node)
             return True
 
         # Create new p node under current parent (keeping formatting context)
@@ -895,7 +894,7 @@ class ParagraphTagHandler(TagHandler):
         else:
             context.current_parent.append_child(new_node)
             
-        context.current_parent = new_node
+        context.enter_element(new_node)
 
         # Add to stack of open elements
         context.open_elements.push(new_node)
@@ -919,7 +918,7 @@ class ParagraphTagHandler(TagHandler):
             p_in_button = context.current_parent.find_ancestor("p")
             if p_in_button:
                 # Found p within button scope, close it
-                context.current_parent = p_in_button.parent or context.current_parent
+                context.move_to_element_with_fallback(p_in_button.parent, context.current_parent)
                 self.debug(f"Closed p within button scope, current_parent now: {context.current_parent.tag_name}")
             
             # Always create implicit p inside button when </p> is encountered in button scope
@@ -934,11 +933,11 @@ class ParagraphTagHandler(TagHandler):
         if context.current_parent.tag_name == "p":
             # Current parent is the p element being closed
             if context.current_parent.parent:
-                context.current_parent = context.current_parent.parent
+                context.move_up_one_level()
             else:
                 # Fallback to body if p has no parent
                 body = self.parser._ensure_body_node(context)
-                context.current_parent = body
+                context.move_to_element(body)
             
             # Reconstruct active formatting elements after closing the paragraph
             if context.active_formatting_elements._stack:
@@ -951,11 +950,11 @@ class ParagraphTagHandler(TagHandler):
         if p_ancestor:
             # Normal case: close up to the p's parent
             if p_ancestor.parent:
-                context.current_parent = p_ancestor.parent
+                context.move_to_element(p_ancestor.parent)
             else:
                 # Fallback to body if p has no parent
                 body = self.parser._ensure_body_node(context)
-                context.current_parent = body
+                context.move_to_element(body)
             
             # Reconstruct active formatting elements after closing the paragraph
             # This ensures formatting elements that were inside the paragraph continue their scope
@@ -1034,16 +1033,16 @@ class TableElementHandler(TagHandler):
             new_table = Node("table")
             context.current_parent.append_child(new_table)
             context.current_table = new_table
-            context.current_parent = new_table
+            context.enter_element(new_table)
             self.parser.transition_to_state(context, DocumentState.IN_TABLE)
         
         return self._create_element(token)
 
     def _append_to_table_level(self, element: "Node", context: "ParseContext") -> None:
         """Append element at table level"""
-        context.current_parent = context.current_table
+        context.move_to_element(context.current_table)
         context.current_table.append_child(element)
-        context.current_parent = element
+        context.move_to_element(element)
 
 
 class TableTagHandler(TemplateAwareHandler, TableElementHandler):
@@ -1094,7 +1093,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             new_table = Node("table")
             context.current_parent.append_child(new_table)
             context.current_table = new_table
-            context.current_parent = new_table
+            context.enter_element(new_table)
             self.parser.transition_to_state(context, DocumentState.IN_TABLE)
 
         # Handle each element type
@@ -1151,7 +1150,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     # Add table as child of paragraph's parent (making it a sibling to p)
                     paragraph_parent.append_child(new_table)
                     # Set current parent to the paragraph's parent for subsequent content
-                    context.current_parent = paragraph_parent
+                    context.move_to_element(paragraph_parent)
                 else:
                     # Fallback: add to current context if no parent found
                     context.current_parent.append_child(new_table)
@@ -1163,7 +1162,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             context.current_parent.append_child(new_table)
             
         context.current_table = new_table
-        context.current_parent = new_table
+        context.enter_element(new_table)
         self.parser.transition_to_state(context, DocumentState.IN_TABLE)
         return True
 
@@ -1194,12 +1193,12 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             # Create new empty tbody after the colgroup
             new_tbody = Node("tbody")
             context.current_table.append_child(new_tbody)
-            context.current_parent = new_tbody
+            context.enter_element(new_tbody)
             return True
 
         # Rule 4: Otherwise stay at table level
         self.debug("No tbody/tr/td ancestors, staying at table level")
-        context.current_parent = context.current_table
+        context.move_to_element(context.current_table)
         return True
 
     def _handle_col(self, token: "HTMLToken", context: "ParseContext") -> bool:
@@ -1255,12 +1254,12 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             # Create new empty tbody after the colgroup
             new_tbody = Node("tbody")
             context.current_table.append_child(new_tbody)
-            context.current_parent = new_tbody
+            context.enter_element(new_tbody)
             return True
 
         # Rule 6: Otherwise stay at table level
         self.debug("No tbody/tr/td ancestors, staying at table level")
-        context.current_parent = context.current_table
+        context.move_to_element(context.current_table)
         return True
 
     def _handle_tbody(self, token: "HTMLToken", context: "ParseContext") -> bool:
@@ -1283,13 +1282,13 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         if context.current_parent.tag_name in ("tbody", "thead", "tfoot"):
             new_tr = self._create_element(token)
             context.current_parent.append_child(new_tr)
-            context.current_parent = new_tr
+            context.enter_element(new_tr)
             return True
 
         tbody = self._find_or_create_tbody(context)
         new_tr = self._create_element(token)
         tbody.append_child(new_tr)
-        context.current_parent = new_tr
+        context.enter_element(new_tr)
         return True
 
     def _handle_cell(self, token: "HTMLToken", context: "ParseContext") -> bool:
@@ -1299,13 +1298,13 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             # Inside template content, just create the cell directly without table structure
             new_cell = self._create_element(token)
             context.current_parent.append_child(new_cell)
-            context.current_parent = new_cell
+            context.enter_element(new_cell)
             return True
             
         tr = self._find_or_create_tr(context)
         new_cell = self._create_element(token)
         tr.append_child(new_cell)
-        context.current_parent = new_cell
+        context.enter_element(new_cell)
         return True
 
     def _find_or_create_tbody(self, context: "ParseContext") -> "Node":
@@ -1534,13 +1533,13 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 self.debug("Creating implicit p element in table cell")
                 new_p = Node("p")
                 cell.append_child(new_p)
-                context.current_parent = new_p
+                context.enter_element(new_p)
                 return True
 
         if tag_name == "caption" and context.document_state == DocumentState.IN_CAPTION:
             caption = context.current_parent.find_ancestor("caption")
             if caption:
-                context.current_parent = caption.parent
+                context.move_to_element(caption.parent)
                 self.parser.transition_to_state(context, DocumentState.IN_TABLE)
             return True
 
@@ -1550,15 +1549,15 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 formatting_parent = context.current_table.parent
                 if formatting_parent and formatting_parent.tag_name in FORMATTING_ELEMENTS:
                     self.debug(f"Returning to formatting context: {formatting_parent}")
-                    context.current_parent = formatting_parent
+                    context.move_to_element(formatting_parent)
                 else:
                     # Try to get body node, but fall back to root in fragment contexts
                     body_node = self.parser._ensure_body_node(context)
                     if body_node:
-                        context.current_parent = body_node
+                        context.move_to_element(body_node)
                     else:
                         # In fragment contexts, fall back to the fragment root
-                        context.current_parent = self.parser.root
+                        context.move_to_element(self.parser.root)
 
                 # # Find the original <a> tag that contained the table
                 # original_a = context.current_table.parent
@@ -1577,7 +1576,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 #         body = self.parser._get_body_node()
                 #         if body:
                 #             body.append_child(new_a)
-                #             context.current_parent = new_a
+                #             context.enter_element(new_a)
                 #     else:
                 #         # Case like test #77 - keep using original <a>
                 #         self.debug(f"Keeping original <a> tag: {original_a}")
@@ -1599,10 +1598,10 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 #         body = self.parser._get_body_node()
                 #         if body:
                 #             body.append_child(new_a)
-                #             context.current_parent = new_a
+                #             context.enter_element(new_a)
                 #     else:
                 #         body = self.parser._get_body_node()
-                #         context.current_parent = body or self.parser.html_node
+                #         context.move_to_element_with_fallback(body, self.parser.html_node)
 
                 context.current_table = None
                 self.parser.transition_to_state(context, DocumentState.IN_BODY)
@@ -1613,24 +1612,24 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             a_element = context.current_parent.find_ancestor("a")
             if a_element:
                 body = self.parser._get_body_node()
-                context.current_parent = a_element.parent or context.current_table or body or self.parser.html_node
+                context.move_to_element_with_fallback(a_element.parent, context.current_table or body) or self.parser.html_node
                 return True
 
         elif tag_name in TABLE_ELEMENTS:
             if tag_name in ["tbody", "thead", "tfoot"]:
                 tbody = context.current_parent.find_ancestor("tbody")
                 if tbody:
-                    context.current_parent = tbody
+                    context.move_to_element(tbody)
                     return True
             elif tag_name in ["td", "th"]:
                 tr = context.current_parent.find_ancestor("tr")
                 if tr:
-                    context.current_parent = tr
+                    context.move_to_element(tr)
                     return True
             elif tag_name == "tr":
                 tbody = context.current_parent.find_ancestor("tbody")
                 if tbody:
-                    context.current_parent = tbody
+                    context.move_to_element(tbody)
                     return True
 
         return False
@@ -1700,7 +1699,7 @@ class FormTagHandler(TagHandler):
 
         # Update current parent for non-void elements
         if tag_name not in ("input",):
-            context.current_parent = new_node
+            context.enter_element(new_node)
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
@@ -1714,7 +1713,7 @@ class FormTagHandler(TagHandler):
 
         if current:
             body = self.parser._get_body_node()
-            context.current_parent = current.parent or body or self.parser.html_node
+            context.move_to_element_with_fallback(current.parent, body) or self.parser.html_node
             if tag_name == "form":
                 context.has_form = False
 
@@ -1767,12 +1766,12 @@ class ListTagHandler(TagHandler):
             # Close everything up to the dl parent
             dl_parent = ancestor.parent
             self.debug(f"Closing up to dl parent: {dl_parent}")
-            context.current_parent = dl_parent
+            context.move_to_element(dl_parent)
 
             # Create new element at same level
             new_node = self._create_element(token)
             dl_parent.append_child(new_node)
-            context.current_parent = new_node
+            context.enter_element(new_node)
             self.debug(f"Created new {tag_name} at dl level: {new_node}")
             return True
 
@@ -1780,7 +1779,7 @@ class ListTagHandler(TagHandler):
         self.debug("No existing dt/dd found, creating normally")
         new_node = self._create_element(token)
         context.current_parent.append_child(new_node)
-        context.current_parent = new_node
+        context.enter_element(new_node)
         self.debug(f"Created new {tag_name}: {new_node}")
         return True
 
@@ -1796,7 +1795,7 @@ class ListTagHandler(TagHandler):
                 new_node = self._create_element(token)
                 table_index = table.parent.children.index(table)
                 table.parent.children.insert(table_index, new_node)
-                context.current_parent = new_node
+                context.enter_element(new_node)
                 self.debug(f"Foster parented li before table: {new_node}")
                 return True
 
@@ -1806,23 +1805,23 @@ class ListTagHandler(TagHandler):
             parent = context.current_parent.parent
             if parent and parent.tag_name in ("ul", "ol"):
                 self.debug(f"Moving up to list parent: {parent.tag_name}")
-                context.current_parent = parent
+                context.move_to_element(parent)
             else:
                 self.debug("No list parent found, moving to body")
                 body = self.parser._get_body_node()
-                context.current_parent = body or self.parser.html_node
+                context.move_to_element_with_fallback(body, self.parser.html_node)
         else:
             # Look for the nearest list container (ul, ol, menu) ancestor
             list_ancestor = context.current_parent.find_ancestor(lambda n: n.tag_name in ("ul", "ol", "menu"))
             if list_ancestor:
                 self.debug(f"Found list ancestor: {list_ancestor.tag_name}, moving to it")
-                context.current_parent = list_ancestor
+                context.move_to_element(list_ancestor)
             else:
                 self.debug("No list ancestor found - creating li in current context")
 
         new_node = self._create_element(token)
         context.current_parent.append_child(new_node)
-        context.current_parent = new_node
+        context.enter_element(new_node)
         self.debug(f"Created new li: {new_node}")
         return True
 
@@ -1832,7 +1831,7 @@ class ListTagHandler(TagHandler):
         self.debug(f"Handling {tag_name} tag")
         new_node = self._create_element(token)
         context.current_parent.append_child(new_node)
-        context.current_parent = new_node
+        context.enter_element(new_node)
         self.debug(f"Created new {tag_name}: {new_node}")
         return True
 
@@ -1868,11 +1867,11 @@ class ListTagHandler(TagHandler):
             # Move to the dl parent
             if dt_dd_ancestor.parent and dt_dd_ancestor.parent.tag_name == "dl":
                 self.debug("Moving to dl parent")
-                context.current_parent = dt_dd_ancestor.parent
+                context.move_to_element(dt_dd_ancestor.parent)
             else:
                 self.debug("No dl parent found, moving to body")
                 body = self.parser._get_body_node()
-                context.current_parent = body or self.parser.html_node
+                context.move_to_element_with_fallback(body, self.parser.html_node)
             return True
         self.debug(f"No matching {tag_name} found")
         return False
@@ -1891,11 +1890,11 @@ class ListTagHandler(TagHandler):
             # Move to the list parent
             if li_ancestor.parent and li_ancestor.parent.tag_name in ("ul", "ol"):
                 self.debug("Moving to list parent")
-                context.current_parent = li_ancestor.parent
+                context.move_to_element(li_ancestor.parent)
             else:
                 self.debug("No list parent found, moving to body")
                 body = self.parser._get_body_node()
-                context.current_parent = body or self.parser.html_node
+                context.move_to_element_with_fallback(body, self.parser.html_node)
             return True
         elif stop_element:
             self.debug(f"Found {stop_element.tag_name} before li, ignoring end tag")
@@ -1919,11 +1918,11 @@ class ListTagHandler(TagHandler):
             # If we're inside an li/dt/dd, stay there
             if matching_container.parent and matching_container.parent.tag_name in ("li", "dt", "dd"):
                 self.debug(f"Staying in {matching_container.parent.tag_name}")
-                context.current_parent = matching_container.parent
+                context.move_to_element(matching_container.parent)
             else:
                 self.debug("Moving to parent")
                 body = self.parser._get_body_node()
-                context.current_parent = matching_container.parent or body or self.parser.html_node
+                context.move_to_element_with_fallback(matching_container.parent, body) or self.parser.html_node
             return True
         
         self.debug(f"No matching {tag_name} found")
@@ -1977,7 +1976,7 @@ class RawtextTagHandler(SelectAwareHandler):
         # Switch to RAWTEXT state and let tokenizer handle the content
         self.debug(f"Switching to RAWTEXT content state for {tag_name}")
         context.content_state = ContentState.RAWTEXT
-        context.current_parent = new_node
+        context.enter_element(new_node)
         self.parser.tokenizer.start_rawtext(tag_name)
         return True
 
@@ -1996,12 +1995,12 @@ class RawtextTagHandler(SelectAwareHandler):
 
             # Return to the original parent
             if original_parent:
-                context.current_parent = original_parent
+                context.move_to_element(original_parent)
                 # If we're in AFTER_HEAD state and the original parent is head,
                 # move current_parent to html level for subsequent content
                 if (context.document_state == DocumentState.AFTER_HEAD and 
                     original_parent.tag_name == "head"):
-                    context.current_parent = context.html_node
+                    context.move_to_element(context.html_node)
                     self.debug(f"AFTER_HEAD state: moved current_parent from head to html")
                 # Clear RAWTEXT content mode
                 context.content_state = ContentState.NONE
@@ -2009,7 +2008,7 @@ class RawtextTagHandler(SelectAwareHandler):
             else:
                 # Fallback to body if no parent
                 body = self.parser._ensure_body_node(context)
-                context.current_parent = body
+                context.move_to_element(body)
                 context.content_state = ContentState.NONE
                 self.debug("Fallback to body, NONE content state")
 
@@ -2062,7 +2061,7 @@ class VoidElementHandler(SelectAwareHandler):
                 new_node = self._create_element(token)
                 head = self.parser._ensure_head_node()
                 head.append_child(new_node)
-                context.current_parent = head
+                context.move_to_element(head)
                 return True
             else:
                 self.debug(f"Keeping {tag_name} in body due to IN_BODY state")
@@ -2071,7 +2070,7 @@ class VoidElementHandler(SelectAwareHandler):
         if context.current_parent.tag_name == "p" and tag_name in BLOCK_ELEMENTS:
             self.debug(f"Closing paragraph for block element {tag_name}")
             body = self.parser._get_body_node()
-            context.current_parent = context.current_parent.parent or body or self.parser.html_node
+            context.move_up_one_level() or body or self.parser.html_node
 
         # Special handling for input elements in table context
         if tag_name == "input" and context.document_state == DocumentState.IN_TABLE:
@@ -2149,12 +2148,12 @@ class AutoClosingTagHandler(TemplateAwareHandler):
 
             # Move current_parent up to the formatting element's parent
             if formatting_element.parent:
-                context.current_parent = formatting_element.parent
+                context.move_to_element(formatting_element.parent)
             
             # Create the block element normally
             new_block = self._create_element(token)
             context.current_parent.append_child(new_block)
-            context.current_parent = new_block
+            context.enter_element(new_block)
             
             # Add block element to open elements stack
             context.open_elements.push(new_block)
@@ -2194,7 +2193,7 @@ class AutoClosingTagHandler(TemplateAwareHandler):
             if token.tag_name in closing_list:
                 self.debug(f"Auto-closing {current_tag} due to new tag {token.tag_name}")
                 if current.parent:
-                    context.current_parent = current.parent
+                    context.move_to_element(current.parent)
                 return False
 
         return False
@@ -2226,7 +2225,7 @@ class AutoClosingTagHandler(TemplateAwareHandler):
             if tr:
                 # Close everything up to the tr
                 body = self.parser._get_body_node()
-                context.current_parent = tr.parent or body or self.parser.html_node
+                context.move_to_element_with_fallback(tr.parent, body) or self.parser.html_node
                 self.parser.transition_to_state(context, DocumentState.IN_TABLE)
                 return True
 
@@ -2249,11 +2248,11 @@ class AutoClosingTagHandler(TemplateAwareHandler):
                     self.debug("Staying in template content")
                     # Don't change current_parent, stay in content
                 else:
-                    context.current_parent = boundary
+                    context.move_to_element(boundary)
                 return True
 
             # Move up to block element's parent
-            context.current_parent = current.parent or self.parser._get_body_node()
+            context.move_to_element_with_fallback(current.parent, self.parser._get_body_node())
             return True
 
         if token.tag_name in CLOSE_ON_PARENT_CLOSE:
@@ -2261,7 +2260,7 @@ class AutoClosingTagHandler(TemplateAwareHandler):
             for parent_tag in parent_tags:
                 parent = context.current_parent.find_ancestor(parent_tag)
                 if parent:
-                    context.current_parent = parent
+                    context.move_to_element(parent)
                     return True
         return False
 
@@ -2324,7 +2323,7 @@ class ForeignTagHandler(TagHandler):
         
         # Only set as current parent if not self-closing
         if not token or not token.is_self_closing:
-            context.current_parent = new_node
+            context.enter_element(new_node)
             
         return new_node
 
@@ -2363,7 +2362,7 @@ class ForeignTagHandler(TagHandler):
 
                     table.parent.children.insert(table_index, new_node)
                     new_node.parent = table.parent
-                    context.current_parent = new_node
+                    context.enter_element(new_node)
 
                     # We are no longer in the table, so switch state
                     self.parser.transition_to_state(context, DocumentState.IN_BODY)
@@ -2441,7 +2440,7 @@ class ForeignTagHandler(TagHandler):
                 new_node = Node(tag_name_lower, token.attributes)
                 table.parent.children.insert(table_index, new_node)
                 new_node.parent = table.parent
-                context.current_parent = new_node
+                context.enter_element(new_node)
                 
                 # Update document state - we're still in the table context logically
                 self.parser.transition_to_state(context, DocumentState.IN_TABLE)
@@ -2451,7 +2450,7 @@ class ForeignTagHandler(TagHandler):
             # If we're in caption/cell, move to that container instead of foster parenting
             if in_caption_or_cell:
                 self.debug(f"HTML element {tag_name_lower} breaking out inside {in_caption_or_cell.tag_name}")
-                context.current_parent = in_caption_or_cell
+                context.move_to_element(in_caption_or_cell)
                 return False  # Let other handlers process this element
             
             # Move current_parent up to the appropriate level, but never make it None
@@ -2461,7 +2460,7 @@ class ForeignTagHandler(TagHandler):
                 if self.parser.fragment_context:
                     target = context.current_parent.find_ancestor("document-fragment")
                     if target:
-                        context.current_parent = target
+                        context.move_to_element(target)
                 else:
                     # In document parsing, go back to the HTML node or body
                     target = context.current_parent.find_ancestor_until(
@@ -2469,7 +2468,7 @@ class ForeignTagHandler(TagHandler):
                         stop_at=None
                     )
                     if target:
-                        context.current_parent = target
+                        context.move_to_element(target)
             return False  # Let other handlers process this element
         
         return False
@@ -2513,14 +2512,14 @@ class ForeignTagHandler(TagHandler):
                 if context.current_parent.tag_name in auto_close_elements:
                     self.debug(f"Auto-closing {context.current_parent.tag_name} for {tag_name_lower}")
                     if context.current_parent.parent:
-                        context.current_parent = context.current_parent.parent
+                        context.move_up_one_level()
             
             # In foreign contexts, RAWTEXT elements behave as normal elements
             if tag_name_lower in RAWTEXT_ELEMENTS:
                 self.debug(f"Treating {tag_name_lower} as normal element in foreign context")
                 new_node = Node(f"math {tag_name}", token.attributes)
                 context.current_parent.append_child(new_node)
-                context.current_parent = new_node
+                context.enter_element(new_node)
                 # Reset tokenizer if it entered RAWTEXT mode
                 if hasattr(self.parser, 'tokenizer') and self.parser.tokenizer.state == "RAWTEXT":
                     self.parser.tokenizer.state = "DATA"
@@ -2532,7 +2531,7 @@ class ForeignTagHandler(TagHandler):
                 new_node = Node("math annotation-xml", self._fix_foreign_attribute_case(token.attributes, "math"))
                 context.current_parent.append_child(new_node)
                 if not token.is_self_closing:
-                    context.current_parent = new_node
+                    context.enter_element(new_node)
                 return True
 
             # Handle HTML elements inside annotation-xml
@@ -2543,28 +2542,28 @@ class ForeignTagHandler(TagHandler):
                     new_node = Node(tag_name_lower, self._fix_foreign_attribute_case(token.attributes, "math"))
                     context.current_parent.append_child(new_node)
                     if not token.is_self_closing:
-                        context.current_parent = new_node
+                        context.enter_element(new_node)
                     return True
                 # Handle SVG inside annotation-xml (switch to SVG context)
                 if tag_name_lower == "svg":
                     fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
                     new_node = Node("svg svg", fixed_attrs)
                     context.current_parent.append_child(new_node)
-                    context.current_parent = new_node
+                    context.enter_element(new_node)
                     context.current_context = "svg"
                     return True
                 if tag_name_lower in HTML_ELEMENTS:
                     new_node = Node(tag_name_lower, self._fix_foreign_attribute_case(token.attributes, "math"))
                     context.current_parent.append_child(new_node)
                     if not token.is_self_closing:
-                        context.current_parent = new_node
+                        context.enter_element(new_node)
                     return True
 
             new_node = Node(f"math {tag_name}", self._fix_foreign_attribute_case(token.attributes, "math"))
             context.current_parent.append_child(new_node)
             # Only set as current parent if not self-closing
             if not token.is_self_closing:
-                context.current_parent = new_node
+                context.enter_element(new_node)
             return True
 
         elif context.current_context == "svg":
@@ -2575,7 +2574,7 @@ class ForeignTagHandler(TagHandler):
                 if context.current_parent.tag_name in auto_close_elements:
                     self.debug(f"Auto-closing {context.current_parent.tag_name} for {tag_name_lower}")
                     if context.current_parent.parent:
-                        context.current_parent = context.current_parent.parent
+                        context.move_up_one_level()
                         
             # In foreign contexts, RAWTEXT elements behave as normal elements
             if tag_name_lower in RAWTEXT_ELEMENTS:
@@ -2583,7 +2582,7 @@ class ForeignTagHandler(TagHandler):
                 fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
                 new_node = Node(f"svg {tag_name}", fixed_attrs)
                 context.current_parent.append_child(new_node)
-                context.current_parent = new_node
+                context.enter_element(new_node)
                 # Reset tokenizer if it entered RAWTEXT mode
                 if hasattr(self.parser, 'tokenizer') and self.parser.tokenizer.state == "RAWTEXT":
                     self.parser.tokenizer.state = "DATA"
@@ -2598,7 +2597,7 @@ class ForeignTagHandler(TagHandler):
                 context.current_parent.append_child(new_node)
                 # Only set as current parent if not self-closing
                 if not token.is_self_closing:
-                    context.current_parent = new_node
+                    context.enter_element(new_node)
                 return True            # Handle HTML elements inside foreignObject, desc, or title (integration points)
             elif tag_name_lower in HTML_ELEMENTS:
                 # Check if current parent is integration point or has integration point ancestor
@@ -2614,7 +2613,7 @@ class ForeignTagHandler(TagHandler):
             context.current_parent.append_child(new_node)
             # Only set as current parent if not self-closing
             if not token.is_self_closing:
-                context.current_parent = new_node
+                context.enter_element(new_node)
             return True
 
         # Enter new context for svg/math tags
@@ -2622,7 +2621,7 @@ class ForeignTagHandler(TagHandler):
             new_node = Node(f"math {tag_name}", self._fix_foreign_attribute_case(token.attributes, "math"))
             context.current_parent.append_child(new_node)
             if not token.is_self_closing:
-                context.current_parent = new_node
+                context.enter_element(new_node)
                 context.current_context = "math"
             return True
 
@@ -2631,7 +2630,7 @@ class ForeignTagHandler(TagHandler):
             new_node = Node(f"svg {tag_name}", fixed_attrs)
             context.current_parent.append_child(new_node)
             if not token.is_self_closing:
-                context.current_parent = new_node
+                context.enter_element(new_node)
                 context.current_context = "svg"
             return True
 
@@ -2640,7 +2639,7 @@ class ForeignTagHandler(TagHandler):
             new_node = Node(f"math {tag_name}", self._fix_foreign_attribute_case(token.attributes, "math"))
             context.current_parent.append_child(new_node)
             if not token.is_self_closing:
-                context.current_parent = new_node
+                context.enter_element(new_node)
                 context.current_context = "math"
             return True
 
@@ -2656,13 +2655,13 @@ class ForeignTagHandler(TagHandler):
         if context.current_context == "math":
             if tag_name == "math":
                 if context.current_parent.parent:
-                    context.current_parent = context.current_parent.parent
+                    context.move_up_one_level()
                     context.current_context = None
                 return True
         elif context.current_context == "svg":
             if tag_name == "svg":
                 if context.current_parent.parent:
-                    context.current_parent = context.current_parent.parent
+                    context.move_up_one_level()
                     context.current_context = None
                 return True
 
@@ -2674,7 +2673,7 @@ class ForeignTagHandler(TagHandler):
         if matching_element:
             # Found matching element, close up to its parent
             if matching_element.parent:
-                context.current_parent = matching_element.parent
+                context.move_to_element(matching_element.parent)
             # No parent, stay at current level
             return True
 
@@ -2770,7 +2769,7 @@ class HeadElementHandler(TagHandler):
                 
                 # For elements that can have content, update current parent
                 if tag_name not in VOID_ELEMENTS:
-                    context.current_parent = new_node
+                    context.enter_element(new_node)
                     if tag_name in RAWTEXT_ELEMENTS:
                         context.content_state = ContentState.RAWTEXT
                         self.debug(f"Switched to RAWTEXT state for {tag_name}")
@@ -2791,7 +2790,7 @@ class HeadElementHandler(TagHandler):
 
                     # For elements that can have content, update current parent
                     if tag_name not in VOID_ELEMENTS:
-                        context.current_parent = new_node
+                        context.enter_element(new_node)
                         if tag_name in RAWTEXT_ELEMENTS:
                             context.content_state = ContentState.RAWTEXT
                             self.debug(f"Switched to RAWTEXT state for {tag_name}")
@@ -2804,7 +2803,7 @@ class HeadElementHandler(TagHandler):
 
             # For elements that can have content, update current parent
             if tag_name not in VOID_ELEMENTS:
-                context.current_parent = new_node
+                context.enter_element(new_node)
                 if tag_name in RAWTEXT_ELEMENTS:
                     context.content_state = ContentState.RAWTEXT
                     self.debug(f"Switched to RAWTEXT state for {tag_name}")
@@ -2823,7 +2822,7 @@ class HeadElementHandler(TagHandler):
                 self.debug("Head element appearing after </head>, foster parenting to head")
                 head = self.parser._ensure_head_node()
                 if head:
-                    context.current_parent = head
+                    context.move_to_element(head)
 
             # Create and append the new element
             new_node = Node(tag_name, token.attributes)
@@ -2835,7 +2834,7 @@ class HeadElementHandler(TagHandler):
 
             # For elements that can have content, update current parent
             if tag_name not in VOID_ELEMENTS:
-                context.current_parent = new_node
+                context.enter_element(new_node)
                 if tag_name in RAWTEXT_ELEMENTS:
                     context.content_state = ContentState.RAWTEXT
                     self.debug(f"Switched to RAWTEXT state for {tag_name}")
@@ -2887,7 +2886,7 @@ class HeadElementHandler(TagHandler):
             self.debug(f"Added template to current parent in {context.document_state} state")
         
         # Set current to the content document fragment
-        context.current_parent = content_node
+        context.move_to_element(content_node)
         self.debug("Set current parent to template content")
         
         return True
@@ -2907,10 +2906,10 @@ class HeadElementHandler(TagHandler):
                 self.parser.transition_to_state(context, DocumentState.AFTER_HEAD)
                 if context.current_parent and context.current_parent.tag_name == "head":
                     if context.current_parent.parent:
-                        context.current_parent = context.current_parent.parent
+                        context.move_up_one_level()
                     else:
                         # If head has no parent, set to html node
-                        context.current_parent = context.html_node
+                        context.move_to_element(context.html_node)
                 self.debug(f"transitioned to AFTER_HEAD, current parent: {context.current_parent}")
             elif context.document_state == DocumentState.INITIAL:
                 # If we see </head> in INITIAL state, transition to AFTER_HEAD
@@ -2918,7 +2917,7 @@ class HeadElementHandler(TagHandler):
                 self.parser.transition_to_state(context, DocumentState.AFTER_HEAD)
                 # Ensure html structure exists and move to html parent
                 self.parser._ensure_html_node()
-                context.current_parent = self.parser.html_node
+                context.move_to_element(self.parser.html_node)
                 self.debug(f"transitioned from INITIAL to AFTER_HEAD, current parent: {context.current_parent}")
             return True
 
@@ -2932,7 +2931,7 @@ class HeadElementHandler(TagHandler):
 
             if template_ancestor:
                 self.debug(f"found matching template, moving to parent: {template_ancestor.parent}")
-                context.current_parent = template_ancestor.parent
+                context.move_to_element(template_ancestor.parent)
                 return True
 
             self.debug("no matching template found within boundaries")
@@ -2944,12 +2943,12 @@ class HeadElementHandler(TagHandler):
             context.content_state = ContentState.NONE
             # Move up to parent
             if context.current_parent and context.current_parent.parent:
-                context.current_parent = context.current_parent.parent
+                context.move_up_one_level()
                 # If we're in AFTER_HEAD state and current parent is head, 
                 # move to html level for subsequent content
                 if (context.document_state == DocumentState.AFTER_HEAD and 
                     context.current_parent.tag_name == "head"):
-                    context.current_parent = context.html_node
+                    context.move_to_element(context.html_node)
                 self.debug(f"returned to parent: {context.current_parent}, document state: {context.document_state}")
             return True
 
@@ -3074,7 +3073,7 @@ class FramesetTagHandler(TagHandler):
                 self.debug("Creating nested frameset")
                 new_node = Node(tag_name, token.attributes)
                 context.current_parent.append_child(new_node)
-                context.current_parent = new_node
+                context.enter_element(new_node)
             return True
 
         elif tag_name == "frame":
@@ -3090,7 +3089,7 @@ class FramesetTagHandler(TagHandler):
             self.debug("Creating noframes element")
             new_node = Node(tag_name, token.attributes)
             context.current_parent.append_child(new_node)
-            context.current_parent = new_node
+            context.enter_element(new_node)
             context.content_state = ContentState.RAWTEXT
             return True
 
@@ -3109,10 +3108,10 @@ class FramesetTagHandler(TagHandler):
             if target:
                 # Move to parent frameset if it exists
                 if target.parent and target.parent.tag_name == "frameset":
-                    context.current_parent = target.parent
+                    context.move_to_element(target.parent)
                 else:
                     # Otherwise stay at root level
-                    context.current_parent = self.parser.html_node
+                    context.move_to_element(self.parser.html_node)
                 return True
             return False
 
@@ -3121,7 +3120,7 @@ class FramesetTagHandler(TagHandler):
                 # Return to frameset
                 parent = context.current_parent.parent
                 if parent and parent.tag_name == "frameset":
-                    context.current_parent = parent
+                    context.move_to_element(parent)
                     self.parser.transition_to_state(context, DocumentState.IN_FRAMESET)
                 else:
                     self.parser.transition_to_state(context, DocumentState.IN_FRAMESET, self.parser.html_node)
@@ -3167,10 +3166,10 @@ class BodyElementHandler(TagHandler):
             body = self.parser._ensure_body_node(context)
             if body:
                 if self.parser.html_node:
-                    context.current_parent = self.parser.html_node
+                    context.move_to_element(self.parser.html_node)
                 else:
                     # Fallback to context.html_node if parser's html_node is None
-                    context.current_parent = context.html_node or body
+                    context.move_to_element_with_fallback(context.html_node, body)
                 self.parser.transition_to_state(context, DocumentState.AFTER_BODY)
             return True
         return False
@@ -3191,7 +3190,7 @@ class BoundaryElementHandler(TagHandler):
         p_ancestor = context.current_parent.find_ancestor("p")
         if p_ancestor and p_ancestor.parent:
             self.debug(f"Found p ancestor, closing it first: {p_ancestor}")
-            context.current_parent = p_ancestor.parent
+            context.move_to_element(p_ancestor.parent)
 
         # Check if we're inside a formatting element
         formatting_element = context.current_parent.find_ancestor(lambda n: n.tag_name in FORMATTING_ELEMENTS)
@@ -3202,25 +3201,25 @@ class BoundaryElementHandler(TagHandler):
             # Create the boundary element
             new_node = Node(token.tag_name, token.attributes)
             formatting_element.append_child(new_node)
-            context.current_parent = new_node
+            context.enter_element(new_node)
             self.debug(f"Created boundary element {new_node.tag_name} under {formatting_element.tag_name}")
 
             # Create an implicit paragraph inside the boundary element
             new_p = Node("p")
             new_node.append_child(new_p)
-            context.current_parent = new_p
+            context.enter_element(new_p)
             self.debug(f"Created implicit paragraph under {new_node.tag_name}")
             return True
 
         # Create the boundary element normally
         new_node = Node(token.tag_name, token.attributes)
         context.current_parent.append_child(new_node)
-        context.current_parent = new_node
+        context.enter_element(new_node)
 
         # Create an implicit paragraph inside the boundary element
         new_p = Node("p")
         new_node.append_child(new_p)
-        context.current_parent = new_p
+        context.enter_element(new_p)
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
@@ -3253,7 +3252,7 @@ class BoundaryElementHandler(TagHandler):
         if formatting_elements:
             self.debug(f"closing formatting elements: {[f.tag_name for f in formatting_elements]}")
             # Move back to the boundary element's parent
-            context.current_parent = target.parent or self.parser.html_node
+            context.move_to_element_with_fallback(target.parent, self.parser.html_node)
             self.debug(f"moved to boundary parent: {context.current_parent}")
 
             # Look for outer formatting element of same type
@@ -3263,11 +3262,11 @@ class BoundaryElementHandler(TagHandler):
 
             if outer_fmt:
                 self.debug(f"found outer formatting element: {outer_fmt}")
-                context.current_parent = outer_fmt
+                context.move_to_element(outer_fmt)
                 self.debug(f"moved to outer formatting element: {context.current_parent}")
         else:
             self.debug("no formatting elements to close")
-            context.current_parent = target.parent or self.parser.html_node
+            context.move_to_element_with_fallback(target.parent, self.parser.html_node)
             self.debug(f"moved to boundary parent: {context.current_parent}")
 
         return True
@@ -3371,7 +3370,7 @@ class PlaintextHandler(SelectAwareHandler):
         # Check if we're inside a paragraph and close it (plaintext is a block element)
         if context.current_parent.tag_name == "p":
             self.debug("Closing paragraph before plaintext")
-            context.current_parent = context.current_parent.parent
+            context.move_up_one_level()
 
         # Create plaintext node
         new_node = Node("plaintext", token.attributes)
@@ -3390,7 +3389,7 @@ class PlaintextHandler(SelectAwareHandler):
                 return True
         else:
             context.current_parent.append_child(new_node)
-            context.current_parent = new_node
+            context.enter_element(new_node)
 
         # Switch to PLAINTEXT mode
         context.content_state = ContentState.PLAINTEXT
@@ -3433,7 +3432,7 @@ class ButtonTagHandler(TagHandler):
         # Create button normally - adoption agency will handle any formatting elements
         new_button = Node("button", token.attributes)
         context.current_parent.append_child(new_button)
-        context.current_parent = new_button
+        context.enter_element(new_button)
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
@@ -3442,7 +3441,7 @@ class ButtonTagHandler(TagHandler):
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         button = context.current_parent.find_ancestor("button")
         if button:
-            context.current_parent = button.parent
+            context.move_to_element(button.parent)
         return True
 
 
@@ -3471,7 +3470,7 @@ class MenuitemElementHandler(TagHandler):
                 if li_ancestor:
                     self.debug(f"Auto-closing menuitem {menuitem_ancestor} for new li (menuitem inside li)")
                     # Move up to menuitem's parent
-                    context.current_parent = menuitem_ancestor.parent or context.current_parent
+                    context.move_to_element_with_fallback(menuitem_ancestor.parent, context.current_parent)
                     # Don't handle the li here, let ListTagHandler handle it
                     return False
                 else:
@@ -3487,7 +3486,7 @@ class MenuitemElementHandler(TagHandler):
         # Create the menuitem element
         new_node = Node(tag_name, token.attributes)
         context.current_parent.append_child(new_node)
-        context.current_parent = new_node  # Set as current parent to contain children
+        context.enter_element(new_node)  # Set as current parent to contain children
         self.debug(f"Created menuitem: {new_node}")
 
         return True
@@ -3506,7 +3505,7 @@ class MenuitemElementHandler(TagHandler):
             # Check if we're directly inside the menuitem or nested deeper
             if context.current_parent == menuitem:
                 # We're directly inside menuitem, close it
-                context.current_parent = menuitem.parent or context.current_parent
+                context.move_to_element_with_fallback(menuitem.parent, context.current_parent)
                 return True
             else:
                 # We're nested inside menuitem, check the current element
@@ -3518,7 +3517,7 @@ class MenuitemElementHandler(TagHandler):
                 else:
                     # For other elements, close the menuitem normally
                     self.debug(f"Inside <{current_tag}>, closing menuitem")
-                    context.current_parent = menuitem.parent or context.current_parent
+                    context.move_to_element_with_fallback(menuitem.parent, context.current_parent)
                     return True
 
         # No menuitem found, treat as stray end tag
@@ -3554,7 +3553,7 @@ class UnknownElementHandler(TagHandler):
         if context.current_parent.tag_name == tag_name:
             # Close the matching element
             if context.current_parent.parent:
-                context.current_parent = context.current_parent.parent
+                context.move_up_one_level()
                 self.debug(f"UnknownElementHandler: closed {tag_name}, current_parent now: {context.current_parent.tag_name}")
             else:
                 # At root level, don't change current_parent to avoid issues
@@ -3591,7 +3590,7 @@ class RubyElementHandler(TagHandler):
         # Create the new element
         new_node = Node(tag_name, token.attributes)
         context.current_parent.append_child(new_node)
-        context.current_parent = new_node
+        context.enter_element(new_node)
         return True
 
     def _auto_close_ruby_elements(self, tag_name: str, context: "ParseContext") -> None:
@@ -3619,7 +3618,7 @@ class RubyElementHandler(TagHandler):
         
         if element_to_close:
             self.debug(f"Auto-closing {element_to_close.tag_name} for new {tag_name}")
-            context.current_parent = element_to_close.parent or context.current_parent
+            context.move_to_element_with_fallback(element_to_close.parent, context.current_parent)
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
         return tag_name in ("ruby", "rb", "rt", "rp", "rtc")
@@ -3636,7 +3635,7 @@ class RubyElementHandler(TagHandler):
         
         if matching_element:
             # Found matching element, move to its parent
-            context.current_parent = matching_element.parent or context.current_parent
+            context.move_to_element_with_fallback(matching_element.parent, context.current_parent)
             self.debug(f"Closed {tag_name}, current_parent now: {context.current_parent.tag_name}")
             return True
 

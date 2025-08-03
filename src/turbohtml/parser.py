@@ -477,7 +477,7 @@ class TurboHTML:
             
         new_node = Node(tag_name, token.attributes)
         context.current_parent.append_child(new_node)
-        context.current_parent = new_node
+        context.move_to_element(new_node)
         
         # Add to open elements stack
         context.open_elements.push(new_node)
@@ -489,11 +489,11 @@ class TurboHTML:
         if not context.current_parent and context.document_state != DocumentState.IN_FRAMESET:
             if self.fragment_context:
                 # In fragment mode, restore current_parent to fragment root
-                context.current_parent = self.root
+                context.move_to_element(self.root)
             else:
                 body = self._ensure_body_node(context)
                 if body:
-                    context.current_parent = body
+                    context.move_to_element(body)
 
         # Check if adoption agency algorithm should run
         if self.adoption_agency.should_run_adoption(tag_name, context):
@@ -507,7 +507,7 @@ class TurboHTML:
                 if handler.handle_end(token, context):
                     # Ensure current_parent is never None in fragment mode
                     if self.fragment_context and not context.current_parent:
-                        context.current_parent = self.root
+                        context.move_to_element(self.root)
                     return
 
         # Default end tag handling - close matching element if found
@@ -529,14 +529,14 @@ class TurboHTML:
             # Found matching element, set current_parent to its parent
             if context.current_parent.parent:
                 old_parent = context.current_parent
-                context.current_parent = context.current_parent.parent
+                context.move_up_one_level()
                 self.debug(f"Default end tag: closed {tag_name}, current_parent now: {context.current_parent.tag_name}")
             else:
                 # At root level, restore to appropriate context
                 if self.fragment_context:
-                    context.current_parent = self.root
+                    context.move_to_element(self.root)
                 else:
-                    context.current_parent = self.body_node or self.html_node
+                    context.move_to_element_with_fallback(self.body_node, self.html_node)
                 self.debug(f"Default end tag: closed {tag_name}, restored to root context")
         else:
             # If no immediate match, ignore the end tag (don't search ancestry)
@@ -549,7 +549,7 @@ class TurboHTML:
         if tag_name == "html":
             # Just update attributes, don't create a new node
             self.html_node.attributes.update(token.attributes)
-            context.current_parent = self.html_node
+            context.move_to_element(self.html_node)
             
             # Don't immediately switch to IN_BODY - let the normal flow handle that
             # The HTML tag should not automatically transition states
@@ -714,7 +714,7 @@ class TurboHTML:
             # No table found, use default handling
             new_node = Node(tag_name, attributes)
             context.current_parent.append_child(new_node)
-            context.current_parent = new_node
+            context.move_to_element(new_node)
             return
             
         # Insert the element before the table
@@ -723,7 +723,7 @@ class TurboHTML:
         
         new_node = Node(tag_name, attributes)
         foster_parent.children.insert(table_index, new_node)
-        context.current_parent = new_node
+        context.move_to_element(new_node)
         self.debug(f"Foster parented {tag_name} before table")
 
     def _is_in_template_content(self, context: "ParseContext") -> bool:
@@ -781,4 +781,4 @@ class TurboHTML:
             self.debug(f"Reconstructed {clone.tag_name} inside {clone.parent.tag_name}")
         
         # Update context's current parent to the innermost reconstructed element
-        context.current_parent = current_parent
+        context.move_to_element(current_parent)

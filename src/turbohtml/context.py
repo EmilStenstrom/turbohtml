@@ -66,10 +66,11 @@ class ParseContext:
 
     @property
     def current_parent(self) -> "Node":
+        """Read-only access to current parent. Use navigation methods to change."""
         return self._current_parent
 
-    @current_parent.setter
-    def current_parent(self, new_parent: "Node") -> None:
+    def _set_current_parent(self, new_parent: "Node") -> None:
+        """Private method to set current_parent with validation and logging"""
         if new_parent is None:
             # This is a serious parsing error - we should never have a None parent
             error_msg = f"Attempt to set current_parent to None! Current state: {self}"
@@ -109,11 +110,46 @@ class ParseContext:
     def transition_to_state(self, new_state: DocumentState, new_parent: "Node" = None) -> None:
         """Transition to any document state, optionally updating current_parent"""
         if new_parent is not None:
-            self.current_parent = new_parent
+            self._set_current_parent(new_parent)
         if new_state != self._document_state:
             if self._debug:
                 self._debug(f"Document State change: {self._document_state} -> {new_state}")
             self._document_state = new_state
+
+    # Navigation methods for current_parent
+    def move_to_element(self, element: "Node") -> None:
+        """Move current_parent to a specific element"""
+        self._set_current_parent(element)
+
+    def move_to_element_with_fallback(self, element: "Node", fallback: "Node") -> None:
+        """Move current_parent to element, or fallback if element is None"""
+        self._set_current_parent(element or fallback)
+
+    def move_up_one_level(self) -> bool:
+        """Move current_parent up one level to its parent. Returns True if successful."""
+        if self._current_parent.parent:
+            self._set_current_parent(self._current_parent.parent)
+            return True
+        return False
+
+    def move_to_ancestor_parent(self, ancestor: "Node") -> bool:
+        """Move current_parent to the parent of the given ancestor. Returns True if successful."""
+        if ancestor and ancestor.parent:
+            self._set_current_parent(ancestor.parent)
+            return True
+        return False
+
+    def close_element_by_tag(self, tag_name: str, stop_at_boundary: bool = False) -> bool:
+        """Find ancestor by tag name and move to its parent. Returns True if found."""
+        ancestor = self._current_parent.find_ancestor(tag_name, stop_at_boundary=stop_at_boundary)
+        if ancestor:
+            self._set_current_parent(ancestor.parent or self._current_parent)
+            return True
+        return False
+
+    def enter_element(self, element: "Node") -> None:
+        """Enter a newly created element (set it as current_parent)"""
+        self._set_current_parent(element)
 
     def __repr__(self):
         parent_name = self._current_parent.tag_name if self._current_parent else "None"
