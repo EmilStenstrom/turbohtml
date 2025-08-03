@@ -2206,16 +2206,10 @@ class AutoClosingTagHandler(TemplateAwareHandler):
             # Add block element to open elements stack
             context.open_elements.push(new_block)
 
-            # Reconstruct active formatting elements inside the block element
-            active_elements = []
-            for entry in context.active_formatting_elements:
-                active_elements.append(entry.element)
-            
-            if active_elements:
-                self.debug(f"Reconstructing active formatting elements inside block: {[e.tag_name for e in active_elements]}")
-                self.parser.adoption_agency._reconstruct_formatting_elements(active_elements, context)
+            # Do NOT reconstruct active formatting elements inside the block element
+            # The adoption agency algorithm will handle this correctly when the end tags are processed
 
-            self.debug(f"Created new block {new_block.tag_name}, with formatting element reconstruction")
+            self.debug(f"Created new block {new_block.tag_name}, letting adoption agency handle reconstruction")
 
             return True
 
