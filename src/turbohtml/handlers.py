@@ -66,7 +66,7 @@ class TagHandler:
 
     def _is_in_select(self, context: "ParseContext") -> bool:
         """Check if we're inside a select element"""
-        return context.current_parent.is_inside_tag("select")
+        return context.current_parent and context.current_parent.is_inside_tag("select")
 
     def _is_in_table_cell(self, context: "ParseContext") -> bool:
         """Check if we're inside a table cell (td or th)"""
@@ -571,6 +571,11 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         # If we're in a select, ignore any foreign elements (svg, math)
         if self._is_in_select(context) and tag_name in ("svg", "math"):
             self.debug(f"Ignoring foreign element {tag_name} inside select")
+            return True
+
+        # If we're in a select, ignore any rawtext elements (plaintext, script, style, etc.)
+        if self._is_in_select(context) and tag_name in RAWTEXT_ELEMENTS:
+            self.debug(f"Ignoring rawtext element {tag_name} inside select")
             return True
 
         elif tag_name in ("optgroup", "option"):
@@ -1803,10 +1808,10 @@ class HeadingTagHandler(SimpleElementHandler):
         return super().handle_end(token, context)
 
 
-class RawtextTagHandler(TagHandler):
+class RawtextTagHandler(SelectAwareHandler):
     """Handles rawtext elements like script, style, title, etc."""
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def _should_handle_start_impl(self, tag_name: str, context: "ParseContext") -> bool:
         return tag_name in RAWTEXT_ELEMENTS
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
@@ -3121,10 +3126,10 @@ class DoctypeHandler(TagHandler):
         return name
 
 
-class PlaintextHandler(TagHandler):
+class PlaintextHandler(SelectAwareHandler):
     """Handles plaintext element which switches to plaintext mode"""
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def _should_handle_start_impl(self, tag_name: str, context: "ParseContext") -> bool:
         # Handle plaintext start tag, or any tag when already in PLAINTEXT mode
         return tag_name == "plaintext" or context.content_state == ContentState.PLAINTEXT
 

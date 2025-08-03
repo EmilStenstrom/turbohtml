@@ -1,4 +1,4 @@
-Tests passed: 1143/1729 (66%) (skipped: 39 script-dependent)
+Tests passed: 1144/1729 (66%) (skipped: 39 script-dependent)
 
 adoption01.dat: 7/18 (39%) [...xxx.xxx..xxx.xx]
 adoption02.dat: 0/2 (0%) [xx]
@@ -46,7 +46,7 @@ tests14.dat: 6/7 (86%) [...x...]
 tests15.dat: 5/14 (36%) [xxxxxx....xx.x]
 tests16.dat: 141/185 (76%) [..........x......x..........x..........x.....xx...........xx...xxxxxxx.x.........x.ssssssxx.xxx..............x......x..........x..........x.....xx.........xx...xxxxxxx.x.........x.ssssssxx.x.....xx] (12 skipped)
 tests17.dat: 4/13 (31%) [xx...xxxxxxx.]
-tests18.dat: 20/35 (57%) [....s........xxx.xx.xxxxxxx.xx...x..] (1 skipped)
+tests18.dat: 21/35 (60%) [....s.........xx.xx.xxxxxxx.xx...x..] (1 skipped)
 tests19.dat: 50/103 (49%) [.....x..x.xx.x...x...x.x......xxxxx...x..x.xx.x.xxxxxxxxxxx..xxxxxxxxxxx...x.xx.x.x......xxxxxx......xx]
 tests20.dat: 64/64 (100%) [................................................................]
 tests21.dat: 6/23 (26%) [...xxxxxxx...xxxxxxxxxx]
