@@ -1996,7 +1996,7 @@ class RawtextTagHandler(SelectAwareHandler):
                 # move current_parent to html level for subsequent content
                 if (context.document_state == DocumentState.AFTER_HEAD and 
                     original_parent.tag_name == "head"):
-                    context.move_to_element(context.html_node)
+                    context.move_to_element(self.parser.html_node)
                     self.debug(f"AFTER_HEAD state: moved current_parent from head to html")
                 # Clear RAWTEXT content mode
                 context.content_state = ContentState.NONE
@@ -2904,7 +2904,7 @@ class HeadElementHandler(TagHandler):
                         context.move_up_one_level()
                     else:
                         # If head has no parent, set to html node
-                        context.move_to_element(context.html_node)
+                        context.move_to_element(self.parser.html_node)
                 self.debug(f"transitioned to AFTER_HEAD, current parent: {context.current_parent}")
             elif context.document_state == DocumentState.INITIAL:
                 # If we see </head> in INITIAL state, transition to AFTER_HEAD
@@ -2943,7 +2943,7 @@ class HeadElementHandler(TagHandler):
                 # move to html level for subsequent content
                 if (context.document_state == DocumentState.AFTER_HEAD and 
                     context.current_parent.tag_name == "head"):
-                    context.move_to_element(context.html_node)
+                    context.move_to_element(self.parser.html_node)
                 self.debug(f"returned to parent: {context.current_parent}, document state: {context.document_state}")
             return True
 
@@ -3163,8 +3163,8 @@ class BodyElementHandler(TagHandler):
                 if self.parser.html_node:
                     context.move_to_element(self.parser.html_node)
                 else:
-                    # Fallback to context.html_node if parser's html_node is None
-                    context.move_to_element_with_fallback(context.html_node, body)
+                    # Fallback to body if parser's html_node is None
+                    context.move_to_element(body)
                 self.parser.transition_to_state(context, DocumentState.AFTER_BODY)
             return True
         return False

@@ -38,16 +38,15 @@ class ParseContext:
     """
 
     def __init__(
-        self, length: int, body_node: "Node", html_node: "Node", debug_callback=None
+        self, length: int, initial_parent: "Node", debug_callback=None
     ):
         self.index = 0
         self.length = length
         # Ensure we never start with None as current_parent
-        self._current_parent = body_node or html_node
-        if self._current_parent is None:
-            raise ValueError("ParseContext requires a valid initial parent (body_node or html_node)")
+        if initial_parent is None:
+            raise ValueError("ParseContext requires a valid initial parent")
+        self._current_parent = initial_parent
         self.current_context = None
-        self.html_node = html_node
         self._document_state = DocumentState.INITIAL
         self._content_state = ContentState.NONE
         self._debug = debug_callback

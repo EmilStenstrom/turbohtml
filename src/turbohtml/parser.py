@@ -313,8 +313,7 @@ class TurboHTML:
             # Fragment is parsed as if inside a table cell
             context = ParseContext(
                 len(self.html),
-                self.root,  # Fragment root
-                None,  # No html node in fragments
+                self.root,  # Fragment root as initial parent
                 debug_callback=self.debug if self.env_debug else None,
             )
             context.transition_to_state(DocumentState.IN_CELL, self.root)
@@ -323,7 +322,6 @@ class TurboHTML:
             context = ParseContext(
                 len(self.html),
                 self.root,
-                None,
                 debug_callback=self.debug if self.env_debug else None,
             )
             context.transition_to_state(DocumentState.IN_ROW, self.root)
@@ -332,7 +330,6 @@ class TurboHTML:
             context = ParseContext(
                 len(self.html),
                 self.root,
-                None,
                 debug_callback=self.debug if self.env_debug else None,
             )
             context.transition_to_state(DocumentState.IN_TABLE_BODY, self.root)
@@ -342,7 +339,6 @@ class TurboHTML:
             context = ParseContext(
                 len(self.html),
                 self.root,
-                None,
                 debug_callback=self.debug if self.env_debug else None,
             )
             context.transition_to_state(DocumentState.INITIAL, self.root)
@@ -352,7 +348,6 @@ class TurboHTML:
             context = ParseContext(
                 len(self.html),
                 self.root,
-                None,
                 debug_callback=self.debug if self.env_debug else None,
             )
             context.transition_to_state(DocumentState.IN_BODY, self.root)
@@ -362,7 +357,6 @@ class TurboHTML:
             context = ParseContext(
                 len(self.html),
                 self.root,
-                None,
                 debug_callback=self.debug if self.env_debug else None,
             )
             context.transition_to_state(DocumentState.IN_BODY, self.root)
@@ -409,7 +403,6 @@ class TurboHTML:
         # Initialize context with html_node as current_parent
         context = ParseContext(
             len(self.html),
-            self._get_body_node(),
             self.html_node,
             debug_callback=self.debug if self.env_debug else None,
         )

@@ -561,8 +561,10 @@ class AdoptionAgencyAlgorithm:
     def _get_body_or_root(self, context):
         """Get the body element or fallback to root"""
         body_node = None
-        if hasattr(context, 'html_node') and context.html_node:
-            for child in context.html_node.children:
+        # Get HTML node from parser instead of context
+        html_node = self.parser.html_node
+        if html_node:
+            for child in html_node.children:
                 if child.tag_name == "body":
                     body_node = child
                     break
@@ -657,8 +659,9 @@ class AdoptionAgencyAlgorithm:
             
             if formatting_index == 0:
                 # No common ancestor - use body or root as common ancestor
-                if hasattr(context, 'html_node') and context.html_node:
-                    for child in context.html_node.children:
+                html_node = self.parser.html_node
+                if html_node:
+                    for child in html_node.children:
                         if child.tag_name == "body":
                             common_ancestor = child
                             break
@@ -1016,8 +1019,9 @@ class AdoptionAgencyAlgorithm:
                 print(f"    Adoption Agency: Active formatting after: {[e.element.tag_name for e in context.active_formatting_elements]}")
                 print(f"    Adoption Agency: Current parent now: {context.current_parent.tag_name}")
                 print(f"    Adoption Agency: DOM structure after reconstruction:")
-                if hasattr(context, 'html_node') and context.html_node:
-                    for child in context.html_node.children:
+                html_node = self.parser.html_node
+                if html_node:
+                    for child in html_node.children:
                         if child.tag_name == "body":
                             print(f"      {child.to_test_format()}")
                             break
