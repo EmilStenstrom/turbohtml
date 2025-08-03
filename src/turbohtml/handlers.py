@@ -545,6 +545,22 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         self.debug(f"Handling {tag_name} in select context, current_parent={context.current_parent}")
 
         if tag_name in ("select", "datalist"):
+            # Foster parent if in table context (but not in a cell or caption)
+            if (
+                context.document_state == DocumentState.IN_TABLE
+                and not context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
+            ):
+                self.debug("Foster parenting select out of table")
+                table = context.current_table
+                if table and table.parent:
+                    new_node = self._create_element(token)
+                    table_index = table.parent.children.index(table)
+                    table.parent.children.insert(table_index, new_node)
+                    new_node.parent = table.parent
+                    context.current_parent = new_node
+                    self.debug(f"Foster parented select before table: {new_node}")
+                    return True
+
             # If we're already in a select, close it and ignore the nested select
             if self._is_in_select(context):
                 self.debug("Found nested select, closing outer select")
@@ -2096,8 +2112,13 @@ class AutoClosingTagHandler(TagHandler):
 class ForeignTagHandler(TagHandler):
     """Handles SVG and other foreign element contexts"""
 
-    def _fix_svg_attribute_case(self, attributes):
-        """Fix case for SVG/MathML attributes - lowercase all unless in case mapping"""
+    def _fix_foreign_attribute_case(self, attributes, element_context):
+        """Fix case for SVG/MathML attributes according to HTML5 spec
+        
+        Args:
+            attributes: Dict of attribute name->value pairs
+            element_context: "svg" or "math" to determine casing rules
+        """
         if not attributes:
             return attributes
         
@@ -2106,13 +2127,25 @@ class ForeignTagHandler(TagHandler):
         fixed_attrs = {}
         for name, value in attributes.items():
             name_lower = name.lower()
-            if name_lower in SVG_CASE_SENSITIVE_ATTRIBUTES:
-                fixed_attrs[SVG_CASE_SENSITIVE_ATTRIBUTES[name_lower]] = value
-            elif name_lower in MATHML_CASE_SENSITIVE_ATTRIBUTES:
-                fixed_attrs[MATHML_CASE_SENSITIVE_ATTRIBUTES[name_lower]] = value
+            
+            if element_context == "svg":
+                # SVG: Use case mapping if available, otherwise preserve case
+                if name_lower in SVG_CASE_SENSITIVE_ATTRIBUTES:
+                    fixed_attrs[SVG_CASE_SENSITIVE_ATTRIBUTES[name_lower]] = value
+                else:
+                    # For SVG, attributes not in the mapping keep their case
+                    fixed_attrs[name] = value
+            elif element_context == "math":
+                # MathML: Lowercase all attributes unless in case mapping
+                if name_lower in MATHML_CASE_SENSITIVE_ATTRIBUTES:
+                    fixed_attrs[MATHML_CASE_SENSITIVE_ATTRIBUTES[name_lower]] = value
+                else:
+                    # For MathML, all other attributes are lowercased
+                    fixed_attrs[name_lower] = value
             else:
-                # All other attributes should be lowercased in foreign contexts
+                # Default: lowercase
                 fixed_attrs[name_lower] = value
+                
         return fixed_attrs
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
@@ -2160,7 +2193,7 @@ class ForeignTagHandler(TagHandler):
                         new_node = Node(f"math {tag_name}", token.attributes)
                         context.current_context = "math"
                     elif tag_name_lower == "svg":
-                        fixed_attrs = self._fix_svg_attribute_case(token.attributes)
+                        fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
                         new_node = Node(f"svg {tag_name}", fixed_attrs)
                         context.current_context = "svg"
                     else:
@@ -2296,7 +2329,7 @@ class ForeignTagHandler(TagHandler):
             
             # Handle MathML elements
             if tag_name_lower == "annotation-xml":
-                new_node = Node("math annotation-xml", self._fix_svg_attribute_case(token.attributes))
+                new_node = Node("math annotation-xml", self._fix_foreign_attribute_case(token.attributes, "math"))
                 context.current_parent.append_child(new_node)
                 if not token.is_self_closing:
                     context.current_parent = new_node
@@ -2307,27 +2340,27 @@ class ForeignTagHandler(TagHandler):
                 encoding = context.current_parent.attributes.get("encoding", "").lower()
                 if encoding in ("application/xhtml+xml", "text/html"):
                     # Keep HTML elements nested for these encodings
-                    new_node = Node(tag_name_lower, self._fix_svg_attribute_case(token.attributes))
+                    new_node = Node(tag_name_lower, self._fix_foreign_attribute_case(token.attributes, "math"))
                     context.current_parent.append_child(new_node)
                     if not token.is_self_closing:
                         context.current_parent = new_node
                     return True
                 # Handle SVG inside annotation-xml (switch to SVG context)
                 if tag_name_lower == "svg":
-                    fixed_attrs = self._fix_svg_attribute_case(token.attributes)
+                    fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
                     new_node = Node("svg svg", fixed_attrs)
                     context.current_parent.append_child(new_node)
                     context.current_parent = new_node
                     context.current_context = "svg"
                     return True
                 if tag_name_lower in HTML_ELEMENTS:
-                    new_node = Node(tag_name_lower, self._fix_svg_attribute_case(token.attributes))
+                    new_node = Node(tag_name_lower, self._fix_foreign_attribute_case(token.attributes, "math"))
                     context.current_parent.append_child(new_node)
                     if not token.is_self_closing:
                         context.current_parent = new_node
                     return True
 
-            new_node = Node(f"math {tag_name}", self._fix_svg_attribute_case(token.attributes))
+            new_node = Node(f"math {tag_name}", self._fix_foreign_attribute_case(token.attributes, "math"))
             context.current_parent.append_child(new_node)
             # Only set as current parent if not self-closing
             if not token.is_self_closing:
@@ -2347,7 +2380,7 @@ class ForeignTagHandler(TagHandler):
             # In foreign contexts, RAWTEXT elements behave as normal elements
             if tag_name_lower in RAWTEXT_ELEMENTS:
                 self.debug(f"Treating {tag_name_lower} as normal element in foreign context")
-                fixed_attrs = self._fix_svg_attribute_case(token.attributes)
+                fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
                 new_node = Node(f"svg {tag_name}", fixed_attrs)
                 context.current_parent.append_child(new_node)
                 context.current_parent = new_node
@@ -2360,7 +2393,7 @@ class ForeignTagHandler(TagHandler):
                 # Handle case-sensitive SVG elements
             if tag_name_lower in SVG_CASE_SENSITIVE_ELEMENTS:
                 correct_case = SVG_CASE_SENSITIVE_ELEMENTS[tag_name_lower]
-                fixed_attrs = self._fix_svg_attribute_case(token.attributes)
+                fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
                 new_node = Node(f"svg {correct_case}", fixed_attrs)
                 context.current_parent.append_child(new_node)
                 # Only set as current parent if not self-closing
@@ -2377,7 +2410,7 @@ class ForeignTagHandler(TagHandler):
                     self.debug(f"HTML element {tag_name_lower} in SVG integration point, delegating to HTML handlers")
                     return False  # Let other handlers (TableTagHandler, ParagraphTagHandler, etc.) handle it
 
-            new_node = Node(f"svg {tag_name_lower}", self._fix_svg_attribute_case(token.attributes))
+            new_node = Node(f"svg {tag_name_lower}", self._fix_foreign_attribute_case(token.attributes, "svg"))
             context.current_parent.append_child(new_node)
             # Only set as current parent if not self-closing
             if not token.is_self_closing:
@@ -2386,7 +2419,7 @@ class ForeignTagHandler(TagHandler):
 
         # Enter new context for svg/math tags
         if tag_name_lower == "math":
-            new_node = Node(f"math {tag_name}", self._fix_svg_attribute_case(token.attributes))
+            new_node = Node(f"math {tag_name}", self._fix_foreign_attribute_case(token.attributes, "math"))
             context.current_parent.append_child(new_node)
             if not token.is_self_closing:
                 context.current_parent = new_node
@@ -2394,7 +2427,7 @@ class ForeignTagHandler(TagHandler):
             return True
 
         if tag_name_lower == "svg":
-            fixed_attrs = self._fix_svg_attribute_case(token.attributes)
+            fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
             new_node = Node(f"svg {tag_name}", fixed_attrs)
             context.current_parent.append_child(new_node)
             if not token.is_self_closing:
@@ -2404,7 +2437,7 @@ class ForeignTagHandler(TagHandler):
 
         # Handle MathML elements outside of MathML context (re-enter MathML)
         if tag_name_lower in MATHML_ELEMENTS:
-            new_node = Node(f"math {tag_name}", self._fix_svg_attribute_case(token.attributes))
+            new_node = Node(f"math {tag_name}", self._fix_foreign_attribute_case(token.attributes, "math"))
             context.current_parent.append_child(new_node)
             if not token.is_self_closing:
                 context.current_parent = new_node
