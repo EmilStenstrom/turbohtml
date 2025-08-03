@@ -117,10 +117,7 @@ class TagHandler:
         """Ensure we have a valid current_parent, fallback to body if needed"""
         if not context.current_parent:
             body = self.parser._ensure_body_node(context)
-            if body:
-                context.current_parent = body
-            else:
-                context.current_parent = self.parser.root
+            context.current_parent = body
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
         return False
@@ -1593,7 +1590,13 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     self.debug(f"Returning to formatting context: {formatting_parent}")
                     context.current_parent = formatting_parent
                 else:
-                    context.current_parent = self.parser._get_body_node()
+                    # Try to get body node, but fall back to root in fragment contexts
+                    body_node = self.parser._ensure_body_node(context)
+                    if body_node:
+                        context.current_parent = body_node
+                    else:
+                        # In fragment contexts, fall back to the fragment root
+                        context.current_parent = self.parser.root
 
                 # # Find the original <a> tag that contained the table
                 # original_a = context.current_table.parent
@@ -3095,9 +3098,8 @@ class HtmlTagHandler(TagHandler):
         elif context.document_state == DocumentState.AFTER_HTML:
             self.debug("Content after </html>, switching to body mode")
             body = self.parser._ensure_body_node(context)
-            if body:
-                context.current_parent = body
-                context.document_state = DocumentState.IN_BODY
+            context.current_parent = body
+            context.document_state = DocumentState.IN_BODY
 
         return True
 
