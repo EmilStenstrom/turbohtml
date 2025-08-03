@@ -210,6 +210,42 @@ class TurboHTML:
             body = self._ensure_body_node(context)
             context.transition_to_state(DocumentState.IN_BODY, body)
 
+    # DOM traversal helper methods
+    def find_current_table(self, context: ParseContext) -> Optional["Node"]:
+        """Find the current table element from the open elements stack when in table context."""
+        # When in explicit table context, look for the table in the open elements stack
+        if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, 
+                                    DocumentState.IN_ROW, DocumentState.IN_CELL, DocumentState.IN_CAPTION):
+            # Search through the open elements stack from top to bottom for a table
+            for element in reversed(context.open_elements._stack):
+                if element.tag_name == "table":
+                    return element
+        
+        # Special case: if we're AFTER_BODY but have tables in open_elements,
+        # we should still consider them for table-related elements (not foster parenting)
+        elif context.document_state == DocumentState.AFTER_BODY:
+            # Search through the open elements stack from top to bottom for a table
+            for element in reversed(context.open_elements._stack):
+                if element.tag_name == "table":
+                    return element
+        
+        # Fallback: traverse ancestors from current parent
+        current = context.current_parent
+        while current:
+            if current.tag_name == "table":
+                return current
+            current = current.parent
+        return None
+
+    def has_form_ancestor(self, context: ParseContext) -> bool:
+        """Check if there's a form element in the ancestry."""
+        current = context.current_parent
+        while current:
+            if current.tag_name == "form":
+                return True
+            current = current.parent
+        return False
+
     # Main Parsing Methods
     def _parse(self) -> None:
         """
@@ -708,13 +744,18 @@ class TurboHTML:
     
     def _foster_parent_element(self, tag_name: str, attributes: dict, context: "ParseContext"):
         """Foster parent an element outside of table context"""
-        # Find the table
-        table = context.current_parent.find_ancestor("table")
+        # Find the table - check if we're in table context
+        table = None
+        if context.document_state == DocumentState.IN_TABLE:
+            # We're in table context, so find the table from the open elements stack
+            table = self.find_current_table(context)
+        
         if not table or not table.parent:
             # No table found, use default handling
             new_node = Node(tag_name, attributes)
             context.current_parent.append_child(new_node)
             context.move_to_element(new_node)
+            context.open_elements.push(new_node)
             return
             
         # Insert the element before the table
@@ -723,7 +764,9 @@ class TurboHTML:
         
         new_node = Node(tag_name, attributes)
         foster_parent.children.insert(table_index, new_node)
+        new_node.parent = foster_parent  # Set parent relationship
         context.move_to_element(new_node)
+        context.open_elements.push(new_node)  # Add to stack
         self.debug(f"Foster parented {tag_name} before table")
 
     def _is_in_template_content(self, context: "ParseContext") -> bool:

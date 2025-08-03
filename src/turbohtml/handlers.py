@@ -90,7 +90,7 @@ class TagHandler:
 
     def _foster_parent_before_table(self, token: "HTMLToken", context: "ParseContext") -> "Node":
         """Foster parent an element before the current table"""
-        table = context.current_table
+        table = self.parser.find_current_table(context)
         if table and table.parent:
             new_node = self._create_element(token)
             table_index = table.parent.children.index(table)
@@ -471,7 +471,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 return True
 
             # If no cell, foster parent before table
-            table = context.current_table
+            table = self.parser.find_current_table(context)
             if table and table.parent:
                 self.debug("Foster parenting formatting element before table")
                 table_index = table.parent.children.index(table)
@@ -628,7 +628,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                 # Check if we're in table document state - if so, this select is in table context
                 if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_CAPTION):
                     # Find the current table for foster parenting
-                    current_table = context.current_table
+                    current_table = self.parser.find_current_table(context)
                     if current_table:
                         # Foster parent the table element out of select and back to table context
                         self.debug(f"Foster parenting table element {tag_name} from select back to table context")
@@ -821,6 +821,22 @@ class ParagraphTagHandler(TagHandler):
             body = self.parser._ensure_body_node(context)
             self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
 
+        # Check if we need to foster parent the paragraph due to table context FIRST
+        # before closing formatting elements
+        if (context.document_state == DocumentState.IN_TABLE and 
+            token.tag_name == "p" and
+            not self._is_in_template_content(context)):
+            self.debug(f"Foster parenting paragraph out of table")
+            self.parser._foster_parent_element(token.tag_name, token.attributes, context)
+            return True
+        
+        # No foster parenting needed, continue with normal logic
+        needs_foster_parenting = False
+        
+        if needs_foster_parenting:
+            # This is now handled above with proper foster parenting
+            pass
+
         # Close any active formatting elements before creating block element
         # This implements part of the HTML5 block element behavior
         if token.tag_name == "p" and context.active_formatting_elements:
@@ -877,23 +893,7 @@ class ParagraphTagHandler(TagHandler):
 
         # Create new p node under current parent (keeping formatting context)
         new_node = self._create_element(token)
-        
-        # Check if we need to foster parent the paragraph due to table context
-        if context.document_state == DocumentState.IN_TABLE and context.current_table:
-            # Foster parent the paragraph before the table
-            table = context.current_table
-            table_parent = table.parent
-            if table_parent:
-                table_index = table_parent.children.index(table)
-                table_parent.children.insert(table_index, new_node)
-                new_node.parent = table_parent
-                self.debug(f"Foster parented paragraph before table: {new_node}")
-            else:
-                # Fallback
-                context.current_parent.append_child(new_node)
-        else:
-            context.current_parent.append_child(new_node)
-            
+        context.current_parent.append_child(new_node)
         context.enter_element(new_node)
 
         # Add to stack of open elements
@@ -989,9 +989,9 @@ class ParagraphTagHandler(TagHandler):
             return True
         
         # Special case: if we're in table context, handle implicit p creation correctly
-        if context.document_state == DocumentState.IN_TABLE and context.current_table:
+        if context.document_state == DocumentState.IN_TABLE and self.parser.find_current_table(context):
             self.debug("No open p element found in table context, creating implicit p")
-            table = context.current_table
+            table = self.parser.find_current_table(context)
             
             # Check if table has a paragraph ancestor (indicating it's inside a p, not foster parented)
             paragraph_ancestor = table.find_ancestor("p")
@@ -1029,10 +1029,9 @@ class TableElementHandler(TagHandler):
     
     def _create_table_element(self, token: "HTMLToken", context: "ParseContext") -> "Node":
         """Create a table element and ensure table context"""
-        if not context.current_table:
+        if not self.parser.find_current_table(context):
             new_table = Node("table")
             context.current_parent.append_child(new_table)
-            context.current_table = new_table
             context.enter_element(new_table)
             self.parser.transition_to_state(context, DocumentState.IN_TABLE)
         
@@ -1040,9 +1039,11 @@ class TableElementHandler(TagHandler):
 
     def _append_to_table_level(self, element: "Node", context: "ParseContext") -> None:
         """Append element at table level"""
-        context.move_to_element(context.current_table)
-        context.current_table.append_child(element)
-        context.move_to_element(element)
+        current_table = self.parser.find_current_table(context)
+        if current_table:
+            context.move_to_element(current_table)
+            current_table.append_child(element)
+            context.move_to_element(element)
 
 
 class TableTagHandler(TemplateAwareHandler, TableElementHandler):
@@ -1089,10 +1090,9 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             return self._handle_table(token, context)
 
         # For other table elements, we need a current table
-        if not context.current_table:
+        if not self.parser.find_current_table(context):
             new_table = Node("table")
             context.current_parent.append_child(new_table)
-            context.current_table = new_table
             context.enter_element(new_table)
             self.parser.transition_to_state(context, DocumentState.IN_TABLE)
 
@@ -1161,8 +1161,8 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         else:
             context.current_parent.append_child(new_table)
             
-        context.current_table = new_table
         context.enter_element(new_table)
+        context.open_elements.push(new_table)  # Add table to open elements stack
         self.parser.transition_to_state(context, DocumentState.IN_TABLE)
         return True
 
@@ -1178,7 +1178,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         # Rule 2: Always create new colgroup at table level
         self.debug("Creating new colgroup")
         new_colgroup = self._create_element(token)
-        context.current_table.append_child(new_colgroup)
+        self.parser.find_current_table(context).append_child(new_colgroup)
 
         # Rule 3: Check context and create new tbody if needed
         td_ancestor = context.current_parent.find_ancestor("td")
@@ -1187,18 +1187,18 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             return True
             
         tbody_ancestor = context.current_parent.find_first_ancestor_in_tags(
-            ["tbody", "tr", "colgroup"], context.current_table)
+            ["tbody", "tr", "colgroup"], self.parser.find_current_table(context))
         if tbody_ancestor:
             self.debug("Found tbody/tr/colgroup ancestor, creating new tbody")
             # Create new empty tbody after the colgroup
             new_tbody = Node("tbody")
-            context.current_table.append_child(new_tbody)
+            self.parser.find_current_table(context).append_child(new_tbody)
             context.enter_element(new_tbody)
             return True
 
         # Rule 4: Otherwise stay at table level
         self.debug("No tbody/tr/td ancestors, staying at table level")
-        context.move_to_element(context.current_table)
+        context.move_to_element(self.parser.find_current_table(context))
         return True
 
     def _handle_col(self, token: "HTMLToken", context: "ParseContext") -> bool:
@@ -1215,12 +1215,12 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         last_colgroup = None
 
         # Look for last colgroup that's still valid
-        for child in reversed(context.current_table.children):
+        for child in reversed(self.parser.find_current_table(context).children):
             if child.tag_name == "colgroup":
                 # Found a colgroup, but check if there's tbody/tr/td after it
-                idx = context.current_table.children.index(child)
+                idx = self.parser.find_current_table(context).children.index(child)
                 has_content_after = any(
-                    c.tag_name in ("tbody", "tr", "td") for c in context.current_table.children[idx + 1 :]
+                    c.tag_name in ("tbody", "tr", "td") for c in self.parser.find_current_table(context).children[idx + 1 :]
                 )
                 self.debug(f"Found colgroup at index {idx}, has_content_after={has_content_after}")
                 if not has_content_after:
@@ -1232,7 +1232,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         if need_new_colgroup:
             self.debug("Creating new colgroup")
             last_colgroup = Node("colgroup")
-            context.current_table.append_child(last_colgroup)
+            self.parser.find_current_table(context).append_child(last_colgroup)
         else:
             self.debug(f"Reusing existing colgroup: {last_colgroup}")
 
@@ -1248,18 +1248,18 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             return True
             
         tbody_ancestor = context.current_parent.find_first_ancestor_in_tags(
-            ["tbody", "tr"], context.current_table)
+            ["tbody", "tr"], self.parser.find_current_table(context))
         if tbody_ancestor:
             self.debug("Found tbody/tr ancestor, creating new tbody")
             # Create new empty tbody after the colgroup
             new_tbody = Node("tbody")
-            context.current_table.append_child(new_tbody)
+            self.parser.find_current_table(context).append_child(new_tbody)
             context.enter_element(new_tbody)
             return True
 
         # Rule 6: Otherwise stay at table level
         self.debug("No tbody/tr/td ancestors, staying at table level")
-        context.move_to_element(context.current_table)
+        context.move_to_element(self.parser.find_current_table(context))
         return True
 
     def _handle_tbody(self, token: "HTMLToken", context: "ParseContext") -> bool:
@@ -1315,13 +1315,13 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             return tbody_ancestor
 
         # Look for existing tbody in table using new Node method
-        existing_tbody = context.current_table.find_child_by_tag("tbody")
+        existing_tbody = self.parser.find_current_table(context).find_child_by_tag("tbody")
         if existing_tbody:
             return existing_tbody
 
         # Create new tbody
         tbody = Node("tbody")
-        context.current_table.append_child(tbody)
+        self.parser.find_current_table(context).append_child(tbody)
         return tbody
 
     def _find_or_create_tr(self, context: "ParseContext") -> "Node":
@@ -1388,7 +1388,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             return True
 
         # Foster parent non-whitespace text nodes
-        table = context.current_table
+        table = self.parser.find_current_table(context)
         if not table or not table.parent:
             self.debug("No table or table parent found")
             return False
@@ -1544,9 +1544,9 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             return True
 
         if tag_name == "table":
-            if context.current_table:
+            if self.parser.find_current_table(context):
                 # Find any active formatting element that contained the table
-                formatting_parent = context.current_table.parent
+                formatting_parent = self.parser.find_current_table(context).parent
                 if formatting_parent and formatting_parent.tag_name in FORMATTING_ELEMENTS:
                     self.debug(f"Returning to formatting context: {formatting_parent}")
                     context.move_to_element(formatting_parent)
@@ -1560,7 +1560,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         context.move_to_element(self.parser.root)
 
                 # # Find the original <a> tag that contained the table
-                # original_a = context.current_table.parent
+                # original_a = self.parser.find_current_table(context).parent
                 # if original_a and original_a.tag_name == "a":
                 #     # Check if there was an <a> tag with different attributes inside the table
                 #     different_a = None
@@ -1603,7 +1603,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 #         body = self.parser._get_body_node()
                 #         context.move_to_element_with_fallback(body, self.parser.html_node)
 
-                context.current_table = None
                 self.parser.transition_to_state(context, DocumentState.IN_BODY)
                 return True
 
@@ -1612,7 +1611,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             a_element = context.current_parent.find_ancestor("a")
             if a_element:
                 body = self.parser._get_body_node()
-                context.move_to_element_with_fallback(a_element.parent, context.current_table or body) or self.parser.html_node
+                context.move_to_element_with_fallback(a_element.parent, self.parser.find_current_table(context) or body) or self.parser.html_node
                 return True
 
         elif tag_name in TABLE_ELEMENTS:
@@ -1689,9 +1688,8 @@ class FormTagHandler(TagHandler):
 
         if tag_name == "form":
             # Only one form element allowed
-            if context.has_form:
+            if self.parser.has_form_ancestor(context):
                 return True
-            context.has_form = True
 
         # Create and append the new node
         new_node = Node(tag_name, token.attributes)
@@ -1714,8 +1712,6 @@ class FormTagHandler(TagHandler):
         if current:
             body = self.parser._get_body_node()
             context.move_to_element_with_fallback(current.parent, body) or self.parser.html_node
-            if tag_name == "form":
-                context.has_form = False
 
         return True
 
@@ -1790,7 +1786,7 @@ class ListTagHandler(TagHandler):
         # If we're in table context, foster parent the li element
         if context.document_state == DocumentState.IN_TABLE:
             self.debug("Foster parenting li out of table")
-            table = context.current_table
+            table = self.parser.find_current_table(context)
             if table and table.parent:
                 new_node = self._create_element(token)
                 table_index = table.parent.children.index(table)
@@ -2345,7 +2341,7 @@ class ForeignTagHandler(TagHandler):
         ):
             # If we are in a cell or caption, handle normally (don't foster)
             if not self._is_in_cell_or_caption(context):
-                table = context.current_table
+                table = self.parser.find_current_table(context)
                 if table and table.parent:
                     self.debug(f"Foster parenting foreign element <{tag_name}> before table")
                     table_index = table.parent.children.index(table)
@@ -2422,9 +2418,9 @@ class ForeignTagHandler(TagHandler):
             # Look for the nearest table in the document tree that's still open
             table = context.current_parent.find_ancestor("table")
             
-            # Also check context.current_table
-            if not table and context.current_table:
-                table = context.current_table
+            # Also check self.parser.find_current_table(context)
+            if not table and self.parser.find_current_table(context):
+                table = self.parser.find_current_table(context)
             
             # Check if we're inside a caption/cell before deciding to foster parent
             in_caption_or_cell = context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
@@ -2444,7 +2440,6 @@ class ForeignTagHandler(TagHandler):
                 
                 # Update document state - we're still in the table context logically
                 self.parser.transition_to_state(context, DocumentState.IN_TABLE)
-                context.current_table = table
                 return True
             
             # If we're in caption/cell, move to that container instead of foster parenting
@@ -2760,7 +2755,7 @@ class HeadElementHandler(TagHandler):
         # If we're in table context, foster parent head elements to body
         if context.document_state == DocumentState.IN_TABLE:
             self.debug(f"Head element {tag_name} in table context, foster parenting to body")
-            table = context.current_table
+            table = self.parser.find_current_table(context)
             if table and table.parent:
                 # Foster parent before the table
                 new_node = Node(tag_name, token.attributes)
@@ -3379,7 +3374,7 @@ class PlaintextHandler(SelectAwareHandler):
         if (context.document_state == DocumentState.IN_TABLE and 
             context.current_parent.tag_name not in ("td", "th", "caption")):
             self.debug("Foster parenting plaintext out of table")
-            table = context.current_table
+            table = self.parser.find_current_table(context)
             if table and table.parent:
                 table_index = table.parent.children.index(table)
                 table.parent.children.insert(table_index, new_node)

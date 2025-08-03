@@ -47,14 +47,9 @@ class ParseContext:
         if self._current_parent is None:
             raise ValueError("ParseContext requires a valid initial parent (body_node or html_node)")
         self.current_context = None
-        self.has_form = False
-        self.in_rawtext = False
-        self.rawtext_start = 0
         self.html_node = html_node
         self._document_state = DocumentState.INITIAL
         self._content_state = ContentState.NONE
-        self.current_table = None
-        self.active_block = None
         self._debug = debug_callback
         self.doctype_seen = False
         
@@ -70,20 +65,12 @@ class ParseContext:
         return self._current_parent
 
     def _set_current_parent(self, new_parent: "Node") -> None:
-        """Private method to set current_parent with validation and logging"""
-        if new_parent is None:
-            # This is a serious parsing error - we should never have a None parent
-            error_msg = f"Attempt to set current_parent to None! Current state: {self}"
-            if self._debug:
-                self._debug(f"ERROR: {error_msg}")
-            raise ValueError(error_msg)
-        
+        """Internal method to update current parent. Should only be called by navigation methods."""
         if new_parent != self._current_parent:
             if self._debug:
                 old_name = self._current_parent.tag_name if self._current_parent else "None"
                 new_name = new_parent.tag_name if new_parent else "None"
                 self._debug(f"Parent change: {old_name} -> {new_name}")
-        
         self._current_parent = new_parent
 
     @property

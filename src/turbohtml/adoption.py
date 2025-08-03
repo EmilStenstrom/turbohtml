@@ -750,12 +750,23 @@ class AdoptionAgencyAlgorithm:
                 print(f"    Adoption Agency: Furthest block parent before: {furthest_block.parent.tag_name if furthest_block.parent else 'None'}")
             
             # Step 0: Move furthest block to be a child of common ancestor if needed
+            # BUT: don't move foster parented elements back into table context
             if furthest_block.parent != common_ancestor:
-                if furthest_block.parent:
-                    furthest_block.parent.remove_child(furthest_block)
-                common_ancestor.append_child(furthest_block)
-                if self.debug_enabled:
-                    print(f"    Adoption Agency: Moved furthest block to common ancestor")
+                # Check if this would be moving an element back into table context
+                should_foster_parent = self._should_foster_parent(common_ancestor)
+                
+                if should_foster_parent:
+                    # Don't move foster parented elements back into table context
+                    if self.debug_enabled:
+                        print(f"    Adoption Agency: Keeping foster parented element outside table")
+                    # Keep the element where it is (already foster parented)
+                else:
+                    # Normal case: move to common ancestor
+                    if furthest_block.parent:
+                        furthest_block.parent.remove_child(furthest_block)
+                    common_ancestor.append_child(furthest_block)
+                    if self.debug_enabled:
+                        print(f"    Adoption Agency: Moved furthest block to common ancestor")
             
             # Step 1: Create reconstructed elements as a nested chain before furthest block
             # For complex cases with multiple sequential blocks, create reconstruction at each level
