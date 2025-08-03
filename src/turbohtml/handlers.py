@@ -2191,15 +2191,23 @@ class AutoClosingTagHandler(TemplateAwareHandler):
         self.debug(f"Current parent's parent: {current.parent}")
         self.debug(f"Current parent's children: {[c.tag_name for c in current.children]}")
 
-        # First check if we're in a container element
-        if current.tag_name in ("div", "article", "section", "aside", "nav"):
-            self.debug(f"Inside container element {current.tag_name}, allowing nesting")
-            return False
-
         # Check if we're inside a formatting element AND this is a block element
         formatting_element = current.find_ancestor(lambda n: n.tag_name in FORMATTING_ELEMENTS)
-        if formatting_element and token.tag_name in BLOCK_ELEMENTS:
-            self.debug(f"Found formatting element ancestor: {formatting_element}")
+        
+        # Also check if there are active formatting elements that need reconstruction
+        has_active_formatting = len(context.active_formatting_elements) > 0
+        
+        if (formatting_element or has_active_formatting) and token.tag_name in BLOCK_ELEMENTS:
+            if formatting_element:
+                self.debug(f"Found formatting element ancestor: {formatting_element}")
+            if has_active_formatting:
+                self.debug(f"Found active formatting elements: {[e.element.tag_name for e in context.active_formatting_elements]}")
+
+            # If we're in a container element but have active formatting elements,
+            # we still need to handle reconstruction
+            if current.tag_name in ("div", "article", "section", "aside", "nav") and not has_active_formatting:
+                self.debug(f"Inside container element {current.tag_name} with no active formatting, allowing nesting")
+                return False
 
             # Move current_parent up to the formatting element's parent
             if formatting_element.parent:
@@ -2213,11 +2221,12 @@ class AutoClosingTagHandler(TemplateAwareHandler):
             # Add block element to open elements stack
             context.open_elements.push(new_block)
 
-            # Check if we should reconstruct formatting elements
-            # Only reconstruct if we're in a simple case (not deeply nested formatting)
+            # Check the formatting elements in the stack for decision making
             formatting_elements_in_stack = [e for e in context.open_elements._stack 
                                           if e.tag_name in FORMATTING_ELEMENTS]
-            
+
+            # Check if we should reconstruct formatting elements
+            # Only reconstruct if we're in a simple case (not deeply nested formatting)
             if len(formatting_elements_in_stack) <= 2:  # Simple case - reconstruct
                 # Check if this is a very simple case (like <a><div>) vs nested case (like <b><em>...<aside>)
                 # For nested formatting elements, let adoption agency handle everything

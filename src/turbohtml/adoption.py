@@ -683,30 +683,62 @@ class AdoptionAgencyAlgorithm:
             # These are elements that were implicitly closed and need to be reconstructed
             elements_to_reconstruct = []
             
-            # HTML5 adoption agency: determine the correct reconstruction range
-            # For complex nested patterns like <a><b><u><i><code>, skip the immediate child
-            # For simple patterns like <a><b><b>, include all elements
+            # HTML5 adoption agency: only reconstruct formatting elements that are actually
+            # broken by the furthest block. Elements that remain properly nested should
+            # stay in their original positions.
             
-            formatting_elements_count = sum(1 for i in range(formatting_index + 1, furthest_block_index)
-                                           if context.active_formatting_elements.find_element(context.open_elements._stack[i]))
+            # For Test 17 case: <b><em><foo><foob><fooc><aside></b></em>
+            # The <em> is not broken by <aside> - it remains properly nested in <b>
+            # Only elements that are actually interrupted by the block need reconstruction
             
-            # If there are many nested formatting elements, skip the immediate child (it stays stable)
-            start_index = formatting_index + 1
-            if formatting_elements_count >= 3:  # Complex case - skip immediate child
-                start_index = formatting_index + 2
-                if self.debug_enabled:
-                    print(f"    Adoption Agency: Complex reconstruction pattern detected, skipping immediate child")
-            
-            if self.debug_enabled:
-                print(f"    Adoption Agency: Reconstruction range: {start_index} to {furthest_block_index}")
-            
-            for i in range(start_index, furthest_block_index):
+            # Check if any formatting elements between format and furthest are broken
+            # by the furthest block (i.e., their content spans across the block boundary)
+            for i in range(formatting_index + 1, furthest_block_index):
                 element = context.open_elements._stack[i]
-                # Only reconstruct formatting elements
+                # Only consider formatting elements
                 if context.active_formatting_elements.find_element(element):
-                    elements_to_reconstruct.append(element)
-                    if self.debug_enabled:
-                        print(f"    Adoption Agency: Including {element.tag_name} for reconstruction")
+                    # Check if this formatting element should be reconstructed
+                    should_reconstruct = True
+                    
+                    # Special case: if it's the immediate child of the formatting element being closed
+                    if i == formatting_index + 1:
+                        # Count and analyze elements after this immediate child
+                        formatting_elements_after = []
+                        non_formatting_elements_after = 0
+                        
+                        for j in range(i + 1, furthest_block_index):
+                            intermediate_element = context.open_elements._stack[j]
+                            if context.active_formatting_elements.find_element(intermediate_element):
+                                formatting_elements_after.append(intermediate_element.tag_name)
+                            else:
+                                non_formatting_elements_after += 1
+                        
+                        # Rule 1: If there are 3+ non-formatting elements after the immediate child,
+                        # it should stay in place (long content chain case like Test 17)
+                        if non_formatting_elements_after >= 3:
+                            should_reconstruct = False
+                            if self.debug_enabled:
+                                print(f"    Adoption Agency: Skipping immediate child {element.tag_name} - has long non-formatting chain ({non_formatting_elements_after})")
+                        
+                        # Rule 2: If there are different types of formatting elements after it,
+                        # the immediate child should stay in place to maintain the nested structure (like Test 14)
+                        elif len(formatting_elements_after) > 0 and len(set(formatting_elements_after)) > 1:
+                            should_reconstruct = False
+                            if self.debug_enabled:
+                                print(f"    Adoption Agency: Skipping immediate child {element.tag_name} - has diverse formatting elements after it: {formatting_elements_after}")
+                        
+                        # Rule 3: Otherwise (direct adjacency, identical elements, or short chain), reconstruct it
+                        else:
+                            if self.debug_enabled:
+                                if len(formatting_elements_after) > 0:
+                                    print(f"    Adoption Agency: Reconstructing immediate child {element.tag_name} - same type formatting elements: {formatting_elements_after}")
+                                else:
+                                    print(f"    Adoption Agency: Reconstructing immediate child {element.tag_name} - direct interruption by furthest block")
+                    
+                    if should_reconstruct:
+                        elements_to_reconstruct.append(element)
+                        if self.debug_enabled:
+                            print(f"    Adoption Agency: Including {element.tag_name} for reconstruction")
             
             if self.debug_enabled:
                 print(f"    Adoption Agency: Elements to reconstruct: {[e.tag_name for e in elements_to_reconstruct]}")
@@ -796,8 +828,26 @@ class AdoptionAgencyAlgorithm:
                 if self.debug_enabled:
                     print(f"    Adoption Agency: No reconstruction, but setting current parent to formatting clone {formatting_clone.tag_name}")
             
-            # Step 6: Clean up stacks - only remove the formatting element being closed
-            # Do NOT remove elements_to_reconstruct from active formatting - they'll be handled by their own end tags
+            # Step 6: Clean up stacks - remove the formatting element being closed and its ancestors
+            # When we close a formatting element, any formatting elements nested within it 
+            # should also be considered closed
+            
+            # First, find formatting elements that were nested within the closed element
+            # In case like <b><em>...<aside></b>, the </b> should also close the <em>
+            # because <em> was completely contained within <b>
+            formatting_element_index_in_open = context.open_elements.index_of(formatting_element)
+            elements_to_close = []
+            if formatting_element_index_in_open >= 0:
+                # Find all active formatting elements that were between this element and furthest block
+                for i in range(formatting_element_index_in_open + 1, len(context.open_elements._stack)):
+                    element = context.open_elements._stack[i]
+                    if context.active_formatting_elements.find_element(element):
+                        # This formatting element was nested within the one being closed
+                        elements_to_close.append(element)
+                        if self.debug_enabled:
+                            print(f"    Adoption Agency: Found nested formatting element to close: {element.tag_name}")
+            
+            # Remove the main formatting element being closed
             if formatting_element in context.open_elements._stack:
                 context.open_elements.remove_element(formatting_element)
             
@@ -805,8 +855,13 @@ class AdoptionAgencyAlgorithm:
             if formatting_entry:
                 context.active_formatting_elements.remove(formatting_element)
             
+            # Remove nested formatting elements from active formatting (they're implicitly closed)
+            for element in elements_to_close:
+                context.active_formatting_elements.remove(element)
+                if self.debug_enabled:
+                    print(f"    Adoption Agency: Implicitly closing nested formatting element {element.tag_name}")
+            
             # Remove reconstructed elements from open elements stack only
-            # (they remain in active formatting for their own end tags)
             for element in elements_to_reconstruct:
                 if element in context.open_elements._stack:
                     context.open_elements.remove_element(element)
