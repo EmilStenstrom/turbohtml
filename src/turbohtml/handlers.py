@@ -966,6 +966,13 @@ class ParagraphTagHandler(TagHandler):
             
             # Normal case: close up to the p's parent
             context.current_parent = p_ancestor.parent
+            
+            # Reconstruct active formatting elements after closing the paragraph
+            # This ensures formatting elements that were inside the paragraph continue their scope
+            if context.active_formatting_elements._stack:
+                self.debug("Reconstructing active formatting elements after paragraph close")
+                self.parser.adoption_agency.reconstruct_active_formatting_elements(context)
+            
             return True
 
         # HTML5 spec: If no p element is in scope, check for special contexts
@@ -2131,9 +2138,9 @@ class AutoClosingTagHandler(TemplateAwareHandler):
             self.debug(f"Inside container element {current.tag_name}, allowing nesting")
             return False
 
-        # Check if we're inside a formatting element
+        # Check if we're inside a formatting element AND this is a block element
         formatting_element = current.find_ancestor(lambda n: n.tag_name in FORMATTING_ELEMENTS)
-        if formatting_element:
+        if formatting_element and token.tag_name in BLOCK_ELEMENTS:
             self.debug(f"Found formatting element ancestor: {formatting_element}")
 
             # Simple approach: just close the formatting element and let adoption agency handle the reconstruction
@@ -2141,7 +2148,7 @@ class AutoClosingTagHandler(TemplateAwareHandler):
             if formatting_element.parent:
                 context.current_parent = formatting_element.parent
             
-            # Create the block element normally - don't try to recreate formatting elements here
+            # Create the block element normally
             new_block = self._create_element(token)
             context.current_parent.append_child(new_block)
             context.current_parent = new_block
@@ -2149,7 +2156,16 @@ class AutoClosingTagHandler(TemplateAwareHandler):
             # Add block element to open elements stack
             context.open_elements.push(new_block)
 
-            self.debug(f"Created new block {new_block.tag_name}, letting adoption agency handle formatting element reconstruction")
+            # Reconstruct active formatting elements inside the block element
+            active_elements = []
+            for entry in context.active_formatting_elements:
+                active_elements.append(entry.element)
+            
+            if active_elements:
+                self.debug(f"Reconstructing active formatting elements inside block: {[e.tag_name for e in active_elements]}")
+                self.parser.adoption_agency._reconstruct_formatting_elements(active_elements, context)
+
+            self.debug(f"Created new block {new_block.tag_name}, with formatting element reconstruction")
 
             return True
 
@@ -3424,10 +3440,6 @@ class MenuitemElementHandler(TagHandler):
         if context.current_parent.find_ancestor("select"):
             self.debug("Ignoring menuitem inside select")
             return True
-
-        # Reconstruct active formatting elements before creating menuitem
-        # This is required by HTML5 spec for most element insertions
-        self.parser.reconstruct_active_formatting_elements(context)
 
         # Create the menuitem element
         new_node = Node(tag_name, token.attributes)

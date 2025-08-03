@@ -392,12 +392,22 @@ class AdoptionAgencyAlgorithm:
         # Step 1: If the current node is an HTML element whose tag name is subject,
         # and the current node is not in the list of active formatting elements,
         # then pop the current node off the stack of open elements and return.
-        if (not context.open_elements.is_empty() and 
-            context.open_elements.current() and
-            context.open_elements.current().tag_name == tag_name and
-            not context.active_formatting_elements.find_element(context.open_elements.current())):
-            context.open_elements.pop()
-            return True
+        current_node = context.open_elements.current() if not context.open_elements.is_empty() else None
+        if self.debug_enabled:
+            print(f"    Adoption Agency: Current node: {current_node}")
+            print(f"    Adoption Agency: Current node tag: {current_node.tag_name if current_node else None}")
+            print(f"    Adoption Agency: Target tag: {tag_name}")
+            
+        if current_node and current_node.tag_name == tag_name:
+            is_in_active_formatting = context.active_formatting_elements.find_element(current_node) is not None
+            if self.debug_enabled:
+                print(f"    Adoption Agency: Current node in active formatting elements: {is_in_active_formatting}")
+            
+            if not is_in_active_formatting:
+                if self.debug_enabled:
+                    print(f"    Adoption Agency: Step 1 - Simple case, popping current node")
+                context.open_elements.pop()
+                return True
         
         # Step 2: Find the formatting element
         formatting_entry = context.active_formatting_elements.find(tag_name)
@@ -556,6 +566,17 @@ class AdoptionAgencyAlgorithm:
             
             # Add as child of current parent
             current_parent.append_child(clone)
+            
+            # Add to open elements stack so subsequent parsing knows about it
+            context.open_elements.push(clone)
+            
+            # Update the active formatting elements to point to the clone instead of the original
+            entry = context.active_formatting_elements.find_element(element)
+            if entry:
+                # Replace the element in the active formatting elements entry
+                entry.element = clone
+                if self.debug_enabled:
+                    print(f"    Adoption Agency: Updated active formatting elements entry to point to cloned {clone.tag_name}")
             
             # Update current parent to be the clone for nesting
             current_parent = clone
