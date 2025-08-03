@@ -234,11 +234,9 @@ class TextHandler(TagHandler):
                     self._append_text(text, context)
             else:
                 self.debug("Parse error: non-whitespace after </body>, switching back to in body")
-                context.document_state = DocumentState.IN_BODY
-                body = self.parser._get_body_node()
-                if body:
-                    context.current_parent = body
-                    self._append_text(text, context)
+                body = self.parser._ensure_body_node(context)
+                self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
+                self._append_text(text, context)
             return True
 
         if context.content_state == ContentState.RAWTEXT:
@@ -271,13 +269,12 @@ class TextHandler(TagHandler):
                     context.current_parent = self.parser.html_node
                     self._append_text(text, context)
                     self.debug(f"Added whitespace to html level: '{text}'")
-                context.document_state = DocumentState.IN_BODY
+                self.parser.transition_to_state(context, DocumentState.IN_BODY)
             else:
                 # Non-whitespace text should trigger body creation and go there
                 self.debug("Non-whitespace text in AFTER_HEAD, transitioning to body")
                 body = self.parser._ensure_body_node(context)
-                context.current_parent = body
-                context.document_state = DocumentState.IN_BODY
+                self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
                 self._append_text(text, context)
                 self.debug(f"Added text to body: '{text}'")
             
@@ -300,8 +297,7 @@ class TextHandler(TagHandler):
                     # Switch to body for non-whitespace and remaining text
                     self.debug(f"Found non-whitespace at pos {i}, switching to body")
                     body = self.parser._ensure_body_node(context)
-                    context.current_parent = body
-                    context.document_state = DocumentState.IN_BODY
+                    self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
                     # In INITIAL state: preserve ALL text including leading whitespace when non-whitespace follows
                     # In IN_HEAD state: start from current non-whitespace position
                     self._append_text(text if was_initial else text[i:], context)
@@ -325,8 +321,7 @@ class TextHandler(TagHandler):
                 else:
                     self.debug("Non-basic whitespace in INITIAL state, preserving")
                     body = self.parser._ensure_body_node(context)
-                    context.current_parent = body
-                    context.document_state = DocumentState.IN_BODY
+                    self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
                     self._append_text(text, context)
                     return True
 
@@ -820,14 +815,12 @@ class ParagraphTagHandler(TagHandler):
             else:
                 # Fallback to body if p has no parent
                 body = self.parser._ensure_body_node(context)
-                if body:
-                    context.current_parent = body
+                context.current_parent = body
             return False  # Let the original handler handle the new tag
 
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
             body = self.parser._ensure_body_node(context)
-            context.current_parent = body
-            context.document_state = DocumentState.IN_BODY
+            self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
 
         # Close any active formatting elements before creating block element
         # This implements part of the HTML5 block element behavior
@@ -1042,7 +1035,7 @@ class TableElementHandler(TagHandler):
             context.current_parent.append_child(new_table)
             context.current_table = new_table
             context.current_parent = new_table
-            context.document_state = DocumentState.IN_TABLE
+            self.parser.transition_to_state(context, DocumentState.IN_TABLE)
         
         return self._create_element(token)
 
@@ -1102,7 +1095,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             context.current_parent.append_child(new_table)
             context.current_table = new_table
             context.current_parent = new_table
-            context.document_state = DocumentState.IN_TABLE
+            self.parser.transition_to_state(context, DocumentState.IN_TABLE)
 
         # Handle each element type
         handlers = {
@@ -1124,7 +1117,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         # Always create caption at table level
         new_caption = self._create_element(token)
         self._append_to_table_level(new_caption, context)
-        context.document_state = DocumentState.IN_CAPTION
+        self.parser.transition_to_state(context, DocumentState.IN_CAPTION)
         return True
 
     def _handle_table(self, token: "HTMLToken", context: "ParseContext") -> bool:
@@ -1133,8 +1126,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
             self.debug("Implicitly closing head and switching to body")
             body = self.parser._ensure_body_node(context)
-            context.current_parent = body
-            context.document_state = DocumentState.IN_BODY
+            self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
 
         # Special case: if we're inside a paragraph, don't auto-close it immediately
         # Instead, the table should be foster parented according to HTML5 spec
@@ -1172,7 +1164,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             
         context.current_table = new_table
         context.current_parent = new_table
-        context.document_state = DocumentState.IN_TABLE
+        self.parser.transition_to_state(context, DocumentState.IN_TABLE)
         return True
 
     def _handle_colgroup(self, token: "HTMLToken", context: "ParseContext") -> bool:
@@ -1549,7 +1541,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             caption = context.current_parent.find_ancestor("caption")
             if caption:
                 context.current_parent = caption.parent
-                context.document_state = DocumentState.IN_TABLE
+                self.parser.transition_to_state(context, DocumentState.IN_TABLE)
             return True
 
         if tag_name == "table":
@@ -1613,7 +1605,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 #         context.current_parent = body or self.parser.html_node
 
                 context.current_table = None
-                context.document_state = DocumentState.IN_BODY
+                self.parser.transition_to_state(context, DocumentState.IN_BODY)
                 return True
 
         elif tag_name == "a":
@@ -1694,8 +1686,7 @@ class FormTagHandler(TagHandler):
         # If we're in head, implicitly close it and switch to body
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
             body = self.parser._ensure_body_node(context)
-            context.current_parent = body
-            context.document_state = DocumentState.IN_BODY
+            self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
 
         if tag_name == "form":
             # Only one form element allowed
@@ -1749,8 +1740,7 @@ class ListTagHandler(TagHandler):
         # If we're in head, implicitly close it and switch to body
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
             body = self.parser._ensure_body_node(context)
-            context.current_parent = body
-            context.document_state = DocumentState.IN_BODY
+            self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
 
         # Handle dd/dt elements
         if tag_name in ("dd", "dt"):
@@ -2237,7 +2227,7 @@ class AutoClosingTagHandler(TemplateAwareHandler):
                 # Close everything up to the tr
                 body = self.parser._get_body_node()
                 context.current_parent = tr.parent or body or self.parser.html_node
-                context.document_state = DocumentState.IN_TABLE
+                self.parser.transition_to_state(context, DocumentState.IN_TABLE)
                 return True
 
         # Handle block elements
@@ -2376,7 +2366,7 @@ class ForeignTagHandler(TagHandler):
                     context.current_parent = new_node
 
                     # We are no longer in the table, so switch state
-                    context.document_state = DocumentState.IN_BODY
+                    self.parser.transition_to_state(context, DocumentState.IN_BODY)
                     return True
         return False
 
@@ -2454,7 +2444,7 @@ class ForeignTagHandler(TagHandler):
                 context.current_parent = new_node
                 
                 # Update document state - we're still in the table context logically
-                context.document_state = DocumentState.IN_TABLE
+                self.parser.transition_to_state(context, DocumentState.IN_TABLE)
                 context.current_table = table
                 return True
             
@@ -2826,8 +2816,7 @@ class HeadElementHandler(TagHandler):
             # If we're not in head (and not after head), switch to head
             if context.document_state not in (DocumentState.IN_HEAD, DocumentState.AFTER_HEAD):
                 head = self.parser._ensure_head_node()
-                context.current_parent = head
-                context.document_state = DocumentState.IN_HEAD
+                self.parser.transition_to_state(context, DocumentState.IN_HEAD, head)
                 self.debug("Switched to head state")
             elif context.document_state == DocumentState.AFTER_HEAD:
                 # Head elements after </head> should go back to head (foster parenting)
@@ -2884,8 +2873,7 @@ class HeadElementHandler(TagHandler):
         elif context.document_state == DocumentState.INITIAL:
             # Template at document start should go to head
             head = self.parser._ensure_head_node()
-            context.current_parent = head
-            context.document_state = DocumentState.IN_HEAD
+            self.parser.transition_to_state(context, DocumentState.IN_HEAD, head)
             self.debug("Switched to head state for template at document start")
             context.current_parent.append_child(template_node)
             self.debug("Added template to head")
@@ -2916,7 +2904,7 @@ class HeadElementHandler(TagHandler):
             self.debug("handling head end tag")
             if context.document_state == DocumentState.IN_HEAD:
                 # Transition to AFTER_HEAD state and move to html parent
-                context.document_state = DocumentState.AFTER_HEAD
+                self.parser.transition_to_state(context, DocumentState.AFTER_HEAD)
                 if context.current_parent and context.current_parent.tag_name == "head":
                     if context.current_parent.parent:
                         context.current_parent = context.current_parent.parent
@@ -2927,7 +2915,7 @@ class HeadElementHandler(TagHandler):
             elif context.document_state == DocumentState.INITIAL:
                 # If we see </head> in INITIAL state, transition to AFTER_HEAD
                 # This handles cases like <!doctype html></head> where no <head> was opened
-                context.document_state = DocumentState.AFTER_HEAD
+                self.parser.transition_to_state(context, DocumentState.AFTER_HEAD)
                 # Ensure html structure exists and move to html parent
                 self.parser._ensure_html_node()
                 context.current_parent = self.parser.html_node
@@ -3046,15 +3034,13 @@ class HtmlTagHandler(TagHandler):
             self.debug("Closing head and switching to body")
             body = self.parser._ensure_body_node(context)
             if body:
-                context.current_parent = body
-                context.document_state = DocumentState.IN_BODY
+                self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
 
         # Any content after </html> should be treated as body content
         elif context.document_state == DocumentState.AFTER_HTML:
             self.debug("Content after </html>, switching to body mode")
             body = self.parser._ensure_body_node(context)
-            context.current_parent = body
-            context.document_state = DocumentState.IN_BODY
+            self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
 
         return True
 
@@ -3082,8 +3068,7 @@ class FramesetTagHandler(TagHandler):
                 if body:
                     body.parent.remove_child(body)
                 self.parser.html_node.append_child(new_node)
-                context.current_parent = new_node
-                context.document_state = DocumentState.IN_FRAMESET
+                self.parser.transition_to_state(context, DocumentState.IN_FRAMESET, new_node)
             else:
                 # Nested frameset
                 self.debug("Creating nested frameset")
@@ -3137,10 +3122,9 @@ class FramesetTagHandler(TagHandler):
                 parent = context.current_parent.parent
                 if parent and parent.tag_name == "frameset":
                     context.current_parent = parent
-                    context.document_state = DocumentState.IN_FRAMESET
+                    self.parser.transition_to_state(context, DocumentState.IN_FRAMESET)
                 else:
-                    context.current_parent = self.parser.html_node
-                    context.document_state = DocumentState.IN_FRAMESET
+                    self.parser.transition_to_state(context, DocumentState.IN_FRAMESET, self.parser.html_node)
             return True
 
         return False
@@ -3156,8 +3140,7 @@ class ImageTagHandler(TagHandler):
         # If we're in head, implicitly close it and switch to body
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
             body = self.parser._ensure_body_node(context)
-            context.current_parent = body
-            context.document_state = DocumentState.IN_BODY
+            self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
 
         # Always create as "img" regardless of input tag
         new_node = Node("img", token.attributes)
@@ -3188,7 +3171,7 @@ class BodyElementHandler(TagHandler):
                 else:
                     # Fallback to context.html_node if parser's html_node is None
                     context.current_parent = context.html_node or body
-                context.document_state = DocumentState.AFTER_BODY
+                self.parser.transition_to_state(context, DocumentState.AFTER_BODY)
             return True
         return False
 
@@ -3383,8 +3366,7 @@ class PlaintextHandler(SelectAwareHandler):
         # If we're in INITIAL, AFTER_HEAD, or AFTER_BODY state, ensure we have body
         if context.document_state in (DocumentState.INITIAL, DocumentState.AFTER_HEAD, DocumentState.AFTER_BODY):
             body = self.parser._ensure_body_node(context)
-            context.current_parent = body
-            context.document_state = DocumentState.IN_BODY
+            self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
 
         # Check if we're inside a paragraph and close it (plaintext is a block element)
         if context.current_parent.tag_name == "p":
@@ -3402,8 +3384,7 @@ class PlaintextHandler(SelectAwareHandler):
             if table and table.parent:
                 table_index = table.parent.children.index(table)
                 table.parent.children.insert(table_index, new_node)
-                context.current_parent = new_node
-                context.document_state = DocumentState.IN_BODY
+                self.parser.transition_to_state(context, DocumentState.IN_BODY, new_node)
                 # Switch to PLAINTEXT mode
                 context.content_state = ContentState.PLAINTEXT
                 return True
@@ -3597,8 +3578,7 @@ class RubyElementHandler(TagHandler):
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
             self.debug("Implicitly closing head and switching to body for ruby element")
             body = self.parser._ensure_body_node(context)
-            context.current_parent = body
-            context.document_state = DocumentState.IN_BODY
+            self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
 
         # Handle auto-closing behavior for ruby elements
         if tag_name in ("rb", "rt", "rp"):

@@ -199,6 +199,17 @@ class TurboHTML:
             self.html_node.append_child(body)
         return body
 
+    # State transition helper methods
+    def transition_to_state(self, context: ParseContext, new_state: DocumentState, new_parent: "Node" = None) -> None:
+        """Transition context to any document state, optionally with a new parent node"""
+        context.transition_to_state(new_state, new_parent)
+
+    def ensure_body_context(self, context: ParseContext) -> None:
+        """Ensure context is in body context, transitioning if needed"""
+        if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
+            body = self._ensure_body_node(context)
+            context.transition_to_state(DocumentState.IN_BODY, body)
+
     # Main Parsing Methods
     def _parse(self) -> None:
         """
@@ -270,8 +281,7 @@ class TurboHTML:
                 None,  # No html node in fragments
                 debug_callback=self.debug if self.env_debug else None,
             )
-            context.document_state = DocumentState.IN_CELL
-            context.current_parent = self.root
+            context.transition_to_state(DocumentState.IN_CELL, self.root)
                 
         elif self.fragment_context in ("tr",):
             context = ParseContext(
@@ -280,8 +290,7 @@ class TurboHTML:
                 None,
                 debug_callback=self.debug if self.env_debug else None,
             )
-            context.document_state = DocumentState.IN_ROW
-            context.current_parent = self.root
+            context.transition_to_state(DocumentState.IN_ROW, self.root)
             
         elif self.fragment_context in ("thead", "tbody", "tfoot"):
             context = ParseContext(
@@ -290,8 +299,7 @@ class TurboHTML:
                 None,
                 debug_callback=self.debug if self.env_debug else None,
             )
-            context.document_state = DocumentState.IN_TABLE_BODY
-            context.current_parent = self.root
+            context.transition_to_state(DocumentState.IN_TABLE_BODY, self.root)
             
         elif self.fragment_context == "html":
             # HTML fragment context - allow document structure
@@ -301,8 +309,7 @@ class TurboHTML:
                 None,
                 debug_callback=self.debug if self.env_debug else None,
             )
-            context.document_state = DocumentState.INITIAL
-            context.current_parent = self.root
+            context.transition_to_state(DocumentState.INITIAL, self.root)
             
         elif self.fragment_context in self._get_rawtext_elements():
             # RAWTEXT fragment context - treat all content as raw text
@@ -312,8 +319,7 @@ class TurboHTML:
                 None,
                 debug_callback=self.debug if self.env_debug else None,
             )
-            context.document_state = DocumentState.IN_BODY
-            context.current_parent = self.root
+            context.transition_to_state(DocumentState.IN_BODY, self.root)
             
         else:
             # Default fragment context (body-like)
@@ -323,8 +329,7 @@ class TurboHTML:
                 None,
                 debug_callback=self.debug if self.env_debug else None,
             )
-            context.document_state = DocumentState.IN_BODY
-            context.current_parent = self.root
+            context.transition_to_state(DocumentState.IN_BODY, self.root)
             
         # Set foreign context if fragment context is within a foreign element
         if self.fragment_context and " " in self.fragment_context:
@@ -429,7 +434,7 @@ class TurboHTML:
             # Then ensure body exists
             body = self._ensure_body_node(context)
             if body:
-                context.document_state = DocumentState.IN_BODY
+                context.transition_to_state(DocumentState.IN_BODY)
 
     # Tag Handling Methods
     def _handle_start_tag(self, token: HTMLToken, tag_name: str, context: ParseContext, end_tag_idx: int) -> None:
@@ -446,8 +451,7 @@ class TurboHTML:
                 if context.document_state != DocumentState.IN_FRAMESET:
                     body = self._ensure_body_node(context)
                     if body:
-                        context.current_parent = body
-                        context.document_state = DocumentState.IN_BODY
+                        context.transition_to_state(DocumentState.IN_BODY, body)
 
         if context.content_state == ContentState.RAWTEXT:
             self.debug("In rawtext mode, ignoring start tag")
@@ -553,8 +557,7 @@ class TurboHTML:
         elif tag_name == "head":
             # Don't create duplicate head elements
             head = self._ensure_head_node()
-            context.current_parent = head
-            context.document_state = DocumentState.IN_HEAD
+            context.transition_to_state(DocumentState.IN_HEAD, head)
 
             # If we're not in frameset mode, ensure we have a body
             if context.document_state != DocumentState.IN_FRAMESET:
@@ -566,8 +569,7 @@ class TurboHTML:
             if body:
                 # Update attributes and switch to body mode
                 body.attributes.update(token.attributes)
-                context.current_parent = body
-                context.document_state = DocumentState.IN_BODY
+                context.transition_to_state(DocumentState.IN_BODY, body)
             return True
         elif tag_name == "frameset" and context.document_state == DocumentState.INITIAL:
             # Let the frameset handler handle this
@@ -576,16 +578,14 @@ class TurboHTML:
             # Handle implicit head/body transitions (but not in frameset mode)
             if context.document_state == DocumentState.INITIAL:
                 self.debug("Implicitly closing head and switching to body")
-                context.document_state = DocumentState.IN_BODY
                 body = self._ensure_body_node(context)
                 if body:
-                    context.current_parent = body
+                    context.transition_to_state(DocumentState.IN_BODY, body)
             elif context.current_parent == self._get_head_node():
                 self.debug("Closing head and switching to body")
-                context.document_state = DocumentState.IN_BODY
                 body = self._ensure_body_node(context)
                 if body:
-                    context.current_parent = body
+                    context.transition_to_state(DocumentState.IN_BODY, body)
         context.index = end_tag_idx
         return False
 

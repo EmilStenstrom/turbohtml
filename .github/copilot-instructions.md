@@ -13,7 +13,7 @@
 ## Critical Patterns
 
 1. **Handler Priority**: Handlers process in specific order - more specific handlers (DoctypeHandler, PlaintextHandler) before general ones
-2. **State Management**: Use `context.document_state` and `context.content_state` enums, not booleans
+2. **State Management**: `context.document_state` is read-only; use `parser.transition_to_state()` to change state. Read `context.content_state` directly, not booleans
 3. **Tree Building**: Always use `append_child()`, `insert_before()` methods to maintain sibling links
 4. **Test Format**: Node output must match html5lib format via `to_test_format()` method
 5. **Debug Tracing**: Use `self.debug()` in handlers and `parser.debug()` with consistent indentation

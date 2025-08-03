@@ -87,14 +87,8 @@ class ParseContext:
 
     @property
     def document_state(self) -> DocumentState:
+        """Read-only access to document state. Use transition_to_state() to change."""
         return self._document_state
-
-    @document_state.setter
-    def document_state(self, new_state: DocumentState) -> None:
-        if new_state != self._document_state:
-            if self._debug:
-                self._debug(f"Document State change: {self._document_state} -> {new_state}")
-            self._document_state = new_state
 
     @property
     def content_state(self) -> ContentState:
@@ -110,6 +104,16 @@ class ParseContext:
     def debug(self, message: str) -> None:
         if self._debug:
             self._debug(message)
+
+    # State transition methods
+    def transition_to_state(self, new_state: DocumentState, new_parent: "Node" = None) -> None:
+        """Transition to any document state, optionally updating current_parent"""
+        if new_parent is not None:
+            self.current_parent = new_parent
+        if new_state != self._document_state:
+            if self._debug:
+                self._debug(f"Document State change: {self._document_state} -> {new_state}")
+            self._document_state = new_state
 
     def __repr__(self):
         parent_name = self._current_parent.tag_name if self._current_parent else "None"
