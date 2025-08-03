@@ -314,6 +314,25 @@ class TextHandler(TagHandler):
             return True
 
         # Handle other text normally
+        
+        # Check if we need to reconstruct active formatting elements
+        # This happens when text is encountered but the current insertion point
+        # is not inside the appropriate formatting elements
+        if (context.active_formatting_elements._stack and 
+            context.document_state == DocumentState.IN_BODY and
+            context.current_parent.tag_name in ("p", "div", "body")):
+            
+            # Check if current parent is NOT inside any of the active formatting elements
+            needs_reconstruction = True
+            for entry in context.active_formatting_elements._stack:
+                if context.current_parent.find_ancestor(entry.element.tag_name):
+                    needs_reconstruction = False
+                    break
+            
+            if needs_reconstruction:
+                self.debug("Text encountered outside active formatting elements, reconstructing")
+                self.parser.adoption_agency.reconstruct_active_formatting_elements(context)
+        
         self._append_text(text, context)
         return True
 
@@ -928,9 +947,8 @@ class ParagraphTagHandler(TagHandler):
         # Add to stack of open elements
         context.open_elements.push(new_node)
 
-        # Note: Don't reconstruct active formatting elements immediately.
-        # They will be reconstructed when the next content (text/element) is encountered.
-        # This matches the HTML5 spec behavior.
+        # Note: Active formatting elements will be reconstructed as needed
+        # when content is encountered that requires them (per HTML5 spec)
 
         self.debug(f"Created new paragraph node: {new_node} under {new_node.parent}")
         return True
