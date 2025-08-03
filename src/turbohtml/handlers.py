@@ -536,7 +536,8 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
 
     def _should_handle_start_impl(self, tag_name: str, context: "ParseContext") -> bool:
         # If we're in a select, handle all tags to prevent formatting elements
-        if self._is_in_select(context):
+        # BUT only if we're not in template content (template elements should be handled by template handlers)
+        if self._is_in_select(context) and not self._is_in_template_content(context):
             return True
         return tag_name in ("select", "option", "optgroup", "datalist")
 
@@ -592,6 +593,42 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         # If we're in a select, ignore any rawtext elements (plaintext, script, style, etc.)
         if self._is_in_select(context) and tag_name in RAWTEXT_ELEMENTS:
             self.debug(f"Ignoring rawtext element {tag_name} inside select")
+            return True
+
+        # If we're in a select and encounter table elements, check if we should foster parent
+        if self._is_in_select(context) and tag_name in TABLE_ELEMENTS:
+            # Find the select element
+            select_element = context.current_parent.find_ancestor("select")
+            if select_element:
+                # Check if we're in table document state - if so, this select is in table context
+                if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_CAPTION):
+                    # Find the current table for foster parenting
+                    current_table = context.current_table
+                    if current_table:
+                        # Foster parent the table element out of select and back to table context
+                        self.debug(f"Foster parenting table element {tag_name} from select back to table context")
+                        
+                        # Find the appropriate foster parent location
+                        foster_parent = self._find_foster_parent_for_table_element_in_current_table(current_table, tag_name)
+                        if foster_parent:
+                            # Create the new table element
+                            new_node = Node(tag_name, token.attributes)
+                            foster_parent.append_child(new_node)
+                            context.current_parent = new_node
+                            
+                            self.debug(f"Foster parented {tag_name} to {foster_parent.tag_name}: {new_node}")
+                            return True
+                        else:
+                            # No appropriate foster parent found - delegate to TableTagHandler for complex table structure creation
+                            self.debug(f"No simple foster parent found for {tag_name}, delegating to TableTagHandler")
+                            return False  # Let TableTagHandler handle this
+                else:
+                    # Not in table document state, so ignore the table element completely
+                    self.debug(f"Ignoring table element {tag_name} inside select (not in table document state)")
+                    return True
+            
+            # Fallback: ignore the table element
+            self.debug(f"Ignoring table element {tag_name} inside select")
             return True
 
         elif tag_name in ("optgroup", "option"):
@@ -653,7 +690,99 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                 self.debug(f"Created option: {new_option}, parent now: {context.current_parent}")
                 return True
 
+        # If we're in a select and this is any other tag, ignore it
+        if self._is_in_select(context):
+            self.debug(f"Ignoring {tag_name} inside select")
+            return True
+
         return False
+
+    def _find_foster_parent_for_table_element_in_current_table(self, table: "Node", table_tag: str) -> Optional["Node"]:
+        """Find the appropriate foster parent for a table element within the current table"""
+        if table_tag in ("tr",):
+            # <tr> elements should go in tbody, thead, tfoot - look for the last one
+            last_section = None
+            for child in table.children:
+                if child.tag_name in ("tbody", "thead", "tfoot"):
+                    last_section = child
+            
+            # If we found a table section, use it
+            if last_section:
+                return last_section
+            
+            # No table section found - this means we need to create implicit tbody
+            # Instead of doing it here, return None to signal that TableTagHandler should handle this
+            return None
+            
+        elif table_tag in ("td", "th"):
+            # Cell elements should go in the last <tr> of the last table section
+            last_section = None
+            for child in table.children:
+                if child.tag_name in ("tbody", "thead", "tfoot"):
+                    last_section = child
+            
+            if last_section:
+                # Find the last tr in this section
+                last_tr = None
+                for child in last_section.children:
+                    if child.tag_name == "tr":
+                        last_tr = child
+                if last_tr:
+                    return last_tr
+                # No tr found, return the section (TableTagHandler will create tr if needed)
+                return last_section
+            
+            # No table section found, return None to delegate to TableTagHandler
+            return None
+            
+        elif table_tag in ("tbody", "thead", "tfoot", "caption"):
+            # These go directly in table
+            return table
+            
+        elif table_tag in ("col", "colgroup"):
+            # These go in table or colgroup
+            return table
+        
+        return table
+
+    def _find_foster_parent_for_table_element(self, select_element: "Node", table_tag: str) -> Optional["Node"]:
+        """Find the appropriate foster parent for a table element inside a select"""
+        # Look at the ancestors of the select element to find appropriate table context
+        current = select_element.parent
+        
+        while current:
+            if table_tag in ("tr",):
+                # <tr> elements should go in tbody, thead, tfoot, or table
+                if current.tag_name in ("tbody", "thead", "tfoot", "table"):
+                    return current
+            elif table_tag in ("td", "th"):
+                # Cell elements should go in <tr>
+                if current.tag_name == "tr":
+                    return current
+                # If no tr found, might need to create implicit table structure
+                if current.tag_name in ("tbody", "thead", "tfoot"):
+                    # Find or create a tr in this section
+                    for child in current.children:
+                        if child.tag_name == "tr":
+                            return child
+                    # No tr found, would need to create one - for now return the section
+                    return current
+            elif table_tag in ("tbody", "thead", "tfoot", "caption"):
+                # These should go directly in table
+                if current.tag_name == "table":
+                    return current
+            elif table_tag == "col":
+                # Columns should go in colgroup or table
+                if current.tag_name in ("colgroup", "table"):
+                    return current
+            elif table_tag == "colgroup":
+                # Column groups go in table
+                if current.tag_name == "table":
+                    return current
+            
+            current = current.parent
+        
+        return None
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
         return tag_name in ("select", "option", "optgroup", "datalist")
@@ -925,13 +1054,8 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
     """Handles table-related elements"""
 
     def _should_handle_start_impl(self, tag_name: str, context: "ParseContext") -> bool:
-        # Handle td/th elements even inside template content, but handle other table elements carefully
-        if tag_name in ("td", "th"):
-            return True
-            
         # Always handle col/colgroup to prevent them being handled by VoidElementHandler
         if tag_name in ("col", "colgroup"):
-            # But only process them if in table context
             return True
 
         # Don't handle table elements in foreign contexts unless in integration point
@@ -950,7 +1074,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     encoding = annotation_ancestor.attributes.get("encoding", "").lower()
                     if encoding in ("application/xhtml+xml", "text/html"):
                         in_integration_point = True
-                    temp_parent = temp_parent.parent
                     
             if not in_integration_point:
                 return False
@@ -1975,10 +2098,10 @@ class VoidElementHandler(SelectAwareHandler):
         return True
 
 
-class AutoClosingTagHandler(TagHandler):
+class AutoClosingTagHandler(TemplateAwareHandler):
     """Handles auto-closing behavior for certain tags"""
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def _should_handle_start_impl(self, tag_name: str, context: "ParseContext") -> bool:
         # Handle both formatting cases and auto-closing cases
         if not context.current_parent:
             body = self.parser._ensure_body_node(context)

@@ -64,6 +64,7 @@ class TurboHTML:
             PlaintextHandler(self),
             FramesetTagHandler(self),
             ForeignTagHandler(self) if handle_foreign_elements else None,  # Move before other handlers
+            SelectTagHandler(self),  # Move before TableTagHandler so select can control table elements
             TableTagHandler(self),
             ParagraphTagHandler(self),  # Move before AutoClosingTagHandler for special button logic
             AutoClosingTagHandler(self),
@@ -79,7 +80,6 @@ class TurboHTML:
             FormattingElementHandler(self),
             ImageTagHandler(self),
             TextHandler(self),
-            SelectTagHandler(self),
             FormTagHandler(self),
             HeadingTagHandler(self),
             RubyElementHandler(self),  # Handle ruby annotation elements
@@ -441,9 +441,7 @@ class TurboHTML:
             # But don't do this if we're inside template content
             if (
                 context.document_state == DocumentState.INITIAL or context.document_state == DocumentState.IN_HEAD
-            ) and tag_name not in HEAD_ELEMENTS and tag_name != "html" and not (
-                context.current_parent and context.current_parent.tag_name == "content"
-            ):
+            ) and tag_name not in HEAD_ELEMENTS and tag_name != "html" and not self._is_in_template_content(context):
                 self.debug("Implicitly creating body node")
                 if context.document_state != DocumentState.IN_FRAMESET:
                     body = self._ensure_body_node(context)
