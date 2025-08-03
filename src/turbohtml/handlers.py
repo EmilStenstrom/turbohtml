@@ -906,7 +906,23 @@ class ParagraphTagHandler(TagHandler):
 
         # Create new p node under current parent (keeping formatting context)
         new_node = self._create_element(token)
-        context.current_parent.append_child(new_node)
+        
+        # Check if we need to foster parent the paragraph due to table context
+        if context.document_state == DocumentState.IN_TABLE and context.current_table:
+            # Foster parent the paragraph before the table
+            table = context.current_table
+            table_parent = table.parent
+            if table_parent:
+                table_index = table_parent.children.index(table)
+                table_parent.children.insert(table_index, new_node)
+                new_node.parent = table_parent
+                self.debug(f"Foster parented paragraph before table: {new_node}")
+            else:
+                # Fallback
+                context.current_parent.append_child(new_node)
+        else:
+            context.current_parent.append_child(new_node)
+            
         context.current_parent = new_node
 
         # Add to stack of open elements
@@ -944,26 +960,19 @@ class ParagraphTagHandler(TagHandler):
             return True
 
         # Standard behavior: Find nearest p ancestor and move up to its parent
+        if context.current_parent.tag_name == "p":
+            # Current parent is the p element being closed
+            context.current_parent = context.current_parent.parent
+            
+            # Reconstruct active formatting elements after closing the paragraph
+            if context.active_formatting_elements._stack:
+                self.debug("Reconstructing active formatting elements after paragraph close")
+                self.parser.adoption_agency.reconstruct_active_formatting_elements(context)
+            
+            return True
+            
         p_ancestor = context.current_parent.find_ancestor("p")
         if p_ancestor:
-            # Special case: if we're in table context, also create implicit p
-            if context.document_state == DocumentState.IN_TABLE:
-                self.debug("Found p ancestor in table context, creating implicit p as sibling")
-                # Create implicit p as sibling to current content in the paragraph
-                # Insert it before the table for correct order
-                if context.current_table and context.current_table.parent == p_ancestor:
-                    table_index = p_ancestor.children.index(context.current_table)
-                    p_node = Node("p")
-                    p_ancestor.children.insert(table_index, p_node)
-                    p_node.parent = p_ancestor
-                else:
-                    # Fallback: append at end
-                    p_node = Node("p")
-                    p_ancestor.append_child(p_node)
-                # Then close the paragraph normally
-                context.current_parent = p_ancestor.parent
-                return True
-            
             # Normal case: close up to the p's parent
             context.current_parent = p_ancestor.parent
             
@@ -1395,6 +1404,14 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             context.current_parent.append_child(text_node)
             return True
 
+        # Check if we're already inside a foster parented element that can contain text
+        if context.current_parent.tag_name in ("p", "div", "section", "article", "blockquote"):
+            self.debug(f"Already inside foster parented block element {context.current_parent.tag_name}, adding text directly")
+            text_node = Node("#text")
+            text_node.text_content = text
+            context.current_parent.append_child(text_node)
+            return True
+
         # Foster parent non-whitespace text nodes
         table = context.current_table
         if not table or not table.parent:
@@ -1406,24 +1423,39 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         table_index = foster_parent.children.index(table)
         self.debug(f"Foster parent: {foster_parent}, table index: {table_index}")
 
-        # Find the most recent <a> tag before the table with content
+        # Find the most recent <a> tag before the table
         prev_a = None
         for child in reversed(foster_parent.children[:table_index]):
-            if child.tag_name == "a" and child.children:
+            if child.tag_name == "a":
                 prev_a = child
-                self.debug(f"Found previous <a> tag with content: {prev_a} with attributes {prev_a.attributes}")
+                self.debug(f"Found previous <a> tag: {prev_a} with attributes {prev_a.attributes}")
                 break
 
+        # Check if we can continue the previous <a> tag or need to create a new one
         if prev_a:
-            self.debug("Creating new <a> tag with attributes from previous one")
-            # Create new <a> with same attributes
-            new_a = Node("a", prev_a.attributes.copy())
-            text_node = Node("#text")
-            text_node.text_content = text
-            new_a.append_child(text_node)
-            foster_parent.children.insert(table_index, new_a)
-            self.debug(f"Inserted new <a> tag before table: {new_a}")
-            return True
+            # We can only continue the previous <a> if we haven't entered and exited any table structure
+            # since it was created. Check if the current context suggests we're still in the same "run"
+            # by examining if we're directly in the <a> context or if there have been intervening table elements.
+            
+            # If we're currently inside the <a> element's context (meaning we're still processing
+            # the same foster parenting run), we can add to it
+            if context.current_parent.find_ancestor("a") == prev_a:
+                self.debug("Still in same <a> context, adding text to existing <a> tag")
+                text_node = Node("#text")
+                text_node.text_content = text
+                prev_a.append_child(text_node)
+                self.debug(f"Added text to existing <a> tag: {prev_a}")
+                return True
+            else:
+                # We're not in the same context anymore, so create a new <a> tag
+                self.debug("No longer in same <a> context, creating new <a> tag")
+                new_a = Node("a", prev_a.attributes.copy())
+                text_node = Node("#text")
+                text_node.text_content = text
+                new_a.append_child(text_node)
+                foster_parent.children.insert(table_index, new_a)
+                self.debug(f"Inserted new <a> tag before table: {new_a}")
+                return True
 
         # Check for other formatting context
         # Collect formatting elements from current position up to foster parent
