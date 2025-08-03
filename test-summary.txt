@@ -1,14 +1,14 @@
-Tests passed: 1178/1729 (68%) (skipped: 39 script-dependent)
+Tests passed: 1180/1729 (68%) (skipped: 39 script-dependent)
 
 adoption01.dat: 18/18 (100%) [..................]
 adoption02.dat: 2/2 (100%) [..]
 blocks.dat: 48/48 (100%) [................................................]
 comments01.dat: 16/16 (100%) [................]
 doctype01.dat: 37/37 (100%) [.....................................]
-domjs-unsafe.dat: 21/49 (43%) [...xxxxx.....xxxxxxxx......xxxxxxxx.x....xxxxx..x]
+domjs-unsafe.dat: 22/49 (45%) [...xxxxx.....xxxxxxxx......xxxxxxxx.x....xxx.x..x]
 entities01.dat: 75/75 (100%) [...........................................................................]
 entities02.dat: 26/26 (100%) [..........................]
-foreign-fragment.dat: 47/66 (71%) [..x...............x..xx..xx..xx..xx..x.....x.xx............xxxx..x]
+foreign-fragment.dat: 48/66 (73%) [..................x..xx..xx..xx..xx..x.....x.xx............xxxx..x]
 html5test-com.dat: 23/24 (96%) [....................x...]
 inbody01.dat: 4/4 (100%) [....]
 isindex.dat: 4/4 (100%) [....]
