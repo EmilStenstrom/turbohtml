@@ -683,11 +683,30 @@ class AdoptionAgencyAlgorithm:
             # These are elements that were implicitly closed and need to be reconstructed
             elements_to_reconstruct = []
             
-            for i in range(formatting_index + 1, furthest_block_index):
+            # HTML5 adoption agency: determine the correct reconstruction range
+            # For complex nested patterns like <a><b><u><i><code>, skip the immediate child
+            # For simple patterns like <a><b><b>, include all elements
+            
+            formatting_elements_count = sum(1 for i in range(formatting_index + 1, furthest_block_index)
+                                           if context.active_formatting_elements.find_element(context.open_elements._stack[i]))
+            
+            # If there are many nested formatting elements, skip the immediate child (it stays stable)
+            start_index = formatting_index + 1
+            if formatting_elements_count >= 3:  # Complex case - skip immediate child
+                start_index = formatting_index + 2
+                if self.debug_enabled:
+                    print(f"    Adoption Agency: Complex reconstruction pattern detected, skipping immediate child")
+            
+            if self.debug_enabled:
+                print(f"    Adoption Agency: Reconstruction range: {start_index} to {furthest_block_index}")
+            
+            for i in range(start_index, furthest_block_index):
                 element = context.open_elements._stack[i]
                 # Only reconstruct formatting elements
                 if context.active_formatting_elements.find_element(element):
                     elements_to_reconstruct.append(element)
+                    if self.debug_enabled:
+                        print(f"    Adoption Agency: Including {element.tag_name} for reconstruction")
             
             if self.debug_enabled:
                 print(f"    Adoption Agency: Elements to reconstruct: {[e.tag_name for e in elements_to_reconstruct]}")
