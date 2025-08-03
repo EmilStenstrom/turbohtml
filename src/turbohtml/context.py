@@ -42,7 +42,10 @@ class ParseContext:
     ):
         self.index = 0
         self.length = length
-        self._current_parent = body_node
+        # Ensure we never start with None as current_parent
+        self._current_parent = body_node or html_node
+        if self._current_parent is None:
+            raise ValueError("ParseContext requires a valid initial parent (body_node or html_node)")
         self.current_context = None
         self.has_form = False
         self.in_rawtext = False

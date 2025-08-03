@@ -609,34 +609,25 @@ class TurboHTML:
 
         # Handle comment placement based on parser state
         if context.document_state == DocumentState.INITIAL:
-            # If we have a current parent (like html), add comment there
-            if context.current_parent:
-                self.debug(f"Adding comment to current parent {context.current_parent.tag_name} in initial state")
-                # In INITIAL state, comments should come before head elements but after the html tag
-                if context.current_parent.tag_name == "html":
-                    # Find the position to insert - before the first non-comment element (like head)
-                    insert_index = 0
-                    for i, child in enumerate(context.current_parent.children):
-                        if child.tag_name not in ("#comment", "#text"):
-                            insert_index = i
-                            break
-                        else:
-                            insert_index = i + 1
-                    context.current_parent.insert_child_at(insert_index, comment_node)
-                    self.debug(f"Inserted comment at index {insert_index}")
-                else:
-                    context.current_parent.append_child(comment_node)
+            # In INITIAL state, check if html_node is already in tree
+            if self.html_node in self.root.children:
+                # HTML node exists, comment should go inside it
+                self.debug(f"Adding comment to html in initial state")
+                # Find the position to insert - before the first non-comment element (like head)
+                insert_index = 0
+                for i, child in enumerate(self.html_node.children):
+                    if child.tag_name not in ("#comment", "#text"):
+                        insert_index = i
+                        break
+                    else:
+                        insert_index = i + 1
+                self.html_node.insert_child_at(insert_index, comment_node)
+                self.debug(f"Inserted comment at index {insert_index}")
             else:
+                # HTML node doesn't exist yet, comment goes at document level
                 self.debug("Adding comment to root in initial state")
                 self.root.append_child(comment_node)
-                self._ensure_html_node()  # Make sure html node is in tree
-                context.document_state = DocumentState.IN_BODY
-                # Ensure body exists and set as current parent
-                if context.document_state != DocumentState.IN_FRAMESET:
-                    body = self._ensure_body_node(context)
-                    if body:
-                        context.current_parent = body
-            self.debug(f"Root children after append: {[c.tag_name for c in self.root.children]}")
+            self.debug(f"Root children after comment: {[c.tag_name for c in self.root.children]}")
             return
 
         # Comments after </head> should go in html node after head but before body

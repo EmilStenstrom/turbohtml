@@ -1,4 +1,4 @@
-Tests passed: 1180/1729 (68%) (skipped: 39 script-dependent)
+Tests passed: 1184/1729 (68%) (skipped: 39 script-dependent)
 
 adoption01.dat: 18/18 (100%) [..................]
 adoption02.dat: 2/2 (100%) [..]
@@ -30,11 +30,11 @@ search-element.dat: 2/3 (67%) [..x]
 svg.dat: 0/8 (0%) [xxxxxxxx]
 tables01.dat: 11/19 (58%) [......xx.xx..x..xxx]
 template.dat: 42/112 (38%) [..................xx.xxxxxx.x...xxxxxxxx.xxxxxxxxxxxxxxxx..xxxxxxxxxx.x.xx.xxxxx...x..x...xx...xxx.x.xxxxxxxxxxx]
-tests1.dat: 79/112 (71%) [....................x....x....xxx...x.............x.xxx...xxx.......xx..xxxx.xxxxx....x...x..x...x...xxx.....xx.]
+tests1.dat: 80/112 (71%) [....................x....x....xxx...x...............xxx...xxx.......xx..xxxx.xxxxx....x...x..x...x...xxx.....xx.]
 tests2.dat: 63/63 (100%) [...............................................................]
 tests3.dat: 24/24 (100%) [........................]
 tests4.dat: 9/9 (100%) [.........]
-tests5.dat: 9/15 (60%) [.x....xx..x.xx.ss] (2 skipped)
+tests5.dat: 12/15 (80%) [..........x.xx.ss] (2 skipped)
 tests6.dat: 37/52 (71%) [.xxx..x..x................x.xx...xx.x.x..x.xx.......]
 tests7.dat: 22/34 (65%) [...........xxxxxx.....xx...x.xx..x]
 tests8.dat: 6/10 (60%) [....x..xxx]
