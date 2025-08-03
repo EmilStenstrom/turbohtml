@@ -531,7 +531,26 @@ class AdoptionAgencyAlgorithm:
         if elements_to_reconstruct:
             if self.debug_enabled:
                 print(f"    Adoption Agency: Reconstructing {len(elements_to_reconstruct)} formatting elements")
+            
+            # For the no furthest block case, reconstruct elements as siblings
+            # of the formatting element that was just closed, not nested inside
+            reconstruction_parent = context.current_parent
+            if formatting_element.parent and formatting_element.parent != context.current_parent:
+                # If the formatting element had a different parent, use that level for reconstruction
+                reconstruction_parent = formatting_element.parent
+            
+            # Temporarily adjust current_parent for reconstruction
+            original_parent = context.current_parent
+            context.current_parent = reconstruction_parent
+            
             self._reconstruct_formatting_elements(elements_to_reconstruct, context)
+            
+            # Restore original current_parent if reconstruction changed it inappropriately
+            if context.current_parent.tag_name in [e.tag_name for e in elements_to_reconstruct]:
+                # We're now inside the last reconstructed element, which is correct
+                pass
+            else:
+                context.current_parent = original_parent
         
         return True
     

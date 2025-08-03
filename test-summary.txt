@@ -1,6 +1,6 @@
-Tests passed: 1165/1729 (67%) (skipped: 39 script-dependent)
+Tests passed: 1166/1729 (67%) (skipped: 39 script-dependent)
 
-adoption01.dat: 14/18 (78%) [.........x...xx..x]
+adoption01.dat: 15/18 (83%) [.............xx..x]
 adoption02.dat: 1/2 (50%) [.x]
 blocks.dat: 48/48 (100%) [................................................]
 comments01.dat: 16/16 (100%) [................]
