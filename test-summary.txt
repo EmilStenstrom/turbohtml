@@ -1,7 +1,7 @@
-Tests passed: 1154/1729 (67%) (skipped: 39 script-dependent)
+Tests passed: 1158/1729 (67%) (skipped: 39 script-dependent)
 
-adoption01.dat: 9/18 (50%) [....xx.xxx...xx.xx]
-adoption02.dat: 0/2 (0%) [xx]
+adoption01.dat: 11/18 (61%) [....xx...x...xx.xx]
+adoption02.dat: 1/2 (50%) [.x]
 blocks.dat: 48/48 (100%) [................................................]
 comments01.dat: 16/16 (100%) [................]
 doctype01.dat: 37/37 (100%) [.....................................]
@@ -9,7 +9,7 @@ domjs-unsafe.dat: 21/49 (43%) [...xxxxx.....xxxxxxxx......xxxxxxxx.x....xxxxx..x
 entities01.dat: 75/75 (100%) [...........................................................................]
 entities02.dat: 26/26 (100%) [..........................]
 foreign-fragment.dat: 47/66 (71%) [..x...............x..xx..xx..xx..xx..x.....x.xx............xxxx..x]
-html5test-com.dat: 24/24 (100%) [........................]
+html5test-com.dat: 23/24 (96%) [....................x...]
 inbody01.dat: 4/4 (100%) [....]
 isindex.dat: 4/4 (100%) [....]
 main-element.dat: 2/3 (67%) [..x]
@@ -30,7 +30,7 @@ search-element.dat: 2/3 (67%) [..x]
 svg.dat: 0/8 (0%) [xxxxxxxx]
 tables01.dat: 11/19 (58%) [......xx.xx..x..xxx]
 template.dat: 42/112 (38%) [..................xx.xxxxxx.x...xxxxxxxx.xxxxxxxxxxxxxxxx..xxxxxxxxxx.x.xx.xxxxx...x..x...xx...xxx.x.xxxxxxxxxxx]
-tests1.dat: 76/112 (68%) [....................x.x..x....xxx...x.............x.xx..x.xxx.......xxxxxxxx.x.xxx....x...x..x.x.x...xxx.....xx.]
+tests1.dat: 78/112 (70%) [....................x.x..x....xxx...x.............x.xx..x.xxx.......xx..xxxx.x.xxx....x...x..x.x.x...xxx.....xx.]
 tests2.dat: 63/63 (100%) [...............................................................]
 tests3.dat: 24/24 (100%) [........................]
 tests4.dat: 9/9 (100%) [.........]
@@ -58,4 +58,4 @@ tests26.dat: 1/20 (5%) [xxxxxxxxxxxxxx.xxxxx]
 tests_innerHTML_1.dat: 33/81 (41%) [...x...xxx.xxxxxxxxx........xxxxxx.xxx......xxxxxxxxxxxxxxx..xx.xx.......x.xxxxxx]
 tricky01.dat: 1/9 (11%) [.xxxxxxxx]
 webkit01.dat: 28/52 (54%) [...x...x.x.x....xx.xxxx.xx.x..x..x.x.x..x.xxxx.x...x]
-webkit02.dat: 6/33 (18%) [.ss.x.xxx.xxx.xxxxxxxxxx.xxxxxxxxxx] (2 skipped)
+webkit02.dat: 6/33 (18%) [.ss.x.xxx.xx.xxxxxxxxxxx.xxxxxxxxxx] (2 skipped)

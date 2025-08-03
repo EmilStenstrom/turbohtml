@@ -662,39 +662,47 @@ class AdoptionAgencyAlgorithm:
                 if self.debug_enabled:
                     print(f"    Adoption Agency: Moved furthest block to common ancestor")
             
-            # Step 1: Create empty reconstructed elements as siblings before furthest block
+            # Step 1: Create reconstructed elements as a nested chain before furthest block
             # These represent elements that were implicitly closed
+            first_reconstructed = None
+            last_reconstructed_sibling = None
+            current_parent_for_chain = common_ancestor
+            
             for element in elements_to_reconstruct:
                 if self.debug_enabled:
-                    print(f"    Adoption Agency: Creating empty sibling {element.tag_name} before furthest block")
+                    print(f"    Adoption Agency: Creating reconstructed {element.tag_name}")
                 sibling_clone = Node(element.tag_name, element.attributes.copy())
-                # Insert as sibling before furthest block
-                if furthest_block.parent:
+                
+                if first_reconstructed is None:
+                    # Insert first element as sibling before furthest block
                     if self.debug_enabled:
-                        print(f"    Adoption Agency: Inserting {sibling_clone.tag_name} before {furthest_block.tag_name} in {furthest_block.parent.tag_name}")
+                        print(f"    Adoption Agency: Inserting first {sibling_clone.tag_name} before {furthest_block.tag_name} in {furthest_block.parent.tag_name}")
                         print(f"    Adoption Agency: Parent children before: {[c.tag_name for c in furthest_block.parent.children]}")
                     furthest_block.parent.insert_before(sibling_clone, furthest_block)
+                    first_reconstructed = sibling_clone
+                    current_parent_for_chain = sibling_clone
                     if self.debug_enabled:
                         print(f"    Adoption Agency: Parent children after: {[c.tag_name for c in furthest_block.parent.children]}")
                 else:
+                    # Subsequent elements nest inside the previous one
                     if self.debug_enabled:
-                        print(f"    Adoption Agency: ERROR - furthest block has no parent!")
+                        print(f"    Adoption Agency: Nesting {sibling_clone.tag_name} inside {current_parent_for_chain.tag_name}")
+                    current_parent_for_chain.append_child(sibling_clone)
+                    current_parent_for_chain = sibling_clone
+                
+                last_reconstructed_sibling = sibling_clone
             
-            # Step 2: Create nested reconstruction inside furthest block
-            # Build the nesting from outermost to innermost
-            current_container = furthest_block
-            
-            # Create reconstructed elements inside furthest block (reverse order for nesting)
-            for element in reversed(elements_to_reconstruct):
+            # Move furthest block inside the last reconstructed element if we created any
+            if last_reconstructed_sibling and elements_to_reconstruct:
                 if self.debug_enabled:
-                    print(f"    Adoption Agency: Creating nested {element.tag_name} inside furthest block")
-                nested_clone = Node(element.tag_name, element.attributes.copy())
-                # Insert at the beginning of furthest block
-                if current_container.children:
-                    current_container.insert_before(current_container.children[0], nested_clone)
-                else:
-                    current_container.append_child(nested_clone)
-                current_container = nested_clone
+                    print(f"    Adoption Agency: Moving furthest block into last reconstructed element {last_reconstructed_sibling.tag_name}")
+                if furthest_block.parent:
+                    furthest_block.parent.remove_child(furthest_block)
+                last_reconstructed_sibling.append_child(furthest_block)
+            
+            # Step 2: Create the formatting element clone inside furthest block
+            # No nested reconstruction needed when we've already handled siblings
+            current_container = furthest_block
             
             # Step 3: Create the formatting element clone inside the deepest nested element
             if self.debug_enabled:
