@@ -1,7 +1,7 @@
-Tests passed: 1166/1729 (67%) (skipped: 39 script-dependent)
+Tests passed: 1168/1729 (68%) (skipped: 39 script-dependent)
 
 adoption01.dat: 15/18 (83%) [.............xx..x]
-adoption02.dat: 1/2 (50%) [.x]
+adoption02.dat: 2/2 (100%) [..]
 blocks.dat: 48/48 (100%) [................................................]
 comments01.dat: 16/16 (100%) [................]
 doctype01.dat: 37/37 (100%) [.....................................]
@@ -30,7 +30,7 @@ search-element.dat: 2/3 (67%) [..x]
 svg.dat: 0/8 (0%) [xxxxxxxx]
 tables01.dat: 11/19 (58%) [......xx.xx..x..xxx]
 template.dat: 42/112 (38%) [..................xx.xxxxxx.x...xxxxxxxx.xxxxxxxxxxxxxxxx..xxxxxxxxxx.x.xx.xxxxx...x..x...xx...xxx.x.xxxxxxxxxxx]
-tests1.dat: 78/112 (70%) [....................x.x..x....xxx...x.............x.xxx...xxx.......xx..xxxx.x.xxx....x...x..x.x.x...xxx.....xx.]
+tests1.dat: 79/112 (71%) [....................x....x....xxx...x.............x.xxx...xxx.......xx..xxxx.xxxxx....x...x..x...x...xxx.....xx.]
 tests2.dat: 63/63 (100%) [...............................................................]
 tests3.dat: 24/24 (100%) [........................]
 tests4.dat: 9/9 (100%) [.........]
@@ -57,5 +57,5 @@ tests25.dat: 26/26 (100%) [..........................]
 tests26.dat: 2/20 (10%) [xxxxxxxxx.xxxx.xxxxx]
 tests_innerHTML_1.dat: 33/81 (41%) [...x...xxx.xxxxxxxxx........xxxxxx.xxx......xxxxxxxxxxxxxxx..xx.xx.......x.xxxxxx]
 tricky01.dat: 1/9 (11%) [.xxxxxxxx]
-webkit01.dat: 28/52 (54%) [...x...x.x.x....xx.xxxx.xx.x..x..x.x.x..x.xxxx.x...x]
-webkit02.dat: 6/33 (18%) [.ss.x.xxx.xx.xxxxxxxxxxx.xxxxxxxxxx] (2 skipped)
+webkit01.dat: 29/52 (56%) [...x...x.x.x....xx.xxxx.xx.x..x..x.x.x....xxxx.x...x]
+webkit02.dat: 5/33 (15%) [.ss.x.xxx.xxxxxxxxxxxxxx.xxxxxxxxxx] (2 skipped)

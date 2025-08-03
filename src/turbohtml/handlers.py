@@ -413,6 +413,14 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         tag_name = token.tag_name
         self.debug(f"handling <{tag_name}>, context={context}")
 
+        # Check for duplicate active formatting elements (e.g., <a> inside <a>)
+        existing_entry = context.active_formatting_elements.find(tag_name)
+        if existing_entry and tag_name in ('a',):  # Apply to specific elements that shouldn't nest
+            self.debug(f"Found existing active {tag_name}, running adoption agency to close it first")
+            # Run adoption agency algorithm to close the existing element
+            if self.parser.adoption_agency.run_algorithm(tag_name, context):
+                self.debug(f"Adoption agency handled duplicate {tag_name}")
+
         # Add to open elements stack
         new_element = self._create_element(token)
         context.open_elements.push(new_element)
@@ -2193,7 +2201,6 @@ class AutoClosingTagHandler(TemplateAwareHandler):
         if formatting_element and token.tag_name in BLOCK_ELEMENTS:
             self.debug(f"Found formatting element ancestor: {formatting_element}")
 
-            # Simple approach: just close the formatting element and let adoption agency handle the reconstruction
             # Move current_parent up to the formatting element's parent
             if formatting_element.parent:
                 context.current_parent = formatting_element.parent
@@ -2206,10 +2213,24 @@ class AutoClosingTagHandler(TemplateAwareHandler):
             # Add block element to open elements stack
             context.open_elements.push(new_block)
 
-            # Do NOT reconstruct active formatting elements inside the block element
-            # The adoption agency algorithm will handle this correctly when the end tags are processed
-
-            self.debug(f"Created new block {new_block.tag_name}, letting adoption agency handle reconstruction")
+            # Check if we should reconstruct formatting elements
+            # Only reconstruct if we're in a simple case (not deeply nested formatting)
+            formatting_elements_in_stack = [e for e in context.open_elements._stack 
+                                          if e.tag_name in FORMATTING_ELEMENTS]
+            
+            if len(formatting_elements_in_stack) <= 2:  # Simple case - reconstruct
+                # Reconstruct active formatting elements inside the block element
+                active_elements = []
+                for entry in context.active_formatting_elements:
+                    active_elements.append(entry.element)
+                
+                if active_elements:
+                    self.debug(f"Simple case: reconstructing active formatting elements inside block: {[e.tag_name for e in active_elements]}")
+                    self.parser.adoption_agency._reconstruct_formatting_elements(active_elements, context)
+                
+                self.debug(f"Created new block {new_block.tag_name}, with simple formatting element reconstruction")
+            else:  # Complex case - let adoption agency handle it
+                self.debug(f"Complex case: created new block {new_block.tag_name}, letting adoption agency handle reconstruction")
 
             return True
 
