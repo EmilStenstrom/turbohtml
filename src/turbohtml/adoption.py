@@ -472,6 +472,20 @@ class AdoptionAgencyAlgorithm:
         if self.debug_enabled:
             print(f"    Adoption Agency: No furthest block case")
         
+        # Before popping, check for formatting elements that need to be reconstructed
+        # Find all formatting elements after the target formatting element in open elements stack
+        formatting_index = context.open_elements.index_of(formatting_element)
+        elements_to_reconstruct = []
+        
+        if formatting_index >= 0:
+            for i in range(formatting_index + 1, len(context.open_elements._stack)):
+                element = context.open_elements._stack[i]
+                if element.tag_name in FORMATTING_ELEMENTS:
+                    elements_to_reconstruct.append(element)
+        
+        if self.debug_enabled:
+            print(f"    Adoption Agency: Elements to reconstruct after popping: {[e.tag_name for e in elements_to_reconstruct]}")
+        
         # Pop elements from stack until we reach the formatting element (inclusive)
         while not context.open_elements.is_empty():
             element = context.open_elements.pop()
@@ -481,7 +495,7 @@ class AdoptionAgencyAlgorithm:
         # Remove from active formatting elements
         context.active_formatting_elements.remove(formatting_element)
         
-        # Update current_parent to the new top of stack
+        # Update current_parent to the new top of stack or appropriate fallback
         if not context.open_elements.is_empty():
             context.current_parent = context.open_elements.current()
         else:
@@ -494,22 +508,84 @@ class AdoptionAgencyAlgorithm:
                         current.tag_name.startswith("svg ") or
                         current.tag_name in ("math math", "svg svg")):
                         context.current_parent = current
-                        return True
-                    current = current.parent
-            
-            # Fallback to body or html
-            body_node = None
-            if hasattr(context, 'html_node') and context.html_node:
-                for child in context.html_node.children:
-                    if child.tag_name == "body":
-                        body_node = child
                         break
-            if body_node:
-                context.current_parent = body_node
+                    current = current.parent
+                else:
+                    # Fallback if no foreign context found
+                    context.current_parent = self._get_body_or_root(context)
             else:
-                context.current_parent = self.parser.root
+                # Regular case - use body or root
+                context.current_parent = self._get_body_or_root(context)
+        
+        # Reconstruct formatting elements that were implicitly closed
+        if elements_to_reconstruct:
+            if self.debug_enabled:
+                print(f"    Adoption Agency: Reconstructing {len(elements_to_reconstruct)} formatting elements")
+            self._reconstruct_formatting_elements(elements_to_reconstruct, context)
         
         return True
+    
+    def _get_body_or_root(self, context):
+        """Get the body element or fallback to root"""
+        body_node = None
+        if hasattr(context, 'html_node') and context.html_node:
+            for child in context.html_node.children:
+                if child.tag_name == "body":
+                    body_node = child
+                    break
+        if body_node:
+            return body_node
+        else:
+            return self.parser.root
+    
+    def _reconstruct_formatting_elements(self, elements: List[Node], context):
+        """Reconstruct formatting elements that were implicitly closed"""
+        if not elements:
+            return
+            
+        if self.debug_enabled:
+            print(f"    Adoption Agency: Reconstructing formatting elements: {[e.tag_name for e in elements]}")
+            print(f"    Adoption Agency: Current parent before reconstruction: {context.current_parent.tag_name}")
+        
+        # Reconstruct each formatting element as nested children
+        current_parent = context.current_parent
+        
+        for element in elements:
+            # Clone the formatting element
+            clone = Node(element.tag_name, element.attributes.copy())
+            
+            # Add as child of current parent
+            current_parent.append_child(clone)
+            
+            # Update current parent to be the clone for nesting
+            current_parent = clone
+            
+            if self.debug_enabled:
+                print(f"    Adoption Agency: Reconstructed {clone.tag_name} inside {clone.parent.tag_name}")
+        
+        # Update context's current parent to the innermost reconstructed element
+        context.current_parent = current_parent
+        
+        if self.debug_enabled:
+            print(f"    Adoption Agency: Current parent after reconstruction: {context.current_parent.tag_name}")
+
+    def reconstruct_active_formatting_elements(self, context):
+        """
+        Reconstruct active formatting elements according to HTML5 spec.
+        This is called when certain elements (like block elements) are encountered.
+        """
+        if not context.active_formatting_elements._stack:
+            return
+            
+        if self.debug_enabled:
+            print(f"    Adoption Agency: Reconstructing active formatting elements")
+            print(f"    Adoption Agency: Active formatting elements: {[e.element.tag_name for e in context.active_formatting_elements._stack]}")
+        
+        # Get all active formatting elements
+        active_elements = [entry.element for entry in context.active_formatting_elements._stack]
+        
+        # Reconstruct them in the current context
+        self._reconstruct_formatting_elements(active_elements, context)
     
     def _run_complex_adoption_spec(self, formatting_entry: FormattingElementEntry, furthest_block: Node, context) -> bool:
         """

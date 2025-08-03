@@ -9,6 +9,7 @@ from turbohtml.constants import (
     HEAD_ELEMENTS,
     HEADING_ELEMENTS,
     HTML_ELEMENTS,
+    HTML_BREAK_OUT_ELEMENTS,
     MATHML_ELEMENTS,
     SVG_CASE_SENSITIVE_ATTRIBUTES,
     RAWTEXT_ELEMENTS,
@@ -2332,7 +2333,7 @@ class ForeignTagHandler(TagHandler):
                     return True
 
         # Check if this is an HTML element that should break out of foreign content
-        if context.current_context in ("svg", "math") and tag_name_lower in HTML_ELEMENTS:
+        if context.current_context in ("svg", "math") and tag_name_lower in HTML_BREAK_OUT_ELEMENTS:
             # Check if we're in an integration point where HTML is allowed
             in_integration_point = False
             
@@ -3306,6 +3307,11 @@ class PlaintextHandler(SelectAwareHandler):
             if body:
                 context.current_parent = body
                 context.document_state = DocumentState.IN_BODY
+
+        # Check if we're inside a paragraph and close it (plaintext is a block element)
+        if context.current_parent.tag_name == "p":
+            self.debug("Closing paragraph before plaintext")
+            context.current_parent = context.current_parent.parent
 
         # Create plaintext node
         new_node = Node("plaintext", token.attributes)
