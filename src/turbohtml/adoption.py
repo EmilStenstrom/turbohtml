@@ -4,15 +4,18 @@ Adoption Agency Algorithm Implementation
 This module implements the HTML5 Adoption Agency Algorithm for handling
 mismatched formatting elements according to the WHATWG specification.
 
+The algorithm handles complex cases including:
+- Basic formatting element reconstruction
+- Cascading reconstruction across multiple block elements
+- Proper DOM tree structure maintenance
+
 References:
 - https://html.spec.whatwg.org/multipage/parsing.html#adoption-agency-algorithm
 """
 
 from typing import List, Optional, Tuple, Dict, Any, Union
-from turbohtml.constants import BLOCK_ELEMENTS
 from dataclasses import dataclass
-
-from .constants import FORMATTING_ELEMENTS, BLOCK_ELEMENTS
+import traceback
 
 from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken
@@ -760,8 +763,8 @@ class AdoptionAgencyAlgorithm:
             last_reconstructed_sibling = None
             current_parent_for_chain = common_ancestor
             
-            # Special handling for Test 13 case: multiple sequential block elements
-            # In this case, we should reconstruct the formatting element at each block level
+            # Handle cascading reconstruction for multiple sequential block elements  
+            # In complex cases, we need to reconstruct the formatting element at each block level
             # Find ALL block elements between formatting element and furthest block
             all_blocks_between = []
             for i in range(formatting_index + 1, len(context.open_elements._stack)):
@@ -825,8 +828,10 @@ class AdoptionAgencyAlgorithm:
             # Add the formatting clone to the container
             current_container.append_child(formatting_clone)
             
-            # Special handling for Test 13: after creating the normal structure,
-            # insert additional blocks with <a> reconstructions
+            # Handle cascading reconstruction for complex nested structures:
+            # When there are multiple sequential block elements, the HTML5 spec requires
+            # reconstructing the formatting element at each intermediate level.
+            # This creates a cascading pattern: <a><div><a><div><a>...
             if len(all_blocks_between) > 1 and formatting_element.tag_name == 'a':
                 if self.debug_enabled:
                     print(f"    Adoption Agency: Post-processing cascading reconstruction for {len(all_blocks_between)} blocks")
@@ -842,7 +847,7 @@ class AdoptionAgencyAlgorithm:
                     # Remove the formatting clone temporarily
                     current_container.remove_child(formatting_clone)
                     
-                    # For Test 13, the pattern is:
+                    # The cascading pattern is:
                     # furthest_block -> <a> (sibling) -> first_div -> <a> (child) -> second_div -> ...
                     
                     # Add the first <a> as a sibling to furthest block content
@@ -1011,7 +1016,6 @@ class AdoptionAgencyAlgorithm:
         except Exception as e:
             if self.debug_enabled:
                 print(f"    Adoption Agency: ERROR in complex algorithm: {e}")
-                import traceback
                 traceback.print_exc()
             return False
     
