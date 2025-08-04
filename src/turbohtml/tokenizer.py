@@ -404,7 +404,8 @@ class HTMLTokenizer:
         if not text:
             return None
 
-        # Decode entities in text - this handles invalid codepoints properly
+        # Replace invalid characters first, then decode entities 
+        text = self._replace_invalid_characters(text)
         decoded = self._decode_entities(text)
         return HTMLToken("Character", data=decoded)
 

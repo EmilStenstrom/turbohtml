@@ -362,11 +362,17 @@ class TurboHTML:
             context.transition_to_state(DocumentState.IN_BODY, self.root)
             
         # Set foreign context if fragment context is within a foreign element
-        if self.fragment_context and " " in self.fragment_context:
-            namespace_elem = self.fragment_context.split(" ")[0]
-            if namespace_elem in ("math", "svg"):
-                context.current_context = namespace_elem
-                self.debug(f"Set foreign context to {namespace_elem}")
+        if self.fragment_context:
+            if self.fragment_context in ("math", "svg"):
+                # Simple foreign context (e.g., fragment_context="math")
+                context.current_context = self.fragment_context
+                self.debug(f"Set foreign context to {self.fragment_context}")
+            elif " " in self.fragment_context:
+                # Namespaced foreign element (e.g., fragment_context="math ms")
+                namespace_elem = self.fragment_context.split(" ")[0]
+                if namespace_elem in ("math", "svg"):
+                    context.current_context = namespace_elem
+                    self.debug(f"Set foreign context to {namespace_elem}")
             
         return context
 

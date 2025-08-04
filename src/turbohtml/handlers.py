@@ -2594,8 +2594,9 @@ class ForeignTagHandler(TagHandler):
 
             new_node = Node(f"math {tag_name}", self._fix_foreign_attribute_case(token.attributes, "math"))
             context.current_parent.append_child(new_node)
-            # Only set as current parent if not self-closing
-            if not token.is_self_closing:
+            # In MathML context, even self-closing tags can contain content
+            # Elements like <mi/>, <mn/>, <mo/>, <ms/>, <mtext/> should be able to contain text
+            if not token.is_self_closing or tag_name_lower in ("mi", "mn", "mo", "ms", "mtext"):
                 context.enter_element(new_node)
             return True
 

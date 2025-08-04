@@ -1,4 +1,4 @@
-Tests passed: 1221/1729 (71%) (skipped: 39 script-dependent)
+Tests passed: 1228/1729 (71%) (skipped: 39 script-dependent)
 
 adoption01.dat: 18/18 (100%) [..................]
 adoption02.dat: 2/2 (100%) [..]
@@ -8,7 +8,7 @@ doctype01.dat: 37/37 (100%) [.....................................]
 domjs-unsafe.dat: 49/49 (100%) [.................................................]
 entities01.dat: 75/75 (100%) [...........................................................................]
 entities02.dat: 26/26 (100%) [..........................]
-foreign-fragment.dat: 48/66 (73%) [..................x..xx..xx..xx..xx..x.....x.xx............xxxx..x]
+foreign-fragment.dat: 54/66 (82%) [..................x...x...x...x...x....x.x.................xxxx..x]
 html5test-com.dat: 23/24 (96%) [....................x...]
 inbody01.dat: 4/4 (100%) [....]
 isindex.dat: 4/4 (100%) [....]
@@ -19,7 +19,7 @@ namespace-sensitivity.dat: 0/1 (0%) [x]
 noscript01.dat: 0/0 (N/A) [ssssssssssssssssss] (18 skipped)
 pending-spec-changes-plain-text-unsafe.dat: 0/1 (0%) [x]
 pending-spec-changes.dat: 2/3 (67%) [..x]
-plain-text-unsafe.dat: 13/33 (39%) [...x..xxx.xxxxxxxx..x.....xxxxxxx]
+plain-text-unsafe.dat: 14/33 (42%) [...x..xxx.xxxx.xxx..x.....xxxxxxx]
 quirks01.dat: 4/4 (100%) [....]
 ruby.dat: 21/21 (100%) [.....................]
 scriptdata01.dat: 17/26 (65%) [......x........xxx.xxxx.x.]
