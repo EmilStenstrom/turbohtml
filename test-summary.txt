@@ -1,4 +1,4 @@
-Tests passed: 1230/1729 (71%) (skipped: 39 script-dependent)
+Tests passed: 1240/1729 (72%) (skipped: 39 script-dependent)
 
 adoption01.dat: 18/18 (100%) [..................]
 adoption02.dat: 2/2 (100%) [..]
@@ -13,9 +13,9 @@ html5test-com.dat: 23/24 (96%) [....................x...]
 inbody01.dat: 4/4 (100%) [....]
 isindex.dat: 4/4 (100%) [....]
 main-element.dat: 3/3 (100%) [...]
-math.dat: 0/8 (0%) [xxxxxxxx]
+math.dat: 8/8 (100%) [........]
 menuitem-element.dat: 20/20 (100%) [....................]
-namespace-sensitivity.dat: 0/1 (0%) [x]
+namespace-sensitivity.dat: 1/1 (100%) [.]
 noscript01.dat: 0/0 (N/A) [ssssssssssssssssss] (18 skipped)
 pending-spec-changes-plain-text-unsafe.dat: 0/1 (0%) [x]
 pending-spec-changes.dat: 2/3 (67%) [..x]
@@ -27,7 +27,7 @@ scripted/adoption01.dat: 0/0 (N/A) [s] (1 skipped)
 scripted/ark.dat: 0/0 (N/A) [s] (1 skipped)
 scripted/webkit01.dat: 0/0 (N/A) [ss] (2 skipped)
 search-element.dat: 3/3 (100%) [...]
-svg.dat: 0/8 (0%) [xxxxxxxx]
+svg.dat: 3/8 (38%) [xxxxx...]
 tables01.dat: 12/19 (63%) [......xx.xx..x..xx.]
 template.dat: 44/112 (39%) [..................xx.xxxxxx.x...xxxxxx.x.xxxxxxxxxxxxxxxx..xxx.xxxxxx.x.xx.xxxxx...x..x...xx...xxx.x.xxxxxxxxxxx]
 tests1.dat: 82/112 (73%) [.........................x....xxx...x...............xxx...xxx.......xx..xxxx.x.xxx....x...x......x...xxx....xxx.]
@@ -38,8 +38,8 @@ tests5.dat: 12/15 (80%) [..........x.xx.ss] (2 skipped)
 tests6.dat: 37/52 (71%) [.xxx..x..x................x.xx...xx.x.x..x.xx.......]
 tests7.dat: 22/34 (65%) [...........xxxxxx.....xx...x.xx..x]
 tests8.dat: 6/10 (60%) [....x..xxx]
-tests9.dat: 14/27 (52%) [............x..xxxxxxxxxxxx]
-tests10.dat: 28/54 (52%) [...........x..xxxxxxxxxxxx...xxxxxxx.xx.x..........xxx]
+tests9.dat: 13/27 (48%) [...........xx..xxxxxxxxxxxx]
+tests10.dat: 27/54 (50%) [..........xx..xxxxxxxxxxxx...xxxxxxx.xx.x..........xxx]
 tests11.dat: 9/13 (69%) [..x.xxx......]
 tests12.dat: 0/2 (0%) [xx]
 tests14.dat: 6/7 (86%) [...x...]

@@ -328,6 +328,14 @@ class TextHandler(TagHandler):
 
         # Handle other text normally
         
+        # Check for table foster parenting before other text handling
+        if (context.document_state == DocumentState.IN_TABLE and 
+            not self._is_in_integration_point(context) and
+            not text.isspace()):  # Only foster parent non-whitespace text
+            self.debug(f"Foster parenting text '{text}' out of table context")
+            self._foster_parent_text(text, context)
+            return True
+        
         # Check if we need to reconstruct active formatting elements
         # This happens when text is encountered but the current insertion point
         # is not inside the appropriate formatting elements
@@ -348,6 +356,49 @@ class TextHandler(TagHandler):
         
         self._append_text(text, context)
         return True
+
+    def _is_in_integration_point(self, context: "ParseContext") -> bool:
+        """Check if we're inside an SVG or MathML integration point where HTML rules apply"""
+        # Check current parent and ancestors for integration points
+        current = context.current_parent
+        while current:
+            # SVG integration points: foreignObject, desc, title
+            if current.tag_name in ("svg foreignObject", "svg desc", "svg title"):
+                return True
+            
+            # MathML integration points: annotation-xml with specific encoding
+            if (current.tag_name == "math annotation-xml" and 
+                current.attributes and
+                any(attr.name.lower() == "encoding" and 
+                    attr.value.lower() in ("text/html", "application/xhtml+xml")
+                    for attr in current.attributes)):
+                return True
+            
+            current = current.parent
+        
+        return False
+
+    def _foster_parent_text(self, text: str, context: "ParseContext") -> None:
+        """Foster parent text content before the current table"""
+        # Find the table element
+        table = self.parser.find_current_table(context)
+        if not table:
+            # No table found, just append normally
+            self._append_text(text, context)
+            return
+        
+        # Find the table's parent
+        table_parent = table.parent
+        if not table_parent:
+            # Table has no parent, just append normally
+            self._append_text(text, context)
+            return
+        
+        # Create text node and insert it before the table
+        text_node = Node("#text")
+        text_node.text_content = text
+        table_parent.insert_before(text_node, table)
+        self.debug(f"Foster parented text '{text}' before table")
 
     def _append_text(self, text: str, context: "ParseContext") -> None:
         """Helper to append text, either as new node or merged with previous"""
@@ -2418,13 +2469,13 @@ class ForeignTagHandler(TagHandler):
             if annotation_xml:
                 in_integration_point = True
             
-            # Check if we're inside mtext/mi/mo/mn/ms which allow formatting elements
-            if not in_integration_point and tag_name_lower in ("b", "i", "strong", "em", "small", "s", "sub", "sup"):
+            # Check if we're inside mtext/mi/mo/mn/ms which are integration points for ALL HTML elements
+            if not in_integration_point:
                 mtext_ancestor = context.current_parent.find_ancestor(
                     lambda n: n.tag_name in ("math mtext", "math mi", "math mo", "math mn", "math ms"))
                 if mtext_ancestor:
-                    # These are integration points - HTML formatting elements should remain HTML
-                    return False  # Let other handlers process as regular HTML
+                    # These are integration points - ALL HTML elements should remain HTML
+                    in_integration_point = True
         
         # Check for SVG integration points  
         elif context.current_context == "svg":
@@ -2538,6 +2589,27 @@ class ForeignTagHandler(TagHandler):
             return breakout_result
 
         if context.current_context == "math":
+            # Check for invalid table element nesting in MathML
+            if tag_name_lower in ("tr", "td", "th", "tbody", "thead", "tfoot"):
+                # Invalid table nesting in MathML: drop the element completely
+                current_ancestors = []
+                parent = context.current_parent
+                while parent:
+                    current_ancestors.append(parent.tag_name)
+                    parent = parent.parent
+                
+                # Check for invalid nesting patterns
+                invalid_patterns = [
+                    (tag_name_lower == "tr" and any(ancestor in ["math td", "math th"] for ancestor in current_ancestors)),
+                    (tag_name_lower == "td" and any(ancestor in ["math td", "math th"] for ancestor in current_ancestors)),
+                    (tag_name_lower == "th" and any(ancestor in ["math td", "math th"] for ancestor in current_ancestors)),
+                    (tag_name_lower in ("tbody", "thead", "tfoot") and any(ancestor in ["math tbody", "math thead", "math tfoot"] for ancestor in current_ancestors)),
+                ]
+                
+                if any(invalid_patterns):
+                    self.debug(f"MathML: Dropping invalid table element {tag_name_lower} in context {current_ancestors}")
+                    return True  # Ignore this element completely
+            
             # Auto-close certain MathML elements when encountering table elements
             if tag_name_lower in ("tr", "td", "th") and context.current_parent.tag_name.startswith("math "):
                 # Find if we're inside a MathML operator/leaf element that should auto-close
@@ -2591,6 +2663,17 @@ class ForeignTagHandler(TagHandler):
                     if not token.is_self_closing:
                         context.enter_element(new_node)
                     return True
+            
+            # Handle HTML elements inside MathML integration points (mtext, mi, mo, mn, ms)
+            mtext_ancestor = context.current_parent.find_ancestor(
+                lambda n: n.tag_name in ("math mtext", "math mi", "math mo", "math mn", "math ms"))
+            if mtext_ancestor and tag_name_lower in HTML_ELEMENTS:
+                # HTML elements inside MathML integration points remain as HTML
+                new_node = Node(tag_name_lower, self._fix_foreign_attribute_case(token.attributes, "math"))
+                context.current_parent.append_child(new_node)
+                if not token.is_self_closing:
+                    context.enter_element(new_node)
+                return True
 
             new_node = Node(f"math {tag_name}", self._fix_foreign_attribute_case(token.attributes, "math"))
             context.current_parent.append_child(new_node)
@@ -2721,6 +2804,14 @@ class ForeignTagHandler(TagHandler):
         if not self.should_handle_text(text, context):
             return False
 
+        # Check for table foster parenting before other text handling
+        if (context.document_state == DocumentState.IN_TABLE and 
+            not self._is_in_integration_point(context) and
+            not text.isspace()):  # Only foster parent non-whitespace text
+            self.debug(f"Foster parenting text '{text}' out of table context")
+            self._foster_parent_text(text, context)
+            return True
+
         # In foreign content, text is just appended.
         # Try to merge with previous text node.
         if context.current_parent.children and context.current_parent.children[-1].tag_name == "#text":
@@ -2730,6 +2821,53 @@ class ForeignTagHandler(TagHandler):
             text_node.text_content = text
             context.current_parent.append_child(text_node)
         return True
+
+    def _is_in_integration_point(self, context: "ParseContext") -> bool:
+        """Check if we're inside an SVG or MathML integration point where HTML rules apply"""
+        # Check current parent and ancestors for integration points
+        current = context.current_parent
+        while current:
+            # SVG integration points: foreignObject, desc, title
+            if current.tag_name in ("svg foreignObject", "svg desc", "svg title"):
+                return True
+            
+            # MathML integration points: annotation-xml with specific encoding
+            if (current.tag_name == "math annotation-xml" and 
+                current.attributes and
+                any(attr.name.lower() == "encoding" and 
+                    attr.value.lower() in ("text/html", "application/xhtml+xml")
+                    for attr in current.attributes)):
+                return True
+            
+            current = current.parent
+        
+        return False
+
+    def _foster_parent_text(self, text: str, context: "ParseContext") -> None:
+        """Foster parent text content before the current table"""
+        # Find the table element
+        table = self.parser.find_current_table(context)
+        if not table:
+            # No table found, just append normally
+            text_node = Node("#text")
+            text_node.text_content = text
+            context.current_parent.append_child(text_node)
+            return
+        
+        # Find the table's parent
+        table_parent = table.parent
+        if not table_parent:
+            # Table has no parent, just append normally
+            text_node = Node("#text")
+            text_node.text_content = text
+            context.current_parent.append_child(text_node)
+            return
+        
+        # Create text node and insert it before the table
+        text_node = Node("#text")
+        text_node.text_content = text
+        table_parent.insert_before(text_node, table)
+        self.debug(f"Foster parented text '{text}' before table")
 
     def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:
         """Handle CDATA sections in foreign elements (SVG/MathML)"""

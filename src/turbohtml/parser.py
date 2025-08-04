@@ -388,7 +388,12 @@ class TurboHTML:
         if tag_name in ("html", "head", "body", "frameset"):
             return True
         
-        # Also ignore context element start tags
+        # In foreign contexts (MathML/SVG), let the foreign handlers manage everything
+        # Fragment parsing is less relevant in foreign contexts
+        if context.current_context in ("math", "svg"):
+            return False
+        
+        # Also ignore context element start tags in HTML context
         if self.fragment_context == tag_name:
             return True
         elif self.fragment_context in ("td", "th") and tag_name in ("td", "th"):
@@ -501,11 +506,12 @@ class TurboHTML:
         # Default handling for unhandled tags
         self.debug(f"No handler found, using default handling for {tag_name}")
         
-        # Check if we need table foster parenting (but not inside template content)
+        # Check if we need table foster parenting (but not inside template content or integration points)
         if (context.document_state == DocumentState.IN_TABLE and 
             tag_name not in self._get_table_elements() and 
             tag_name not in self._get_head_elements() and
-            not self._is_in_template_content(context)):
+            not self._is_in_template_content(context) and
+            not self._is_in_integration_point(context)):
             self.debug(f"Foster parenting {tag_name} out of table")
             self._foster_parent_element(tag_name, token.attributes, context)
             return
@@ -784,6 +790,27 @@ class TurboHTML:
                 current.parent and 
                 current.parent.tag_name == "template"):
                 return True
+            current = current.parent
+        
+        return False
+    
+    def _is_in_integration_point(self, context: "ParseContext") -> bool:
+        """Check if we're inside an SVG or MathML integration point where HTML rules apply"""
+        # Check current parent and ancestors for integration points
+        current = context.current_parent
+        while current:
+            # SVG integration points: foreignObject, desc, title
+            if current.tag_name in ("svg foreignObject", "svg desc", "svg title"):
+                return True
+            
+            # MathML integration points: annotation-xml with specific encoding
+            if (current.tag_name == "math annotation-xml" and 
+                current.attributes and
+                any(attr.name.lower() == "encoding" and 
+                    attr.value.lower() in ("text/html", "application/xhtml+xml")
+                    for attr in current.attributes)):
+                return True
+            
             current = current.parent
         
         return False
