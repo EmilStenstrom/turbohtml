@@ -1180,25 +1180,24 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         new_colgroup = self._create_element(token)
         self.parser.find_current_table(context).append_child(new_colgroup)
 
-        # Rule 3: Check context and create new tbody if needed
+        # Rule 3: Enter the colgroup context so content goes inside it
+        self.debug("Entering colgroup context")
+        context.enter_element(new_colgroup)
+        
+        # Rule 4: Check context and create new tbody if needed after colgroup
         td_ancestor = context.current_parent.find_ancestor("td")
         if td_ancestor:
-            self.debug("Found td ancestor, staying in current context")
+            self.debug("Found td ancestor, staying in colgroup context")
             return True
             
         tbody_ancestor = context.current_parent.find_first_ancestor_in_tags(
-            ["tbody", "tr", "colgroup"], self.parser.find_current_table(context))
+            ["tbody", "tr"], self.parser.find_current_table(context))
         if tbody_ancestor:
-            self.debug("Found tbody/tr/colgroup ancestor, creating new tbody")
-            # Create new empty tbody after the colgroup
-            new_tbody = Node("tbody")
-            self.parser.find_current_table(context).append_child(new_tbody)
-            context.enter_element(new_tbody)
+            self.debug("Found tbody/tr ancestor, staying in colgroup context")
             return True
 
-        # Rule 4: Otherwise stay at table level
-        self.debug("No tbody/tr/td ancestors, staying at table level")
-        context.move_to_element(self.parser.find_current_table(context))
+        # Rule 5: Stay in colgroup context
+        self.debug("Staying in colgroup context")
         return True
 
     def _handle_col(self, token: "HTMLToken", context: "ParseContext") -> bool:
@@ -1369,6 +1368,37 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             text_node = Node("#text")
             text_node.text_content = text
             context.current_parent.append_child(text_node)
+            return True
+
+        # Special handling for colgroup context
+        if context.current_parent.tag_name == "colgroup":
+            self.debug(f"Inside colgroup, checking text content: '{text}'")
+            # Split text into whitespace and non-whitespace parts
+            import re
+            parts = re.split(r'(\S+)', text)
+            
+            for part in parts:
+                if not part:  # Skip empty strings
+                    continue
+                    
+                if part.isspace():
+                    # Whitespace stays in colgroup
+                    self.debug(f"Adding whitespace '{part}' to colgroup")
+                    text_node = Node("#text")
+                    text_node.text_content = part
+                    context.current_parent.append_child(text_node)
+                else:
+                    # Non-whitespace gets foster-parented - temporarily move to table context
+                    self.debug(f"Foster-parenting non-whitespace '{part}' from colgroup")
+                    saved_parent = context.current_parent
+                    table = self.parser.find_current_table(context)
+                    context.move_to_element(table)
+                    
+                    # Recursively call handle_text for this part with table context
+                    self.handle_text(part, context)
+                    
+                    # Restore colgroup context for any remaining parts
+                    context.move_to_element(saved_parent)
             return True
 
         # If it's whitespace-only text, allow it in table

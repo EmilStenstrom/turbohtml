@@ -1,11 +1,11 @@
-Tests passed: 1218/1729 (70%) (skipped: 39 script-dependent)
+Tests passed: 1221/1729 (71%) (skipped: 39 script-dependent)
 
 adoption01.dat: 18/18 (100%) [..................]
 adoption02.dat: 2/2 (100%) [..]
 blocks.dat: 48/48 (100%) [................................................]
 comments01.dat: 16/16 (100%) [................]
 doctype01.dat: 37/37 (100%) [.....................................]
-domjs-unsafe.dat: 47/49 (96%) [..................................x.x............]
+domjs-unsafe.dat: 49/49 (100%) [.................................................]
 entities01.dat: 75/75 (100%) [...........................................................................]
 entities02.dat: 26/26 (100%) [..........................]
 foreign-fragment.dat: 48/66 (73%) [..................x..xx..xx..xx..xx..x.....x.xx............xxxx..x]
@@ -29,8 +29,8 @@ scripted/webkit01.dat: 0/0 (N/A) [ss] (2 skipped)
 search-element.dat: 2/3 (67%) [..x]
 svg.dat: 0/8 (0%) [xxxxxxxx]
 tables01.dat: 12/19 (63%) [......xx.xx..x..xx.]
-template.dat: 42/112 (38%) [..................xx.xxxxxx.x...xxxxxxxx.xxxxxxxxxxxxxxxx..xxxxxxxxxx.x.xx.xxxxx...x..x...xx...xxx.x.xxxxxxxxxxx]
-tests1.dat: 83/112 (74%) [.........................x....xxx...x...............xxx...xxx.......xx..xxxx.x.xxx....x...x......x...xxx.....xx.]
+template.dat: 44/112 (39%) [..................xx.xxxxxx.x...xxxxxx.x.xxxxxxxxxxxxxxxx..xxx.xxxxxx.x.xx.xxxxx...x..x...xx...xxx.x.xxxxxxxxxxx]
+tests1.dat: 82/112 (73%) [.........................x....xxx...x...............xxx...xxx.......xx..xxxx.x.xxx....x...x......x...xxx....xxx.]
 tests2.dat: 63/63 (100%) [...............................................................]
 tests3.dat: 24/24 (100%) [........................]
 tests4.dat: 9/9 (100%) [.........]
