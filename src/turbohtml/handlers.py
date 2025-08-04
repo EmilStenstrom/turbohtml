@@ -2407,9 +2407,17 @@ class ForeignTagHandler(TagHandler):
         # Only break out if NOT in an integration point
         if not in_integration_point:
             # Special case: font element only breaks out if it has attributes
-            if tag_name_lower == "font" and not token.attributes:
-                # font with no attributes stays in foreign context
-                return False
+            # Special case: font elements with HTML-specific attributes should break out
+            if tag_name_lower == "font":
+                # Check if font has HTML-specific attributes that should cause breakout
+                html_font_attrs = {"color", "face", "size"}
+                has_html_attrs = any(attr.lower() in html_font_attrs for attr in token.attributes)
+                if has_html_attrs:
+                    # font with HTML attributes breaks out of foreign context
+                    pass  # Continue with breakout logic
+                else:
+                    # font with non-HTML attributes stays in foreign context
+                    return False
             
             # HTML elements break out of foreign content and are processed as regular HTML
             self.debug(f"HTML element {tag_name_lower} breaks out of foreign content")
@@ -3277,6 +3285,13 @@ class DoctypeHandler(TagHandler):
         # If we've already seen a doctype, ignore additional ones
         if context.doctype_seen:
             self.debug("Ignoring duplicate DOCTYPE")
+            return True
+        
+        # If the document has already started (any elements have been processed), 
+        # ignore unexpected DOCTYPEs per HTML5 spec
+        if (context.document_state != DocumentState.INITIAL or 
+            len(self.parser.root.children) > 0):
+            self.debug("Ignoring unexpected DOCTYPE after document started")
             return True
 
         self.debug(f"handling {doctype}")
