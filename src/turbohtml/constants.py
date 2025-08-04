@@ -207,7 +207,6 @@ FORMATTING_ELEMENTS = [
 # Per WHATWG HTML5 spec - these are specifically the HTML elements that
 # cause a break-out from foreign content context
 HTML_BREAK_OUT_ELEMENTS = [
-    "a",
     "b", 
     "big",
     "blockquote",

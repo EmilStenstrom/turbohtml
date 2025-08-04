@@ -1,4 +1,4 @@
-Tests passed: 1228/1729 (71%) (skipped: 39 script-dependent)
+Tests passed: 1230/1729 (71%) (skipped: 39 script-dependent)
 
 adoption01.dat: 18/18 (100%) [..................]
 adoption02.dat: 2/2 (100%) [..]
@@ -12,7 +12,7 @@ foreign-fragment.dat: 54/66 (82%) [..................x...x...x...x...x....x.x...
 html5test-com.dat: 23/24 (96%) [....................x...]
 inbody01.dat: 4/4 (100%) [....]
 isindex.dat: 4/4 (100%) [....]
-main-element.dat: 2/3 (67%) [..x]
+main-element.dat: 3/3 (100%) [...]
 math.dat: 0/8 (0%) [xxxxxxxx]
 menuitem-element.dat: 20/20 (100%) [....................]
 namespace-sensitivity.dat: 0/1 (0%) [x]
@@ -26,7 +26,7 @@ scriptdata01.dat: 17/26 (65%) [......x........xxx.xxxx.x.]
 scripted/adoption01.dat: 0/0 (N/A) [s] (1 skipped)
 scripted/ark.dat: 0/0 (N/A) [s] (1 skipped)
 scripted/webkit01.dat: 0/0 (N/A) [ss] (2 skipped)
-search-element.dat: 2/3 (67%) [..x]
+search-element.dat: 3/3 (100%) [...]
 svg.dat: 0/8 (0%) [xxxxxxxx]
 tables01.dat: 12/19 (63%) [......xx.xx..x..xx.]
 template.dat: 44/112 (39%) [..................xx.xxxxxx.x...xxxxxx.x.xxxxxxxxxxxxxxxx..xxx.xxxxxx.x.xx.xxxxx...x..x...xx...xxx.x.xxxxxxxxxxx]

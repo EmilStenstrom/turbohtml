@@ -3051,7 +3051,11 @@ class HtmlTagHandler(TagHandler):
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         self.debug("handling start tag")
-        # Update html node attributes if it exists
+        # Ignore subsequent html start tags - only the first one should set attributes
+        if self.parser.html_node and self.parser.html_node.attributes:
+            self.debug("Ignoring subsequent html start tag (attributes already set)")
+            return True
+        # Update html node attributes if it exists and has no attributes yet
         if self.parser.html_node:
             self.parser.html_node.attributes.update(token.attributes)
         return True
