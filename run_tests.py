@@ -167,7 +167,8 @@ class TestRunner:
                     for exclude in self.config["exclude_files"])]
             
         if self.config["filter_files"]:
-            files = [f for f in files if self.config["filter_files"] in f.name]
+            files = [f for f in files if any(filter_str in f.name 
+                    for filter_str in self.config["filter_files"])]
             
         return sorted(files, key=self._natural_sort_key)
     
@@ -389,8 +390,8 @@ def parse_args() -> dict:
                        help='Space-separated list of test specs in format: file:indices (e.g., test1.dat:0,1,2 test2.dat:5,6)')
     parser.add_argument('-d', '--debug', action='store_true',
                        help='Print debug information')
-    parser.add_argument('--filter-files', type=str,
-                       help='Only run tests from files containing this string')
+    parser.add_argument('--filter-files', type=str, nargs='+',
+                       help='Only run tests from files containing any of these strings (space-separated)')
     parser.add_argument('-q', '--quiet', action='store_true',
                        help='Suppress progress indicators (dots and x\'s)')
     parser.add_argument('--exclude-errors', type=str,
