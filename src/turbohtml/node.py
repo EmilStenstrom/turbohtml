@@ -24,6 +24,10 @@ class Node:
         self.previous_sibling: Optional['Node'] = None
 
     def append_child(self, child: 'Node'):
+        # Check for circular reference before adding
+        if self._would_create_circular_reference(child):
+            raise ValueError(f"Adding {child.tag_name} as child of {self.tag_name} would create circular reference")
+        
         if child.parent:
             # Update sibling links in old location
             if child.previous_sibling:
@@ -42,6 +46,26 @@ class Node:
         child.parent = self
         child.next_sibling = None
         self.children.append(child)
+    
+    def _would_create_circular_reference(self, child: 'Node') -> bool:
+        """Check if adding child would create a circular reference"""
+        # Check if self is a descendant of child
+        current = self
+        visited = set()
+        depth = 0
+        
+        while current and depth < 100:  # Safety limit
+            if id(current) in visited:
+                return True  # Already found circular reference in current tree
+                
+            if current == child:
+                return True  # Self is a descendant of child
+                
+            visited.add(id(current))
+            current = current.parent
+            depth += 1
+            
+        return False
 
     def insert_child_at(self, index: int, child: 'Node'):
         """Insert a child at the specified index"""
