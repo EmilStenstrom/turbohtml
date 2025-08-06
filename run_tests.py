@@ -299,7 +299,7 @@ class TestReporter:
         
         if not self.config["fail_fast"]:
             percentage = round(passed*100/total) if total else 0
-            summary += f' ({percentage}%) (skipped: {skipped} script-dependent)'
+            summary += f' ({percentage}%) ({skipped} skipped)'
             
             # Only save to file if no filters are applied (running all tests)
             if self._is_running_all_tests() and file_results:
