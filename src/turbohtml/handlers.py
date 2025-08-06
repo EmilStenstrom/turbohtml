@@ -2317,12 +2317,16 @@ class AutoClosingTagHandler(TemplateAwareHandler):
                 self.debug(f"Inside container element {current.tag_name} with no active formatting, allowing nesting")
                 return False
 
-            # Move current_parent up to the first non-formatting element
+            # Move current_parent up to the same level as the outermost formatting element
             target_parent = None
             if formatting_element:
-                target_parent = formatting_element.parent
-                while target_parent and target_parent.tag_name in FORMATTING_ELEMENTS:
-                    target_parent = target_parent.parent
+                # Find the outermost formatting element in the chain
+                outermost_formatting = formatting_element
+                while outermost_formatting.parent and outermost_formatting.parent.tag_name in FORMATTING_ELEMENTS:
+                    outermost_formatting = outermost_formatting.parent
+                
+                # The target parent should be the parent of the outermost formatting element
+                target_parent = outermost_formatting.parent
             
             if target_parent:
                 # Save the current parent before moving

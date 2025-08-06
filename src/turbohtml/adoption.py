@@ -1044,9 +1044,10 @@ class AdoptionAgencyAlgorithm:
         
         # Clean up the open elements stack to remove elements that are no longer ancestors
         # of the furthest block after the adoption agency rearrangement
-        # DISABLED: Stack cleanup is causing issues with the first test case
-        # if len(context.active_formatting_elements) > 1:
-        #     self._cleanup_open_elements_stack(context, furthest_block)
+        # Also clean up active formatting elements that are no longer in scope
+        # Only run cleanup for complex cases with multiple formatting elements
+        if len(context.active_formatting_elements) > 1:
+            self._cleanup_active_formatting_elements(context, furthest_block)
         
         if self.debug_enabled:
             print(f"\n--- STEP 19: Update open elements stack ---")
@@ -1100,6 +1101,52 @@ class AdoptionAgencyAlgorithm:
         
         if self.debug_enabled and elements_to_remove:
             print(f"    Stack after cleanup: {[e.tag_name for e in context.open_elements._stack]}")
+    
+    def _cleanup_active_formatting_elements(self, context, current_element: Node) -> None:
+        """
+        Clean up active formatting elements that are no longer in scope after adoption agency.
+        
+        After adoption agency rearranges the tree, some formatting elements may no longer
+        be in the current scope and should be removed from active formatting elements.
+        """
+        if self.debug_enabled:
+            print(f"    Cleaning up active formatting elements")
+            print(f"    Active formatting before cleanup: {[e.element.tag_name for e in context.active_formatting_elements]}")
+        
+        # Build the path from current element to root
+        ancestors = []
+        node = current_element
+        while node:
+            ancestors.append(node)
+            node = node.parent
+        
+        # Remove formatting elements that are not in the current scope
+        elements_to_remove = []
+        for entry in context.active_formatting_elements:
+            element = entry.element
+            # Check if the element is in the current scope (ancestors or children of ancestors)
+            is_in_scope = False
+            
+            # Check if it's an ancestor
+            if element in ancestors:
+                is_in_scope = True
+            else:
+                # Check if it's a child of any ancestor
+                for ancestor in ancestors:
+                    if element in ancestor.children:
+                        is_in_scope = True
+                        break
+            
+            if not is_in_scope:
+                elements_to_remove.append(entry)
+                if self.debug_enabled:
+                    print(f"    Removing {element.tag_name} from active formatting (not in scope)")
+        
+        for entry in elements_to_remove:
+            context.active_formatting_elements.remove_entry(entry)
+        
+        if self.debug_enabled and elements_to_remove:
+            print(f"    Active formatting after cleanup: {[e.element.tag_name for e in context.active_formatting_elements]}")
     
     def _validate_no_circular_references(self, formatting_clone: Node, furthest_block: Node) -> None:
         """Validate that no circular references were created in the DOM tree"""
