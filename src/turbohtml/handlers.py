@@ -571,12 +571,44 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         tag_name = token.tag_name
-        self.debug(f"handling end tag <{tag_name}>, context={context}")
+        self.debug(f"FormattingElementHandler: *** START PROCESSING END TAG <{tag_name}> ***")
+        self.debug(f"FormattingElementHandler: handling end tag <{tag_name}>, context={context}")
 
-        # Check if adoption agency algorithm should run
-        if self.parser.adoption_agency.should_run_adoption(tag_name, context):
-            self.debug(f"Running adoption agency algorithm for end tag </{tag_name}>")
-            return self.parser.adoption_agency.run_algorithm(tag_name, context)
+        # Track adoption agency runs for this end tag
+        adoption_run_count = 0
+        max_runs = 10  # Safety limit to prevent infinite loops
+        
+        # Keep running adoption agency algorithm until no more reconstructions are needed
+        while adoption_run_count < max_runs:
+            self.debug(f"FormattingElementHandler: Checking should_run_adoption for run #{adoption_run_count + 1}")
+            should_run = self.parser.adoption_agency.should_run_adoption(tag_name, context)
+            self.debug(f"FormattingElementHandler: should_run_adoption returned: {should_run}")
+            
+            if not should_run:
+                self.debug(f"FormattingElementHandler: should_run_adoption returned False after {adoption_run_count} run(s)")
+                break
+                
+            adoption_run_count += 1
+            self.debug(f"FormattingElementHandler: Running adoption agency algorithm #{adoption_run_count} for end tag </{tag_name}>")
+            
+            # Run the adoption agency algorithm
+            result = self.parser.adoption_agency.run_algorithm(tag_name, context)
+            self.debug(f"FormattingElementHandler: Adoption agency run #{adoption_run_count} returned: {result}")
+            
+            if not result:
+                # If adoption agency returns False, stop trying
+                self.debug(f"FormattingElementHandler: Adoption agency returned False on run #{adoption_run_count}, stopping")
+                break
+        
+        if adoption_run_count > 0:
+            self.debug(f"FormattingElementHandler: Adoption agency completed after {adoption_run_count} run(s) for </{tag_name}>")
+            return True
+        
+        if adoption_run_count >= max_runs:
+            self.debug(f"FormattingElementHandler: WARNING: Adoption agency hit maximum runs ({max_runs}) for {tag_name}")
+            return True
+
+        self.debug(f"FormattingElementHandler: No adoption agency runs needed for </{tag_name}>, proceeding with normal end tag handling")
 
         # If we're in a table cell, ignore the end tag
         if self._is_in_table_cell(context):
@@ -2229,6 +2261,20 @@ class VoidElementHandler(SelectAwareHandler):
         return True
 
 
+    def _create_element_from_node(self, node: "Node") -> "Node":
+        """Create a new element with the same tag name and attributes as the given node"""
+        from .tokenizer import HTMLToken
+        
+        # Create a token-like object for the new element
+        token = HTMLToken("start_tag", node.tag_name, {}, False)
+        
+        # Copy attributes if any
+        if hasattr(node, 'attributes') and node.attributes:
+            token.attributes.update(node.attributes)
+            
+        return self._create_element(token)
+
+
 class AutoClosingTagHandler(TemplateAwareHandler):
     """Handles auto-closing behavior for certain tags"""
 
@@ -2266,12 +2312,42 @@ class AutoClosingTagHandler(TemplateAwareHandler):
                 return False
 
             # Move current_parent up to the first non-formatting element
-            target_parent = formatting_element.parent
-            while target_parent and target_parent.tag_name in FORMATTING_ELEMENTS:
-                target_parent = target_parent.parent
+            target_parent = None
+            if formatting_element:
+                target_parent = formatting_element.parent
+                while target_parent and target_parent.tag_name in FORMATTING_ELEMENTS:
+                    target_parent = target_parent.parent
             
             if target_parent:
+                # Save the current parent before moving
+                original_parent = context.current_parent
+                
+                self.debug(f"Moving context to target parent: {target_parent.tag_name}")
                 context.move_to_element(target_parent)
+                
+                # When we move out of formatting elements due to a block element,
+                # we need to remove the "inner" formatting elements that were properly closed
+                # but keep the "outer" formatting elements that should be reconstructed
+                if formatting_element:
+                    formatting_elements_to_remove = []
+                    
+                    # Find the path from the formatting_element to the block insertion point
+                    path_elements = []
+                    temp = original_parent
+                    while temp and temp != formatting_element and temp.tag_name in FORMATTING_ELEMENTS:
+                        path_elements.append(temp)
+                        temp = temp.parent
+                    
+                    # Remove formatting elements that are in the path but not the outermost one
+                    for entry in context.active_formatting_elements:
+                        elem = entry.element
+                        if elem in path_elements and elem != formatting_element:
+                            formatting_elements_to_remove.append(entry)
+                            self.debug(f"Removing inner formatting element: {elem.tag_name}")
+                    
+                    # Remove the inner formatting elements
+                    for entry in formatting_elements_to_remove:
+                        context.active_formatting_elements.remove_entry(entry)
             
             # Create the block element normally
             new_block = self._create_element(token)
@@ -2302,43 +2378,9 @@ class AutoClosingTagHandler(TemplateAwareHandler):
                     
                     self.debug(f"Created new block {new_block.tag_name}, with simple formatting element reconstruction")
                 else:
-                    # Multiple formatting elements - need to be selective about reconstruction
-                    # For the case like <b><em>...<aside>, we should only reconstruct the outermost formatting element (<b>)
-                    
-                    # Get active formatting elements and find the outermost one (the one with no formatting parent)
-                    active_elements = [entry.element for entry in context.active_formatting_elements]
-                    outermost_elements = []
-                    
-                    for element in active_elements:
-                        # Check if this element has any active formatting element as parent
-                        has_formatting_parent = False
-                        parent = element.parent
-                        while parent:
-                            if parent in active_elements:
-                                has_formatting_parent = True
-                                break
-                            parent = parent.parent
-                        
-                        if not has_formatting_parent:
-                            outermost_elements.append(element)
-                    
-                    if outermost_elements:
-                        self.debug(f"Multiple formatting elements case: reconstructing outermost elements: {[e.tag_name for e in outermost_elements]}")
-                        
-                        # Remove non-reconstructed formatting elements from active formatting elements
-                        # This prevents them from being processed by subsequent adoption agency calls
-                        elements_to_remove = []
-                        for element in active_elements:
-                            if element not in outermost_elements:
-                                elements_to_remove.append(element)
-                                self.debug(f"Removing non-reconstructed formatting element {element.tag_name} from active list")
-                        
-                        for element in elements_to_remove:
-                            context.active_formatting_elements.remove(element)
-                        
-                        self.parser.adoption_agency._reconstruct_formatting_elements(outermost_elements, context)
-                    else:
-                        self.debug(f"Multiple formatting elements case: created new block {new_block.tag_name}, letting adoption agency handle reconstruction")
+                    # Multiple formatting elements case - no reconstruction here
+                    # Let the adoption agency handle all reconstruction when end tags are processed
+                    self.debug(f"Multiple formatting elements case: no reconstruction, letting adoption agency handle it")
             else:  # Complex case - let adoption agency handle it
                 self.debug(f"Complex case: created new block {new_block.tag_name}, letting adoption agency handle reconstruction")
 

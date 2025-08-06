@@ -536,11 +536,26 @@ class TurboHTML:
                 if body:
                     context.move_to_element(body)
 
-        # Check if adoption agency algorithm should run
-        if self.adoption_agency.should_run_adoption(tag_name, context):
-            self.debug(f"Running adoption agency algorithm for {tag_name}")
-            if self.adoption_agency.run_algorithm(tag_name, context):
-                return
+        # Check if adoption agency algorithm should run iteratively
+        adoption_run_count = 0
+        max_runs = 10  # Safety limit to prevent infinite loops
+        
+        while adoption_run_count < max_runs:
+            if self.adoption_agency.should_run_adoption(tag_name, context):
+                adoption_run_count += 1
+                self.debug(f"Running adoption agency algorithm #{adoption_run_count} for {tag_name}")
+                
+                if not self.adoption_agency.run_algorithm(tag_name, context):
+                    # If adoption agency returns False, stop trying
+                    self.debug(f"Adoption agency returned False on run #{adoption_run_count}, stopping")
+                    break
+            else:
+                # No more adoption agency runs needed
+                break
+        
+        if adoption_run_count > 0:
+            self.debug(f"Adoption agency completed after {adoption_run_count} run(s) for </{tag_name}>")
+            return
 
         # Try tag handlers first
         for handler in self.tag_handlers:

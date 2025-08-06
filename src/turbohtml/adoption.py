@@ -359,6 +359,50 @@ class AdoptionAgencyAlgorithm:
         self.parser = parser
         self.debug_enabled = getattr(parser, 'env_debug', False)
     
+    def _find_formatting_element_for_reconstruction(self, tag_name: str, context) -> Optional[FormattingElementEntry]:
+        """
+        Find the formatting element that actually needs reconstruction.
+        
+        This should be the formatting element that:
+        1. Is in the active formatting elements list
+        2. Is in the open elements stack  
+        3. Has block elements after it in the stack
+        
+        We want the EARLIEST such element in the stack (closest to the root).
+        """
+        candidates = []
+        
+        # Find all formatting elements of this type in the stack that have blocks after them
+        for i, element in enumerate(context.open_elements._stack):
+            if element.tag_name == tag_name:
+                # Check if there are any active formatting elements of this type
+                # (use tag name matching instead of object identity to handle reconstruction)
+                entry = context.active_formatting_elements.find(tag_name, element.attributes)
+                if entry:
+                    # Check if there are block elements after this instance
+                    has_blocks_after = False
+                    for j in range(i + 1, len(context.open_elements._stack)):
+                        check_element = context.open_elements._stack[j]
+                        if context.open_elements._is_special_category(check_element):
+                            has_blocks_after = True
+                            break
+                    
+                    if has_blocks_after:
+                        candidates.append((i, entry))
+                        if self.debug_enabled:
+                            print(f"    Found candidate {tag_name} at index {i} with blocks after it")
+        
+        if not candidates:
+            if self.debug_enabled:
+                print(f"    No {tag_name} candidates found for reconstruction")
+            return None
+            
+        # Return the earliest candidate (smallest index)
+        earliest_index, earliest_entry = min(candidates, key=lambda x: x[0])
+        if self.debug_enabled:
+            print(f"    Selected earliest candidate at index {earliest_index}")
+        return earliest_entry
+    
     def _find_for_adoption(self, tag_name: str, context) -> Optional[FormattingElementEntry]:
         """Find the appropriate formatting element for adoption agency algorithm"""
         # For adoption agency, we need to find the formatting element that comes 
@@ -390,98 +434,190 @@ class AdoptionAgencyAlgorithm:
         """
         Determine if the adoption agency algorithm should run for this tag.
         
-        Per HTML5 spec, the algorithm runs when:
-        1. It's an end tag for a formatting element
-        2. The formatting element is in the active formatting elements list
+        The algorithm should run when there are formatting elements that have been
+        "broken" by block elements - even if those formatting elements were reconstructed.
         """
         if tag_name not in FORMATTING_ELEMENTS:
             return False
             
-        # Check if element is in active formatting elements
-        entry = context.active_formatting_elements.find(tag_name)
-        return entry is not None
+        if self.debug_enabled:
+            print(f"    should_run_adoption: Checking all {tag_name} elements in stack")
+            print(f"    should_run_adoption: Stack: {[e.tag_name for e in context.open_elements._stack]}")
+            print(f"    should_run_adoption: Active formatting: {[e.element.tag_name for e in context.active_formatting_elements]}")
+            
+        # Look for ANY formatting element of this type that has block elements after it
+        # This includes cases where formatting elements were reconstructed
+        found_candidates = 0
+        target_formatting_elements = []
+        
+        # Collect all formatting elements of the target type
+        for i, element in enumerate(context.open_elements._stack):
+            if element.tag_name == tag_name:
+                target_formatting_elements.append((i, element))
+                found_candidates += 1
+        
+        # Check if any of these formatting elements are followed by block elements
+        for i, element in target_formatting_elements:
+            if self.debug_enabled:
+                print(f"    should_run_adoption: Checking {tag_name} at index {i}")
+            
+            # Check if there are block elements after this instance
+            blocks_after = []
+            formatting_after = []
+            for j in range(i + 1, len(context.open_elements._stack)):
+                check_element = context.open_elements._stack[j]
+                # Check if element is special (block-like)
+                special_elements = {
+                    "address", "applet", "area", "article", "aside", "base", "basefont",
+                    "bgsound", "blockquote", "body", "br", "button", "caption", "center",
+                    "col", "colgroup", "dd", "details", "dir", "div", "dl", "dt", "embed",
+                    "fieldset", "figcaption", "figure", "footer", "form", "frame", "frameset",
+                    "h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hgroup", "hr",
+                    "html", "iframe", "img", "input", "isindex", "li", "link", "listing",
+                    "main", "marquee", "menu", "meta", "nav", "noembed", "noframes",
+                    "noscript", "object", "ol", "p", "param", "plaintext", "pre", "script",
+                    "section", "select", "source", "style", "summary", "table", "tbody",
+                    "td", "template", "textarea", "tfoot", "th", "thead", "title", "tr",
+                    "track", "ul", "wbr", "xmp"
+                }
+                if check_element.tag_name in special_elements:
+                    blocks_after.append(check_element.tag_name)
+                elif check_element.tag_name in FORMATTING_ELEMENTS:
+                    formatting_after.append(check_element.tag_name)
+            
+            if blocks_after:
+                if self.debug_enabled:
+                    print(f"    should_run_adoption: Found {tag_name} at index {i} with blocks {blocks_after} after it - SHOULD RUN")
+                return True
+            elif formatting_after:
+                # Check if there are any instances of the same formatting element after this one
+                # AND if there are blocks even further after those formatting elements
+                # This indicates a reconstruction happened due to block insertion
+                same_type_after = [f for f in formatting_after if f == tag_name]
+                if same_type_after:
+                    # Look even further to see if there are blocks after the duplicate formatting elements
+                    has_blocks_after_duplicates = False
+                    for k in range(i + 1, len(context.open_elements._stack)):
+                        check_element = context.open_elements._stack[k]
+                        if check_element.tag_name == tag_name:
+                            # Found duplicate, now check if there are blocks after this duplicate
+                            for m in range(k + 1, len(context.open_elements._stack)):
+                                later_element = context.open_elements._stack[m]
+                                if later_element.tag_name in special_elements:
+                                    has_blocks_after_duplicates = True
+                                    break
+                            break
+                    
+                    if has_blocks_after_duplicates:
+                        if self.debug_enabled:
+                            print(f"    should_run_adoption: Found {tag_name} at index {i} with same-type formatting elements {same_type_after} and blocks after duplicates - SHOULD RUN")
+                        return True
+                    else:
+                        if self.debug_enabled:
+                            print(f"    should_run_adoption: {tag_name} at index {i} has duplicates {same_type_after} but no blocks after them")
+                else:
+                    if self.debug_enabled:
+                        print(f"    should_run_adoption: {tag_name} at index {i} has formatting elements {formatting_after} but no duplicates")
+            else:
+                if self.debug_enabled:
+                    print(f"    should_run_adoption: {tag_name} at index {i} has no blocks after it")
+                            
+        if self.debug_enabled:
+            print(f"    should_run_adoption: Found {found_candidates} {tag_name} elements total, none need adoption agency")
+        return False
     
     def run_algorithm(self, tag_name: str, context) -> bool:
         """
         Run the HTML5 Adoption Agency Algorithm per WHATWG spec.
         
-        This is the full algorithm as specified in:
-        https://html.spec.whatwg.org/multipage/parsing.html#adoption-agency-algorithm
+        This version finds the CORRECT formatting element that needs reconstruction
+        (the one with block elements after it) rather than just the first one found.
         """
         if self.debug_enabled:
-            print(f"    Adoption Agency: Starting algorithm for {tag_name}")
+            print(f"\n=== ADOPTION AGENCY ALGORITHM START ===")
+            print(f"    Target tag: {tag_name}")
+            print(f"    Open elements stack: {[e.tag_name for e in context.open_elements._stack]}")
+            print(f"    Active formatting elements: {[e.element.tag_name for e in context.active_formatting_elements]}")
+            
+        # Find the formatting element that actually needs reconstruction
+        formatting_entry = self._find_formatting_element_for_reconstruction(tag_name, context)
+        if not formatting_entry:
+            if self.debug_enabled:
+                print(f"    No formatting element found that needs reconstruction")
+            return False
+            
+        formatting_element = formatting_entry.element
+        
+        if self.debug_enabled:
+            print(f"    Selected formatting element: {formatting_element} at index {context.open_elements.index_of(formatting_element)}")
             
         # Step 1: If the current node is an HTML element whose tag name is subject,
         # and the current node is not in the list of active formatting elements,
         # then pop the current node off the stack of open elements and return.
         current_node = context.open_elements.current() if not context.open_elements.is_empty() else None
         if self.debug_enabled:
-            print(f"    Adoption Agency: Current node: {current_node}")
-            print(f"    Adoption Agency: Current node tag: {current_node.tag_name if current_node else None}")
-            print(f"    Adoption Agency: Target tag: {tag_name}")
+            print(f"\n--- STEP 1: Check current node ---")
+            print(f"    Current node: {current_node}")
+            print(f"    Current node tag: {current_node.tag_name if current_node else None}")
+            print(f"    Target tag: {tag_name}")
             
         if current_node and current_node.tag_name == tag_name:
             is_in_active_formatting = context.active_formatting_elements.find_element(current_node) is not None
             if self.debug_enabled:
-                print(f"    Adoption Agency: Current node in active formatting elements: {is_in_active_formatting}")
+                print(f"    Current node matches target tag")
+                print(f"    Current node in active formatting elements: {is_in_active_formatting}")
             
             if not is_in_active_formatting:
                 if self.debug_enabled:
-                    print(f"    Adoption Agency: Step 1 - Simple case, popping current node")
+                    print(f"    STEP 1 RESULT: Simple case - popping current node and returning")
                 context.open_elements.pop()
                 return True
         
-        # Step 2: Find the formatting element
-        formatting_entry = context.active_formatting_elements.find(tag_name)
-        if not formatting_entry:
-            if self.debug_enabled:
-                print(f"    Adoption Agency: No formatting element found for {tag_name}")
-            return False
-            
-        formatting_element = formatting_entry.element
+        # Step 2: We already found the formatting element above
         if self.debug_enabled:
-            print(f"    Adoption Agency: Found formatting element: {formatting_element}")
+            print(f"\n--- STEP 2: Use selected formatting element ---")
+            print(f"    Formatting element: {formatting_element}")
+            print(f"    Formatting element parent: {formatting_element.parent.tag_name if formatting_element.parent else None}")
         
         # Step 3: If formatting element is not in stack of open elements
         if not context.open_elements.contains(formatting_element):
             if self.debug_enabled:
-                print(f"    Adoption Agency: Formatting element not in open elements, removing from active formatting")
+                print(f"\n--- STEP 3: Check if formatting element is in open elements ---")
+                print(f"    STEP 3 RESULT: Formatting element not in open elements - removing from active formatting")
             context.active_formatting_elements.remove(formatting_element)
-            
-            # The formatting element was likely reconstructed in a previous adoption agency run
-            # We need to "close" the current formatting context and update the current parent
-            if context.current_parent and context.current_parent.tag_name == tag_name:
-                # We're currently inside a reconstructed version of this element
-                # Move current parent to the parent of the current formatting element
-                if context.current_parent.parent:
-                    context.move_up_one_level()
-                    if self.debug_enabled:
-                        print(f"    Adoption Agency: Updated current parent to {context.current_parent.tag_name}")
-            
             return True
         
         # Step 4: If formatting element is in stack but not in scope
         if not context.open_elements.has_element_in_scope(formatting_element.tag_name):
             if self.debug_enabled:
-                print(f"    Adoption Agency: Formatting element not in scope")
+                print(f"\n--- STEP 4: Check scope ---")
+                print(f"    STEP 4 RESULT: Formatting element not in scope - ignoring end tag")
             return True  # Parse error, ignore the end tag
         
         # Step 5: If formatting element is not the current node, it's a parse error
         if context.open_elements.current() != formatting_element:
             if self.debug_enabled:
-                print(f"    Adoption Agency: Parse error - formatting element not current node")
+                print(f"\n--- STEP 5: Parse error check ---")
+                print(f"    STEP 5 RESULT: Parse error - formatting element not current node (continuing anyway)")
             # Continue with algorithm anyway
         
         # Step 6: Find the furthest block
         furthest_block = self._find_furthest_block_spec_compliant(formatting_element, context)
         if self.debug_enabled:
-            print(f"    Adoption Agency: Furthest block: {furthest_block}")
+            print(f"\n--- STEP 6: Find furthest block ---")
+            print(f"    Furthest block: {furthest_block}")
+            if furthest_block:
+                print(f"    Furthest block parent: {furthest_block.parent.tag_name if furthest_block.parent else None}")
         
         # Step 7: If no furthest block, then simple case
         if furthest_block is None:
+            if self.debug_enabled:
+                print(f"    STEP 7: No furthest block - running simple case")
             return self._handle_no_furthest_block_spec(formatting_element, formatting_entry, context)
         
         # Step 8-19: Complex case with furthest block
+        if self.debug_enabled:
+            print(f"    STEP 8-19: Complex case with furthest block")
         return self._run_complex_adoption_spec(formatting_entry, furthest_block, context)
         
     def _find_furthest_block_spec_compliant(self, formatting_element: Node, context) -> Optional[Node]:
@@ -491,7 +627,7 @@ class AdoptionAgencyAlgorithm:
             return None
             
         # Look for special category elements after the formatting element
-        # Special category includes all elements that can terminate scope
+        # Return the FIRST one found (closest to formatting element)
         for i in range(formatting_index + 1, len(context.open_elements._stack)):
             element = context.open_elements._stack[i]
             if context.open_elements._is_special_category(element):
@@ -620,6 +756,14 @@ class AdoptionAgencyAlgorithm:
                 entry.element = clone
                 if self.debug_enabled:
                     print(f"    Adoption Agency: Updated active formatting elements entry to point to cloned {clone.tag_name}")
+            else:
+                # Element not found in active formatting elements, add the clone
+                # This happens when we reconstruct elements that were previously closed
+                from turbohtml.tokenizer import HTMLToken
+                dummy_token = HTMLToken("StartTag", clone.tag_name, clone.attributes)
+                context.active_formatting_elements.push(clone, dummy_token)
+                if self.debug_enabled:
+                    print(f"    Adoption Agency: Added cloned {clone.tag_name} to active formatting elements")
             
             # Update current parent to be the clone for nesting
             current_parent = clone
@@ -660,16 +804,25 @@ class AdoptionAgencyAlgorithm:
         """
         formatting_element = formatting_entry.element
         if self.debug_enabled:
-            print(f"    Adoption Agency: Complex case with furthest block {furthest_block.tag_name}")
-            print(f"    Adoption Agency: Formatting element: {formatting_element.tag_name}")
+            print(f"\n=== COMPLEX ADOPTION ALGORITHM (Steps 8-19) ===")
+            print(f"    Formatting element: {formatting_element.tag_name}")
+            print(f"    Furthest block: {furthest_block.tag_name}")
+            print(f"    Stack before: {[e.tag_name for e in context.open_elements._stack]}")
         
         # Step 8: Create a bookmark pointing to the location of the formatting element
         # in the list of active formatting elements
         bookmark_index = context.active_formatting_elements.get_index(formatting_entry)
+        if self.debug_enabled:
+            print(f"\n--- STEP 8: Create bookmark ---")
+            print(f"    Bookmark index in active formatting elements: {bookmark_index}")
         
         # Step 9: Create a list of elements to be removed from the stack of open elements
         formatting_index = context.open_elements.index_of(formatting_element)
         furthest_index = context.open_elements.index_of(furthest_block)
+        if self.debug_enabled:
+            print(f"\n--- STEP 9: Identify elements ---")
+            print(f"    Formatting element index in stack: {formatting_index}")
+            print(f"    Furthest block index in stack: {furthest_index}")
         
         # Step 10: Find the common ancestor (element immediately above formatting element)
         if formatting_index > 0:
@@ -679,10 +832,19 @@ class AdoptionAgencyAlgorithm:
             common_ancestor = formatting_element.parent
         
         if not common_ancestor:
+            if self.debug_enabled:
+                print(f"    STEP 10 ERROR: No common ancestor found - aborting")
             return False
+        
+        if self.debug_enabled:
+            print(f"\n--- STEP 10: Find common ancestor ---")
+            print(f"    Common ancestor: {common_ancestor.tag_name}")
         
         # Step 11: Create a list "node list" and initialize it to empty
         node_list = []
+        if self.debug_enabled:
+            print(f"\n--- STEP 11: Initialize node list ---")
+            print(f"    Node list initialized (empty)")
         
         # Step 12: Reconstruction loop
         # This loop implements steps 12.1-12.3 with inner and outer loops
@@ -691,31 +853,45 @@ class AdoptionAgencyAlgorithm:
         inner_loop_counter = 0
         
         if self.debug_enabled:
-            print(f"    Adoption Agency: Starting reconstruction loop")
-            print(f"    Adoption Agency: Initial furthest_block parent: {furthest_block.parent.tag_name if furthest_block.parent else 'None'}")
+            print(f"\n--- STEP 12: Reconstruction loop ---")
+            print(f"    Starting with furthest_block: {furthest_block.tag_name}")
+            print(f"    Initial furthest_block parent: {furthest_block.parent.tag_name if furthest_block.parent else 'None'}")
         
         while True:
             inner_loop_counter += 1
+            if self.debug_enabled:
+                print(f"\n    --- Loop iteration {inner_loop_counter} ---")
+                print(f"        Current node: {node.tag_name}")
             
             # Step 12.1: Find the previous element in open elements stack
             node_index = context.open_elements.index_of(node)
             if node_index <= 0:
+                if self.debug_enabled:
+                    print(f"        STEP 12.1: Node index <= 0, breaking loop")
                 break
             node = context.open_elements._stack[node_index - 1]
+            if self.debug_enabled:
+                print(f"        STEP 12.1: Previous element: {node.tag_name}")
             
             # Step 12.2: If node is the formatting element, then break
             if node == formatting_element:
+                if self.debug_enabled:
+                    print(f"        STEP 12.2: Node is formatting element, breaking loop")
                 break
                 
             # Step 12.3: If node is not in active formatting elements, remove it
             node_entry = context.active_formatting_elements.find_element(node)
             if not node_entry:
+                if self.debug_enabled:
+                    print(f"        STEP 12.3: Node {node.tag_name} not in active formatting - removing from stack")
                 context.open_elements.remove_element(node)
                 continue
                 
             # Step 12.4: If we've been through this loop 3 times and node is still in
             # the list of active formatting elements, remove it
             if inner_loop_counter > 3:
+                if self.debug_enabled:
+                    print(f"        STEP 12.4: Loop count > 3, removing {node.tag_name} from active formatting")
                 context.active_formatting_elements.remove_entry(node_entry)
                 continue
             
@@ -724,79 +900,112 @@ class AdoptionAgencyAlgorithm:
                 tag_name=node.tag_name,
                 attributes=node.attributes.copy()
             )
+            if self.debug_enabled:
+                print(f"        STEP 12.5: Created clone of {node.tag_name}")
             
             # Step 12.6: Replace the entry for node in active formatting elements
             # with an entry for the clone
             clone_entry = FormattingElementEntry(node_clone, node_entry.token)
             bookmark_index_before = context.active_formatting_elements.get_index(node_entry)
             context.active_formatting_elements.replace_entry(node_entry, node_clone, node_entry.token)
+            if self.debug_enabled:
+                print(f"        STEP 12.6: Replaced active formatting entry")
             
             # Step 12.7: Replace node with the clone in the open elements stack
             context.open_elements.replace_element(node, node_clone)
+            if self.debug_enabled:
+                print(f"        STEP 12.7: Replaced in open elements stack")
             
             # Step 12.8: If last_node is the furthest block, set the bookmark
             if last_node == furthest_block:
                 bookmark_index = bookmark_index_before + 1
+                if self.debug_enabled:
+                    print(f"        STEP 12.8: Updated bookmark index to {bookmark_index}")
             
             # Step 12.9: Insert last_node as a child of node_clone
             if last_node.parent:
                 if self.debug_enabled:
-                    print(f"    Adoption Agency: Removing {last_node.tag_name} from parent {last_node.parent.tag_name}")
+                    print(f"        STEP 12.9: Removing {last_node.tag_name} from parent {last_node.parent.tag_name}")
                 last_node.parent.remove_child(last_node)
             
             if self.debug_enabled:
-                print(f"    Adoption Agency: Adding {last_node.tag_name} as child of {node_clone.tag_name}")
-                print(f"    Adoption Agency: node_clone parent: {node_clone.parent.tag_name if node_clone.parent else 'None'}")
-                print(f"    Adoption Agency: last_node parent before: {last_node.parent.tag_name if last_node.parent else 'None'}")
+                print(f"        STEP 12.9: Adding {last_node.tag_name} as child of {node_clone.tag_name}")
             
             node_clone.append_child(last_node)
-            
-            if self.debug_enabled:
-                print(f"    Adoption Agency: last_node parent after: {last_node.parent.tag_name if last_node.parent else 'None'}")
             
             # Step 12.10: Set last_node to node_clone
             last_node = node_clone
             node = node_clone
+            if self.debug_enabled:
+                print(f"        STEP 12.10: Set last_node to {node_clone.tag_name}")
         
         # Step 13: Insert last_node as a child of common_ancestor
         if self.debug_enabled:
-            print(f"    Adoption Agency: Step 13 - Inserting {last_node.tag_name} as child of {common_ancestor.tag_name}")
-            print(f"    Adoption Agency: last_node parent before step 13: {last_node.parent.tag_name if last_node.parent else 'None'}")
-            print(f"    Adoption Agency: common_ancestor: {common_ancestor.tag_name}")
+            print(f"\n--- STEP 13: Insert last_node into common ancestor ---")
+            print(f"    Inserting {last_node.tag_name} as child of {common_ancestor.tag_name}")
+            print(f"    last_node parent before: {last_node.parent.tag_name if last_node.parent else 'None'}")
         
         if last_node.parent:
             last_node.parent.remove_child(last_node)
         
         # Check if we need foster parenting
         if self._should_foster_parent(common_ancestor):
+            if self.debug_enabled:
+                print(f"    Using foster parenting")
             self._foster_parent_node(last_node, context, common_ancestor)
         else:
             common_ancestor.append_child(last_node)
-            
-        if self.debug_enabled:
-            print(f"    Adoption Agency: last_node parent after step 13: {last_node.parent.tag_name if last_node.parent else 'None'}")
-            print(f"    Adoption Agency: furthest_block parent before step 15: {furthest_block.parent.tag_name if furthest_block.parent else 'None'}")
+            if self.debug_enabled:
+                print(f"    Added normally to common ancestor")
         
         # Step 14: Create a clone of the formatting element
         formatting_clone = Node(
             tag_name=formatting_element.tag_name,
             attributes=formatting_element.attributes.copy()
         )
+        if self.debug_enabled:
+            print(f"\n--- STEP 14: Create formatting element clone ---")
+            print(f"    Created clone of {formatting_element.tag_name}")
         
         # Step 15: Move all children of furthest_block to formatting_clone
-        children_to_move = furthest_block.children[:]
+        # BUT: Only move children that are NOT block elements to avoid consuming
+        # multiple blocks in one adoption agency run. Block elements should remain
+        # in the open elements stack to trigger subsequent adoption agency runs.
+        children_to_move = []
+        block_children_left = []
+        
+        for child in furthest_block.children[:]:
+            if hasattr(child, 'tag_name') and context.open_elements._is_special_category(child):
+                # This is a block element - leave it for subsequent adoption agency runs
+                block_children_left.append(child)
+            else:
+                # This is not a block element - move it to the formatting clone
+                children_to_move.append(child)
+        
+        if self.debug_enabled:
+            print(f"\n--- STEP 15: Move furthest block children ---")
+            print(f"    Moving {len(children_to_move)} non-block children from {furthest_block.tag_name} to {formatting_clone.tag_name}")
+            print(f"    Children to move: {[c.tag_name if hasattr(c, 'tag_name') else repr(c) for c in children_to_move]}")
+            print(f"    Block children left in stack: {[c.tag_name for c in block_children_left]}")
+        
         for child in children_to_move:
             furthest_block.remove_child(child)
             formatting_clone.append_child(child)
         
         # Step 16: Append formatting_clone as a child of furthest_block
         furthest_block.append_child(formatting_clone)
+        if self.debug_enabled:
+            print(f"\n--- STEP 16: Add formatting clone to furthest block ---")
+            print(f"    Added {formatting_clone.tag_name} as child of {furthest_block.tag_name}")
         
         # Safety check: Ensure no circular references were created
         self._validate_no_circular_references(formatting_clone, furthest_block)
         
         # Step 17: Remove formatting_entry from active formatting elements
         context.active_formatting_elements.remove_entry(formatting_entry)
+        if self.debug_enabled:
+            print(f"\n--- STEP 17: Remove original from active formatting ---")
+            print(f"    Removed original {formatting_element.tag_name}")
         
         # Step 18: Insert new entry for formatting_clone in active formatting elements
         # at the position marked by the bookmark
@@ -806,6 +1015,10 @@ class AdoptionAgencyAlgorithm:
             context.active_formatting_elements.insert_at_index(bookmark_index, formatting_clone, formatting_entry.token)
         else:
             context.active_formatting_elements.push(formatting_clone, formatting_entry.token)
+        
+        if self.debug_enabled:
+            print(f"\n--- STEP 18: Add clone to active formatting ---")
+            print(f"    Added {formatting_clone.tag_name} at bookmark index {bookmark_index}")
         
         # Step 19: Remove formatting_element from open elements and insert formatting_clone
         # after furthest_block
@@ -817,9 +1030,13 @@ class AdoptionAgencyAlgorithm:
         context.move_to_element(furthest_block)
         
         if self.debug_enabled:
-            print(f"    Adoption Agency: Reconstruction complete")
-            print(f"    Adoption Agency: Stack after: {[e.tag_name for e in context.open_elements._stack]}")
-            print(f"    Adoption Agency: Active formatting after: {[e.element.tag_name for e in context.active_formatting_elements]}")
+            print(f"\n--- STEP 19: Update open elements stack ---")
+            print(f"    Removed original {formatting_element.tag_name} from stack")
+            print(f"    Added {formatting_clone.tag_name} after {furthest_block.tag_name}")
+            print(f"    Final stack: {[e.tag_name for e in context.open_elements._stack]}")
+            print(f"    Final active formatting: {[e.element.tag_name for e in context.active_formatting_elements]}")
+            print(f"    Current parent now: {context.current_parent.tag_name}")
+            print(f"=== ADOPTION AGENCY ALGORITHM END ===\n")
         
         return True
     
