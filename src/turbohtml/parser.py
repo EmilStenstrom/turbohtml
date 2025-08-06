@@ -538,14 +538,14 @@ class TurboHTML:
 
         # Check if adoption agency algorithm should run iteratively
         adoption_run_count = 0
-        max_runs = 10  # Safety limit to prevent infinite loops
+        max_runs = 8  # HTML5 spec limit for adoption agency algorithm iterations
         
         while adoption_run_count < max_runs:
             if self.adoption_agency.should_run_adoption(tag_name, context):
                 adoption_run_count += 1
                 self.debug(f"Running adoption agency algorithm #{adoption_run_count} for {tag_name}")
                 
-                if not self.adoption_agency.run_algorithm(tag_name, context):
+                if not self.adoption_agency.run_algorithm(tag_name, context, adoption_run_count):
                     # If adoption agency returns False, stop trying
                     self.debug(f"Adoption agency returned False on run #{adoption_run_count}, stopping")
                     break

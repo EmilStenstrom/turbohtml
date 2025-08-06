@@ -526,12 +526,17 @@ class AdoptionAgencyAlgorithm:
             print(f"    should_run_adoption: Found {found_candidates} {tag_name} elements total, none need adoption agency")
         return False
     
-    def run_algorithm(self, tag_name: str, context) -> bool:
+    def run_algorithm(self, tag_name: str, context, iteration_count: int = 0) -> bool:
         """
         Run the HTML5 Adoption Agency Algorithm per WHATWG spec.
         
         This version finds the CORRECT formatting element that needs reconstruction
         (the one with block elements after it) rather than just the first one found.
+        
+        Args:
+            tag_name: The tag name to process
+            context: The parse context
+            iteration_count: Which iteration of the algorithm this is (1-8)
         """
         if self.debug_enabled:
             print(f"\n=== ADOPTION AGENCY ALGORITHM START ===")
@@ -618,7 +623,7 @@ class AdoptionAgencyAlgorithm:
         # Step 8-19: Complex case with furthest block
         if self.debug_enabled:
             print(f"    STEP 8-19: Complex case with furthest block")
-        return self._run_complex_adoption_spec(formatting_entry, furthest_block, context)
+        return self._run_complex_adoption_spec(formatting_entry, furthest_block, context, iteration_count)
         
     def _find_furthest_block_spec_compliant(self, formatting_element: Node, context) -> Optional[Node]:
         """Find the furthest block element per HTML5 spec"""
@@ -795,12 +800,15 @@ class AdoptionAgencyAlgorithm:
         # Reconstruct them in the current context
         self._reconstruct_formatting_elements(active_elements, context)
     
-    def _run_complex_adoption_spec(self, formatting_entry: FormattingElementEntry, furthest_block: Node, context) -> bool:
+    def _run_complex_adoption_spec(self, formatting_entry: FormattingElementEntry, furthest_block: Node, context, iteration_count: int = 0) -> bool:
         """
         Run the complex adoption agency algorithm (steps 8-19) per HTML5 spec.
         
         This implements the full algorithm with proper element reconstruction
         following the html5lib approach.
+        
+        Args:
+            iteration_count: Which iteration of the algorithm this is (1-8)
         """
         formatting_element = formatting_entry.element
         if self.debug_enabled:
@@ -971,11 +979,16 @@ class AdoptionAgencyAlgorithm:
         # BUT: Only move children that are NOT block elements to avoid consuming
         # multiple blocks in one adoption agency run. Block elements should remain
         # in the open elements stack to trigger subsequent adoption agency runs.
+        # EXCEPTION: On the 8th iteration (the limit), move ALL children including blocks
+        # since no more adoption agency runs will happen.
         children_to_move = []
         block_children_left = []
         
         for child in furthest_block.children[:]:
-            if hasattr(child, 'tag_name') and context.open_elements._is_special_category(child):
+            if iteration_count == 8:
+                # On the 8th iteration, move ALL children including blocks
+                children_to_move.append(child)
+            elif hasattr(child, 'tag_name') and context.open_elements._is_special_category(child):
                 # This is a block element - leave it for subsequent adoption agency runs
                 block_children_left.append(child)
             else:
@@ -1029,6 +1042,12 @@ class AdoptionAgencyAlgorithm:
         # This ensures subsequent content goes into the furthest block, not the formatting clone
         context.move_to_element(furthest_block)
         
+        # Clean up the open elements stack to remove elements that are no longer ancestors
+        # of the furthest block after the adoption agency rearrangement
+        # DISABLED: Stack cleanup is causing issues with the first test case
+        # if len(context.active_formatting_elements) > 1:
+        #     self._cleanup_open_elements_stack(context, furthest_block)
+        
         if self.debug_enabled:
             print(f"\n--- STEP 19: Update open elements stack ---")
             print(f"    Removed original {formatting_element.tag_name} from stack")
@@ -1039,6 +1058,48 @@ class AdoptionAgencyAlgorithm:
             print(f"=== ADOPTION AGENCY ALGORITHM END ===\n")
         
         return True
+    
+    def _cleanup_open_elements_stack(self, context, current_element: Node) -> None:
+        """
+        Clean up the open elements stack after adoption agency to remove elements
+        that are no longer ancestors of the current element.
+        
+        After adoption agency rearranges the tree, some elements in the stack
+        may no longer be on the path from the root to the current element.
+        """
+        if self.debug_enabled:
+            print(f"    Cleaning up open elements stack")
+            print(f"    Stack before cleanup: {[e.tag_name for e in context.open_elements._stack]}")
+        
+        # Build the path from current element to root
+        ancestors = []
+        node = current_element
+        while node:
+            ancestors.append(node)
+            node = node.parent
+        
+        # Remove elements from stack that are not ancestors
+        # But be more conservative - only remove if they're definitely not in the tree
+        elements_to_remove = []
+        for element in context.open_elements._stack:
+            if element not in ancestors:
+                # Additional check: only remove if the element is not a child of any ancestor
+                is_child_of_ancestor = False
+                for ancestor in ancestors:
+                    if element in ancestor.children:
+                        is_child_of_ancestor = True
+                        break
+                
+                if not is_child_of_ancestor:
+                    elements_to_remove.append(element)
+                    if self.debug_enabled:
+                        print(f"    Removing {element.tag_name} from stack (not an ancestor or child)")
+        
+        for element in elements_to_remove:
+            context.open_elements.remove_element(element)
+        
+        if self.debug_enabled and elements_to_remove:
+            print(f"    Stack after cleanup: {[e.tag_name for e in context.open_elements._stack]}")
     
     def _validate_no_circular_references(self, formatting_clone: Node, furthest_block: Node) -> None:
         """Validate that no circular references were created in the DOM tree"""

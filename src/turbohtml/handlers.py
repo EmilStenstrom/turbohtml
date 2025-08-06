@@ -496,7 +496,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         if existing_entry and tag_name in ('a',):  # Apply to specific elements that shouldn't nest
             self.debug(f"Found existing active {tag_name}, running adoption agency to close it first")
             # Run adoption agency algorithm to close the existing element
-            if self.parser.adoption_agency.run_algorithm(tag_name, context):
+            if self.parser.adoption_agency.run_algorithm(tag_name, context, 1):
                 self.debug(f"Adoption agency handled duplicate {tag_name}")
 
         # Add to open elements stack
@@ -576,10 +576,11 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
 
         # Track adoption agency runs for this end tag
         adoption_run_count = 0
-        max_runs = 10  # Safety limit to prevent infinite loops
+        max_runs = 8  # HTML5 spec limit for adoption agency algorithm iterations
+        self.debug(f"FormattingElementHandler: MAX_RUNS SET TO {max_runs}")
         
         # Keep running adoption agency algorithm until no more reconstructions are needed
-        while adoption_run_count < max_runs:
+        while True:
             self.debug(f"FormattingElementHandler: Checking should_run_adoption for run #{adoption_run_count + 1}")
             should_run = self.parser.adoption_agency.should_run_adoption(tag_name, context)
             self.debug(f"FormattingElementHandler: should_run_adoption returned: {should_run}")
@@ -588,11 +589,16 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 self.debug(f"FormattingElementHandler: should_run_adoption returned False after {adoption_run_count} run(s)")
                 break
                 
+            # Check if we've reached the limit before running
+            if adoption_run_count >= max_runs:
+                self.debug(f"FormattingElementHandler: Reached maximum runs ({max_runs}) for {tag_name}, stopping")
+                break
+                
             adoption_run_count += 1
             self.debug(f"FormattingElementHandler: Running adoption agency algorithm #{adoption_run_count} for end tag </{tag_name}>")
             
             # Run the adoption agency algorithm
-            result = self.parser.adoption_agency.run_algorithm(tag_name, context)
+            result = self.parser.adoption_agency.run_algorithm(tag_name, context, adoption_run_count)
             self.debug(f"FormattingElementHandler: Adoption agency run #{adoption_run_count} returned: {result}")
             
             if not result:
