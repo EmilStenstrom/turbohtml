@@ -3003,27 +3003,44 @@ class ForeignTagHandler(TagHandler):
         self.debug(f"Foster parented text '{text}' before table")
 
     def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:
-        """Handle CDATA sections in foreign elements (SVG/MathML)"""
-        return (
-            context.current_context in ("svg", "math") and
-            comment.startswith("[CDATA[") and comment.endswith("]]")
-        )
+        """Handle <![CDATA[...]]> sequences seen as comments by the tokenizer in foreign content.
+
+        In SVG/MathML contexts (but not integration points like foreignObject/desc/title),
+        treat CDATA as text. Support incomplete CDATA at EOF by emitting the inner text.
+        """
+        if context.current_context not in ("svg", "math"):
+            return False
+        # If inside an integration point that uses HTML parsing, do not special-case CDATA
+        current = context.current_parent
+        while current:
+            if current.tag_name in ("svg foreignObject", "svg desc", "svg title"):
+                return False
+            current = current.parent
+        return comment.startswith("[CDATA[")
 
     def handle_comment(self, comment: str, context: "ParseContext") -> bool:
-        """Convert CDATA sections to text content in foreign elements"""
+        """Convert <![CDATA[...]]> sequences to text content in foreign elements."""
         if not self.should_handle_comment(comment, context):
             return False
         
-        # Extract text content from CDATA: [CDATA[foo]] -> foo
-        cdata_content = comment[7:-2]  # Remove [CDATA[ and ]]
-        self.debug(f"Converting CDATA to text: '{cdata_content}' in {context.current_context} context")
+        inner = ""
+        if comment.startswith("[CDATA["):
+            if comment.endswith("]]") and len(comment) >= 9:
+                inner = comment[7:-2]
+            else:
+                inner = comment[7:]
         
+        # Do not emit empty text for empty CDATA blocks
+        if inner == "":
+            return True
+        
+        self.debug(f"Converting CDATA to text: '{inner}' in {context.current_context} context")
         # Add as text content (similar to handle_text)
         if context.current_parent.children and context.current_parent.children[-1].tag_name == "#text":
-            context.current_parent.children[-1].text_content += cdata_content
+            context.current_parent.children[-1].text_content += inner
         else:
             text_node = Node("#text")
-            text_node.text_content = cdata_content
+            text_node.text_content = inner
             context.current_parent.append_child(text_node)
         return True
 
