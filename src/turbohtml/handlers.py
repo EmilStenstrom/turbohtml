@@ -169,6 +169,8 @@ class SimpleElementHandler(TagHandler):
         
         if not self._is_void_element(token.tag_name):
             context.enter_element(new_node)
+            # Ensure formatting elements are tracked in the open elements stack
+            context.open_elements.push(new_node)
         return True
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
@@ -2817,6 +2819,15 @@ class ForeignTagHandler(TagHandler):
             return True
 
         elif context.current_context == "svg":
+            # If we're inside an SVG integration point (foreignObject, desc, title),
+            # delegate ALL tags to HTML handlers. HTML parsing rules apply within these
+            # subtrees per the HTML spec.
+            if (
+                context.current_parent.tag_name in ("svg foreignObject", "svg desc", "svg title") or
+                context.current_parent.has_ancestor_matching(lambda n: n.tag_name in ("svg foreignObject", "svg desc", "svg title"))
+            ):
+                self.debug("Inside SVG integration point, delegating to HTML handlers")
+                return False
             # Auto-close certain SVG elements when encountering table elements
             if tag_name_lower in ("tr", "td", "th") and context.current_parent.tag_name.startswith("svg "):
                 # Find if we're inside an SVG element that should auto-close
@@ -3815,6 +3826,11 @@ class MenuitemElementHandler(TagHandler):
         if context.current_parent.find_ancestor("select"):
             self.debug("Ignoring menuitem inside select")
             return True
+
+        # Reconstruct active formatting elements before inserting menuitem, so elements like <b>
+        # continue outside closed paragraphs per HTML5 parsing behavior
+        if hasattr(self.parser, 'adoption_agency'):
+            self.parser.adoption_agency.reconstruct_active_formatting_elements(context)
 
         # Create the menuitem element
         new_node = Node(tag_name, token.attributes)
