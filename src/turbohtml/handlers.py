@@ -1068,6 +1068,31 @@ class ParagraphTagHandler(TagHandler):
             # Don't change current_parent - the implicit p is immediately closed
             return True
 
+        # Special handling: when in table context, an end tag </p> may appear while inside
+        # a table subtree. The tests expect an implicit empty <p> around tables in this case.
+        if context.document_state == DocumentState.IN_TABLE and self.parser.find_current_table(context):
+            self.debug("In table context; creating implicit p relative to table per tests")
+            table = self.parser.find_current_table(context)
+            # If the table is inside a paragraph, insert an empty <p> BEFORE the table inside that paragraph
+            paragraph_ancestor = table.find_ancestor("p")
+            if paragraph_ancestor:
+                p_node = Node("p")
+                try:
+                    idx = paragraph_ancestor.children.index(table)
+                except ValueError:
+                    idx = len(paragraph_ancestor.children)
+                paragraph_ancestor.children.insert(idx, p_node)
+                p_node.parent = paragraph_ancestor
+                self.debug(f"Inserted implicit empty <p> before table inside paragraph {paragraph_ancestor}")
+                return True
+            # If the table was foster-parented after a paragraph, create empty <p> in original paragraph
+            elif table.parent and table.previous_sibling and table.previous_sibling.tag_name == "p":
+                original_paragraph = table.previous_sibling
+                p_node = Node("p")
+                original_paragraph.append_child(p_node)
+                self.debug(f"Created implicit p as child of original paragraph {original_paragraph}")
+                return True
+
         # Standard behavior: Find nearest p ancestor and move up to its parent
         if context.current_parent.tag_name == "p":
             # Current parent is the p element being closed
@@ -1140,23 +1165,38 @@ class ParagraphTagHandler(TagHandler):
             # Check if table has a paragraph ancestor (indicating it's inside a p, not foster parented)
             paragraph_ancestor = table.find_ancestor("p")
             if paragraph_ancestor:
-                # The table is inside a paragraph, create the implicit p as sibling to the table
-                # within the same paragraph
+                # The table is inside a paragraph; create the implicit empty <p> BEFORE the table
+                # as a sibling within the same paragraph to match html5lib expectations.
                 p_node = Node("p")
-                paragraph_ancestor.append_child(p_node)
-                self.debug(f"Created implicit p as sibling to table within paragraph {paragraph_ancestor}")
+                try:
+                    idx = paragraph_ancestor.children.index(table)
+                except ValueError:
+                    idx = len(paragraph_ancestor.children)
+                paragraph_ancestor.children.insert(idx, p_node)
+                p_node.parent = paragraph_ancestor
+                self.debug(f"Inserted implicit empty <p> before table inside paragraph {paragraph_ancestor}")
                 # Don't change current_parent - the implicit p is immediately closed
                 return True
             
             # Check if table has a paragraph sibling (indicating it was foster parented from a p)
             elif table.parent and table.previous_sibling and table.previous_sibling.tag_name == "p":
-                # The table was foster parented from a paragraph, create the implicit p as 
-                # a child of the original paragraph
+                # The table was inserted after closing a paragraph. Move the table back
+                # inside the original paragraph and create an implicit empty <p> before it
+                # to match html5lib expectations for this edge case.
                 original_paragraph = table.previous_sibling
+                parent = table.parent
+                try:
+                    idx = parent.children.index(table)
+                    parent.children.pop(idx)
+                except ValueError:
+                    pass
+                # Insert an empty <p> inside the original paragraph
                 p_node = Node("p")
                 original_paragraph.append_child(p_node)
-                self.debug(f"Created implicit p as child of original paragraph {original_paragraph}")
-                # Don't change current_parent - the implicit p is immediately closed
+                # Append the table into the original paragraph
+                original_paragraph.append_child(table)
+                table.parent = original_paragraph
+                self.debug(f"Moved table into original paragraph and created implicit p under it: {original_paragraph}")
                 return True
 
         # In valid body context with valid parent - create implicit p (rare case)
@@ -1271,40 +1311,44 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             body = self.parser._ensure_body_node(context)
             self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
 
-        # Special case: if we're inside a paragraph, don't auto-close it immediately
-        # Instead, the table should be foster parented according to HTML5 spec
-        paragraph_ancestor = None
-        if (context.current_parent and 
-            context.current_parent.tag_name == "p"):
-            paragraph_ancestor = context.current_parent
-            self.debug(f"Table inside paragraph {paragraph_ancestor}, using foster parenting")
+        # Per HTML parsing algorithm: handling differs between standards and quirks.
+        # If a table start tag is seen while inside a p:
+        # - Standards mode: close the p first and insert table at the parent level (foster parenting path)
+        # - Quirks mode (no doctype): keep the table inside the paragraph
+        if context.current_parent and context.current_parent.tag_name == "p":
+            # If the paragraph is empty (no children), leave it in place and
+            # insert the table as a sibling after the existing empty <p> so
+            # the empty <p> remains in the tree (matches tests20.dat:41).
+            paragraph_node = context.current_parent
+            is_empty_paragraph = len(paragraph_node.children) == 0
+            if is_empty_paragraph:
+                # Decide based on standards vs quirks mode
+                if self._should_foster_parent_table(context):
+                    self.debug("Empty <p> before <table> in standards mode; close <p> and insert table as sibling")
+                    parent = paragraph_node.parent
+                    if parent is None:
+                        body = self.parser._ensure_body_node(context)
+                        context.move_to_element(body)
+                    else:
+                        context.move_to_element(parent)
+                else:
+                    # Quirks mode: keep the table inside the empty paragraph
+                    self.debug("Empty <p> before <table> in quirks mode; keep table inside <p>")
+            else:
+                # Non-empty <p>: close it in standards mode
+                if self._should_foster_parent_table(context):
+                    self.debug("Non-empty <p> with <table>; closing paragraph before inserting table")
+                    if context.current_parent.parent:
+                        context.move_up_one_level()
+                    else:
+                        body = self.parser._ensure_body_node(context)
+                        context.move_to_element(body)
+                else:
+                    self.debug("Quirks mode: keep table inside non-empty <p>")
 
         new_table = self._create_element(token)
+        context.current_parent.append_child(new_table)
         
-        if paragraph_ancestor:
-            # Determine if we should foster parent based on DOCTYPE
-            should_foster_parent = self._should_foster_parent_table(context)
-            
-            if should_foster_parent:
-                # Foster parent: close the paragraph and add table as sibling
-                # This follows HTML5 foster parenting rules for standards mode
-                self.debug(f"Foster parenting table: closing paragraph and adding table as sibling")
-                paragraph_parent = paragraph_ancestor.parent
-                if paragraph_parent:
-                    # Add table as child of paragraph's parent (making it a sibling to p)
-                    paragraph_parent.append_child(new_table)
-                    # Set current parent to the paragraph's parent for subsequent content
-                    context.move_to_element(paragraph_parent)
-                else:
-                    # Fallback: add to current context if no parent found
-                    context.current_parent.append_child(new_table)
-            else:
-                # Legacy/quirks mode: allow table inside paragraph
-                self.debug(f"Quirks mode: allowing table inside paragraph")
-                paragraph_ancestor.append_child(new_table)
-        else:
-            context.current_parent.append_child(new_table)
-            
         context.enter_element(new_table)
         context.open_elements.push(new_table)  # Add table to open elements stack
         self.parser.transition_to_state(context, DocumentState.IN_TABLE)
@@ -1861,7 +1905,11 @@ class FormTagHandler(TagHandler):
             self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
 
         if tag_name == "form":
-            # Only one form element allowed
+            # Only one active form element at a time: detect dynamically by scanning open elements.
+            # Also ignore if there's a form ancestor (nested form).
+            has_open_form = context.open_elements.has_element_in_scope("form")
+            if has_open_form:
+                return True
             if self.parser.has_form_ancestor(context):
                 return True
 
@@ -1872,6 +1920,11 @@ class FormTagHandler(TagHandler):
         # Update current parent for non-void elements
         if tag_name not in ("input",):
             context.enter_element(new_node)
+            # Track form in open elements so dynamic detection works
+            if tag_name == "form":
+                context.open_elements.push(new_node)
+        
+        # No persistent pointer; dynamic detection is used instead
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
@@ -1884,6 +1937,9 @@ class FormTagHandler(TagHandler):
         current = context.current_parent.find_ancestor(tag_name)
 
         if current:
+            # Remove the form from open elements stack if present
+            if tag_name == "form":
+                context.open_elements.remove_element(current)
             body = self.parser._get_body_node()
             context.move_to_element_with_fallback(current.parent, body) or self.parser.html_node
 
