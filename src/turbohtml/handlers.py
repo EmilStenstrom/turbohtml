@@ -945,6 +945,14 @@ class ParagraphTagHandler(TagHandler):
         self.debug(f"handling {token}, context={context}")
         self.debug(f"Current parent: {context.current_parent}")
 
+        # If inside an SVG integration point, clear active formatting elements to avoid
+        # leaking HTML formatting from outside into this subtree.
+        if (
+            context.current_parent.tag_name in ("svg foreignObject", "svg desc", "svg title") or
+            context.current_parent.has_ancestor_matching(lambda n: n.tag_name in ("svg foreignObject", "svg desc", "svg title"))
+        ):
+            context.active_formatting_elements._stack.clear()
+
         # If we're handling a tag that should close p
         if token.tag_name != "p" and context.current_parent.tag_name == "p":
             self.debug(f"Auto-closing p due to {token.tag_name}")
@@ -2375,6 +2383,10 @@ class AutoClosingTagHandler(TemplateAwareHandler):
         has_active_formatting = len(context.active_formatting_elements) > 0
         
         if (formatting_element or has_active_formatting) and token.tag_name in BLOCK_ELEMENTS:
+            # Do not perform auto-closing/reconstruction inside HTML integration points
+            if self._is_in_integration_point(context):
+                self.debug("In integration point; skipping auto-closing/reconstruction for block element")
+                return False
             if formatting_element:
                 self.debug(f"Found formatting element ancestor: {formatting_element}")
             if has_active_formatting:
@@ -2477,6 +2489,21 @@ class AutoClosingTagHandler(TemplateAwareHandler):
 
         return False
 
+    def _is_in_integration_point(self, context: "ParseContext") -> bool:
+        """Check if we're inside an SVG or MathML integration point where HTML rules apply."""
+        current = context.current_parent
+        while current:
+            # SVG integration points: foreignObject, desc, title
+            if current.tag_name in ("svg foreignObject", "svg desc", "svg title"):
+                return True
+            # MathML integration points: annotation-xml with specific encoding
+            if current.tag_name == "math annotation-xml":
+                encoding = current.attributes.get("encoding", "").lower()
+                if encoding in ("text/html", "application/xhtml+xml"):
+                    return True
+            current = current.parent
+        return False
+
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
         # Don't handle end tags inside template content that would affect document state
         if self._is_in_template_content(context):
@@ -2568,8 +2595,8 @@ class ForeignTagHandler(TagHandler):
                 if name_lower in SVG_CASE_SENSITIVE_ATTRIBUTES:
                     fixed_attrs[SVG_CASE_SENSITIVE_ATTRIBUTES[name_lower]] = value
                 else:
-                    # For SVG, attributes not in the mapping keep their case
-                    fixed_attrs[name] = value
+                    # For SVG, attributes not in the mapping are lowercased per spec
+                    fixed_attrs[name_lower] = value
             elif element_context == "math":
                 # MathML: Lowercase all attributes unless in case mapping
                 if name_lower in MATHML_CASE_SENSITIVE_ATTRIBUTES:
@@ -2765,9 +2792,37 @@ class ForeignTagHandler(TagHandler):
             # Check if we're inside a select element (foreign elements not allowed)
             if context.current_parent.is_inside_tag("select"):
                 return False
-        
-        # Handle any tag when in SVG or MathML context
-        if context.current_context in ("svg", "math"):
+
+        # If inside an SVG integration point (foreignObject, desc, title),
+        # HTML parsing rules apply; delegate to HTML handlers by returning False.
+        if context.current_context == "svg":
+            if (
+                context.current_parent.tag_name in ("svg foreignObject", "svg desc", "svg title") or
+                context.current_parent.has_ancestor_matching(lambda n: n.tag_name in ("svg foreignObject", "svg desc", "svg title"))
+            ):
+                # Apply HTML rules within integration points by delegating to HTML handlers
+                return False
+            return True
+
+        # In MathML text integration points, HTML parsing rules apply; delegate HTML elements.
+        if context.current_context == "math":
+            # MathML text integration points: mtext, mi, mo, mn, ms
+            in_text_ip = context.current_parent.find_ancestor(
+                lambda n: n.tag_name in ("math mtext", "math mi", "math mo", "math mn", "math ms")
+            ) is not None
+            if in_text_ip:
+                from .constants import HTML_ELEMENTS, TABLE_ELEMENTS
+                tnl = tag_name.lower()
+                # Delegate typical HTML elements, but NOT table-related elements
+                if tnl in HTML_ELEMENTS and tnl not in TABLE_ELEMENTS and tnl != "table":
+                    return False
+            # Also, for annotation-xml with HTML/XHTML encoding, delegate HTML elements
+            if context.current_parent.tag_name == "math annotation-xml":
+                encoding = context.current_parent.attributes.get("encoding", "").lower()
+                if encoding in ("application/xhtml+xml", "text/html"):
+                    from .constants import HTML_ELEMENTS
+                    if tag_name.lower() in HTML_ELEMENTS:
+                        return False
             return True
         # Also handle svg and math tags to enter those contexts
         if tag_name in ("svg", "math"):
@@ -2893,6 +2948,8 @@ class ForeignTagHandler(TagHandler):
                 context.current_parent.tag_name in ("svg foreignObject", "svg desc", "svg title") or
                 context.current_parent.has_ancestor_matching(lambda n: n.tag_name in ("svg foreignObject", "svg desc", "svg title"))
             ):
+                # Ensure HTML handlers run: temporarily exit foreign context for this branch
+                context.current_context = None
                 self.debug("Inside SVG integration point, delegating to HTML handlers")
                 return False
             # Auto-close certain SVG elements when encountering table elements
@@ -2926,6 +2983,8 @@ class ForeignTagHandler(TagHandler):
                 # Only set as current parent if not self-closing
                 if not token.is_self_closing:
                     context.enter_element(new_node)
+                # Enter HTML parsing rules inside SVG integration points
+                # Do not change global foreign context for integration points; delegation is handled elsewhere
                 return True            # Handle HTML elements inside foreignObject, desc, or title (integration points)
             elif tag_name_lower in HTML_ELEMENTS:
                 # Check if current parent is integration point or has integration point ancestor
@@ -3009,6 +3068,25 @@ class ForeignTagHandler(TagHandler):
         return True
 
     def should_handle_text(self, text: str, context: "ParseContext") -> bool:
+        # Delegate text to HTML handlers inside integration points
+        if context.current_context == "svg":
+            if (
+                context.current_parent.tag_name in ("svg foreignObject", "svg desc", "svg title") or
+                context.current_parent.has_ancestor_matching(lambda n: n.tag_name in ("svg foreignObject", "svg desc", "svg title"))
+            ):
+                return False
+        elif context.current_context == "math":
+            # MathML text integration points (mtext, mi, mo, mn, ms)
+            in_text_ip = context.current_parent.find_ancestor(
+                lambda n: n.tag_name in ("math mtext", "math mi", "math mo", "math mn", "math ms")
+            ) is not None
+            if in_text_ip:
+                return False
+            # annotation-xml with HTML/XHTML encoding
+            if context.current_parent.tag_name == "math annotation-xml":
+                encoding = context.current_parent.attributes.get("encoding", "").lower()
+                if encoding in ("application/xhtml+xml", "text/html"):
+                    return False
         return context.current_context in ("svg", "math")
 
     def handle_text(self, text: str, context: "ParseContext") -> bool:
