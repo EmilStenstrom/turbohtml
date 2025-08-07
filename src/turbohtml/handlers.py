@@ -519,6 +519,14 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                     context.active_formatting_elements.push(new_element, token)
                 return True
 
+        # Determine if the formatting element is being created as a descendant of <object>.
+        # If so, per spec, do not add it to the active formatting elements list.
+        # We check both current parent and the new element's ancestry as it is appended.
+        inside_object = (
+            context.current_parent.find_ancestor("object") is not None or
+            context.current_parent.tag_name == "object"
+        )
+
         # If we're in a table cell, handle normally
         if self._is_in_table_cell(context):
             self.debug("Inside table cell, creating formatting element normally")
@@ -526,7 +534,8 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
             context.enter_element(new_element)
             
             # Add to active formatting elements
-            context.active_formatting_elements.push(new_element, token)
+            if not inside_object:
+                context.active_formatting_elements.push(new_element, token)
             return True
 
         # If we're in a table but not in a cell, foster parent
@@ -552,7 +561,8 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 context.enter_element(new_element)
                 
                 # Add to active formatting elements
-                context.active_formatting_elements.push(new_element, token)
+                if not inside_object:
+                    context.active_formatting_elements.push(new_element, token)
                 return True
 
         # Create new formatting element normally
@@ -565,7 +575,8 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         context.enter_element(new_element)
         
         # Add to active formatting elements
-        context.active_formatting_elements.push(new_element, token)
+        if not inside_object:
+            context.active_formatting_elements.push(new_element, token)
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
@@ -3516,11 +3527,9 @@ class BoundaryElementHandler(TagHandler):
     """Handles elements that can affect formatting elements like marquee"""
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
-        # Don't handle foreign elements (svg, math) as boundary elements
-        # since they should be handled by ForeignTagHandler
-        if tag_name in ("svg", "math"):
-            return False
-        return tag_name in BOUNDARY_ELEMENTS
+        # Only handle marquee here. Other boundary/special elements (e.g., object,
+        # table, td, th, template) are handled by dedicated handlers.
+        return tag_name == "marquee"
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         # If we're in a <p> tag, close it first
@@ -3560,10 +3569,7 @@ class BoundaryElementHandler(TagHandler):
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
-        # Don't handle foreign elements (svg, math) as boundary elements
-        if tag_name in ("svg", "math"):
-            return False
-        return tag_name in BOUNDARY_ELEMENTS
+        return tag_name == "marquee"
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         tag_name = token.tag_name

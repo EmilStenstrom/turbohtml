@@ -1,4 +1,4 @@
-Tests passed: 1251/1729 (72%) (39 skipped)
+Tests passed: 1273/1729 (74%) (39 skipped)
 
 adoption01.dat: 18/18 (100%) [..................]
 adoption02.dat: 2/2 (100%) [..]
@@ -29,7 +29,7 @@ scripted/webkit01.dat: 0/0 (N/A) [ss] (2 skipped)
 search-element.dat: 3/3 (100%) [...]
 svg.dat: 3/8 (38%) [xxxxx...]
 tables01.dat: 13/19 (68%) [......xx.xx..x...x.]
-template.dat: 44/112 (39%) [..................xx.xxxxxx.x...xxxxxx.x.xxxxxxxxxxxxxxxx..xxx.xxxxxx.x.xx.xxxxx...x..x...xx...xxx.x.xxxxxxxxxxx]
+template.dat: 64/112 (57%) [..................xx.xxxxx.............x.xx.xxxxxxxxxxxxx......xxxxxx.x.xx.xxx............xx.......x.xxxxxxxx.xx]
 tests1.dat: 87/112 (78%) [.........................x....xxx...x...............xx....xxx.......xx.......x.xxx....x...x......x...xxx....xxx.]
 tests2.dat: 63/63 (100%) [...............................................................]
 tests3.dat: 24/24 (100%) [........................]
@@ -43,7 +43,7 @@ tests10.dat: 27/54 (50%) [..........xx..xxxxxxxxxxxx...xxxxxxx.xx.x..........xxx
 tests11.dat: 9/13 (69%) [..x.xxx......]
 tests12.dat: 0/2 (0%) [xx]
 tests14.dat: 6/7 (86%) [...x...]
-tests15.dat: 5/14 (36%) [xxxxxx....xx.x]
+tests15.dat: 6/14 (43%) [xxxxxx....xx..]
 tests16.dat: 145/185 (78%) [..........x......x..........x..........x.....xx...........xx...xxxxxx............x.ssssssxx.xxx..............x......x..........x..........x.....xx.........xx...xxxxxx............x.ssssssxx.x.....xx] (12 skipped)
 tests17.dat: 13/13 (100%) [.............]
 tests18.dat: 20/35 (57%) [....s.........xx.xx.xxxxxxxxxx...x..] (1 skipped)
@@ -51,7 +51,7 @@ tests19.dat: 57/103 (55%) [.................x...x.x......xxxxx...x..x..x.x.xxxxx
 tests20.dat: 62/64 (97%) [.........................................x.....x................]
 tests21.dat: 11/23 (48%) [......xx.x....xxxxxxxxx]
 tests22.dat: 0/5 (0%) [xxxxx]
-tests23.dat: 4/5 (80%) [....x]
+tests23.dat: 5/5 (100%) [.....]
 tests24.dat: 8/8 (100%) [........]
 tests25.dat: 26/26 (100%) [..........................]
 tests26.dat: 2/20 (10%) [xxxxxxxxx.xxxx.xxxxx]
