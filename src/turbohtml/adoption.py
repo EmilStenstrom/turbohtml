@@ -27,6 +27,9 @@ class FormattingElementEntry:
     """Entry in the active formatting elements stack"""
     element: Node
     token: HTMLToken
+
+    # Marker entries will have element set to None. We keep token optional then.
+    # Using a dataclass keeps uniform list handling.
     
     def matches(self, tag_name: str, attributes: Dict[str, str] = None) -> bool:
         """Check if this entry matches the given tag and attributes"""
@@ -66,11 +69,22 @@ class ActiveFormattingElements:
         # Enforce maximum size (remove oldest if needed)
         if len(self._stack) > self._max_size:
             self._stack.pop(0)
+
+    def push_marker(self) -> None:
+        """Push a marker entry (spec: used for table/template boundaries)."""
+        # Represent marker as entry with element=None, token=None
+        marker = FormattingElementEntry(element=None, token=None)  # type: ignore
+        self._stack.append(marker)
+
+    def is_marker(self, entry: FormattingElementEntry) -> bool:
+        return entry.element is None
     
     def find(self, tag_name: str, attributes: Dict[str, str] = None) -> Optional[FormattingElementEntry]:
         """Find a formatting element by tag name and optionally attributes"""
         # Search from most recent to oldest
         for entry in reversed(self._stack):
+            if self.is_marker(entry):
+                continue
             if entry.matches(tag_name, attributes):
                 return entry
         return None
@@ -78,6 +92,8 @@ class ActiveFormattingElements:
     def find_element(self, element: Node) -> Optional[FormattingElementEntry]:
         """Find an entry by element instance"""
         for entry in self._stack:
+            if self.is_marker(entry):
+                continue
             if entry.element is element:
                 return entry
         return None
@@ -85,7 +101,7 @@ class ActiveFormattingElements:
     def remove(self, element: Node) -> bool:
         """Remove a formatting element from the active list"""
         for i, entry in enumerate(self._stack):
-            if entry.element is element:
+            if not self.is_marker(entry) and entry.element is element:
                 self._stack.pop(i)
                 return True
         return False
@@ -108,9 +124,12 @@ class ActiveFormattingElements:
         self.push(new_element, new_token)
     
     def clear_up_to_last_marker(self) -> None:
-        """Clear elements up to the last marker (not implemented in basic version)"""
-        # In full implementation, this would clear to last table/template boundary
-        pass
+        """Clear entries back to and including last marker (marker retained per spec variant)."""
+        # Walk backwards until marker found
+        while self._stack:
+            entry = self._stack.pop()
+            if self.is_marker(entry):
+                break
     
     def get_elements_after(self, target_entry: FormattingElementEntry) -> List[FormattingElementEntry]:
         """Get all entries after the target entry"""
@@ -128,7 +147,8 @@ class ActiveFormattingElements:
         return len(self._stack)
     
     def __iter__(self):
-        return iter(self._stack)
+        # Iterate only non-marker entries
+        return (entry for entry in self._stack if not self.is_marker(entry))
         
     def get_index(self, entry: FormattingElementEntry) -> int:
         """Get the index of an entry in the stack"""
@@ -167,6 +187,8 @@ class ActiveFormattingElements:
         first_identical = None
         
         for entry in self._stack:
+            if self.is_marker(entry):
+                continue
             if entry.matches(new_entry.element.tag_name, new_entry.element.attributes):
                 identical_count += 1
                 if first_identical is None:
@@ -697,21 +719,27 @@ class AdoptionAgencyAlgorithm:
         """
         if not context.active_formatting_elements._stack:
             return
-        # Spec-like reconstruction: find first entry whose element is not on open stack
-        # If all present, do nothing.
+        # Spec: walk list from earliest (bottom) until a marker; ignore markers; find first
+        # entry whose element is NOT on the open elements stack.
         open_stack = context.open_elements._stack
         entries = context.active_formatting_elements._stack
         first_missing_index = None
         for i, entry in enumerate(entries):
-            if entry.element not in open_stack:
+            # Stop at last marker (nothing before needs reconstruction)
+            if entry.element is None:  # marker
+                first_missing_index = None  # reset search after marker
+                continue
+            if entry.element not in open_stack and first_missing_index is None:
                 first_missing_index = i
                 break
         if first_missing_index is None:
             return
         if self.debug_enabled:
             print("    Adoption Agency: reconstruct: starting from index", first_missing_index)
-        # Reconstruct from first_missing_index onwards
+        # Reconstruct from first_missing_index onwards, skipping markers
         for entry in entries[first_missing_index:]:
+            if entry.element is None:
+                continue
             if entry.element in open_stack:
                 continue
             clone = Node(entry.element.tag_name, entry.element.attributes.copy())
@@ -888,23 +916,34 @@ class AdoptionAgencyAlgorithm:
             print(f"    Inserting {last_node.tag_name} as child of {common_ancestor.tag_name}")
             print(f"    last_node parent before: {last_node.parent.tag_name if last_node.parent else 'None'}")
         
-        if last_node.parent:
-            last_node.parent.remove_child(last_node)
-        # Heuristic tweak: avoid nesting under inline ancestor when it already wraps formatting element
-        target_parent = common_ancestor
-        if (common_ancestor.tag_name in FORMATTING_ELEMENTS and
-            formatting_element.parent is common_ancestor.parent):
-            # Use the parent one level up
-            if common_ancestor.parent:
-                target_parent = common_ancestor.parent
-        if self._should_foster_parent(target_parent):
-            if self.debug_enabled:
-                print("    Using foster parenting (adjusted parent)")
-            self._foster_parent_node(last_node, context, target_parent)
+        # Avoid inserting a node into itself (can happen if last_node already equals common_ancestor)
+        if last_node is not common_ancestor:
+            if last_node.parent:
+                last_node.parent.remove_child(last_node)
+            # Heuristic tweak: avoid nesting under inline ancestor when it already wraps formatting element
+            target_parent = common_ancestor
+            if (common_ancestor.tag_name in FORMATTING_ELEMENTS and
+                formatting_element.parent is common_ancestor.parent and
+                common_ancestor is not last_node):
+                # Use the parent one level up
+                if common_ancestor.parent:
+                    target_parent = common_ancestor.parent
+            # Prevent creating a circular self-nesting of the furthest block
+            if target_parent is last_node:
+                if self.debug_enabled:
+                    print("    Skipping insertion to avoid self-nesting")
+            else:
+                if self._should_foster_parent(target_parent):
+                    if self.debug_enabled:
+                        print("    Using foster parenting (adjusted parent)")
+                    self._foster_parent_node(last_node, context, target_parent)
+                else:
+                    target_parent.append_child(last_node)
+                    if self.debug_enabled:
+                        print(f"    Added normally to ancestor {target_parent.tag_name}")
         else:
-            target_parent.append_child(last_node)
             if self.debug_enabled:
-                print(f"    Added normally to ancestor {target_parent.tag_name}")
+                print("    Skipping Step 13 insertion (last_node is common_ancestor)")
         
         # Step 14: Create a clone of the formatting element
         formatting_clone = Node(

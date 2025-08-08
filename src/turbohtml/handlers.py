@@ -345,36 +345,28 @@ class TextHandler(TagHandler):
         # Check if we need to reconstruct active formatting elements
         # This happens when text is encountered but the current insertion point
         # is not inside the appropriate formatting elements
-        if (context.active_formatting_elements._stack and 
+        if (len(context.active_formatting_elements._stack) and 
             context.document_state == DocumentState.IN_BODY):
-            
-            # Check if current parent is NOT inside any of the active formatting elements
+            # Iterate only over real formatting entries (skip markers via iterator)
             needs_reconstruction = True
-            for entry in context.active_formatting_elements._stack:
-                if context.current_parent.find_ancestor(entry.element.tag_name):
+            for entry in context.active_formatting_elements:
+                if entry.element and context.current_parent.find_ancestor(entry.element.tag_name):
                     needs_reconstruction = False
                     break
-            
-            # Special case: if current parent is a block element that already contains
-            # reconstructed formatting elements as direct children, don't reconstruct again.
-            # This indicates the block element is the result of adoption agency.
-            if (needs_reconstruction and 
-                context.current_parent.tag_name in BLOCK_ELEMENTS):
-                
-                # Check if any direct children are formatting elements from active list
+
+            # If we still think we need reconstruction, check for already reconstructed children
+            if needs_reconstruction and context.current_parent.tag_name in BLOCK_ELEMENTS:
                 has_reconstructed_formatting = False
+                # Gather active formatting tag names (skip markers)
+                active_tags = {e.element.tag_name for e in context.active_formatting_elements if e.element}
                 for child in context.current_parent.children:
-                    for entry in context.active_formatting_elements._stack:
-                        if child.tag_name == entry.element.tag_name:
-                            has_reconstructed_formatting = True
-                            break
-                    if has_reconstructed_formatting:
+                    if child.tag_name in active_tags:
+                        has_reconstructed_formatting = True
                         break
-                
                 if has_reconstructed_formatting:
                     self.debug(f"Block element {context.current_parent.tag_name} already has reconstructed formatting - not reconstructing again")
                     needs_reconstruction = False
-            
+
             if needs_reconstruction:
                 self.debug("Text encountered outside active formatting elements, reconstructing")
                 self.parser.reconstruct_active_formatting_elements(context)
@@ -1401,6 +1393,27 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             body = self.parser._ensure_body_node(context)
             self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
 
+        # If we're already in table insertion mode, encountering a new <table> while
+        # not inside a cell should create a sibling table (html5lib expectation for
+        # inputs like x<table><table>x). Only nest when inside a cell.
+        if (context.document_state == DocumentState.IN_TABLE and
+            context.current_parent.tag_name not in ("td", "th")):
+            current_table = self.parser.find_current_table(context)
+            if current_table and current_table.parent:
+                self.debug("Encountered <table> inside existing table context (not in cell); creating sibling table")
+                new_table = self._create_element(token)
+                parent = current_table.parent
+                idx = parent.children.index(current_table)
+                parent.children.insert(idx + 1, new_table)
+                new_table.parent = parent
+                context.move_to_element(new_table)
+                context.open_elements.push(new_table)
+                # Push formatting marker for new table boundary
+                context.active_formatting_elements.push_marker()
+                self.debug("Pushed active formatting marker at <table> sibling boundary")
+                # Stay in IN_TABLE state
+                return True
+
         # Per HTML parsing algorithm: handling differs between standards and quirks.
         # If a table start tag is seen while inside a p:
         # - Standards mode: close the p first and insert table at the parent level (foster parenting path)
@@ -1438,10 +1451,36 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
         new_table = self._create_element(token)
         context.current_parent.append_child(new_table)
-        
+		
         context.enter_element(new_table)
         context.open_elements.push(new_table)  # Add table to open elements stack
+        # Insert active formatting marker to bound formatting across table boundary
+        context.active_formatting_elements.push_marker()
+        self.debug("Pushed active formatting marker at <table> boundary")
         self.parser.transition_to_state(context, DocumentState.IN_TABLE)
+        return True
+
+    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name == "table"
+
+    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        # Close current table: pop open elements up to table, clear formatting to marker
+        current_table = self.parser.find_current_table(context)
+        if not current_table:
+            return True
+        # Pop open elements until we remove this table
+        while context.open_elements._stack:
+            popped = context.open_elements.pop()
+            if popped is current_table:
+                break
+        # Move insertion point to parent of table (if exists)
+        if current_table.parent:
+            context.move_to_element(current_table.parent)
+        # Clear active formatting entries up to last marker for this table boundary
+        context.active_formatting_elements.clear_up_to_last_marker()
+        # Transition back to body (or appropriate containing state)
+        self.parser.transition_to_state(context, DocumentState.IN_BODY)
+        self.debug("Closed </table>, popped formatting marker")
         return True
 
     def _handle_colgroup(self, token: "HTMLToken", context: "ParseContext") -> bool:
@@ -1705,6 +1744,14 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         foster_parent = table.parent
         table_index = foster_parent.children.index(table)
         self.debug(f"Foster parent: {foster_parent}, table index: {table_index}")
+
+        # If the immediate previous sibling before the table is a text node, merge into it
+        if table_index > 0:
+            prev_sibling = foster_parent.children[table_index - 1]
+            if prev_sibling.tag_name == "#text":
+                self.debug("Merging foster-parented text into previous sibling text node")
+                prev_sibling.text_content += text
+                return True
 
         # Find the most recent <a> tag before the table
         prev_a = None
@@ -2460,6 +2507,9 @@ class AutoClosingTagHandler(TemplateAwareHandler):
     """Handles auto-closing behavior for certain tags"""
 
     def _should_handle_start_impl(self, tag_name: str, context: "ParseContext") -> bool:
+        # Don't intercept list item tags in table context; let ListTagHandler handle foster parenting
+        if context.document_state == DocumentState.IN_TABLE and tag_name in ("li","dt","dd"):
+            return False
         # Handle both formatting cases and auto-closing cases
         return tag_name in AUTO_CLOSING_TAGS or (
             tag_name in BLOCK_ELEMENTS

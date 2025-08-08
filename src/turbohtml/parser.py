@@ -781,7 +781,23 @@ class TurboHTML:
         # Insert the element before the table
         foster_parent = table.parent
         table_index = foster_parent.children.index(table)
-        
+        # If current_parent is an existing foster-parented block immediately before the table,
+        # and that block is allowed to contain this element, nest inside it instead of creating
+        # a new sibling. This matches html5lib behavior where successive foster-parented
+        # start tags become children (e.g., <table><div><div> becomes nested divs).
+        if table_index > 0:
+            prev_sibling = foster_parent.children[table_index - 1]
+            # Only nest if previous sibling is a block-like container and current insertion
+            # point is that previous sibling (we just foster parented into it)
+            if (prev_sibling is context.current_parent and
+                prev_sibling.tag_name in ("div","p","section","article","blockquote","li")):
+                self.debug(f"Nesting {tag_name} inside existing foster-parented {prev_sibling.tag_name}")
+                new_node = Node(tag_name, attributes)
+                prev_sibling.append_child(new_node)
+                context.move_to_element(new_node)
+                context.open_elements.push(new_node)
+                return
+
         new_node = Node(tag_name, attributes)
         foster_parent.children.insert(table_index, new_node)
         new_node.parent = foster_parent  # Set parent relationship
