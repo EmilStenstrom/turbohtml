@@ -349,6 +349,9 @@ class TemplateContentFilterHandler(TagHandler):
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
         if not self._in_template_content(context):
             return False
+        # In foreign (SVG/MathML) contexts inside template content, let foreign handlers manage tags
+        if context.current_context in ("math", "svg"):
+            return False
         return tag_name in self.IGNORED_START or tag_name in self.GENERIC_AS_PLAIN or tag_name == "template"
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
@@ -385,6 +388,9 @@ class TemplateContentFilterHandler(TagHandler):
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
         if not self._in_template_content(context):
             return False
+        # In foreign (SVG/MathML) contexts inside template content, let foreign handlers manage tags
+        if context.current_context in ("math", "svg"):
+            return False
         # Ignore end </select> and ends for ignored starts
         if tag_name in self.IGNORED_START or tag_name == "select":
             return True
@@ -396,18 +402,20 @@ class TemplateContentFilterHandler(TagHandler):
         # Close generic element: pop up until we exit the matching element,
         # but never move above the current template content boundary.
         boundary = self._current_content_boundary(context)
-        while (context.current_parent
-               and context.current_parent is not boundary
-               and context.current_parent.tag_name != token.tag_name):
-            if context.current_parent.parent:
-                context.move_to_element_with_fallback(context.current_parent.parent, context.current_parent)
-            else:
+        # First, check if there is a matching ancestor below the boundary
+        cursor = context.current_parent
+        found = None
+        while cursor and cursor is not boundary:
+            if cursor.tag_name == token.tag_name:
+                found = cursor
                 break
-        # Now if we're at the matching element (and not at boundary), move out one level
-        if (context.current_parent
-            and context.current_parent is not boundary
-            and context.current_parent.tag_name == token.tag_name
-            and context.current_parent.parent):
+            cursor = cursor.parent
+        if not found:
+            return True  # Ignore unmatched end tag inside template content
+        # Move up to the found element and then step out of it
+        while context.current_parent is not found and context.current_parent and context.current_parent.parent:
+            context.move_to_element_with_fallback(context.current_parent.parent, context.current_parent)
+        if context.current_parent is found and context.current_parent.parent:
             context.move_to_element_with_fallback(context.current_parent.parent, context.current_parent)
         return True
 
@@ -953,10 +961,10 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         tag_name = token.tag_name
         self.debug(f"Handling {tag_name} in select context, current_parent={context.current_parent}")
 
-        # If we're inside template content, let the TemplateContentFilterHandler (earlier in chain)
-        # handle option/optgroup/select semantics to keep them scoped to template. Avoid body promotion.
+        # If we're inside template content, block select semantics entirely. The content filter
+        # will represent option/optgroup/select as plain elements without promotion or relocation.
         if self._is_in_template_content(context):
-            return False
+            return True
 
         if tag_name in ("select", "datalist"):
             # Foster parent if in table context (but not in a cell or caption)
