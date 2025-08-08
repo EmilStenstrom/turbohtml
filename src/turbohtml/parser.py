@@ -3,6 +3,7 @@ from turbohtml.handlers import (
     AutoClosingTagHandler,
     DoctypeHandler,
     TemplateTagHandler,
+    TemplateContentFilterHandler,
     ForeignTagHandler,
     FormattingElementHandler,
     FormTagHandler,
@@ -63,6 +64,7 @@ class TurboHTML:
         self.tag_handlers = [
             DoctypeHandler(self),
             TemplateTagHandler(self),
+            TemplateContentFilterHandler(self),
             PlaintextHandler(self),
             FramesetTagHandler(self),
             ForeignTagHandler(self) if handle_foreign_elements else None,  # Move before other handlers
@@ -613,6 +615,11 @@ class TurboHTML:
         self, token: HTMLToken, tag_name: str, context: ParseContext, end_tag_idx: int
     ) -> bool:
         """Handle html, head, body and frameset tags."""
+        # Inside template content, do not perform special html/head/body/frameset handling.
+        # Let the TemplateContentFilterHandler decide how to treat these tokens.
+        if self._is_in_template_content(context):
+            context.index = end_tag_idx
+            return False
         if tag_name == "html":
             # Just update attributes, don't create a new node
             self.html_node.attributes.update(token.attributes)

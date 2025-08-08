@@ -249,31 +249,121 @@ class TemplateTagHandler(TagHandler):
         context.open_elements.push(template_node)
         # Keep content node off the open elements stack to avoid interfering with scope algorithms
         context.enter_element(content_node)
+        # Record outer document state (for possible future nuanced handling)
+        # Persist outer document state for potential restoration; store in attributes dict to avoid dynamic attribute issues
+        try:
+            saved_state = getattr(context, "document_state", None)
+            if saved_state is not None:
+                template_node.attributes.append(NodeAttribute(name="data-saved-state", value=saved_state.name))
+        except Exception:
+            pass
+        if hasattr(context, "template_content_depth"):
+            context.template_content_depth += 1
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
         return tag_name == "template"
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
-        # Pop until template element is closed
-        # First, if current parent is content, move up
-        if context.current_parent.tag_name == "content" and context.current_parent.parent and context.current_parent.parent.tag_name == "template":
+        # Close a template: unwind any elements inside its content, then remove template from open stack
+        # If currently inside the content node, move to its parent (the template)
+        if (
+            context.current_parent.tag_name == "content"
+            and context.current_parent.parent
+            and context.current_parent.parent.tag_name == "template"
+        ):
             context.move_to_element_with_fallback(context.current_parent.parent, context.current_parent)
-        # Now ensure we're at template node
-        # Generate implied end tags until reaching template
-        # Simplified: pop non-template, non-content elements above template
-        # (Prevents stray inline like <b> remaining open across template close.)
-        if context.current_parent.tag_name != "template":
-            while context.current_parent and context.current_parent.tag_name not in ("template", "content"):
-                if context.current_parent.parent:
-                    context.move_to_element_with_fallback(context.current_parent.parent, context.current_parent)
-                else:
-                    break
-        if context.current_parent.tag_name == "content" and context.current_parent.parent and context.current_parent.parent.tag_name == "template":
-            context.move_to_element_with_fallback(context.current_parent.parent, context.current_parent)
-        if context.current_parent.tag_name == "template":
-            if context.open_elements.contains(context.current_parent):
-                context.open_elements.remove_element(context.current_parent)
+
+        # Pop elements until we reach the template (simplified implied end tag handling inside template)
+        while context.current_parent and context.current_parent.tag_name not in ("template",):
+            if context.current_parent.parent:
+                context.move_to_element_with_fallback(context.current_parent.parent, context.current_parent)
+            else:
+                break
+
+        if context.current_parent and context.current_parent.tag_name == "template":
+            # Remove from open elements if present
+            template_node = context.current_parent
+            if context.open_elements.contains(template_node):
+                context.open_elements.remove_element(template_node)
+            # Move insertion point to the template's parent (outside the template subtree)
+            template_parent = template_node.parent or template_node
+            context.move_to_element_with_fallback(template_parent, template_node)
+            # Restore previous document state if saved (currently advisory)
+            saved_state = getattr(template_node, "_saved_document_state", None)
+            if saved_state is not None:
+                # Only restore if parser hasn't already transitioned due to other logic
+                try:
+                    if hasattr(context, "document_state") and saved_state != context.document_state:
+                        self.parser.transition_to_state(context, saved_state, template_parent)
+                except Exception:
+                    pass
+            if hasattr(context, "template_content_depth") and context.template_content_depth > 0:
+                context.template_content_depth -= 1
+        return True
+
+
+class TemplateContentFilterHandler(TagHandler):
+    """Filter/adjust tokens while inside <template> content.
+
+    Inside template content, many table-structure tokens are not supposed to trigger
+    HTML table construction; they are either ignored (caption, colgroup, tbody, thead, tfoot, table)
+    or treated as generic elements (td, th, tr, col). Also ignore stray html/head/body tags.
+    This handler must run before table handling.
+    """
+
+    IGNORED_START = {"caption", "colgroup", "tbody", "html", "head", "body", "frameset"}
+    # Treat table & select related and nested template triggers as plain generics (no special algorithms)
+    GENERIC_AS_PLAIN = {"table", "thead", "tfoot", "tr", "td", "th", "col", "option", "optgroup"}
+
+    def _in_template_content(self, context: "ParseContext") -> bool:
+        # Mirror parser._is_in_template_content: allow being inside descendants of content
+        p = context.current_parent
+        if not p:
+            return False
+        if (p.tag_name == "content" and p.parent and p.parent.tag_name == "template"):
+            return True
+        return p.has_ancestor_matching(lambda n: n.tag_name == "content" and n.parent and n.parent.tag_name == "template")
+
+    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        if not self._in_template_content(context):
+            return False
+        return tag_name in self.IGNORED_START or tag_name in self.GENERIC_AS_PLAIN or tag_name == "template"
+
+    def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
+        if token.tag_name in self.IGNORED_START:
+            return True  # Ignore entirely
+        if token.tag_name == "template":
+            # Treat nested <template> as a plain element under content; do NOT create nested content fragment
+            new_node = Node("template", token.attributes)
+            context.current_parent.append_child(new_node)
+            context.enter_element(new_node)
+            return True
+        # Treat other specific tags as generic elements (no special algorithms)
+        new_node = Node(token.tag_name, token.attributes)
+        context.current_parent.append_child(new_node)
+        context.enter_element(new_node)
+        return True
+
+    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        if not self._in_template_content(context):
+            return False
+        # Ignore end </select> and ends for ignored starts
+        if tag_name in self.IGNORED_START or tag_name == "select":
+            return True
+        return tag_name in self.GENERIC_AS_PLAIN or tag_name == "template"
+
+    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        if token.tag_name in self.IGNORED_START or token.tag_name == "select":
+            return True
+        # Close generic element: pop up until we exit the matching element
+        while context.current_parent and context.current_parent.tag_name != token.tag_name:
+            if context.current_parent.parent:
+                context.move_to_element_with_fallback(context.current_parent.parent, context.current_parent)
+            else:
+                break
+        # Now if we're at the matching element, move out one level
+        if context.current_parent and context.current_parent.tag_name == token.tag_name and context.current_parent.parent:
             context.move_to_element_with_fallback(context.current_parent.parent, context.current_parent)
         return True
 
@@ -363,7 +453,7 @@ class TextHandler(TagHandler):
             
             return True
 
-        if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
+        if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD) and not getattr(context, "template_content_depth", 0):
             # Store the original state before modification
             was_initial = context.document_state == DocumentState.INITIAL
 
@@ -816,6 +906,11 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         tag_name = token.tag_name
         self.debug(f"Handling {tag_name} in select context, current_parent={context.current_parent}")
+
+        # If we're inside template content, let the TemplateContentFilterHandler (earlier in chain)
+        # handle option/optgroup/select semantics to keep them scoped to template. Avoid body promotion.
+        if self._is_in_template_content(context):
+            return False
 
         if tag_name in ("select", "datalist"):
             # Foster parent if in table context (but not in a cell or caption)
@@ -1510,7 +1605,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
     def _handle_table(self, token: "HTMLToken", context: "ParseContext") -> bool:
         """Handle table element"""
         # If we're in head, implicitly close it and switch to body
-        if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
+        if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD) and not getattr(context, "template_content_depth", 0):
             self.debug("Implicitly closing head and switching to body")
             body = self.parser._ensure_body_node(context)
             self.parser.transition_to_state(context, DocumentState.IN_BODY, body)

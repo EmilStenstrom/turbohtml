@@ -40,23 +40,30 @@ class ParseContext:
     def __init__(
         self, length: int, initial_parent: "Node", debug_callback=None
     ):
+        # Basic indexing/state
         self.index = 0
         self.length = length
-        # Ensure we never start with None as current_parent
+
+        # Validate and set initial parent
         if initial_parent is None:
             raise ValueError("ParseContext requires a valid initial parent")
         self._current_parent = initial_parent
         self.current_context = None
+
+        # Core parser states
         self._document_state = DocumentState.INITIAL
         self._content_state = ContentState.NONE
         self._debug = debug_callback
         self.doctype_seen = False
-        
+
         # Adoption Agency Algorithm data structures
         from turbohtml.adoption import ActiveFormattingElements, OpenElementsStack
         self.active_formatting_elements = ActiveFormattingElements()
         self.open_elements = OpenElementsStack()
         self.adoption_agency_counter = 0
+
+        # Template content isolation depth (acts like a stack counter)
+        self.template_content_depth = 0
 
     @property
     def current_parent(self) -> "Node":
