@@ -325,6 +325,14 @@ class TemplateContentFilterHandler(TagHandler):
             return True
         return p.has_ancestor_matching(lambda n: n.tag_name == "content" and n.parent and n.parent.tag_name == "template")
 
+    def _current_content_boundary(self, context: "ParseContext") -> Optional["Node"]:
+        node = context.current_parent
+        while node:
+            if node.tag_name == "content" and node.parent and node.parent.tag_name == "template":
+                return node
+            node = node.parent
+        return None
+
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
         if not self._in_template_content(context):
             return False
@@ -339,6 +347,16 @@ class TemplateContentFilterHandler(TagHandler):
             context.current_parent.append_child(new_node)
             context.enter_element(new_node)
             return True
+        # If currently inside a generic table-ish context, and a non-table element arrives,
+        # either ignore (for col/colgroup) or break out to content before inserting.
+        tableish = {"table", "thead", "tfoot", "tbody", "tr", "td", "th", "col", "colgroup"}
+        if context.current_parent.tag_name in tableish and token.tag_name not in (self.IGNORED_START | self.GENERIC_AS_PLAIN | {"template"}):
+            if context.current_parent.tag_name in {"col", "colgroup"}:
+                return True  # Drop unexpected content after col/colgroup inside template content
+            # Move up to the content boundary before inserting
+            boundary = self._current_content_boundary(context)
+            if boundary:
+                context.move_to_element(boundary)
         # Treat other specific tags as generic elements (no special algorithms)
         new_node = Node(token.tag_name, token.attributes)
         context.current_parent.append_child(new_node)
@@ -356,14 +374,21 @@ class TemplateContentFilterHandler(TagHandler):
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         if token.tag_name in self.IGNORED_START or token.tag_name == "select":
             return True
-        # Close generic element: pop up until we exit the matching element
-        while context.current_parent and context.current_parent.tag_name != token.tag_name:
+        # Close generic element: pop up until we exit the matching element,
+        # but never move above the current template content boundary.
+        boundary = self._current_content_boundary(context)
+        while (context.current_parent
+               and context.current_parent is not boundary
+               and context.current_parent.tag_name != token.tag_name):
             if context.current_parent.parent:
                 context.move_to_element_with_fallback(context.current_parent.parent, context.current_parent)
             else:
                 break
-        # Now if we're at the matching element, move out one level
-        if context.current_parent and context.current_parent.tag_name == token.tag_name and context.current_parent.parent:
+        # Now if we're at the matching element (and not at boundary), move out one level
+        if (context.current_parent
+            and context.current_parent is not boundary
+            and context.current_parent.tag_name == token.tag_name
+            and context.current_parent.parent):
             context.move_to_element_with_fallback(context.current_parent.parent, context.current_parent)
         return True
 
