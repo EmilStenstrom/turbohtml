@@ -2,6 +2,8 @@
 
 **TurboHTML** is an HTML5 parser being built with AI assistance, currently passing html5lib test suite tests. It follows a modular handler-based architecture strictly adhering to the WHATWG HTML5 specification.
 
+DON'T STOP AND ASK FOR PERSMISSION, JUST DO WHAT YOU THINK IS BEST. THE ONLY TIME YOU CAN STOP IS IF YOU HAVE AN IMPROVED TEST SUITE, THINK THIS IS A GOOD CHECKPOINT WHERE I SHOULD CHECK IN.
+
 ## Key Architecture
 
 - **Tokenizer** (`tokenizer.py`): HTML5-compliant token generation with state machines for RAWTEXT handling
