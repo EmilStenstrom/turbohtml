@@ -1745,12 +1745,24 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         table_index = foster_parent.children.index(table)
         self.debug(f"Foster parent: {foster_parent}, table index: {table_index}")
 
-        # If the immediate previous sibling before the table is a text node, merge into it
+        # If the immediate previous sibling before the table is suitable, decide placement:
+        # 1. If it's a text node, merge.
+        # 2. If it's a foster-parented block container (div/p/section/article/blockquote/li), append inside it.
         if table_index > 0:
             prev_sibling = foster_parent.children[table_index - 1]
             if prev_sibling.tag_name == "#text":
                 self.debug("Merging foster-parented text into previous sibling text node")
                 prev_sibling.text_content += text
+                return True
+            elif prev_sibling.tag_name in ("div","p","section","article","blockquote","li"):
+                self.debug(f"Appending foster-parented text into previous block container <{prev_sibling.tag_name}>")
+                # Merge with its last text child if present
+                if prev_sibling.children and prev_sibling.children[-1].tag_name == "#text":
+                    prev_sibling.children[-1].text_content += text
+                else:
+                    text_node = Node("#text")
+                    text_node.text_content = text
+                    prev_sibling.append_child(text_node)
                 return True
 
         # Find the most recent <a> tag before the table
@@ -2557,6 +2569,13 @@ class AutoClosingTagHandler(TemplateAwareHandler):
                 # The target parent should be the parent of the outermost formatting element
                 target_parent = outermost_formatting.parent
             
+            if target_parent:
+                # If this is a simple case: single active formatting element (current) and a block (like <div>)
+                # keep the block inside the formatting element instead of moving it outside. This matches
+                # expected tree where <b><div>... rather than lifting div out before adoption.
+                # (Reverted experimental simple-case logic to avoid regressions)
+                pass
+
             if target_parent:
                 # Save the current parent before moving
                 original_parent = context.current_parent

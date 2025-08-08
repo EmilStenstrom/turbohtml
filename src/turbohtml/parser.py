@@ -476,6 +476,9 @@ class TurboHTML:
             if body:
                 context.transition_to_state(DocumentState.IN_BODY)
 
+        # Normalize tree: merge adjacent text nodes (can result from foster parenting / reconstruction)
+        self._merge_adjacent_text_nodes(self.root)
+
     # Tag Handling Methods
     def _handle_start_tag(self, token: HTMLToken, tag_name: str, context: ParseContext, end_tag_idx: int) -> None:
         """Handle all opening HTML tags."""
@@ -761,6 +764,40 @@ class TurboHTML:
         """Get list of RAWTEXT elements"""
         from .constants import RAWTEXT_ELEMENTS
         return RAWTEXT_ELEMENTS
+
+    def _merge_adjacent_text_nodes(self, node: Node) -> None:
+        """Recursively merge adjacent text node children for cleaner DOM output.
+
+        This is a post-processing normalization to align with html5lib expectations
+        where successive character insertions that are contiguous end up in a single
+        text node. It is intentionally conservative: only merges direct siblings
+        that are both '#text'.
+        """
+        if not node.children:
+            return
+        merged = []
+        pending_text = None
+        for child in node.children:
+            if child.tag_name == '#text':
+                if pending_text is None:
+                    pending_text = child
+                else:
+                    # Merge into pending
+                    pending_text.text_content += child.text_content
+            else:
+                if pending_text is not None:
+                    merged.append(pending_text)
+                    pending_text = None
+                merged.append(child)
+        if pending_text is not None:
+            merged.append(pending_text)
+        # Only replace if changed
+        if len(merged) != len(node.children):
+            node.children = merged
+        # Recurse
+        for child in node.children:
+            if child.tag_name != '#text':
+                self._merge_adjacent_text_nodes(child)
     
     def _foster_parent_element(self, tag_name: str, attributes: dict, context: "ParseContext"):
         """Foster parent an element outside of table context"""
