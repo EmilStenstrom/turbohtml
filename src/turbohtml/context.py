@@ -64,6 +64,8 @@ class ParseContext:
 
         # Template content isolation depth (acts like a stack counter)
         self.template_content_depth = 0
+        # Transparent template parsing depth (e.g., inside frameset, treat <template> as transparent)
+        self.template_transparent_depth = 0
 
     @property
     def current_parent(self) -> "Node":

@@ -620,6 +620,10 @@ class TurboHTML:
         if self._is_in_template_content(context):
             context.index = end_tag_idx
             return False
+        # If we're inside a transparent template (frameset mode), don't do special handling
+        if getattr(context, "template_transparent_depth", 0):
+            context.index = end_tag_idx
+            return False
         if tag_name == "html":
             # Just update attributes, don't create a new node
             self.html_node.attributes.update(token.attributes)

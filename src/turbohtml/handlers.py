@@ -213,6 +213,13 @@ class TemplateTagHandler(TagHandler):
         return tag_name == "template"
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
+        # If we're in frameset parsing context, treat <template> as transparent (contents go to parent)
+        from turbohtml.context import DocumentState
+        if context.document_state in (DocumentState.IN_FRAMESET, DocumentState.AFTER_FRAMESET):
+            # Do not create a template/content; just parse its children in-place
+            if hasattr(context, "template_transparent_depth"):
+                context.template_transparent_depth += 1
+            return True
         # Determine insertion parent following simplified WHATWG rules:
         # 1. If in the initial/head/after-head phase and template appears at top-level (parent is <html> or <head>), insert into <head>
         # 2. If after body (AFTER_BODY states) insert into existing <body>
@@ -265,6 +272,12 @@ class TemplateTagHandler(TagHandler):
         return tag_name == "template"
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        # If we were treating template as transparent (frameset context), just consume the end tag
+        from turbohtml.context import DocumentState
+        if context.document_state in (DocumentState.IN_FRAMESET, DocumentState.AFTER_FRAMESET):
+            if hasattr(context, "template_transparent_depth") and context.template_transparent_depth > 0:
+                context.template_transparent_depth -= 1
+            return True
         # Close a template: unwind any elements inside its content, then remove template from open stack
         # If currently inside the content node, move to its parent (the template)
         if (
@@ -347,16 +360,22 @@ class TemplateContentFilterHandler(TagHandler):
             context.current_parent.append_child(new_node)
             context.enter_element(new_node)
             return True
+        boundary = self._current_content_boundary(context) or context.current_parent
+        # Do not synthesize table structure; treat table-related tags as plain elements only
         # If currently inside a generic table-ish context, and a non-table element arrives,
         # either ignore (for col/colgroup) or break out to content before inserting.
         tableish = {"table", "thead", "tfoot", "tbody", "tr", "td", "th", "col", "colgroup"}
         if context.current_parent.tag_name in tableish and token.tag_name not in (self.IGNORED_START | self.GENERIC_AS_PLAIN | {"template"}):
-            if context.current_parent.tag_name in {"col", "colgroup"}:
+            # If inside a cell, allow generic content inside the cell; otherwise, move out to content
+            if context.current_parent.tag_name in {"td", "th"}:
+                pass  # keep inside cell
+            elif context.current_parent.tag_name in {"col", "colgroup"}:
                 return True  # Drop unexpected content after col/colgroup inside template content
             # Move up to the content boundary before inserting
-            boundary = self._current_content_boundary(context)
-            if boundary:
-                context.move_to_element(boundary)
+            else:
+                boundary2 = self._current_content_boundary(context)
+                if boundary2:
+                    context.move_to_element(boundary2)
         # Treat other specific tags as generic elements (no special algorithms)
         new_node = Node(token.tag_name, token.attributes)
         context.current_parent.append_child(new_node)
@@ -478,7 +497,9 @@ class TextHandler(TagHandler):
             
             return True
 
-        if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD) and not getattr(context, "template_content_depth", 0):
+        if (context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD)
+            and not getattr(context, "template_content_depth", 0)
+            and not getattr(context, "template_transparent_depth", 0)):
             # Store the original state before modification
             was_initial = context.document_state == DocumentState.INITIAL
 
