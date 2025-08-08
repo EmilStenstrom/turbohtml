@@ -210,6 +210,9 @@ class TemplateTagHandler(TagHandler):
     """
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        # Do not treat <template> specially when in foreign (SVG/MathML) contexts; let foreign handlers manage it
+        if context.current_context in ("math", "svg"):
+            return False
         return tag_name == "template"
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
@@ -269,6 +272,8 @@ class TemplateTagHandler(TagHandler):
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        if context.current_context in ("math", "svg"):
+            return False
         return tag_name == "template"
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
@@ -325,9 +330,9 @@ class TemplateContentFilterHandler(TagHandler):
     This handler must run before table handling.
     """
 
-    IGNORED_START = {"caption", "colgroup", "tbody", "html", "head", "body", "frameset"}
+    IGNORED_START = {"html", "head", "body", "frameset"}
     # Treat table & select related and nested template triggers as plain generics (no special algorithms)
-    GENERIC_AS_PLAIN = {"table", "thead", "tfoot", "tr", "td", "th", "col", "option", "optgroup"}
+    GENERIC_AS_PLAIN = {"table", "thead", "tbody", "tfoot", "caption", "colgroup", "tr", "td", "th", "col", "option", "optgroup"}
 
     def _in_template_content(self, context: "ParseContext") -> bool:
         # Mirror parser._is_in_template_content: allow being inside descendants of content
@@ -352,11 +357,8 @@ class TemplateContentFilterHandler(TagHandler):
         # In foreign (SVG/MathML) contexts inside template content, let foreign handlers manage tags
         if context.current_context in ("math", "svg"):
             return False
-        # If currently inside a table-ish element, intercept any start tag to manage placement
-        tableish = {"table", "thead", "tfoot", "tbody", "tr", "td", "th", "col", "colgroup"}
-        if context.current_parent and context.current_parent.tag_name in tableish:
-            return True
-        return tag_name in self.IGNORED_START or tag_name in self.GENERIC_AS_PLAIN or tag_name == "template"
+        # Intercept all start tags while inside template content to avoid outer promotions
+        return True
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         if token.tag_name in self.IGNORED_START:
@@ -369,13 +371,70 @@ class TemplateContentFilterHandler(TagHandler):
                     context.move_to_element(boundary)
             return True  # Ignore entirely
         if token.tag_name == "template":
-            # Treat nested <template> as a plain element under content; do NOT create nested content fragment
-            new_node = Node("template", token.attributes)
-            context.current_parent.append_child(new_node)
-            context.enter_element(new_node)
+            # If inside a foreign subtree (SVG/MathML), do not treat as HTML template
+            # Detect by current_context or ancestor tag names starting with 'svg ' or 'math '
+            if (context.current_context in ("math", "svg") or
+                context.current_parent.has_ancestor_matching(lambda n: n.tag_name.startswith("svg ") or n.tag_name == "svg" or n.tag_name.startswith("math ") or n.tag_name == "math")):
+                return False
+            # Create an actual nested template element with its own content fragment
+            template_node = Node("template", token.attributes)
+            context.current_parent.append_child(template_node)
+            content_node = Node("content")
+            template_node.append_child(content_node)
+            # Enter template then its content
+            context.enter_element(template_node)
+            context.open_elements.push(template_node)
+            context.enter_element(content_node)
             return True
         boundary = self._current_content_boundary(context) or context.current_parent
-        # Do not synthesize table structure; treat table-related tags as plain elements only
+
+        # If a table-related tag appears while nested inside a non-table element,
+        # normalize insertion to the content boundary first
+        table_related = {"table", "thead", "tbody", "tfoot", "caption", "colgroup", "col", "tr", "td", "th"}
+        if (token.tag_name in table_related and
+            context.current_parent is not boundary and
+            context.current_parent.tag_name not in {"tr", "td", "th"}):
+            context.move_to_element(boundary)
+
+        # If the last structural entry was a col/colgroup, drop unexpected content that follows
+        last_child = boundary.children[-1] if boundary and boundary.children else None
+        if last_child and last_child.tag_name in {"col", "colgroup"}:
+            # After a <col> or <colgroup>, ignore subsequent content inside template content,
+            # except allow another <col>
+            allowed_after_col = {"col"}
+            if token.tag_name not in allowed_after_col:
+                return True
+
+        # Minimal handling for rows and cells inside template content
+        if token.tag_name in ("td", "th"):
+            if context.current_parent.tag_name == "tr":
+                cell = Node(token.tag_name, token.attributes)
+                context.current_parent.append_child(cell)
+                context.enter_element(cell)
+                return True
+            if context.current_parent is boundary:
+                # If previous child was a tr, start a new tr for the next cell; else, place directly
+                prev = boundary.children[-1] if boundary.children else None
+                if prev and prev.tag_name == "tr":
+                    new_tr = Node("tr")
+                    boundary.append_child(new_tr)
+                    context.enter_element(new_tr)
+                    cell = Node(token.tag_name, token.attributes)
+                    new_tr.append_child(cell)
+                    context.enter_element(cell)
+                else:
+                    cell = Node(token.tag_name, token.attributes)
+                    boundary.append_child(cell)
+                    context.enter_element(cell)
+                return True
+
+        if token.tag_name == "tr":
+            if context.current_parent is not boundary:
+                context.move_to_element(boundary)
+            new_tr = Node("tr", token.attributes)
+            boundary.append_child(new_tr)
+            context.enter_element(new_tr)
+            return True
         # If currently inside a generic table-ish context, and a non-table element arrives,
         # either ignore (for col/colgroup) or break out to content before inserting.
         tableish = {"table", "thead", "tfoot", "tbody", "tr", "td", "th", "col", "colgroup"}
@@ -393,7 +452,10 @@ class TemplateContentFilterHandler(TagHandler):
         # Treat other specific tags as generic elements (no special algorithms)
         new_node = Node(token.tag_name, token.attributes)
         context.current_parent.append_child(new_node)
-        context.enter_element(new_node)
+        # Do not descend into table-structure tags; keep insertion at current parent
+        do_not_enter = {"table", "thead", "tbody", "tfoot", "caption", "colgroup", "col"}
+        if new_node.tag_name not in do_not_enter:
+            context.enter_element(new_node)
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
@@ -407,6 +469,18 @@ class TemplateContentFilterHandler(TagHandler):
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         if token.tag_name in self.IGNORED_START or token.tag_name == "select":
+            return True
+        # Handle closing of a nested template we opened here: move from content to template, then out
+        if token.tag_name == "template":
+            # If currently inside content of a template, move to the template node
+            if (context.current_parent.tag_name == "content" and context.current_parent.parent and context.current_parent.parent.tag_name == "template"):
+                context.move_to_element_with_fallback(context.current_parent.parent, context.current_parent)
+            # Now move out of the template
+            if context.current_parent.tag_name == "template":
+                if context.open_elements.contains(context.current_parent):
+                    context.open_elements.remove_element(context.current_parent)
+                parent = context.current_parent.parent or context.current_parent
+                context.move_to_element_with_fallback(parent, context.current_parent)
             return True
         # Close generic element: pop up until we exit the matching element,
         # but never move above the current template content boundary.
@@ -479,6 +553,18 @@ class TextHandler(TagHandler):
 
         # Check if we're inside template content
         if self._is_in_template_content(context):
+            # Suppress text immediately following <col> or <colgroup> inside template content
+            boundary = None
+            current = context.current_parent
+            while current:
+                if current.tag_name == "content" and current.parent and current.parent.tag_name == "template":
+                    boundary = current
+                    break
+                current = current.parent
+            if boundary:
+                last_child = boundary.children[-1] if boundary.children else None
+                if last_child and last_child.tag_name in {"col", "colgroup"}:
+                    return True
             self.debug("Text inside template content, keeping in content")
             self._append_text(text, context)
             return True
@@ -973,6 +1059,15 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         # If we're inside template content, block select semantics entirely. The content filter
         # will represent option/optgroup/select as plain elements without promotion or relocation.
         if self._is_in_template_content(context):
+            # Special case: if a caption appears after select inside a table cell, ensure it moves to table level
+            if tag_name == "caption":
+                table = self.parser.find_current_table(context)
+                if table:
+                    context.move_to_element(table)
+                    new_caption = Node("caption")
+                    table.append_child(new_caption)
+                    context.enter_element(new_caption)
+                    return True
             return True
 
         if tag_name in ("select", "datalist"):
