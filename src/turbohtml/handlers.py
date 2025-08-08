@@ -352,10 +352,21 @@ class TemplateContentFilterHandler(TagHandler):
         # In foreign (SVG/MathML) contexts inside template content, let foreign handlers manage tags
         if context.current_context in ("math", "svg"):
             return False
+        # If currently inside a table-ish element, intercept any start tag to manage placement
+        tableish = {"table", "thead", "tfoot", "tbody", "tr", "td", "th", "col", "colgroup"}
+        if context.current_parent and context.current_parent.tag_name in tableish:
+            return True
         return tag_name in self.IGNORED_START or tag_name in self.GENERIC_AS_PLAIN or tag_name == "template"
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         if token.tag_name in self.IGNORED_START:
+            # frameset and friends are ignored inside template content; however,
+            # if we're currently inside a table-ish container, move back to the content boundary first
+            tableish = {"table", "thead", "tfoot", "tbody", "tr", "td", "th", "col", "colgroup"}
+            if context.current_parent and context.current_parent.tag_name in tableish:
+                boundary = self._current_content_boundary(context)
+                if boundary:
+                    context.move_to_element(boundary)
             return True  # Ignore entirely
         if token.tag_name == "template":
             # Treat nested <template> as a plain element under content; do NOT create nested content fragment
@@ -391,10 +402,8 @@ class TemplateContentFilterHandler(TagHandler):
         # In foreign (SVG/MathML) contexts inside template content, let foreign handlers manage tags
         if context.current_context in ("math", "svg"):
             return False
-        # Ignore end </select> and ends for ignored starts
-        if tag_name in self.IGNORED_START or tag_name == "select":
-            return True
-        return tag_name in self.GENERIC_AS_PLAIN or tag_name == "template"
+        # Intercept all end tags while inside template content so we can safely bound popping
+        return True
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         if token.tag_name in self.IGNORED_START or token.tag_name == "select":
