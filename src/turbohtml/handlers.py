@@ -200,6 +200,84 @@ class AncestorCloseHandler(TagHandler):
         return False
 
 
+class TemplateTagHandler(TagHandler):
+    """Handle <template> elements by creating a 'template' node with a dedicated 'content' subtree.
+
+    Fundamental behavior per spec: contents are parsed in a separate tree (DocumentFragment). We approximate
+    this by creating a 'template' element node and a child 'content' node; all children between <template>
+    and its matching end tag are placed under the 'content' node. This isolated subtree should NOT influence
+    outer foster parenting or formatting reconstruction.
+    """
+
+    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name == "template"
+
+    def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
+        # Determine insertion parent following simplified WHATWG rules:
+        # 1. If in the initial/head/after-head phase and template appears at top-level (parent is <html> or <head>), insert into <head>
+        # 2. If after body (AFTER_BODY states) insert into existing <body>
+        # 3. Otherwise (including inside flow/content), insert at current_parent (do NOT hoist to body)
+        insertion_parent = context.current_parent
+        html_node = self.parser.html_node
+        head_node = None
+        body_node = None
+        if html_node:
+            for child in html_node.children:
+                if child.tag_name == "head":
+                    head_node = child
+                elif child.tag_name == "body":
+                    body_node = child
+        try:
+            from turbohtml.context import DocumentState
+            state = context.document_state
+            at_top_level = context.current_parent in (html_node, head_node)
+            if body_node and state.name.startswith("AFTER_BODY"):
+                insertion_parent = body_node
+            elif head_node and at_top_level and state in (DocumentState.INITIAL, DocumentState.IN_HEAD, DocumentState.AFTER_HEAD):
+                insertion_parent = head_node
+            # Else leave insertion_parent as current_parent
+        except Exception:
+            pass
+        # Create template element
+        template_node = Node("template", token.attributes)
+        insertion_parent.append_child(template_node)
+        # Create content container
+        content_node = Node("content")
+        template_node.append_child(content_node)
+        # Enter content node for subsequent children
+        context.enter_element(template_node)
+        context.open_elements.push(template_node)
+        # Keep content node off the open elements stack to avoid interfering with scope algorithms
+        context.enter_element(content_node)
+        return True
+
+    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name == "template"
+
+    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        # Pop until template element is closed
+        # First, if current parent is content, move up
+        if context.current_parent.tag_name == "content" and context.current_parent.parent and context.current_parent.parent.tag_name == "template":
+            context.move_to_element_with_fallback(context.current_parent.parent, context.current_parent)
+        # Now ensure we're at template node
+        # Generate implied end tags until reaching template
+        # Simplified: pop non-template, non-content elements above template
+        # (Prevents stray inline like <b> remaining open across template close.)
+        if context.current_parent.tag_name != "template":
+            while context.current_parent and context.current_parent.tag_name not in ("template", "content"):
+                if context.current_parent.parent:
+                    context.move_to_element_with_fallback(context.current_parent.parent, context.current_parent)
+                else:
+                    break
+        if context.current_parent.tag_name == "content" and context.current_parent.parent and context.current_parent.parent.tag_name == "template":
+            context.move_to_element_with_fallback(context.current_parent.parent, context.current_parent)
+        if context.current_parent.tag_name == "template":
+            if context.open_elements.contains(context.current_parent):
+                context.open_elements.remove_element(context.current_parent)
+            context.move_to_element_with_fallback(context.current_parent.parent, context.current_parent)
+        return True
+
+
 class TextHandler(TagHandler):
     """Default handler for text nodes"""
 
@@ -394,6 +472,24 @@ class TextHandler(TagHandler):
             current = current.parent
         
         return False
+
+    def _is_plain_svg_foreign(self, context: "ParseContext") -> bool:
+        """Return True if current parent is inside an <svg> subtree that is NOT an HTML integration point.
+
+        In such cases, HTML table-related tags (table, tbody, thead, tfoot, tr, td, th, caption, col, colgroup)
+        should NOT trigger HTML table construction; instead they are treated as raw foreign elements (the
+        svg*.dat tests expect nested <svg tagname> nodes rather than HTML table scaffolding).
+        """
+        cur = context.current_parent
+        seen_svg = False
+        while cur:
+            if cur.tag_name.startswith("svg "):
+                seen_svg = True
+            # Any integration point breaks the foreign-only condition
+            if cur.tag_name in ("svg foreignObject", "svg desc", "svg title"):
+                return False
+            cur = cur.parent
+        return seen_svg
 
     def _foster_parent_text(self, text: str, context: "ParseContext") -> None:
         """Foster parent text content before the current table"""
@@ -1340,11 +1436,37 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             if not in_integration_point:
                 return False
 
-        return tag_name in ("table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption")
+        # Suppress HTML table construction inside plain SVG (non integration point) foreign subtree
+        if tag_name in ("table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption"):
+            text_handler = getattr(self.parser, 'text_handler', None)
+            try:
+                if text_handler and text_handler._is_plain_svg_foreign(context):  # type: ignore[attr-defined]
+                    return False
+            except Exception:
+                pass
+            return True
+        return False
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         tag_name = token.tag_name
         self.debug(f"Handling {tag_name} in table context")
+
+        # Suppress HTML table construction entirely when inside an <svg title> element;
+        # tests expect these table-related tags to be ignored (parse errors) rather than
+        # creating table scaffolding. We simply consume the token.
+        if context.current_parent.tag_name == "svg title":
+            return True
+
+        # If inside a plain (non-integration) SVG subtree, do not perform HTML table processing;
+        # let generic foreign content handling represent this tag as a foreign element.
+        # The text handler got the helper; access via parser.handlers ordering may vary, so use
+        # getattr defensively.
+        text_handler = getattr(self.parser, 'text_handler', None)
+        try:
+            if text_handler and text_handler._is_plain_svg_foreign(context):  # type: ignore[attr-defined]
+                return False
+        except Exception:
+            pass
 
         # Ignore col/colgroup outside of table context
         if tag_name in ("col", "colgroup") and context.document_state != DocumentState.IN_TABLE:
@@ -2792,6 +2914,14 @@ class ForeignTagHandler(TagHandler):
         """
         fixed_attrs = self._fix_foreign_attribute_case(attributes, context_type)
         new_node = Node(f"{context_type} {tag_name}", fixed_attrs)
+
+        # Set foreign context BEFORE appending so downstream handlers in same token sequence
+        # (e.g., immediate table-related elements) can detect we're inside foreign content.
+        if context_type == "svg" and tag_name.lower() == "svg":
+            context.current_context = "svg"
+        elif context_type == "math" and tag_name.lower() == "math":
+            context.current_context = "math"
+
         context.current_parent.append_child(new_node)
 
         # Only set as current parent if not self-closing
@@ -2972,7 +3102,11 @@ class ForeignTagHandler(TagHandler):
                 context.current_parent.tag_name in ("svg foreignObject", "svg desc", "svg title") or
                 context.current_parent.has_ancestor_matching(lambda n: n.tag_name in ("svg foreignObject", "svg desc", "svg title"))
             ):
-                return False  # delegate to HTML handlers
+                # Exception: table-related tags should STILL be treated as foreign (tests expect nested <svg tag>)
+                table_related = {"table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption", "col", "colgroup"}
+                if tag_name.lower() in table_related:
+                    return True  # handle as foreign element
+                return False  # delegate other HTML tags to HTML handlers
             return True  # keep handling inside generic SVG subtree
 
         # 3. Already inside MathML foreign content

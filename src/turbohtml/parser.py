@@ -2,6 +2,7 @@ from turbohtml.context import ParseContext, DocumentState, ContentState
 from turbohtml.handlers import (
     AutoClosingTagHandler,
     DoctypeHandler,
+    TemplateTagHandler,
     ForeignTagHandler,
     FormattingElementHandler,
     FormTagHandler,
@@ -61,6 +62,7 @@ class TurboHTML:
         # Initialize tag handlers in deterministic order
         self.tag_handlers = [
             DoctypeHandler(self),
+            TemplateTagHandler(self),
             PlaintextHandler(self),
             FramesetTagHandler(self),
             ForeignTagHandler(self) if handle_foreign_elements else None,  # Move before other handlers
@@ -86,6 +88,12 @@ class TurboHTML:
             UnknownElementHandler(self),  # Handle unknown/namespace elements
         ]
         self.tag_handlers = [h for h in self.tag_handlers if h is not None]
+
+        # Expose specific handlers for cross-handler coordination (minimal public surface)
+        for handler in self.tag_handlers:
+            if isinstance(handler, TextHandler):
+                self.text_handler = handler
+                break
 
         # Trigger parsing
         self._parse()
