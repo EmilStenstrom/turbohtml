@@ -841,28 +841,37 @@ class TurboHTML:
         """
         if context.active_formatting_elements.is_empty():
             return
-            
-        self.debug("Reconstructing active formatting elements")
-        
-        # Get all active formatting elements in order
-        entries = list(context.active_formatting_elements)
-        if not entries:
+
+        # Step 1: If there are no entries, return (already handled)
+        afe_list = list(context.active_formatting_elements)
+        if not afe_list:
             return
-            
-        # Reconstruct each formatting element as nested children
-        current_parent = context.current_parent
-        
-        for entry in entries:
-            # Clone the formatting element
+
+        # Step 2: If the last entry's element is already on the open elements stack, return
+        # (Optimization: we detect earliest needing reconstruction below)
+
+        # Find the earliest entry that needs reconstruction per spec:
+        # Walk backwards until we find first entry whose element is not on the open elements stack.
+        index_to_reconstruct_from = None
+        for i, entry in enumerate(afe_list):
+            # Skip markers (not implemented) – all entries treated as normal
+            if not context.open_elements.contains(entry.element):
+                index_to_reconstruct_from = i
+                break
+        if index_to_reconstruct_from is None:
+            # Every formatting element already open
+            return
+
+        # Step 3: For each entry from index_to_reconstruct_from onwards, if element already open continue;
+        # otherwise create element, append, push and update entry.element
+        for entry in afe_list[index_to_reconstruct_from:]:
+            if context.open_elements.contains(entry.element):
+                continue
             clone = Node(entry.element.tag_name, entry.element.attributes.copy())
-            
-            # Add as child of current parent
-            current_parent.append_child(clone)
-            
-            # Update current parent to be the clone for nesting
-            current_parent = clone
-            
-            self.debug(f"Reconstructed {clone.tag_name} inside {clone.parent.tag_name}")
-        
-        # Update context's current parent to the innermost reconstructed element
-        context.move_to_element(current_parent)
+            context.current_parent.append_child(clone)
+            context.open_elements.push(clone)
+            # Update the entry's element reference
+            entry.element = clone
+            # Set current parent to the clone (nesting)
+            context.move_to_element(clone)
+            self.debug(f"Reconstructed formatting element {clone.tag_name}")

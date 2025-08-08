@@ -209,6 +209,10 @@ class TextHandler(TagHandler):
     def handle_text(self, text: str, context: "ParseContext") -> bool:
         self.debug(f"handling text '{text}' in state {context.document_state}")
 
+    # (Removed flag-based forced reconstruction; paragraph splitting now handled
+    #  by popping formatting descendants from open stack at </p> so standard
+    #  reconstruction logic applies when needed.)
+
         # Special case: Handle malformed DOCTYPE endings that become text content
         if context.document_state == DocumentState.INITIAL and text.strip() == "]>":
             # This looks like a DOCTYPE ending that was parsed as text
@@ -373,7 +377,7 @@ class TextHandler(TagHandler):
             
             if needs_reconstruction:
                 self.debug("Text encountered outside active formatting elements, reconstructing")
-                self.parser.adoption_agency.reconstruct_active_formatting_elements(context)
+                self.parser.reconstruct_active_formatting_elements(context)
         
         self._append_text(text, context)
         return True
@@ -491,7 +495,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         tag_name = token.tag_name
-        self.debug(f"handling <{tag_name}>, context={context}")
+        self.debug(f"Handling <{tag_name}>, context={context}")
 
         # Check for duplicate active formatting elements (e.g., <a> inside <a>)
         existing_entry = context.active_formatting_elements.find(tag_name)
@@ -501,23 +505,24 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
             if self.parser.adoption_agency.run_algorithm(tag_name, context, 1):
                 self.debug(f"Adoption agency handled duplicate {tag_name}")
 
-        # Add to open elements stack
-        new_element = self._create_element(token)
-        context.open_elements.push(new_element)
+        # Special handling for duplicate <nobr> per HTML5 spec:
+        # If a start tag whose tag name is "nobr" is seen, and there is a nobr
+        # element in scope, then this is a parse error; run the adoption agency
+        # algorithm for the tag name "nobr", then reconstruct the active formatting
+        # elements (if any), then create the element for the token and push it onto
+        # the list of active formatting elements.
+        if tag_name == "nobr" and context.open_elements.has_element_in_scope("nobr"):
+            self.debug("Duplicate <nobr> in scope; running adoption agency before creating new one")
+            self.parser.adoption_agency.run_algorithm("nobr", context, 1)
+            self.parser.reconstruct_active_formatting_elements(context)
+            # After adoption, if insertion point is still inside a nobr, move outward so new nobr becomes sibling
+            if context.current_parent.tag_name == "nobr" and context.current_parent.parent:
+                context.move_to_element(context.current_parent.parent)
 
-        # Special handling for nobr tags to prevent infinite loops
-        if tag_name == "nobr":
-            current = context.current_parent.find_ancestor("nobr")
-            if current:
-                self.debug("Found existing nobr, closing it and creating new one at same level")
-                if current.parent:
-                    context.move_to_element(current.parent)
-                    current.parent.append_child(new_element)
-                    context.enter_element(new_element)
-                    
-                    # Add to active formatting elements
-                    context.active_formatting_elements.push(new_element, token)
-                return True
+        # Create element after any adoption agency handling. For nobr we delay push until after DOM insert
+        new_element = self._create_element(token)
+        if tag_name != "nobr":
+            context.open_elements.push(new_element)
 
         # Determine if the formatting element is being created as a descendant of <object>.
         # If so, per spec, do not add it to the active formatting elements list.
@@ -568,11 +573,18 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         # Create new formatting element normally
         self.debug(f"Creating new formatting element: {tag_name} under {context.current_parent}")
 
-        # Add the new formatting element as a child of current parent
+        # Add the new formatting element ensuring nobr siblings rather than nesting
+        if tag_name == "nobr" and context.current_parent.tag_name == "nobr" and context.current_parent.parent:
+            # Move out one level to prevent nesting (belt-and-suspenders after earlier move)
+            context.move_to_element(context.current_parent.parent)
         context.current_parent.append_child(new_element)
         
         # Update current parent to the new formatting element for nesting
         context.enter_element(new_element)
+        
+        # Push nobr now (after DOM insertion) to better mirror spec ordering
+        if tag_name == "nobr":
+            context.open_elements.push(new_element)
         
         # Add to active formatting elements
         if not inside_object:
@@ -584,45 +596,45 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         tag_name = token.tag_name
-        self.debug(f"FormattingElementHandler: *** START PROCESSING END TAG <{tag_name}> ***")
+        self.debug(f"FormattingElementHandler: *** START PROCESSING END TAG </{tag_name}> ***")
         self.debug(f"FormattingElementHandler: handling end tag <{tag_name}>, context={context}")
 
         # Track adoption agency runs for this end tag
         adoption_run_count = 0
         max_runs = 8  # HTML5 spec limit for adoption agency algorithm iterations
         self.debug(f"FormattingElementHandler: MAX_RUNS SET TO {max_runs}")
-        
+
         # Keep running adoption agency algorithm until no more reconstructions are needed
         while True:
             self.debug(f"FormattingElementHandler: Checking should_run_adoption for run #{adoption_run_count + 1}")
             should_run = self.parser.adoption_agency.should_run_adoption(tag_name, context)
             self.debug(f"FormattingElementHandler: should_run_adoption returned: {should_run}")
-            
+
             if not should_run:
                 self.debug(f"FormattingElementHandler: should_run_adoption returned False after {adoption_run_count} run(s)")
                 break
-                
+
             # Check if we've reached the limit before running
             if adoption_run_count >= max_runs:
                 self.debug(f"FormattingElementHandler: Reached maximum runs ({max_runs}) for {tag_name}, stopping")
                 break
-                
+
             adoption_run_count += 1
             self.debug(f"FormattingElementHandler: Running adoption agency algorithm #{adoption_run_count} for end tag </{tag_name}>")
-            
+
             # Run the adoption agency algorithm
             result = self.parser.adoption_agency.run_algorithm(tag_name, context, adoption_run_count)
             self.debug(f"FormattingElementHandler: Adoption agency run #{adoption_run_count} returned: {result}")
-            
+
             if not result:
                 # If adoption agency returns False, stop trying
                 self.debug(f"FormattingElementHandler: Adoption agency returned False on run #{adoption_run_count}, stopping")
                 break
-        
+
         if adoption_run_count > 0:
             self.debug(f"FormattingElementHandler: Adoption agency completed after {adoption_run_count} run(s) for </{tag_name}>")
             return True
-        
+
         if adoption_run_count >= max_runs:
             self.debug(f"FormattingElementHandler: WARNING: Adoption agency hit maximum runs ({max_runs}) for {tag_name}")
             return True
@@ -685,7 +697,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         if (current.find_child_by_tag("p") and 
             context.current_parent.find_ancestor("p") and 
             current.tag_name == token.tag_name):
-            
+
             p_element = context.current_parent.find_ancestor("p")
             if p_element and p_element.parent == current:
                 self.debug(f"Staying in paragraph that's inside formatting element")
@@ -1006,26 +1018,53 @@ class ParagraphTagHandler(TagHandler):
         # Close any active formatting elements before creating block element
         # This implements part of the HTML5 block element behavior
         if token.tag_name == "p" and context.active_formatting_elements:
-            formatting_elements_to_close = []
-            
-            # Find any active formatting elements that are ancestors
-            formatting_elements_to_close = context.current_parent.collect_ancestors_until(
-                stop_at=None,
-                predicate=lambda n: (n.tag_name in FORMATTING_ELEMENTS and 
-                          context.active_formatting_elements.find(n.tag_name))
-            )
-            
-            # Close the formatting elements (move current_parent out of them)
-            if formatting_elements_to_close:
-                self.debug(f"Closing formatting elements before p: {[e.tag_name for e in formatting_elements_to_close]}")
-                # Move to the parent of the outermost formatting element
-                outermost_formatting = formatting_elements_to_close[-1]
-                if outermost_formatting.parent:
-                    context.move_to_element(outermost_formatting.parent)
+            # Collect formatting ancestors that are DESCENDANTS of the paragraph being closed.
+            # We traverse upward until we reach the paragraph ancestor; do NOT include
+            # formatting elements that are outside (above) that paragraph (e.g. outer <a>),
+            # since removing those would suppress required adoption-agency behavior.
+            formatting_ancestors = []
+            current = context.current_parent
+            paragraph_ancestor = None
+            # First locate the paragraph ancestor (the one being implicitly closed)
+            temp = current
+            while temp and not paragraph_ancestor:
+                if temp.tag_name == "p":
+                    paragraph_ancestor = temp
+                temp = temp.parent
+            # Now walk upwards collecting formatting elements until we hit that paragraph
+            while current and current is not paragraph_ancestor:
+                if (current.tag_name in FORMATTING_ELEMENTS and
+                        context.active_formatting_elements.find(current.tag_name)):
+                    formatting_ancestors.append(current)
+                current = current.parent
+            # Innermost first already due to upward traversal; ensure list order innermost->outermost
+            if paragraph_ancestor and formatting_ancestors:
+                self.debug(f"Closing (popping) formatting ancestors before new <p>: {[n.tag_name for n in formatting_ancestors]}")
+                outermost = formatting_ancestors[-1]
+                # Move insertion point to parent of outermost formatting element
+                if outermost.parent:
+                    context.move_to_element(outermost.parent)
                 else:
-                    # Fallback - should not happen normally
                     body = self.parser._ensure_body_node(context)
-                    context.move_to_element(body) if body else context.root
+                    if body:
+                        context.move_to_element(body)
+                # Remove formatting ancestors from open elements stack (not only contiguous top ones)
+                to_remove = set()
+                # Only remove those whose paragraph ancestor is the same paragraph_ancestor we identified
+                for fmt in formatting_ancestors:
+                    anc = fmt.find_ancestor("p")
+                    if anc is paragraph_ancestor:
+                        to_remove.add(fmt)
+                new_stack = []
+                for elem in context.open_elements._stack:
+                    if elem in to_remove:
+                        self.debug(f"Removing formatting element {elem.tag_name} from open elements stack")
+                        continue
+                    new_stack.append(elem)
+                context.open_elements._stack = new_stack
+                # After popping, formatting elements remain in active list; defer reconstruction
+                # until actual inline/text content appears in the new paragraph. Immediate
+                # reconstruction here caused over‑nesting and duplication in deep font chains.
 
         # Check if we're inside another p tag
         p_ancestor = context.current_parent.find_ancestor("p")
@@ -1130,42 +1169,58 @@ class ParagraphTagHandler(TagHandler):
 
         # Standard behavior: Find nearest p ancestor and move up to its parent
         if context.current_parent.tag_name == "p":
-            # Current parent is the p element being closed
-            if context.current_parent.parent:
+            closing_p = context.current_parent
+            # Move insertion point out of the paragraph first
+            if closing_p.parent:
                 context.move_up_one_level()
             else:
-                # Fallback to body if p has no parent
                 body = self.parser._ensure_body_node(context)
                 context.move_to_element(body)
-            
-            # Reconstruct active formatting elements after closing the paragraph
-            # Only if we're not at the root level (body) and there's content that needs formatting
-            # NOTE: html5lib doesn't automatically reconstruct after paragraph close
-            # Reconstruction should only happen when encountering content/tags that need formatting
-            # if context.active_formatting_elements._stack:
-            #     self.debug("Reconstructing active formatting elements after paragraph close")
-            #     self.parser.adoption_agency.reconstruct_active_formatting_elements(context)
-            
+            # Pop any formatting elements that were descendants of the closed paragraph
+            if context.active_formatting_elements._stack:
+                # Build set of descendant formatting nodes under closing paragraph
+                descendant_fmt = set()
+                def collect_fmt(node: Node):
+                    for ch in node.children:
+                        if ch.tag_name in FORMATTING_ELEMENTS:
+                            descendant_fmt.add(ch)
+                        collect_fmt(ch)
+                collect_fmt(closing_p)
+                if descendant_fmt:
+                    new_stack = []
+                    for elem in context.open_elements._stack:
+                        if elem in descendant_fmt:
+                            self.debug(f"Popping formatting element <{elem.tag_name}> at paragraph boundary for reconstruction later")
+                            continue
+                        new_stack.append(elem)
+                    context.open_elements._stack = new_stack
             return True
             
         p_ancestor = context.current_parent.find_ancestor("p")
         if p_ancestor:
-            # Normal case: close up to the p's parent
-            if p_ancestor.parent:
-                context.move_to_element(p_ancestor.parent)
+            closing_p = p_ancestor
+            if closing_p.parent:
+                context.move_to_element(closing_p.parent)
             else:
-                # Fallback to body if p has no parent
                 body = self.parser._ensure_body_node(context)
                 context.move_to_element(body)
-            
-            # Reconstruct active formatting elements after closing the paragraph
-            # This ensures formatting elements that were inside the paragraph continue their scope
-            # NOTE: html5lib doesn't automatically reconstruct after paragraph close
-            # Reconstruction should only happen when encountering content/tags that need formatting
-            # if context.active_formatting_elements._stack:
-            #     self.debug("Reconstructing active formatting elements after paragraph close")
-            #     self.parser.adoption_agency.reconstruct_active_formatting_elements(context)
-            
+            # Pop descendant formatting elements of this paragraph
+            if context.active_formatting_elements._stack:
+                descendant_fmt = set()
+                def collect_fmt(node: Node):
+                    for ch in node.children:
+                        if ch.tag_name in FORMATTING_ELEMENTS:
+                            descendant_fmt.add(ch)
+                        collect_fmt(ch)
+                collect_fmt(closing_p)
+                if descendant_fmt:
+                    new_stack = []
+                    for elem in context.open_elements._stack:
+                        if elem in descendant_fmt:
+                            self.debug(f"Popping formatting element <{elem.tag_name}> at paragraph boundary for reconstruction later")
+                            continue
+                        new_stack.append(elem)
+                    context.open_elements._stack = new_stack
             return True
 
         # HTML5 spec: If no p element is in scope, check for special contexts
@@ -3178,6 +3233,8 @@ class ForeignTagHandler(TagHandler):
                     context.current_context = None
                 return True
 
+    # (Removed heuristic breakout for unmatched HTML end tags inside foreign content to avoid regressions)
+
         return True  # Ignore if nothing matched
 
     def should_handle_text(self, text: str, context: "ParseContext") -> bool:
@@ -4083,7 +4140,7 @@ class MenuitemElementHandler(TagHandler):
         # Reconstruct active formatting elements before inserting menuitem, so elements like <b>
         # continue outside closed paragraphs per HTML5 parsing behavior
         if hasattr(self.parser, 'adoption_agency'):
-            self.parser.adoption_agency.reconstruct_active_formatting_elements(context)
+                self.parser.reconstruct_active_formatting_elements(context)
 
         # Create the menuitem element
         new_node = Node(tag_name, token.attributes)
