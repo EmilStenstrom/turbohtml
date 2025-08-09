@@ -318,6 +318,14 @@ class TemplateTagHandler(TagHandler):
                     pass
             if hasattr(context, "template_content_depth") and context.template_content_depth > 0:
                 context.template_content_depth -= 1
+        else:
+            # If we're in nested template content closing via the content filter, ensure we step out correctly
+            if context.current_parent and context.current_parent.tag_name == "content" and context.current_parent.parent and context.current_parent.parent.tag_name == "template":
+                context.move_to_element_with_fallback(context.current_parent.parent, context.current_parent)
+                parent = context.current_parent.parent or context.current_parent
+                if context.open_elements.contains(context.current_parent):
+                    context.open_elements.remove_element(context.current_parent)
+                context.move_to_element_with_fallback(parent, context.current_parent)
         return True
 
 
@@ -388,13 +396,7 @@ class TemplateContentFilterHandler(TagHandler):
             return True
         boundary = self._current_content_boundary(context) or context.current_parent
 
-        # If a table-related tag appears while nested inside a non-table element,
-        # normalize insertion to the content boundary first
-        table_related = {"table", "thead", "tbody", "tfoot", "caption", "colgroup", "col", "tr", "td", "th"}
-        if (token.tag_name in table_related and
-            context.current_parent is not boundary and
-            context.current_parent.tag_name not in {"tr", "td", "th"}):
-            context.move_to_element(boundary)
+        # Do not normalize table-related tags out to boundary; allow nesting under generic elements
 
         # If the last structural entry was a col/colgroup, drop unexpected content that follows
         last_child = boundary.children[-1] if boundary and boundary.children else None
@@ -414,7 +416,13 @@ class TemplateContentFilterHandler(TagHandler):
                 return True
             if context.current_parent is boundary:
                 # If previous child was a tr, start a new tr for the next cell; else, place directly
-                prev = boundary.children[-1] if boundary.children else None
+                # Skip trailing templates when checking previous
+                prev = None
+                for child in reversed(boundary.children or []):
+                    if child.tag_name == "template":
+                        continue
+                    prev = child
+                    break
                 if prev and prev.tag_name == "tr":
                     new_tr = Node("tr")
                     boundary.append_child(new_tr)
@@ -430,7 +438,8 @@ class TemplateContentFilterHandler(TagHandler):
 
         if token.tag_name == "tr":
             if context.current_parent is not boundary:
-                context.move_to_element(boundary)
+                # Ignore stray tr inside non-table generic children
+                return True
             new_tr = Node("tr", token.attributes)
             boundary.append_child(new_tr)
             context.enter_element(new_tr)
@@ -1068,6 +1077,9 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                     table.append_child(new_caption)
                     context.enter_element(new_caption)
                     return True
+            # If a tbody/thead/tfoot appears here, ignore it to avoid creating table sections under content
+            if tag_name in ("tbody", "thead", "tfoot", "caption", "colgroup"):
+                return True
             # Swallow select semantics; let content filter represent nested template and other tags
             return True
 
