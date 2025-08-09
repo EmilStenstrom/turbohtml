@@ -338,6 +338,7 @@ class TemplateContentFilterHandler(TagHandler):
     This handler must run before table handling.
     """
 
+    # Ignore only top-level/document-structure things inside template content
     IGNORED_START = {"html", "head", "body", "frameset", "frame"}
     # Treat table & select related and nested template triggers as plain generics (no special algorithms)
     GENERIC_AS_PLAIN = {"table", "thead", "tbody", "tfoot", "caption", "colgroup", "tr", "td", "th", "col", "option", "optgroup"}
@@ -364,6 +365,9 @@ class TemplateContentFilterHandler(TagHandler):
             return False
         # In foreign (SVG/MathML) contexts inside template content, let foreign handlers manage tags
         if context.current_context in ("math", "svg"):
+            return False
+        # Allow foreign roots to be handled by foreign handler so context switches properly
+        if tag_name in ("svg", "math"):
             return False
         # Intercept all start tags while inside template content to avoid outer promotions
         return True
@@ -399,13 +403,14 @@ class TemplateContentFilterHandler(TagHandler):
         # Do not normalize table-related tags out to boundary; allow nesting under generic elements
 
         # If the last structural entry was a col/colgroup, drop unexpected content that follows
+        # (but allow text to remain as generic content under boundary)
         last_child = boundary.children[-1] if boundary and boundary.children else None
         if last_child and last_child.tag_name in {"col", "colgroup"}:
-            # After a <col> or <colgroup>, ignore subsequent content inside template content,
-            # except allow another <col>
-            allowed_after_col = {"col"}
+            allowed_after_col = {"col", "#text"}
             if token.tag_name not in allowed_after_col:
                 return True
+
+        # Represent table controls (thead/tbody/tfoot/caption/colgroup) as plain elements
 
         # Minimal handling for rows and cells inside template content
         if token.tag_name in ("td", "th"):
@@ -440,6 +445,23 @@ class TemplateContentFilterHandler(TagHandler):
             if context.current_parent is not boundary:
                 # Ignore stray tr inside non-table generic children
                 return True
+            # If we've already seen a section (thead/tfoot/tbody), ensure rows go inside tbody
+            seen_section = any(ch.tag_name in {"thead", "tfoot", "tbody"} for ch in (boundary.children or []))
+            if seen_section:
+                # Find the last section and ensure it's a tbody for rows
+                last_section = None
+                for ch in reversed(boundary.children or []):
+                    if ch.tag_name in {"thead", "tfoot", "tbody"}:
+                        last_section = ch
+                        break
+                if not last_section or last_section.tag_name != "tbody":
+                    last_section = Node("tbody")
+                    boundary.append_child(last_section)
+                new_tr = Node("tr", token.attributes)
+                last_section.append_child(new_tr)
+                context.enter_element(new_tr)
+                return True
+            # No sections yet: place row directly at boundary
             new_tr = Node("tr", token.attributes)
             boundary.append_child(new_tr)
             context.enter_element(new_tr)
@@ -458,11 +480,13 @@ class TemplateContentFilterHandler(TagHandler):
                 boundary2 = self._current_content_boundary(context)
                 if boundary2:
                     context.move_to_element(boundary2)
+                # Update local boundary pointer
+                boundary = boundary2 or boundary
         # Treat other specific tags as generic elements (no special algorithms)
         new_node = Node(token.tag_name, token.attributes)
         context.current_parent.append_child(new_node)
         # Do not descend into table-structure tags; keep insertion at current parent
-        do_not_enter = {"table", "thead", "tbody", "tfoot", "caption", "colgroup", "col"}
+        do_not_enter = {"table", "thead", "tbody", "tfoot", "caption", "colgroup", "col", "meta", "link"}
         if new_node.tag_name not in do_not_enter:
             context.enter_element(new_node)
         return True
@@ -472,6 +496,9 @@ class TemplateContentFilterHandler(TagHandler):
             return False
         # In foreign (SVG/MathML) contexts inside template content, let foreign handlers manage tags
         if context.current_context in ("math", "svg"):
+            return False
+        # Allow foreign roots to be handled by foreign handler so context switches properly
+        if tag_name in ("svg", "math"):
             return False
         # Intercept all end tags while inside template content so we can safely bound popping
         return True
@@ -1068,19 +1095,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         # If we're inside template content, block select semantics entirely. The content filter
         # will represent option/optgroup/select as plain elements without promotion or relocation.
         if self._is_in_template_content(context):
-            # Special case: if a caption appears after select inside a table cell, ensure it moves to table level
-            if tag_name == "caption":
-                table = self.parser.find_current_table(context)
-                if table:
-                    context.move_to_element(table)
-                    new_caption = Node("caption")
-                    table.append_child(new_caption)
-                    context.enter_element(new_caption)
-                    return True
-            # If a tbody/thead/tfoot appears here, ignore it to avoid creating table sections under content
-            if tag_name in ("tbody", "thead", "tfoot", "caption", "colgroup"):
-                return True
-            # Swallow select semantics; let content filter represent nested template and other tags
+            # Inside template content, suppress select-specific behavior entirely
             return True
 
         if tag_name in ("select", "datalist"):
