@@ -2,8 +2,6 @@
 
 **TurboHTML** is an HTML5 parser being built with AI assistance, currently passing html5lib test suite tests. It follows a modular handler-based architecture strictly adhering to the WHATWG HTML5 specification.
 
-DON'T STOP AND ASK FOR PERSMISSION, JUST DO WHAT YOU THINK IS BEST. THE ONLY TIME YOU CAN STOP IS IF YOU HAVE AN IMPROVED TEST SUITE, THINK THIS IS A GOOD CHECKPOINT WHERE I SHOULD CHECK IN.
-
 ## Key Architecture
 
 - **Tokenizer** (`tokenizer.py`): HTML5-compliant token generation with state machines for RAWTEXT handling
@@ -71,6 +69,7 @@ Each time run_tests.py is run without filters, it writes an automated summary of
 The typical development workflow is:
 1. **Improve tests**: Focus on fixing failing test cases, implementing missing handlers, or improving existing logic
 2. **Check for regressions**: After making changes, run `git diff test-summary.txt` to ensure no previously passing tests have regressed
-3. **Iterate**: Continue improving tests until a natural stopping point, then validate overall progress with the test summary diff
+3. **Iterate**: Continue improving tests, then validate overall progress with the test summary diff
+4. IMPORTANT: **Act with autonomy**: Don't stop and ask for permission to continue, continue iterating until you have improvements to test coverage to show.
 
 This workflow ensures continuous progress while maintaining quality and preventing regressions.
