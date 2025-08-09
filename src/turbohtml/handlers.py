@@ -330,7 +330,7 @@ class TemplateContentFilterHandler(TagHandler):
     This handler must run before table handling.
     """
 
-    IGNORED_START = {"html", "head", "body", "frameset"}
+    IGNORED_START = {"html", "head", "body", "frameset", "frame"}
     # Treat table & select related and nested template triggers as plain generics (no special algorithms)
     GENERIC_AS_PLAIN = {"table", "thead", "tbody", "tfoot", "caption", "colgroup", "tr", "td", "th", "col", "option", "optgroup"}
 
@@ -1068,6 +1068,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                     table.append_child(new_caption)
                     context.enter_element(new_caption)
                     return True
+            # Swallow select semantics; let content filter represent nested template and other tags
             return True
 
         if tag_name in ("select", "datalist"):
