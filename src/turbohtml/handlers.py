@@ -410,7 +410,19 @@ class TemplateContentFilterHandler(TagHandler):
             if token.tag_name not in allowed_after_col:
                 return True
 
-        # Represent table controls (thead/tbody/tfoot/caption/colgroup) as plain elements
+        # Represent or drop table controls based on whether rows/cells have started
+        if token.tag_name in {"tbody", "caption", "colgroup"}:
+            # If rows/cells have started, ignore these control elements
+            has_rows_or_cells = False
+            for ch in (boundary.children or []):
+                if ch.tag_name in {"tr", "td", "th"}:
+                    has_rows_or_cells = True
+                    break
+            if (not has_rows_or_cells) and context.current_parent.tag_name not in {"tr", "td", "th"}:
+                # Keep as generic element when no rows/cells yet
+                ctrl = Node(token.tag_name, token.attributes)
+                boundary.append_child(ctrl)
+            return True
 
         # Minimal handling for rows and cells inside template content
         if token.tag_name in ("td", "th"):
@@ -445,10 +457,10 @@ class TemplateContentFilterHandler(TagHandler):
             if context.current_parent is not boundary:
                 # Ignore stray tr inside non-table generic children
                 return True
-            # If we've already seen a section (thead/tfoot/tbody), ensure rows go inside tbody
-            seen_section = any(ch.tag_name in {"thead", "tfoot", "tbody"} for ch in (boundary.children or []))
+            # If we've already seen a section (thead/tfoot), ensure rows go inside tbody
+            seen_section = any(ch.tag_name in {"thead", "tfoot"} for ch in (boundary.children or []))
             if seen_section:
-                # Find the last section and ensure it's a tbody for rows
+                # Find the last section and if not tbody, create tbody for rows
                 last_section = None
                 for ch in reversed(boundary.children or []):
                     if ch.tag_name in {"thead", "tfoot", "tbody"}:
@@ -484,7 +496,7 @@ class TemplateContentFilterHandler(TagHandler):
                 boundary = boundary2 or boundary
         # Treat other specific tags as generic elements (no special algorithms)
         new_node = Node(token.tag_name, token.attributes)
-        context.current_parent.append_child(new_node)
+        boundary.append_child(new_node)
         # Do not descend into table-structure tags; keep insertion at current parent
         do_not_enter = {"table", "thead", "tbody", "tfoot", "caption", "colgroup", "col", "meta", "link"}
         if new_node.tag_name not in do_not_enter:
@@ -600,6 +612,13 @@ class TextHandler(TagHandler):
             if boundary:
                 last_child = boundary.children[-1] if boundary.children else None
                 if last_child and last_child.tag_name in {"col", "colgroup"}:
+                    return True
+                # If the last child at the boundary is a table and we have non-whitespace text,
+                # insert the text before that table so ordering matches expectations
+                if last_child and last_child.tag_name == "table" and text and not text.isspace():
+                    text_node = Node("#text")
+                    text_node.text_content = text
+                    boundary.insert_before(text_node, last_child)
                     return True
             self.debug("Text inside template content, keeping in content")
             self._append_text(text, context)
@@ -1160,6 +1179,12 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                             new_node = Node(tag_name, token.attributes)
                             foster_parent.append_child(new_node)
                             context.enter_element(new_node)
+                            # If this is a caption, switch to caption insertion mode so following text goes inside it
+                            if tag_name == "caption":
+                                try:
+                                    self.parser.transition_to_state(context, DocumentState.IN_CAPTION)
+                                except Exception:
+                                    pass
                             
                             self.debug(f"Foster parented {tag_name} to {foster_parent.tag_name}: {new_node}")
                             return True
