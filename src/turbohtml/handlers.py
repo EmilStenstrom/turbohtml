@@ -464,10 +464,11 @@ class TemplateContentFilterHandler(TagHandler):
     # Minimal handling for rows: only allow directly under content boundary
         if token.tag_name == "tr":
             tr_boundary = content_boundary or insertion_parent
-            # Only allow <tr> directly at the content boundary and when not immediately after a nested <template>
+            # Only allow <tr> directly at the content boundary
             if context.current_parent is not tr_boundary:
                 return True
-            # If the last significant child is a template, ignore stray tr (bogus row)
+            # If the last significant child is a template, treat as stray only when
+            # no table context has been established yet (no sections/rows/cells seen).
             last_sig = None
             for ch in reversed(tr_boundary.children or []):
                 if ch.tag_name == "#text" and (not ch.text_content or ch.text_content.isspace()):
@@ -475,8 +476,13 @@ class TemplateContentFilterHandler(TagHandler):
                 last_sig = ch
                 break
             if last_sig and last_sig.tag_name == "template":
-                return True
-            seen_section = any(ch.tag_name in {"thead", "tfoot"} for ch in (tr_boundary.children or []))
+                has_table_context = any(
+                    ch.tag_name in {"thead", "tfoot", "tbody", "tr", "td", "th"}
+                    for ch in (tr_boundary.children or [])
+                )
+                if not has_table_context:
+                    return True
+            seen_section = any(ch.tag_name in {"thead", "tfoot", "tbody"} for ch in (tr_boundary.children or []))
             if seen_section:
                 last_section = None
                 for ch in reversed(tr_boundary.children or []):
@@ -928,6 +934,36 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
             if self.parser.adoption_agency.run_algorithm(tag_name, context, 1):
                 self.debug(f"Adoption agency handled duplicate {tag_name}")
 
+        # Inside template content, if we're currently in a table-ish container (e.g., <table>)
+        # and we are about to insert a formatting element, relocate insertion point so
+        # formatting doesn't end up as a child of the table. Prefer the nearest same-tag
+        # formatting ancestor (e.g., outer <a>) else move to the template content boundary.
+        if self._is_in_template_content(context):
+            tableish = {"table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption", "colgroup", "col"}
+            if context.current_parent.tag_name in tableish:
+                # Prefer nearest same-tag ancestor
+                same_ancestor = context.current_parent.find_ancestor(tag_name)
+                if same_ancestor:
+                    context.move_to_element(same_ancestor)
+                else:
+                    # Find the content boundary
+                    boundary = None
+                    node = context.current_parent
+                    while node:
+                        if node.tag_name == "content" and node.parent and node.parent.tag_name == "template":
+                            boundary = node
+                            break
+                        node = node.parent
+                    if boundary:
+                        # If the last child at the boundary is a table, insert before it to keep formatting siblings
+                        last = boundary.children[-1] if boundary.children else None
+                        if last and last.tag_name == "table":
+                            # We'll create the element and insert before the table below
+                            context.move_to_element(boundary)
+                            context._pending_insert_before = last  # type: ignore[attr-defined]
+                        else:
+                            context.move_to_element(boundary)
+
         # Special handling for duplicate <nobr> per HTML5 spec:
         # If a start tag whose tag name is "nobr" is seen, and there is a nobr
         # element in scope, then this is a parse error; run the adoption agency
@@ -1000,7 +1036,39 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         if tag_name == "nobr" and context.current_parent.tag_name == "nobr" and context.current_parent.parent:
             # Move out one level to prevent nesting (belt-and-suspenders after earlier move)
             context.move_to_element(context.current_parent.parent)
-        context.current_parent.append_child(new_element)
+        # If we set a pending insert-before target (to avoid placing after a trailing table), honor it
+        pending_target = getattr(context, "_pending_insert_before", None)
+        # Special-case inside template content: if the current parent ends with a <table>,
+        # the new formatting element should come before that table (html5lib expected order).
+        if self._is_in_template_content(context):
+            parent = context.current_parent
+            last_child = parent.children[-1] if parent.children else None
+            if last_child and last_child.tag_name == "table":
+                try:
+                    parent.insert_before(new_element, last_child)
+                finally:
+                    if pending_target is not None:
+                        try:
+                            delattr(context, "_pending_insert_before")
+                        except Exception:
+                            pass
+                # Update current parent to the new formatting element for nesting
+                context.enter_element(new_element)
+                if tag_name == "nobr":
+                    context.open_elements.push(new_element)
+                if not inside_object:
+                    context.active_formatting_elements.push(new_element, token)
+                return True
+        if pending_target and pending_target.parent is context.current_parent:
+            try:
+                context.current_parent.insert_before(new_element, pending_target)
+            finally:
+                try:
+                    delattr(context, "_pending_insert_before")
+                except Exception:
+                    pass
+        else:
+            context.current_parent.append_child(new_element)
         
         # Update current parent to the new formatting element for nesting
         context.enter_element(new_element)

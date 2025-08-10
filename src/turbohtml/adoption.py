@@ -648,6 +648,19 @@ class AdoptionAgencyAlgorithm:
         elif not context.open_elements.is_empty():
             # Fallback: current node becomes last open element if any (unless it's a paragraph)
             candidate = context.open_elements.current()
+            # Special case inside template content: if candidate is a table, move to boundary
+            if candidate.tag_name == 'table':
+                # Find template content boundary and use it
+                boundary = None
+                node = candidate
+                while node:
+                    if node.tag_name == 'content' and node.parent and node.parent.tag_name == 'template':
+                        boundary = node
+                        break
+                    node = node.parent
+                if boundary:
+                    context.move_to_element(boundary)
+                    return True
             if candidate.tag_name == 'template':
                 # Prefer template's content as insertion point when inside template content
                 content_child = next((c for c in candidate.children if c.tag_name == 'content'), None)
