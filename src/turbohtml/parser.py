@@ -31,7 +31,7 @@ from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
 from turbohtml.adoption import AdoptionAgencyAlgorithm
 
-from .constants import HEAD_ELEMENTS
+from .constants import HEAD_ELEMENTS, FORMATTING_ELEMENTS
 from typing import Optional
 
 
@@ -533,6 +533,24 @@ class TurboHTML:
         if context.content_state == ContentState.RAWTEXT:
             self.debug("In rawtext mode, ignoring start tag")
             return
+
+        # Per HTML5 spec, before processing most start tags, reconstruct the active
+        # formatting elements. However, in table insertion modes (IN_TABLE, IN_TABLE_BODY,
+        # IN_ROW) and when not inside a cell/caption, reconstructing would wrongly insert
+        # formatting elements as children of <table>/<tbody>/<tr>. Skip reconstruction in
+        # those cases; formatting will be handled via foster parenting and adoption agency.
+        try:
+            if not self._is_in_template_content(context):
+                in_table_modes = context.document_state in (
+                    DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW
+                )
+                in_cell_or_caption = bool(
+                    context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
+                )
+                if not (in_table_modes and not in_cell_or_caption):
+                    self.reconstruct_active_formatting_elements(context)
+        except Exception:
+            pass
 
         # Try tag handlers first
         for handler in self.tag_handlers:

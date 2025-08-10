@@ -563,8 +563,10 @@ class AdoptionAgencyAlgorithm:
         if not context.open_elements.has_element_in_scope(formatting_element.tag_name):
             if self.debug_enabled:
                 print(f"\n--- STEP 4: Check scope ---")
-                print(f"    STEP 4 RESULT: Formatting element not in scope - ignoring end tag")
-            return True  # Parse error, ignore the end tag
+                print(f"    STEP 4 RESULT: Formatting element not in scope - removing from active formatting and aborting")
+            # Spec: remove the formatting element from the list of active formatting elements
+            context.active_formatting_elements.remove(formatting_element)
+            return True  # Parse error handled per spec; abort further steps
         
         # Step 5: If formatting element is not the current node, it's a parse error
         if context.open_elements.current() != formatting_element:
@@ -598,20 +600,12 @@ class AdoptionAgencyAlgorithm:
         if formatting_index == -1:
             return None
             
-        # Look for special category elements after the formatting element
-        # Return the FIRST one found (closest to formatting element)
-        # Optimization: stop scanning if we encounter another identical formatting element
-        # chain without any intervening special elements – this indicates a simple run of
-        # repeated inline formatting (<font><font>...). The adoption algorithm should then
-        # treat closure as simple pop to avoid over-cloning.
+    # Look for special category elements after the formatting element
+    # Return the FIRST one found (closest to formatting element)
         for i in range(formatting_index + 1, len(context.open_elements._stack)):
             element = context.open_elements._stack[i]
             if context.open_elements._is_special_category(element):
                 return element
-            # If we hit another instance of the same tag before a special element and that
-            # tag is one of the high‑duplication formatting tags (font, b, i, nobr), abort.
-            if element.tag_name == formatting_element.tag_name and element.tag_name in {"font", "b", "i", "nobr"}:
-                return None
                 
         return None
     
@@ -619,54 +613,27 @@ class AdoptionAgencyAlgorithm:
         """Handle the simple case when there's no furthest block (steps 7.1-7.3)"""
         if self.debug_enabled:
             print(f"    Adoption Agency: No furthest block case")
-        was_current = (context.open_elements.current() is formatting_element)
-        # Spec simple case: pop formatting element from open elements and remove from active list.
-        # However, when the formatting element is NOT the current node, html5lib behavior results
-        # in subsequent text being inserted at the formatting element's parent, not nested inside
-        # the last remaining descendant formatting element. This enables later end tags to reconstruct
-        # a new formatting context (e.g. splitting <b> around misnested </a>).
-        parent_before_pop = formatting_element.parent
+        # Spec simple case (Steps 7.1-7.3):
+        # - Pop elements from the stack of open elements until the formatting element has been popped.
+        # - Remove the formatting element from the list of active formatting elements.
+        # Our implementation also updates the current insertion point to the new current node
+        # (top of the open elements stack) so that subsequent text or reconstruction occurs
+        # outside of the closed formatting element. Without this, text can continue being
+        # appended under a stale current_parent reference.
         while not context.open_elements.is_empty():
             popped = context.open_elements.pop()
             if popped is formatting_element:
                 break
+        # Remove from active formatting elements
         context.active_formatting_elements.remove(formatting_element)
-        # If formatting element wasn't current, move insertion point to its parent (if still in tree)
-        # BUT suppress this if the parent is a paragraph and the next token likely continues
-        # the paragraph flow (prevents creating trailing duplicate formatting wrapper after </p>).\
-        # Heuristic: if parent_before_pop is a <p> or its parent is <p>, keep current_parent as-is.
-        if not was_current and parent_before_pop:
-            parent_is_para = parent_before_pop.tag_name == 'p'
-            parent_has_para_ancestor = parent_before_pop.find_ancestor('p') is not None
-            if not parent_is_para and not parent_has_para_ancestor:
-                # If parent is a template element, prefer its content child as insertion point
-                if parent_before_pop.tag_name == 'template':
-                    content_child = next((c for c in parent_before_pop.children if c.tag_name == 'content'), None)
-                    context.move_to_element(content_child or parent_before_pop)
-                else:
-                    context.move_to_element(parent_before_pop)
-        elif not context.open_elements.is_empty():
-            # Fallback: current node becomes last open element if any (unless it's a paragraph)
-            candidate = context.open_elements.current()
-            # Special case inside template content: if candidate is a table, move to boundary
-            if candidate.tag_name == 'table':
-                # Find template content boundary and use it
-                boundary = None
-                node = candidate
-                while node:
-                    if node.tag_name == 'content' and node.parent and node.parent.tag_name == 'template':
-                        boundary = node
-                        break
-                    node = node.parent
-                if boundary:
-                    context.move_to_element(boundary)
-                    return True
-            if candidate.tag_name == 'template':
-                # Prefer template's content as insertion point when inside template content
-                content_child = next((c for c in candidate.children if c.tag_name == 'content'), None)
-                context.move_to_element(content_child or candidate)
-            elif candidate.tag_name != 'p':
-                context.move_to_element(candidate)
+
+        # Update current_parent to the new current node (top of stack), or body/root if empty
+        new_current = context.open_elements.current()
+        if not new_current:
+            new_current = self._get_body_or_root(context)
+        # Move insertion point
+        if new_current is not None:
+            context.move_to_element(new_current)
         return True
     
     def _get_body_or_root(self, context):
@@ -733,6 +700,27 @@ class AdoptionAgencyAlgorithm:
         
         if self.debug_enabled:
             print(f"    Adoption Agency: Current parent after reconstruction: {context.current_parent.tag_name}")
+
+    def _safe_detach_node(self, node: Node) -> None:
+        """Detach node from its parent safely, even if linkage is inconsistent.
+
+        Ensures node.parent becomes None and sibling pointers are cleared without throwing.
+        """
+        try:
+            if node.parent:
+                parent = node.parent
+                if hasattr(parent, 'children') and node in parent.children:
+                    parent.remove_child(node)
+                else:
+                    # Inconsistent linkage: clear pointers directly
+                    node.parent = None
+                    node.previous_sibling = None
+                    node.next_sibling = None
+        except Exception:
+            # Best-effort cleanup
+            node.parent = None
+            node.previous_sibling = None
+            node.next_sibling = None
 
     def reconstruct_active_formatting_elements(self, context):
         """
@@ -804,11 +792,12 @@ class AdoptionAgencyAlgorithm:
             print(f"    Formatting element index in stack: {formatting_index}")
             print(f"    Furthest block index in stack: {furthest_index}")
         
-        # Step 10: Find the common ancestor (element immediately above formatting element)
-        if formatting_index > 0:
+        # Step 10: Find the common ancestor: the element immediately BEFORE the formatting
+        # element in the stack of open elements (i.e., one position closer to the root).
+        if formatting_index - 1 >= 0:
             common_ancestor = context.open_elements._stack[formatting_index - 1]
         else:
-            # If formatting element is at index 0, the common ancestor is its parent in the DOM
+            # If there is no element before it in the stack, fall back to its DOM parent
             common_ancestor = formatting_element.parent
         
         if not common_ancestor:
@@ -894,12 +883,6 @@ class AdoptionAgencyAlgorithm:
                 context.active_formatting_elements.remove_entry(node_entry)
                 continue
 
-            # Guard: Prevent pathological deep nesting duplication for runs of identical fonts.
-            if (node.tag_name == formatting_element.tag_name and node.tag_name in {"font", "b", "i"} and
-                last_node != furthest_block and inner_loop_counter > 1):
-                if self.debug_enabled:
-                    print(f"        GUARD: skipping clone for repeated {node.tag_name} to limit duplication")
-                break
             
             # Step 12.5: Create a clone of node
             node_clone = Node(
@@ -945,35 +928,50 @@ class AdoptionAgencyAlgorithm:
             if self.debug_enabled:
                 print(f"        STEP 12.10: Set last_node to {node_clone.tag_name}")
         
-        # Step 13: Insert last_node as a child of common_ancestor (spec). However, our earlier
-        # reconstruction loop may have produced a structure where directly inserting into
-        # the common ancestor (which can be the formatting element itself or a sibling
-        # inline formatting) creates an extra cite level compared with html5lib expectations
-        # in deeply nested inline chains followed by a block. If the common ancestor is
-        # itself a formatting element and already contains the formatting element directly,
-        # insert after that formatting element's position to align with expected tree.
+        # Step 13: Insert last_node as a child of common_ancestor (spec).
         if self.debug_enabled:
             print(f"\n--- STEP 13: Insert last_node into common ancestor ---")
-            print(f"    last_node={last_node.tag_name}, common_ancestor={common_ancestor.tag_name}, furthest_block={furthest_block.tag_name}")
-        skip_step_13 = False
-        # Skip if identical nodes
-        if common_ancestor is furthest_block or last_node is common_ancestor:
-            skip_step_13 = True
-        else:
-            # If furthest_block and common_ancestor share the same parent and CA is not an ancestor
-            # of furthest_block (i.e. they're siblings), inserting would wrongly nest the furthest block.
-            if (furthest_block.parent is not None and
-                common_ancestor.parent is furthest_block.parent and
-                not furthest_block.parent is common_ancestor and
-                not common_ancestor.has_ancestor_matching(lambda n: n is furthest_block)):
-                skip_step_13 = True
-        if skip_step_13:
+            print(
+                f"    last_node={last_node.tag_name}, common_ancestor={common_ancestor.tag_name}, furthest_block={furthest_block.tag_name}"
+            )
+        # Special guard: if the common ancestor is the same node as last_node (object identity),
+        # do nothing to avoid nesting a node under itself (which creates invalid cycles).
+        if common_ancestor is last_node:
             if self.debug_enabled:
-                print("    Skipping Step 13 insertion (guard conditions met)")
-        else:
-            if last_node.parent is not common_ancestor:
+                print("    Skipping insertion; common_ancestor is last_node (no-op)")
+        elif last_node.parent is not common_ancestor:
+            # If inserting would create a cycle (common_ancestor is inside last_node),
+            # insert last_node before the furthest_block instead to preserve order.
+            would_cycle = False
+            try:
+                would_cycle = common_ancestor._would_create_circular_reference(last_node)
+            except Exception:
+                would_cycle = False
+            if would_cycle:
+                if self.debug_enabled:
+                    print("    Step 13: cycle detected; inserting last_node before furthest_block instead")
+                parent = furthest_block.parent
+                if last_node.parent is not None and last_node.parent is not parent:
+                    self._safe_detach_node(last_node)
+                if parent:
+                    # Only insert_before if furthest_block is still a child
+                    try:
+                        if furthest_block in parent.children:
+                            parent.insert_before(last_node, furthest_block)
+                        else:
+                            # Ensure detached before appending
+                            if last_node.parent is not parent:
+                                self._safe_detach_node(last_node)
+                            parent.append_child(last_node)
+                    except Exception:
+                        self._safe_detach_node(last_node)
+                        parent.append_child(last_node)
+                else:
+                    safe_parent = self._get_body_or_root(context)
+                    safe_parent.append_child(last_node)
+            else:
                 if last_node.parent:
-                    last_node.parent.remove_child(last_node)
+                    self._safe_detach_node(last_node)
                 if self._should_foster_parent(common_ancestor):
                     if self.debug_enabled:
                         print("    Using foster parenting (adjusted parent)")
@@ -982,9 +980,9 @@ class AdoptionAgencyAlgorithm:
                     common_ancestor.append_child(last_node)
                     if self.debug_enabled:
                         print(f"    Appended {last_node.tag_name} under {common_ancestor.tag_name}")
-            else:
-                if self.debug_enabled:
-                    print("    Skipping insertion; already child of common_ancestor")
+        else:
+            if self.debug_enabled:
+                print("    Skipping insertion; already child of common_ancestor")
         
         # Step 14: Create a clone of the formatting element (spec always clones)
         # NOTE: Previous optimization to skip cloning for trivial empty case caused
@@ -998,18 +996,48 @@ class AdoptionAgencyAlgorithm:
             print(f"\n--- STEP 14: Create formatting element clone ---")
             print(f"    Created clone of {formatting_element.tag_name}")
         
-        # Step 15: Move all children of furthest_block to formatting_clone (spec)
-        if self.debug_enabled:
-            print(f"\n--- STEP 15: Move all children of furthest block ---")
-        for child in furthest_block.children[:]:
-            furthest_block.remove_child(child)
-            formatting_clone.append_child(child)
+        # Step 15/16: Integrate formatting_clone relative to furthest_block
+        # Special-case table containers: do NOT insert formatting elements as children of
+        # table, tbody, thead, tfoot, or tr. Instead, foster-parent the clone before the
+        # table container and leave the table's internal structure intact. Only move
+        # children when the furthest block is a cell (td/th) or a non-table block.
+        table_containers = {"table", "tbody", "thead", "tfoot", "tr"}
+        is_table_container = furthest_block.tag_name in table_containers
 
-        # Step 16: Append formatting_clone as a child of furthest_block (always per spec)
-        furthest_block.append_child(formatting_clone)
         if self.debug_enabled:
-            print(f"\n--- STEP 16: Add formatting clone to furthest block ---")
-            print(f"    Added {formatting_clone.tag_name} as child of {furthest_block.tag_name}")
+            print(f"\n--- STEP 15/16: Integrate formatting clone ---")
+            print(f"    Furthest block is table container: {is_table_container}")
+
+        if is_table_container:
+            # Do not move children out of the table container; just place the clone
+            # before the table via foster parenting. This matches html5lib expectations
+            # that no inline formatting becomes a child of table structures.
+            if furthest_block.parent:
+                parent = furthest_block.parent
+                idx = parent.children.index(furthest_block)
+                parent.children.insert(idx, formatting_clone)
+                formatting_clone.parent = parent
+                if self.debug_enabled:
+                    print(f"    Foster-parented {formatting_clone.tag_name} before {furthest_block.tag_name}")
+            else:
+                # No parent; append to body/root safely
+                safe_parent = self._get_body_or_root(context)
+                safe_parent.append_child(formatting_clone)
+                if self.debug_enabled:
+                    print(f"    No parent for {furthest_block.tag_name}; appended clone to body/root")
+        else:
+            # Non-table furthest block (including td/th): move its children to the clone
+            if self.debug_enabled:
+                print(f"\n--- STEP 15: Move all children of furthest block ---")
+            for child in furthest_block.children[:]:
+                furthest_block.remove_child(child)
+                formatting_clone.append_child(child)
+
+            # Step 16: Append formatting_clone as a child of furthest_block
+            furthest_block.append_child(formatting_clone)
+            if self.debug_enabled:
+                print(f"\n--- STEP 16: Add formatting clone to furthest block ---")
+                print(f"    Added {formatting_clone.tag_name} as child of {furthest_block.tag_name}")
         
         # Safety check: Ensure no circular references were created
         self._validate_no_circular_references(formatting_clone, furthest_block)
@@ -1038,9 +1066,14 @@ class AdoptionAgencyAlgorithm:
         context.open_elements.remove_element(formatting_element)
         context.open_elements.insert_after(furthest_block, formatting_clone)
 
-        # Update the current context to point to the furthest block
-        # This ensures subsequent content goes into the furthest block, not the formatting clone
-        context.move_to_element(furthest_block)
+        # Update the current context. When the furthest block is a table container,
+        # subsequent content should be inserted outside the table (at its parent),
+        # not inside the table itself. Otherwise, continue inside the furthest block.
+        if is_table_container and furthest_block.parent:
+            context.move_to_element(furthest_block.parent)
+        else:
+            # This ensures subsequent content goes into the furthest block, not the formatting clone
+            context.move_to_element(furthest_block)
 
         # Clean up active formatting elements that are no longer in scope (only if multiple)
         if len(context.active_formatting_elements) > 1:
