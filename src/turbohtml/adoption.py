@@ -639,11 +639,20 @@ class AdoptionAgencyAlgorithm:
             parent_is_para = parent_before_pop.tag_name == 'p'
             parent_has_para_ancestor = parent_before_pop.find_ancestor('p') is not None
             if not parent_is_para and not parent_has_para_ancestor:
-                context.move_to_element(parent_before_pop)
+                # If parent is a template element, prefer its content child as insertion point
+                if parent_before_pop.tag_name == 'template':
+                    content_child = next((c for c in parent_before_pop.children if c.tag_name == 'content'), None)
+                    context.move_to_element(content_child or parent_before_pop)
+                else:
+                    context.move_to_element(parent_before_pop)
         elif not context.open_elements.is_empty():
             # Fallback: current node becomes last open element if any (unless it's a paragraph)
             candidate = context.open_elements.current()
-            if candidate.tag_name != 'p':
+            if candidate.tag_name == 'template':
+                # Prefer template's content as insertion point when inside template content
+                content_child = next((c for c in candidate.children if c.tag_name == 'content'), None)
+                context.move_to_element(content_child or candidate)
+            elif candidate.tag_name != 'p':
                 context.move_to_element(candidate)
         return True
     

@@ -319,6 +319,27 @@ class TurboHTML:
         from turbohtml.context import DocumentState, ContentState
         
         # Create context based on the fragment context element
+        if self.fragment_context == "template":
+            # Special fragment parsing for templates: create a template/content container
+            context = ParseContext(
+                len(self.html),
+                self.root,
+                debug_callback=self.debug if self.env_debug else None,
+            )
+            context.transition_to_state(DocumentState.IN_BODY, self.root)
+            # Build the template wrapper under the fragment root and parse children into its content
+            template_node = Node("template")
+            self.root.append_child(template_node)
+            content_node = Node("content")
+            template_node.append_child(content_node)
+            # Set insertion point to content
+            context.move_to_element(content_node)
+            # Track template depth to prevent implicit body promotions elsewhere
+            try:
+                context.template_content_depth = getattr(context, "template_content_depth", 0) + 1
+            except Exception:
+                pass
+            return context
         if self.fragment_context in ("td", "th"):
             # Fragment is parsed as if inside a table cell
             context = ParseContext(
@@ -465,6 +486,9 @@ class TurboHTML:
                 context.index = self.tokenizer.pos
 
             elif token.type == "EndTag":
+                # In template fragment context, ignore the context's own end tag
+                if self.fragment_context == "template" and token.tag_name == "template":
+                    continue
                 self._handle_end_tag(token, token.tag_name, context)
                 context.index = self.tokenizer.pos
 
@@ -578,6 +602,28 @@ class TurboHTML:
                     if self.fragment_context and not context.current_parent:
                         context.move_to_element(self.root)
                     return
+
+        # In template content, perform a bounded default closure for simple end tags
+        if self._is_in_template_content(context):
+            # Find the nearest template content boundary
+            boundary = None
+            node = context.current_parent
+            while node:
+                if node.tag_name == "content" and node.parent and node.parent.tag_name == "template":
+                    boundary = node
+                    break
+                node = node.parent
+            # Walk up from current_parent until boundary to find matching tag
+            cursor = context.current_parent
+            while cursor and cursor is not boundary:
+                if cursor.tag_name == tag_name:
+                    # Move out of the matching element
+                    if cursor.parent:
+                        context.move_to_element(cursor.parent)
+                    return
+                cursor = cursor.parent
+            # No match below boundary: ignore
+            return
 
         # Default end tag handling - close matching element if found
         # self._handle_default_end_tag(tag_name, context)  # Temporarily disabled
