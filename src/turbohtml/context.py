@@ -27,6 +27,7 @@ class ContentState(Enum):
     """
     Enumerates content parser states for clarity and safety (rawtext...).
     """
+
     NONE = auto()
     RAWTEXT = auto()
     PLAINTEXT = auto()
@@ -37,9 +38,7 @@ class ParseContext:
     Holds parser state during the parsing process.
     """
 
-    def __init__(
-        self, length: int, initial_parent: "Node", debug_callback=None
-    ):
+    def __init__(self, length: int, initial_parent: "Node", debug_callback=None):
         # Basic indexing/state
         self.index = 0
         self.length = length
@@ -58,6 +57,7 @@ class ParseContext:
 
         # Adoption Agency Algorithm data structures
         from turbohtml.adoption import ActiveFormattingElements, OpenElementsStack
+
         self.active_formatting_elements = ActiveFormattingElements()
         self.open_elements = OpenElementsStack()
         self.adoption_agency_counter = 0

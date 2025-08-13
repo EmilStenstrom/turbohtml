@@ -100,10 +100,10 @@ class HTMLTokenizer:
         # Special handling for script elements
         if self.rawtext_tag == "script":
             return self._tokenize_script_content()
-        
+
         # Regular RAWTEXT handling for other elements
         return self._tokenize_regular_rawtext()
-    
+
     def _tokenize_script_content(self) -> Optional[HTMLToken]:
         """Handle script content with HTML5 comment rules"""
         # Look for </script> but respect comment context
@@ -128,12 +128,12 @@ class HTMLTokenizer:
             if potential_tag == "script" and i < self.length and self.html[i] == ">":
                 # Check if this end tag should be honored based on comment context
                 text_before = self.html[self.pos:tag_start - 2]  # Get text before </
-                
+
                 # Use accumulated script content plus text before this end tag
                 full_content = self.script_content + text_before
-                
+
                 self.debug(f"  full script content: {full_content!r}")
-                
+
                 if self._should_honor_script_end_tag(full_content):
                     self.debug("  honoring script end tag")
                     # End the script
@@ -171,7 +171,7 @@ class HTMLTokenizer:
             return HTMLToken("Character", data=text)
 
         return None
-    
+
     def _should_honor_script_end_tag(self, script_content: str) -> bool:
         """
         Determine if a </script> tag should end the script based on HTML5 script parsing rules.
@@ -203,7 +203,7 @@ class HTMLTokenizer:
         # All other cases: honor the end tag
         self.debug("  honoring end tag")
         return True
-    
+
     def _tokenize_regular_rawtext(self) -> Optional[HTMLToken]:
         """Handle regular RAWTEXT elements (non-script)"""
         if self.html.startswith("</", self.pos):
@@ -387,7 +387,7 @@ class HTMLTokenizer:
         return HTMLToken("Character", data="<")
 
     def _try_text(self) -> Optional[HTMLToken]:
-    
+
         """Try to match text at current position"""
         if self.pos >= self.length:
             return None
@@ -416,36 +416,36 @@ class HTMLTokenizer:
     def _parse_attributes_and_check_self_closing(self, attr_string: str) -> tuple[bool, Dict[str, str]]:
         """
         Parse attributes and determine if tag is self-closing.
-        
+
         Returns (is_self_closing, attributes_dict)
         """
         if not attr_string:
             return False, {}
-        
+
         # Trim leading/trailing whitespace
         trimmed = attr_string.strip()
-        
+
         # Simple cases first
         if not trimmed:
             return False, {}
-        
+
         if trimmed == "/":
             return True, {}
-        
+
         if trimmed.endswith(" /"):
             # Clear case: attributes followed by space and slash
             return True, self._parse_attributes(attr_string.rstrip().rstrip("/"))
-        
+
         # More complex case: check if the trailing / is part of an attribute value
         # or self-closing syntax
         if trimmed.endswith("/"):
             # Try parsing without the trailing /
             without_slash = attr_string.rstrip("/")
             attrs_without_slash = self._parse_attributes(without_slash)
-            
+
             # Also try parsing with the slash
             attrs_with_slash = self._parse_attributes(attr_string)
-            
+
             # If parsing without slash gives a quoted attribute value in the last attribute,
             # and parsing with slash gives an unquoted value with quotes and slash,
             # then the slash was self-closing syntax
@@ -453,7 +453,7 @@ class HTMLTokenizer:
                 # Get the last attribute from each parse
                 last_key_without = list(attrs_without_slash.keys())[-1] if attrs_without_slash else None
                 last_key_with = list(attrs_with_slash.keys())[-1] if attrs_with_slash else None
-                
+
                 if (
                     last_key_without == last_key_with
                     and last_key_without
@@ -463,10 +463,10 @@ class HTMLTokenizer:
                 ):
                     # The slash was self-closing syntax
                     return True, attrs_without_slash
-            
+
             # Default: treat as part of attribute value
             return False, attrs_with_slash
-        
+
         # No trailing slash
         return False, self._parse_attributes(attr_string)
 

@@ -42,7 +42,13 @@ class TurboHTML:
     - Provides a root Node that represents the DOM tree.
     """
 
-    def __init__(self, html: str, handle_foreign_elements: bool = True, debug: bool = False, fragment_context: Optional[str] = None):
+    def __init__(
+        self,
+        html: str,
+        handle_foreign_elements: bool = True,
+        debug: bool = False,
+        fragment_context: Optional[str] = None,
+    ):
         """
         Args:
             html: The HTML string to parse
@@ -168,7 +174,7 @@ class TurboHTML:
                 else:
                     # Keep going - comments should come before head
                     insert_index = i + 1
-            
+
             self.html_node.insert_child_at(insert_index, head)
         return head
 
@@ -180,24 +186,24 @@ class TurboHTML:
                 # Create head and body in the fragment
                 head = None
                 body = None
-                
+
                 # Look for existing head/body in fragment
                 for child in self.root.children:
                     if child.tag_name == "head":
                         head = child
                     elif child.tag_name == "body":
                         body = child
-                
+
                 # Create head if it doesn't exist
                 if not head:
                     head = Node("head")
                     self.root.append_child(head)
-                
+
                 # Create body if it doesn't exist
                 if not body:
                     body = Node("body")
                     self.root.append_child(body)
-                
+
                 return body
             else:
                 return None
@@ -224,13 +230,18 @@ class TurboHTML:
     def find_current_table(self, context: ParseContext) -> Optional["Node"]:
         """Find the current table element from the open elements stack when in table context."""
         # When in explicit table context, look for the table in the open elements stack
-        if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, 
-                                    DocumentState.IN_ROW, DocumentState.IN_CELL, DocumentState.IN_CAPTION):
+        if context.document_state in (
+            DocumentState.IN_TABLE,
+            DocumentState.IN_TABLE_BODY,
+            DocumentState.IN_ROW,
+            DocumentState.IN_CELL,
+            DocumentState.IN_CAPTION,
+        ):
             # Search through the open elements stack from top to bottom for a table
             for element in reversed(context.open_elements._stack):
                 if element.tag_name == "table":
                     return element
-        
+
         # Special case: if we're AFTER_BODY but have tables in open_elements,
         # we should still consider them for table-related elements (not foster parenting)
         elif context.document_state == DocumentState.AFTER_BODY:
@@ -238,7 +249,7 @@ class TurboHTML:
             for element in reversed(context.open_elements._stack):
                 if element.tag_name == "table":
                     return element
-        
+
         # Fallback: traverse ancestors from current parent
         current = context.current_parent
         while current:
@@ -269,10 +280,10 @@ class TurboHTML:
     def _parse_fragment(self) -> None:
         """Parse HTML as a document fragment in the given context"""
         self.debug(f"Parsing fragment in context: {self.fragment_context}")
-        
+
         # Set up fragment context based on the context element
         context = self._create_fragment_context()
-        
+
         # Special handling for RAWTEXT contexts - treat everything as text
         if self.fragment_context in self._get_rawtext_elements():
             text_node = Node("#text")
@@ -280,7 +291,7 @@ class TurboHTML:
             context.current_parent.append_child(text_node)
             self.debug(f"Fragment: Treated all content as raw text in {self.fragment_context} context")
             return
-        
+
         self.tokenizer = HTMLTokenizer(self.html)
 
         for token in self.tokenizer.tokenize():
@@ -299,7 +310,7 @@ class TurboHTML:
                 if self._should_ignore_fragment_start_tag(token.tag_name, context):
                     self.debug(f"Fragment: Ignoring {token.tag_name} start tag in {self.fragment_context} context")
                     continue
-                
+
                 self._handle_start_tag(token, token.tag_name, context, self.tokenizer.pos)
                 context.index = self.tokenizer.pos
 
@@ -317,7 +328,7 @@ class TurboHTML:
     def _create_fragment_context(self) -> "ParseContext":
         """Create parsing context for fragment parsing"""
         from turbohtml.context import DocumentState, ContentState
-        
+
         # Create context based on the fragment context element
         if self.fragment_context == "template":
             # Special fragment parsing for templates: create a template/content container
@@ -348,7 +359,7 @@ class TurboHTML:
                 debug_callback=self.debug if self.env_debug else None,
             )
             context.transition_to_state(DocumentState.IN_CELL, self.root)
-                
+
         elif self.fragment_context in ("tr",):
             context = ParseContext(
                 len(self.html),
@@ -356,7 +367,7 @@ class TurboHTML:
                 debug_callback=self.debug if self.env_debug else None,
             )
             context.transition_to_state(DocumentState.IN_ROW, self.root)
-            
+
         elif self.fragment_context in ("thead", "tbody", "tfoot"):
             context = ParseContext(
                 len(self.html),
@@ -364,7 +375,7 @@ class TurboHTML:
                 debug_callback=self.debug if self.env_debug else None,
             )
             context.transition_to_state(DocumentState.IN_TABLE_BODY, self.root)
-            
+
         elif self.fragment_context == "html":
             # HTML fragment context - allow document structure
             context = ParseContext(
@@ -373,7 +384,7 @@ class TurboHTML:
                 debug_callback=self.debug if self.env_debug else None,
             )
             context.transition_to_state(DocumentState.INITIAL, self.root)
-            
+
         elif self.fragment_context in self._get_rawtext_elements():
             # RAWTEXT fragment context - treat all content as raw text
             context = ParseContext(
@@ -382,7 +393,7 @@ class TurboHTML:
                 debug_callback=self.debug if self.env_debug else None,
             )
             context.transition_to_state(DocumentState.IN_BODY, self.root)
-            
+
         else:
             # Default fragment context (body-like)
             context = ParseContext(
@@ -391,7 +402,7 @@ class TurboHTML:
                 debug_callback=self.debug if self.env_debug else None,
             )
             context.transition_to_state(DocumentState.IN_BODY, self.root)
-            
+
         # Set foreign context if fragment context is within a foreign element
         if self.fragment_context:
             if self.fragment_context in ("math", "svg"):
@@ -404,26 +415,26 @@ class TurboHTML:
                 if namespace_elem in ("math", "svg"):
                     context.current_context = namespace_elem
                     self.debug(f"Set foreign context to {namespace_elem}")
-            
+
         return context
 
     def _should_ignore_fragment_start_tag(self, tag_name: str, context: "ParseContext") -> bool:
         """Check if a start tag should be ignored in fragment parsing context"""
         # HTML5 Fragment parsing rules
-        
+
         # In html context, allow document structure
         if self.fragment_context == "html":
             return False  # Don't ignore anything in html context
-            
+
         # In non-document contexts, ignore document structure elements
         if tag_name in ("html", "head", "body", "frameset"):
             return True
-        
+
         # In foreign contexts (MathML/SVG), let the foreign handlers manage everything
         # Fragment parsing is less relevant in foreign contexts
         if context.current_context in ("math", "svg"):
             return False
-        
+
         # Also ignore context element start tags in HTML context
         if self.fragment_context == tag_name:
             return True
@@ -431,7 +442,7 @@ class TurboHTML:
             return True
         elif self.fragment_context in ("thead", "tbody", "tfoot") and tag_name in ("thead", "tbody", "tfoot"):
             return True
-        
+
         return False
 
     def _handle_fragment_comment(self, text: str, context: "ParseContext") -> None:
@@ -522,8 +533,11 @@ class TurboHTML:
             # Create body node if we're implicitly switching to body mode
             # But don't do this if we're inside template content
             if (
-                context.document_state == DocumentState.INITIAL or context.document_state == DocumentState.IN_HEAD
-            ) and tag_name not in HEAD_ELEMENTS and tag_name != "html" and not self._is_in_template_content(context):
+                (context.document_state == DocumentState.INITIAL or context.document_state == DocumentState.IN_HEAD)
+                and tag_name not in HEAD_ELEMENTS
+                and tag_name != "html"
+                and not self._is_in_template_content(context)
+            ):
                 self.debug("Implicitly creating body node")
                 if context.document_state != DocumentState.IN_FRAMESET:
                     body = self._ensure_body_node(context)
@@ -542,7 +556,9 @@ class TurboHTML:
         try:
             if not self._is_in_template_content(context):
                 in_table_modes = context.document_state in (
-                    DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW
+                    DocumentState.IN_TABLE,
+                    DocumentState.IN_TABLE_BODY,
+                    DocumentState.IN_ROW,
                 )
                 in_cell_or_caption = bool(
                     context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
@@ -560,21 +576,23 @@ class TurboHTML:
 
         # Default handling for unhandled tags
         self.debug(f"No handler found, using default handling for {tag_name}")
-        
+
         # Check if we need table foster parenting (but not inside template content or integration points)
-        if (context.document_state == DocumentState.IN_TABLE and 
-            tag_name not in self._get_table_elements() and 
-            tag_name not in self._get_head_elements() and
-            not self._is_in_template_content(context) and
-            not self._is_in_integration_point(context)):
+        if (
+            context.document_state == DocumentState.IN_TABLE
+            and tag_name not in self._get_table_elements()
+            and tag_name not in self._get_head_elements()
+            and not self._is_in_template_content(context)
+            and not self._is_in_integration_point(context)
+        ):
             self.debug(f"Foster parenting {tag_name} out of table")
             self._foster_parent_element(tag_name, token.attributes, context)
             return
-            
+
         new_node = Node(tag_name, token.attributes)
         context.current_parent.append_child(new_node)
         context.move_to_element(new_node)
-        
+
         # Add to open elements stack
         context.open_elements.push(new_node)
 
@@ -594,12 +612,12 @@ class TurboHTML:
         # Check if adoption agency algorithm should run iteratively
         adoption_run_count = 0
         max_runs = 8  # HTML5 spec limit for adoption agency algorithm iterations
-        
+
         while adoption_run_count < max_runs:
             if self.adoption_agency.should_run_adoption(tag_name, context):
                 adoption_run_count += 1
                 self.debug(f"Running adoption agency algorithm #{adoption_run_count} for {tag_name}")
-                
+
                 if not self.adoption_agency.run_algorithm(tag_name, context, adoption_run_count):
                     # If adoption agency returns False, stop trying
                     self.debug(f"Adoption agency returned False on run #{adoption_run_count}, stopping")
@@ -607,7 +625,7 @@ class TurboHTML:
             else:
                 # No more adoption agency runs needed
                 break
-        
+
         if adoption_run_count > 0:
             self.debug(f"Adoption agency completed after {adoption_run_count} run(s) for </{tag_name}>")
             return
@@ -650,20 +668,22 @@ class TurboHTML:
         """Handle end tags that don't have specific handlers by finding and closing matching element"""
         if not context.current_parent:
             return
-            
+
         # Only handle end tags for simple elements - avoid handling complex elements
         # that might have special semantics
         if tag_name in ("html", "head", "body", "table", "tr", "td", "th", "tbody", "thead", "tfoot"):
             self.debug(f"Default end tag: skipping complex element {tag_name}")
             return
-            
+
         # Look for the matching element in current parent only (immediate closure)
         if context.current_parent.tag_name == tag_name:
             # Found matching element, set current_parent to its parent
             if context.current_parent.parent:
                 old_parent = context.current_parent
                 context.move_up_one_level()
-                self.debug(f"Default end tag: closed {tag_name}, current_parent now: {context.current_parent.tag_name}")
+                self.debug(
+                    f"Default end tag: closed {tag_name}, current_parent now: {context.current_parent.tag_name}"
+                )
             else:
                 # At root level, restore to appropriate context
                 if self.fragment_context:
@@ -692,7 +712,7 @@ class TurboHTML:
             # Just update attributes, don't create a new node
             self.html_node.attributes.update(token.attributes)
             context.move_to_element(self.html_node)
-            
+
             # Don't immediately switch to IN_BODY - let the normal flow handle that
             # The HTML tag should not automatically transition states
             return True
@@ -738,11 +758,11 @@ class TurboHTML:
         """
         # First check if any handler wants to process this comment (e.g., CDATA in foreign elements)
         for handler in self.tag_handlers:
-            if hasattr(handler, 'should_handle_comment') and handler.should_handle_comment(text, context):
-                if hasattr(handler, 'handle_comment') and handler.handle_comment(text, context):
+            if hasattr(handler, "should_handle_comment") and handler.should_handle_comment(text, context):
+                if hasattr(handler, "handle_comment") and handler.handle_comment(text, context):
                     self.debug(f"Comment '{text}' handled by {handler.__class__.__name__}")
                     return
-        
+
         # Default comment handling
         comment_node = Node("#comment")
         comment_node.text_content = text
@@ -781,7 +801,7 @@ class TurboHTML:
                 if child.tag_name == "body":
                     body_node = child
                     break
-            
+
             if body_node:
                 self.html_node.insert_before(comment_node, body_node)
                 self.debug(f"Inserted comment before body")
@@ -798,8 +818,7 @@ class TurboHTML:
             return
 
         # Comments in IN_BODY state should go as children of html, positioned before head
-        if (context.document_state == DocumentState.IN_BODY
-            and context.current_parent.tag_name == "html"):
+        if context.document_state == DocumentState.IN_BODY and context.current_parent.tag_name == "html":
             # If we're in body state but current parent is html, place comment before head
             self.debug(f"Adding comment to html in body state")
             # Find head element and insert comment before it
@@ -836,16 +855,19 @@ class TurboHTML:
     def _get_table_elements(self):
         """Get list of elements allowed in tables"""
         from .constants import TABLE_ELEMENTS
+
         return TABLE_ELEMENTS
-    
+
     def _get_head_elements(self):
         """Get list of head elements (templates can appear in tables)"""
-        from .constants import HEAD_ELEMENTS  
+        from .constants import HEAD_ELEMENTS
+
         return HEAD_ELEMENTS
-    
+
     def _get_rawtext_elements(self):
         """Get list of RAWTEXT elements"""
         from .constants import RAWTEXT_ELEMENTS
+
         return RAWTEXT_ELEMENTS
 
     def _merge_adjacent_text_nodes(self, node: Node) -> None:
@@ -861,7 +883,7 @@ class TurboHTML:
         merged = []
         pending_text = None
         for child in node.children:
-            if child.tag_name == '#text':
+            if child.tag_name == "#text":
                 if pending_text is None:
                     pending_text = child
                 else:
@@ -879,9 +901,9 @@ class TurboHTML:
             node.children = merged
         # Recurse
         for child in node.children:
-            if child.tag_name != '#text':
+            if child.tag_name != "#text":
                 self._merge_adjacent_text_nodes(child)
-    
+
     def _foster_parent_element(self, tag_name: str, attributes: dict, context: "ParseContext"):
         """Foster parent an element outside of table context"""
         # Find the table - check if we're in table context
@@ -889,7 +911,7 @@ class TurboHTML:
         if context.document_state == DocumentState.IN_TABLE:
             # We're in table context, so find the table from the open elements stack
             table = self.find_current_table(context)
-        
+
         if not table or not table.parent:
             # No table found, use default handling
             new_node = Node(tag_name, attributes)
@@ -897,7 +919,7 @@ class TurboHTML:
             context.move_to_element(new_node)
             context.open_elements.push(new_node)
             return
-            
+
         # Insert the element before the table
         foster_parent = table.parent
         table_index = foster_parent.children.index(table)
@@ -909,8 +931,14 @@ class TurboHTML:
             prev_sibling = foster_parent.children[table_index - 1]
             # Only nest if previous sibling is a block-like container and current insertion
             # point is that previous sibling (we just foster parented into it)
-            if (prev_sibling is context.current_parent and
-                prev_sibling.tag_name in ("div","p","section","article","blockquote","li")):
+            if prev_sibling is context.current_parent and prev_sibling.tag_name in (
+                "div",
+                "p",
+                "section",
+                "article",
+                "blockquote",
+                "li",
+            ):
                 self.debug(f"Nesting {tag_name} inside existing foster-parented {prev_sibling.tag_name}")
                 new_node = Node(tag_name, attributes)
                 prev_sibling.append_child(new_node)
@@ -928,23 +956,23 @@ class TurboHTML:
     def _is_in_template_content(self, context: "ParseContext") -> bool:
         """Check if we're inside actual template content (not just a user <content> tag)"""
         # Check if current parent is content node
-        if (context.current_parent and 
-            context.current_parent.tag_name == "content" and 
-            context.current_parent.parent and 
-            context.current_parent.parent.tag_name == "template"):
+        if (
+            context.current_parent
+            and context.current_parent.tag_name == "content"
+            and context.current_parent.parent
+            and context.current_parent.parent.tag_name == "template"
+        ):
             return True
-        
+
         # Check if any ancestor is template content
         current = context.current_parent
         while current:
-            if (current.tag_name == "content" and 
-                current.parent and 
-                current.parent.tag_name == "template"):
+            if current.tag_name == "content" and current.parent and current.parent.tag_name == "template":
                 return True
             current = current.parent
-        
+
         return False
-    
+
     def _is_in_integration_point(self, context: "ParseContext") -> bool:
         """Check if we're inside an SVG or MathML integration point where HTML rules apply"""
         # Check current parent and ancestors for integration points
@@ -953,25 +981,28 @@ class TurboHTML:
             # SVG integration points: foreignObject, desc, title
             if current.tag_name in ("svg foreignObject", "svg desc", "svg title"):
                 return True
-            
+
             # MathML integration points: annotation-xml with specific encoding
-            if (current.tag_name == "math annotation-xml" and 
-                current.attributes and
-                any(attr.name.lower() == "encoding" and 
-                    attr.value.lower() in ("text/html", "application/xhtml+xml")
-                    for attr in current.attributes)):
+            if (
+                current.tag_name == "math annotation-xml"
+                and current.attributes
+                and any(
+                    attr.name.lower() == "encoding" and attr.value.lower() in ("text/html", "application/xhtml+xml")
+                    for attr in current.attributes
+                )
+            ):
                 return True
-            
+
             current = current.parent
-        
+
         return False
-    
+
     def reconstruct_active_formatting_elements(self, context: "ParseContext") -> None:
         """
         Reconstruct active formatting elements inside the current parent.
-        
-        This implements the "reconstruct the active formatting elements" 
-        algorithm from the HTML5 specification. When a block element 
+
+        This implements the "reconstruct the active formatting elements"
+        algorithm from the HTML5 specification. When a block element
         interrupts formatting elements, those formatting elements must
         be reconstructed inside the new block.
         """
