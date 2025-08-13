@@ -108,7 +108,7 @@ class HTMLTokenizer:
         """Handle script content with HTML5 comment rules"""
         # Look for </script> but respect comment context
         if self.html.startswith("</", self.pos):
-            self.debug(f"  found </: checking for script end tag")
+            self.debug("  found </: checking for script end tag")
             tag_start = self.pos + 2
             i = tag_start
             potential_tag = ""
@@ -127,8 +127,7 @@ class HTMLTokenizer:
             # Check if it's our end tag
             if potential_tag == "script" and i < self.length and self.html[i] == ">":
                 # Check if this end tag should be honored based on comment context
-                content_so_far = self.html[self.pos:]  # Content from current pos onwards
-                text_before = self.html[self.pos : tag_start - 2]  # Get text before </
+                text_before = self.html[self.pos:tag_start - 2]  # Get text before </
                 
                 # Use accumulated script content plus text before this end tag
                 full_content = self.script_content + text_before
@@ -136,7 +135,7 @@ class HTMLTokenizer:
                 self.debug(f"  full script content: {full_content!r}")
                 
                 if self._should_honor_script_end_tag(full_content):
-                    self.debug(f"  honoring script end tag")
+                    self.debug("  honoring script end tag")
                     # End the script
                     self.pos = i + 1  # Move past >
                     self.state = "DATA"
@@ -151,7 +150,7 @@ class HTMLTokenizer:
                     # Then return the end tag
                     return HTMLToken("EndTag", tag_name=potential_tag)
                 else:
-                    self.debug(f"  ignoring script end tag due to comment context")
+                    self.debug("  ignoring script end tag due to comment context")
                     # Treat as regular content, continue parsing
 
         # If we're here, either no end tag or it should be ignored
@@ -162,7 +161,7 @@ class HTMLTokenizer:
             self.pos += 1
 
         # Return the text we found
-        text = self.html[start : self.pos]
+        text = self.html[start:self.pos]
         if text:
             # For script elements, accumulate content for comment detection
             if self.rawtext_tag == "script":
@@ -176,20 +175,20 @@ class HTMLTokenizer:
     def _should_honor_script_end_tag(self, script_content: str) -> bool:
         """
         Determine if a </script> tag should end the script based on HTML5 script parsing rules.
-        
+
         HTML5 spec section 13.2.5.3: Script data state and escaped states
         """
         self.debug(f"  checking script content: {script_content!r}")
-        
+
         if "<!--" not in script_content:
             # No comments, always honor end tag (script data state)
-            self.debug(f"  no comments found, honoring end tag")
+            self.debug("  no comments found, honoring end tag")
             return True
-        
+
         # Advanced HTML5 Script parsing rules:
         # When script contains <!--, it may enter escaped state
         # In escaped state, certain </script> patterns are treated as content
-        
+
         # Look for specific patterns that suggest content vs end tag
         # Pattern: <!--<script> ... should have the first </script> as content
         # But only count actual </script> tags (case-insensitive), not malformed ones
@@ -198,17 +197,17 @@ class HTMLTokenizer:
             content_lower = script_content.lower()
             end_tag_count = content_lower.count("</script>")
             if end_tag_count == 0:
-                self.debug(f"  first </script> after <!--<script>, treating as content")
+                self.debug("  first </script> after <!--<script>, treating as content")
                 return False
-        
+
         # All other cases: honor the end tag
-        self.debug(f"  honoring end tag")
+        self.debug("  honoring end tag")
         return True
     
     def _tokenize_regular_rawtext(self) -> Optional[HTMLToken]:
         """Handle regular RAWTEXT elements (non-script)"""
         if self.html.startswith("</", self.pos):
-            self.debug(f"  found </: looking for end tag")
+            self.debug("  found </: looking for end tag")
             tag_start = self.pos + 2
             i = tag_start
             potential_tag = ""
@@ -234,9 +233,9 @@ class HTMLTokenizer:
 
             # Check if it's our end tag
             if potential_tag == self.rawtext_tag and i < self.length and self.html[i] == ">":
-                self.debug(f"  found matching end tag")
+                self.debug("  found matching end tag")
                 # Found valid end tag
-                text_before = self.html[self.pos : tag_start - 2]  # Get text before </
+                text_before = self.html[self.pos:tag_start - 2]  # Get text before </
                 self.pos = i + 1  # Move past >
                 self.state = "DATA"
                 self.rawtext_tag = None
@@ -245,6 +244,9 @@ class HTMLTokenizer:
                 if text_before:
                     # Replace invalid characters
                     text_before = self._replace_invalid_characters(text_before)
+                    # Decode entities for RCDATA elements (title/textarea)
+                    if self.rawtext_tag in ("title", "textarea"):
+                        text_before = self._decode_entities(text_before)
                     return HTMLToken("Character", data=text_before)
                 # Then return the end tag
                 return HTMLToken("EndTag", tag_name=potential_tag)
@@ -257,10 +259,13 @@ class HTMLTokenizer:
             self.pos += 1
 
         # Return the text we found
-        text = self.html[start : self.pos]
+        text = self.html[start:self.pos]
         if text:
             # Replace invalid characters according to HTML5 spec
             text = self._replace_invalid_characters(text)
+            # Decode entities for RCDATA elements (title/textarea)
+            if self.rawtext_tag in ("title", "textarea"):
+                text = self._decode_entities(text)
             return HTMLToken("Character", data=text)
 
         return None
@@ -278,7 +283,7 @@ class HTMLTokenizer:
             return HTMLToken("Character", data="<")
 
         # Handle DOCTYPE first (case-insensitive per HTML5 spec)
-        if self.html[self.pos:self.pos + 9].upper() == "<!DOCTYPE":
+        if self.html[self.pos:self.pos+9].upper() == "<!DOCTYPE":
             self.pos += 9  # Skip <!DOCTYPE
             # Skip whitespace
             while self.pos < self.length and self.html[self.pos].isspace():
@@ -287,7 +292,7 @@ class HTMLTokenizer:
             start = self.pos
             while self.pos < self.length and self.html[self.pos] != ">":
                 self.pos += 1
-            doctype = self.html[start : self.pos].strip()
+            doctype = self.html[start:self.pos].strip()
             if self.pos < self.length:  # Skip closing >
                 self.pos += 1
             return HTMLToken("DOCTYPE", data=doctype)
@@ -307,10 +312,10 @@ class HTMLTokenizer:
             has_invalid_char = self.pos + 2 < self.length and not (
                 self.html[self.pos + 2].isascii() and self.html[self.pos + 2].isalpha()
             )
-            match = TAG_OPEN_RE.match(self.html[self.pos :]) if is_end_tag_start else None
+            match = TAG_OPEN_RE.match(self.html[self.pos:]) if is_end_tag_start else None
             has_attributes = match and match.group(2) and match.group(4).strip()
 
-            self.debug(f"Checking bogus comment conditions:")
+            self.debug("Checking bogus comment conditions:")
             self.debug(f"  is_end_tag_start: {is_end_tag_start}")
             self.debug(f"  has_invalid_char: {has_invalid_char}")
             self.debug(f"  tag match: {match and match.groups()}")
@@ -331,19 +336,19 @@ class HTMLTokenizer:
             return HTMLToken("Character", data="</")
 
         # Try to match a tag using TAG_OPEN_RE
-        match = TAG_OPEN_RE.match(self.html[self.pos :])
+        match = TAG_OPEN_RE.match(self.html[self.pos:])
         self.debug(f"Trying to match tag: {match and match.groups()}")
 
         # If no match with >, try to match without it for unclosed tags
         if not match:
             # Look for tag name - be more permissive about what constitutes a tag
-            tag_match = re.match(r"<(!?)(/)?([^\s/>]+)", self.html[self.pos :])
+            tag_match = re.match(r"<(!?)(/)?([^\s/>]+)", self.html[self.pos:])
             if tag_match:
                 self.debug(f"Found unclosed tag: {tag_match.groups()}")
                 bang, is_end_tag, tag_name = tag_match.groups()
                 # Get rest of the input as attributes
                 tag_prefix_len = len(tag_match.group(0))
-                attributes = self.html[self.pos + tag_prefix_len :]
+                attributes = self.html[self.pos + tag_prefix_len:]
                 self.pos = self.length
 
                 # Return appropriate token
@@ -381,9 +386,8 @@ class HTMLTokenizer:
         self.pos += 1
         return HTMLToken("Character", data="<")
 
-
-
     def _try_text(self) -> Optional[HTMLToken]:
+    
         """Try to match text at current position"""
         if self.pos >= self.length:
             return None
@@ -399,12 +403,12 @@ class HTMLTokenizer:
                 break
             self.pos += 1
 
-        text = self.html[start : self.pos]
+        text = self.html[start:self.pos]
         # Only emit non-empty text tokens
         if not text:
             return None
 
-        # Replace invalid characters first, then decode entities 
+        # Replace invalid characters first, then decode entities
         text = self._replace_invalid_characters(text)
         decoded = self._decode_entities(text)
         return HTMLToken("Character", data=decoded)
@@ -450,11 +454,13 @@ class HTMLTokenizer:
                 last_key_without = list(attrs_without_slash.keys())[-1] if attrs_without_slash else None
                 last_key_with = list(attrs_with_slash.keys())[-1] if attrs_with_slash else None
                 
-                if (last_key_without == last_key_with and 
-                    last_key_without and
-                    not attrs_without_slash[last_key_without].startswith('"') and  # Clean value
-                    attrs_with_slash[last_key_with].startswith('"') and          # Malformed with quotes
-                    attrs_with_slash[last_key_with].endswith('/')):              # And ends with slash
+                if (
+                    last_key_without == last_key_with
+                    and last_key_without
+                    and not attrs_without_slash[last_key_without].startswith('"')  # Clean value
+                    and attrs_with_slash[last_key_with].startswith('"')            # Malformed with quotes
+                    and attrs_with_slash[last_key_with].endswith('/')               # And ends with slash
+                ):
                     # The slash was self-closing syntax
                     return True, attrs_without_slash
             
@@ -497,8 +503,10 @@ class HTMLTokenizer:
             return HTMLToken("Comment", data="")
 
         # Special case: <!--- followed by > should end the comment
-        if (self.pos < self.length and self.html[self.pos] == "-" and
-            self.pos + 1 < self.length and self.html[self.pos + 1] == ">"):
+        if (
+            self.pos < self.length and self.html[self.pos] == "-"
+            and self.pos + 1 < self.length and self.html[self.pos + 1] == ">"
+        ):
             self.pos += 2  # Skip ->
             return HTMLToken("Comment", data="")
 
@@ -689,37 +697,41 @@ class HTMLTokenizer:
         """Replace invalid characters according to HTML5 spec."""
         if not text:
             return text
-            
+
         result = []
         for char in text:
             codepoint = ord(char)
-            
+
             # Replace NULL character with replacement character
             if codepoint == 0x00:
                 result.append('\uFFFD')
             # Replace other control characters that should be replaced
-            elif codepoint in (0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 
-                              0x0B, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 
-                              0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 
-                              0x1D, 0x1E, 0x1F, 0x7F):
+            elif codepoint in (
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                0x0B, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14,
+                0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C,
+                0x1D, 0x1E, 0x1F, 0x7F,
+            ):
                 result.append('\uFFFD')
             # Replace surrogates (should not appear in valid UTF-8)
             elif 0xD800 <= codepoint <= 0xDFFF:
                 result.append('\uFFFD')
             # Replace non-characters
-            elif codepoint in (0xFDD0, 0xFDD1, 0xFDD2, 0xFDD3, 0xFDD4, 0xFDD5, 
-                               0xFDD6, 0xFDD7, 0xFDD8, 0xFDD9, 0xFDDA, 0xFDDB, 
-                               0xFDDC, 0xFDDD, 0xFDDE, 0xFDDF, 0xFDE0, 0xFDE1, 
-                               0xFDE2, 0xFDE3, 0xFDE4, 0xFDE5, 0xFDE6, 0xFDE7, 
-                               0xFDE8, 0xFDE9, 0xFDEA, 0xFDEB, 0xFDEC, 0xFDED, 
-                               0xFDEE, 0xFDEF):
+            elif codepoint in (
+                0xFDD0, 0xFDD1, 0xFDD2, 0xFDD3, 0xFDD4, 0xFDD5,
+                0xFDD6, 0xFDD7, 0xFDD8, 0xFDD9, 0xFDDA, 0xFDDB,
+                0xFDDC, 0xFDDD, 0xFDDE, 0xFDDF, 0xFDE0, 0xFDE1,
+                0xFDE2, 0xFDE3, 0xFDE4, 0xFDE5, 0xFDE6, 0xFDE7,
+                0xFDE8, 0xFDE9, 0xFDEA, 0xFDEB, 0xFDEC, 0xFDED,
+                0xFDEE, 0xFDEF,
+            ):
                 result.append('\uFFFD')
             # Replace other non-characters ending in FFFE/FFFF
             elif (codepoint & 0xFFFF) in (0xFFFE, 0xFFFF):
                 result.append('\uFFFD')
             else:
                 result.append(char)
-                
+
         return ''.join(result)
 
     def _codepoint_to_char(self, codepoint: int) -> str:

@@ -207,7 +207,7 @@ FORMATTING_ELEMENTS = [
 # Per WHATWG HTML5 spec - these are specifically the HTML elements that
 # cause a break-out from foreign content context
 HTML_BREAK_OUT_ELEMENTS = [
-    "b", 
+    "b",
     "big",
     "blockquote",
     "body",
@@ -219,13 +219,13 @@ HTML_BREAK_OUT_ELEMENTS = [
     "dl",
     "dt",
     "em",
-    "embed", 
+    "embed",
     "fieldset",
-    "figcaption", 
+    "figcaption",
     "figure",
     "font",
     "h1",
-    "h2", 
+    "h2",
     "h3",
     "h4",
     "h5",
@@ -377,7 +377,7 @@ MATHML_ELEMENTS = [
 # SVG attributes that should have their case preserved
 SVG_CASE_SENSITIVE_ATTRIBUTES = {
     "attributename": "attributeName",
-    "attributetype": "attributeType", 
+    "attributetype": "attributeType",
     "basefrequency": "baseFrequency",
     "baseprofile": "baseProfile",
     "calcmode": "calcMode",
