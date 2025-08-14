@@ -69,7 +69,7 @@ Each time run_tests.py is run without filters, it writes an automated summary of
 The typical development workflow is:
 1. **Improve tests**: Focus on fixing failing test cases, implementing missing handlers, or improving existing logic
 2. **Check for regressions**: After making changes, run `git diff test-summary.txt` to ensure no previously passing tests have regressed
-3. **Iterate**: Continue improving tests, then validate overall progress with the test summary diff
+3. **Iterate**: Continue improving tests, then validate overall progress with `git diff test-summary.txt`
 4. IMPORTANT: **Act with autonomy**: Don't stop and ask for permission to continue, continue iterating until you have improvements to test coverage to show.
 
 This workflow ensures continuous progress while maintaining quality and preventing regressions.
