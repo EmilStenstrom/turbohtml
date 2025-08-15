@@ -616,6 +616,9 @@ class TurboHTML:
             and tag_name not in HEAD_ELEMENTS
             and not self._is_in_template_content(context)
             and not self._is_in_integration_point(context)
+            # Do NOT foster parent if we're already inside a table cell (td/th)
+            and context.current_parent.tag_name not in ("td", "th")
+            and not context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th"))
         ):
             self.debug(f"Foster parenting {tag_name} out of table")
             self._foster_parent_element(tag_name, token.attributes, context)

@@ -3969,6 +3969,37 @@ class ForeignTagHandler(TagHandler):
         Returns True when we want the foreign handler to create a foreign element node
         (svg/math prefixed). Returns False to delegate to normal HTML handlers.
         """
+        # Foreign context sanity: if context says we're in svg/math but the current insertion
+        # point is no longer inside any foreign ancestor, clear the stale context. This can
+        # happen when an HTML integration point (e.g. <svg desc>) delegates a table cell start
+        # tag that causes the insertion point to move outside the <svg> subtree without
+        # emitting a closing </svg>. Without this check, subsequent HTML elements (like <circle>)
+        # would be incorrectly treated as foreign (<svg circle>) instead of plain HTML <circle>
+        # as expected by html5lib pending-spec-changes tests.
+        if context.current_context in ("svg", "math"):
+            foreign_prefix = f"{context.current_context} "
+            cur = context.current_parent
+            inside = False
+            while cur:
+                if cur.tag_name.startswith(foreign_prefix):
+                    inside = True
+                    break
+                cur = cur.parent
+            if not inside:
+                # Fragment safeguard: if we're parsing a fragment whose declared fragment_context
+                # establishes a foreign context (e.g. fragment_context starts with 'svg' or 'math')
+                # and no actual foreign root element has been materialized yet, keep the context.
+                frag_ctx = getattr(self.parser, 'fragment_context', None)
+                if frag_ctx and frag_ctx.startswith(context.current_context):
+                    # Check if any foreign-prefixed node already exists directly under fragment root; if not, retain.
+                    frag_root = self.parser.root if self.parser.root.tag_name == 'document-fragment' else None
+                    if frag_root:
+                        has_foreign_child = any(ch.tag_name.startswith(foreign_prefix) for ch in frag_root.children)
+                        if not has_foreign_child:
+                            inside = True  # treat as inside to suppress clearing
+                if not inside:
+                    context.current_context = None
+
         # 1. Restricted contexts: inside <select> we don't start foreign elements
         if tag_name in ("svg", "math") and context.current_parent.is_inside_tag("select"):
             return False
