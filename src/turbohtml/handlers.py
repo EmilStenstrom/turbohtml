@@ -3570,35 +3570,33 @@ class AutoClosingTagHandler(TemplateAwareHandler):
                 pass
 
             if target_parent:
-                # Save the current parent before moving
-                original_parent = context.current_parent
-
-                self.debug(f"Moving context to target parent: {target_parent.tag_name}")
-                context.move_to_element(target_parent)
-
-                # When we move out of formatting elements due to a block element,
-                # we need to remove the "inner" formatting elements that were properly closed
-                # but keep the "outer" formatting elements that should be reconstructed
-                if formatting_element:
-                    formatting_elements_to_remove = []
-
-                    # Find the path from the formatting_element to the block insertion point
-                    path_elements = []
-                    temp = original_parent
-                    while temp and temp != formatting_element and temp.tag_name in FORMATTING_ELEMENTS:
-                        path_elements.append(temp)
-                        temp = temp.parent
-
-                    # Remove formatting elements that are in the path but not the outermost one
-                    for entry in context.active_formatting_elements:
-                        elem = entry.element
-                        if elem in path_elements and elem != formatting_element:
-                            formatting_elements_to_remove.append(entry)
-                            self.debug(f"Removing inner formatting element: {elem.tag_name}")
-
-                    # Remove the inner formatting elements
-                    for entry in formatting_elements_to_remove:
-                        context.active_formatting_elements.remove_entry(entry)
+                # Determine if we have a single formatting ancestor (simple case)
+                if formatting_element and formatting_element.parent:
+                    fmt_count = sum(1 for e in context.open_elements._stack if e.tag_name in FORMATTING_ELEMENTS)
+                    simple_case = fmt_count == 1 and current is formatting_element
+                else:
+                    simple_case = False
+                # For <a> always move blocks outside; for other formatting elements keep first block inside then move later ones out
+                if simple_case and formatting_element:
+                    if formatting_element.tag_name == 'a':
+                        self.debug(
+                            f"Formatting <a>: moving block <{token.tag_name}> outside to parent {target_parent.tag_name}"
+                        )
+                        context.move_to_element(target_parent)
+                    else:
+                        has_block_child = any(ch.tag_name in BLOCK_ELEMENTS for ch in formatting_element.children)
+                        if has_block_child:
+                            self.debug(
+                                f"Second (or later) block inside formatting; moving out to parent {target_parent.tag_name}"
+                            )
+                            context.move_to_element(target_parent)
+                        else:
+                            self.debug(
+                                f"Keeping first <{token.tag_name}> inside <{formatting_element.tag_name}> (simple case)"
+                            )
+                else:
+                    self.debug(f"Moving context to target parent: {target_parent.tag_name}")
+                    context.move_to_element(target_parent)
 
             # Create the block element normally
             new_block = self._create_element(token)
@@ -3613,35 +3611,12 @@ class AutoClosingTagHandler(TemplateAwareHandler):
                 e for e in context.open_elements._stack if e.tag_name in FORMATTING_ELEMENTS
             ]
 
-            # Check if we should reconstruct formatting elements
-            # Only reconstruct if we're in a simple case (not deeply nested formatting)
-            if len(formatting_elements_in_stack) <= 2:  # Simple case - reconstruct
-                # Check if this is a very simple case (like <a><div>) vs nested case (like <b><em>...<aside>)
-                # For nested formatting elements, let adoption agency handle everything
-                if len(formatting_elements_in_stack) == 1:
-                    # Very simple case like <a><div> - reconstruct the single formatting element
-                    active_elements = []
-                    for entry in context.active_formatting_elements:
-                        active_elements.append(entry.element)
-
-                    if active_elements:
-                        self.debug(
-                            f"Very simple case: reconstructing single formatting element: {[e.tag_name for e in active_elements]}"
-                        )
-                        self.parser.adoption_agency._reconstruct_formatting_elements(active_elements, context)
-
-                    self.debug(
-                        f"Created new block {new_block.tag_name}, with simple formatting element reconstruction"
-                    )
-                else:
-                    # Multiple formatting elements case - no reconstruction here
-                    # Let the adoption agency handle all reconstruction when end tags are processed
-                    self.debug(
-                        f"Multiple formatting elements case: no reconstruction, letting adoption agency handle it"
-                    )
-            else:  # Complex case - let adoption agency handle it
+            # Always attempt reconstruction after inserting a block if there are active formatting elements.
+            if context.active_formatting_elements:
+                self.debug("Reconstructing active formatting elements after block insertion")
+                self.parser.reconstruct_active_formatting_elements(context)
                 self.debug(
-                    f"Complex case: created new block {new_block.tag_name}, letting adoption agency handle reconstruction"
+                    f"Created new block {new_block.tag_name} with reconstruction (active formatting present)"
                 )
 
             return True
@@ -3935,7 +3910,9 @@ class ForeignTagHandler(TagHandler):
 
             # HTML elements break out of foreign content and are processed as regular HTML
             self.debug(f"HTML element {tag_name_lower} breaks out of foreign content")
-            context.current_context = None  # Exit foreign context
+            # Exit foreign context. For robust recovery (e.g., table cell appearing inside <svg>),
+            # we immediately clear foreign context so following siblings (like <circle>) are HTML.
+            context.current_context = None
 
             # Look for the nearest table in the document tree that's still open
             table = context.current_parent.find_ancestor("table")
