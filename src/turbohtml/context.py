@@ -34,39 +34,32 @@ class ContentState(Enum):
 
 
 class ParseContext:
-    """
-    Holds parser state during the parsing process.
-    """
+    """Mutable parser state: stacks, modes, insertion point."""
 
     def __init__(self, length, initial_parent, debug_callback=None):
         # Input bounds
         self.index = 0
         self.length = length
 
-        # Validate and set initial parent
         if initial_parent is None:
             raise ValueError("ParseContext requires a valid initial parent")
         self._current_parent = initial_parent
-        self.current_context = None
+        self.current_context = None  # e.g. 'math' / 'svg'
 
-        # Core parser states
+        # States
         self._document_state = DocumentState.INITIAL
         self._content_state = ContentState.NONE
         self._debug = debug_callback
         self.doctype_seen = False
+        self.frameset_ok = True  # Whether frameset still allowed
 
-        # Adoption Agency Algorithm data structures
+        # Adoption Agency data structures
         from turbohtml.adoption import ActiveFormattingElements, OpenElementsStack
-
         self.active_formatting_elements = ActiveFormattingElements()
         self.open_elements = OpenElementsStack()
-        self.adoption_agency_counter = 0
 
-        # Template content isolation depth (acts like a stack counter)
-        self.template_content_depth = 0
-        # Transparent template parsing depth (e.g., inside frameset, treat <template> as transparent)
-        self.template_transparent_depth = 0
 
+    # --- Properties / helpers ---
     @property
     def current_parent(self):
         return self._current_parent
@@ -138,4 +131,7 @@ class ParseContext:
 
     def __repr__(self):
         parent_name = self._current_parent.tag_name if self._current_parent else "None"
-        return f"<ParseContext: doc_state={self.document_state.name}, content_state={self.content_state.name}, parent={parent_name}>"
+        return (
+            f"<ParseContext: doc_state={self.document_state.name}, "
+            f"content_state={self.content_state.name}, parent={parent_name}>"
+        )

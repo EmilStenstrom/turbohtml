@@ -1,4 +1,4 @@
-Tests passed: 1390/1729 (80%) (39 skipped)
+Tests passed: 1448/1729 (84%) (39 skipped)
 
 adoption01.dat: 18/18 (100%) [..................]
 adoption02.dat: 2/2 (100%) [..]
@@ -17,9 +17,9 @@ math.dat: 8/8 (100%) [........]
 menuitem-element.dat: 20/20 (100%) [....................]
 namespace-sensitivity.dat: 1/1 (100%) [.]
 noscript01.dat: 0/0 (N/A) [ssssssssssssssssss] (18 skipped)
-pending-spec-changes-plain-text-unsafe.dat: 0/1 (0%) [x]
+pending-spec-changes-plain-text-unsafe.dat: 1/1 (100%) [.]
 pending-spec-changes.dat: 2/3 (67%) [..x]
-plain-text-unsafe.dat: 14/33 (42%) [...x..xxx.xxxx.xxx..x.....xxxxxxx]
+plain-text-unsafe.dat: 30/33 (91%) [..........x.......xx.............]
 quirks01.dat: 4/4 (100%) [....]
 ruby.dat: 21/21 (100%) [.....................]
 scriptdata01.dat: 17/26 (65%) [......x........xxx.xxxx.x.]
@@ -35,27 +35,27 @@ tests2.dat: 63/63 (100%) [......................................................
 tests3.dat: 24/24 (100%) [........................]
 tests4.dat: 9/9 (100%) [.........]
 tests5.dat: 14/15 (93%) [..........x....ss] (2 skipped)
-tests6.dat: 40/52 (77%) [.x....x..x................x.xx...xx.x.x....xx.......]
+tests6.dat: 42/52 (81%) [.x....x..x................x.x.......x......x...xxx..]
 tests7.dat: 23/34 (68%) [...........xxxxxx.....x....x.xx..x]
 tests8.dat: 9/10 (90%) [........x.]
 tests9.dat: 14/27 (52%) [............x..xxxxxxxxxxxx]
 tests10.dat: 32/54 (59%) [..........xx..xx..xxxxxxxx....xxxx..xxx.x...........xx]
-tests11.dat: 9/13 (69%) [..x.xxx......]
+tests11.dat: 10/13 (77%) [xxx..........]
 tests12.dat: 2/2 (100%) [..]
 tests14.dat: 6/7 (86%) [...x...]
 tests15.dat: 8/14 (57%) [..xxxx....xx..]
 tests16.dat: 151/185 (82%) [..........x......x..........x..........x.....xx...........xx...xxxxxx..............ssssssxx..................x......x..........x..........x.....xx.........xx...xxxxxx..............ssssssxx.......xx] (12 skipped)
 tests17.dat: 13/13 (100%) [.............]
 tests18.dat: 21/35 (60%) [....s.........xx.xx.xx.xxxxxxx...x..] (1 skipped)
-tests19.dat: 60/103 (58%) [.................x...x.x..............x..x..x.x.xxxxxxxxxxx..xxxxxxxxxxx...x.xx.x.x.......xxxxx..xx..xx]
+tests19.dat: 77/103 (75%) [x....................x.x..............x..x..xx.x.......x.....x.xx.x...........xx..x......xxxxxx..xx..xx]
 tests20.dat: 64/64 (100%) [................................................................]
-tests21.dat: 11/23 (48%) [......xx.x....xxxxxxxxx]
+tests21.dat: 23/23 (100%) [.......................]
 tests22.dat: 4/5 (80%) [....x]
 tests23.dat: 5/5 (100%) [.....]
 tests24.dat: 8/8 (100%) [........]
 tests25.dat: 26/26 (100%) [..........................]
 tests26.dat: 16/20 (80%) [..xxxx..............]
-tests_innerHTML_1.dat: 33/81 (41%) [...x...xxx.xxxxxxxxx........xxxxxx.xxx......xxxxxxxxxxxxxxx..xx.xx.......x.xxxxxx]
-tricky01.dat: 0/9 (0%) [xxxxxxxxx]
-webkit01.dat: 30/52 (58%) [...x...x.x.x....xx.xxxx.xx.x..x..x.x.x.....xxx.x...x]
-webkit02.dat: 15/33 (45%) [.ss.x...x.x.xx....x...xx.xxxxxxxxxx] (2 skipped)
+tests_innerHTML_1.dat: 40/81 (49%) [...x...xxx.xxxxxxxxx........xxxxxx.xxx......xxx.xx..xxx...x..xx.xx.......x.xxxx.x]
+tricky01.dat: 2/9 (22%) [..xxxxxxx]
+webkit01.dat: 31/52 (60%) [...x.....x......xx.xxxxxxx.x..x..xxx.x.....x.x.x...x]
+webkit02.dat: 14/33 (42%) [.ss.x...x.x.xx....x...xxxxxxxxxxxxx] (2 skipped)

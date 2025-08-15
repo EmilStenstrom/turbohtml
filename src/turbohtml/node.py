@@ -17,7 +17,16 @@ class Node:
 
     def __init__(self, tag_name: str, attributes: Optional[Dict[str, str]] = None):
         self.tag_name = tag_name
-        self.attributes = attributes or {}
+        if attributes:
+            # Lowercase attribute names deterministically; keep first occurrence
+            lowered: Dict[str,str] = {}
+            for k,v in attributes.items():
+                lk = k.lower()
+                if lk not in lowered:
+                    lowered[lk] = v
+            self.attributes = lowered
+        else:
+            self.attributes = {}
         self.children: List["Node"] = []
         self.parent: Optional["Node"] = None
         self.text_content = ""  # For text nodes or concatenated text in element nodes

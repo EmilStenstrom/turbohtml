@@ -109,11 +109,10 @@ class ActiveFormattingElements:
 
     def remove_entry(self, entry: FormattingElementEntry) -> bool:
         """Remove a specific entry from the active list"""
-        try:
+        if entry in self._stack:
             self._stack.remove(entry)
             return True
-        except ValueError:
-            return False
+        return False
 
     def replace_entry(self, old_entry: FormattingElementEntry, new_element: Node, new_token: HTMLToken) -> None:
         """Replace an entry with a new element"""
@@ -134,11 +133,10 @@ class ActiveFormattingElements:
 
     def get_elements_after(self, target_entry: FormattingElementEntry) -> List[FormattingElementEntry]:
         """Get all entries after the target entry"""
-        try:
+        if target_entry in self._stack:
             index = self._stack.index(target_entry)
             return self._stack[index + 1 :]
-        except ValueError:
-            return []
+        return []
 
     def is_empty(self) -> bool:
         """Check if the stack is empty"""
@@ -153,10 +151,7 @@ class ActiveFormattingElements:
 
     def get_index(self, entry: FormattingElementEntry) -> int:
         """Get the index of an entry in the stack"""
-        try:
-            return self._stack.index(entry)
-        except ValueError:
-            return -1
+        return self._stack.index(entry) if entry in self._stack else -1
 
     def insert_at_index(self, index: int, element: Node, token: HTMLToken) -> None:
         """Insert a new entry at the specified index"""
@@ -168,11 +163,10 @@ class ActiveFormattingElements:
 
     def insert_after(self, reference_entry: FormattingElementEntry, element: Node, token: HTMLToken) -> None:
         """Insert a new entry after the reference entry"""
-        try:
+        if reference_entry in self._stack:
             index = self._stack.index(reference_entry)
             self.insert_at_index(index + 1, element, token)
-        except ValueError:
-            # If reference not found, append at end
+        else:
             self.push(element, token)
 
     def _apply_noahs_ark(self, new_entry: FormattingElementEntry) -> None:
@@ -286,11 +280,10 @@ class OpenElementsStack:
 
     def remove_element(self, element: Node) -> bool:
         """Remove a specific element from the stack"""
-        try:
+        if element in self._stack:
             self._stack.remove(element)
             return True
-        except ValueError:
-            return False
+        return False
 
     def index_of(self, element: Node) -> int:
         """Get the index of an element in the stack (-1 if not found)"""
@@ -449,7 +442,8 @@ class AdoptionAgencyAlgorithm:
 
     def __init__(self, parser):
         self.parser = parser
-        self.debug_enabled = getattr(parser, "env_debug", False)
+        # Direct attribute access (env_debug always defined in parser)
+        self.debug_enabled = parser.env_debug
 
     def _find_formatting_element_for_reconstruction(self, tag_name: str, context) -> Optional[FormattingElementEntry]:
         """
@@ -640,11 +634,23 @@ class AdoptionAgencyAlgorithm:
             if self.debug_enabled:
                 print(f"\n--- STEP 4: Check scope ---")
                 print(
-                    f"    STEP 4 RESULT: Formatting element not in scope - removing from active formatting and aborting"
+                    f"    STEP 4 RESULT: Formatting element not in scope - performing simple pop + reconstruction"
                 )
-            # Spec: remove the formatting element from the list of active formatting elements
+        # Remove from active formatting list (out of scope)
             context.active_formatting_elements.remove(formatting_element)
-            return True  # Parse error handled per spec; abort further steps
+            # If still on open elements stack, pop elements up to and including it
+            if context.open_elements.contains(formatting_element):
+                while not context.open_elements.is_empty():
+                    popped = context.open_elements.pop()
+                    if popped is formatting_element:
+                        break
+            # Reconstruct remaining active formatting elements to restore inline context
+            self.parser.reconstruct_active_formatting_elements(context)
+            # If insertion point is a table container, move outward for proper foster parenting
+            cp = context.current_parent
+            if cp and cp.tag_name in {"table", "tbody", "thead", "tfoot", "tr"} and cp.parent:
+                context.move_to_element(cp.parent)
+            return True
 
         # Step 5: If formatting element is not the current node, it's a parse error
         if context.open_elements.current() != formatting_element:
@@ -667,12 +673,32 @@ class AdoptionAgencyAlgorithm:
         if furthest_block is None:
             if self.debug_enabled:
                 print(f"    STEP 7: No furthest block - running simple case")
-            return self._handle_no_furthest_block_spec(formatting_element, formatting_entry, context)
+            result = self._handle_no_furthest_block_spec(formatting_element, formatting_entry, context)
+            # After simple adoption, if insertion point is a table container, move outward.
+            cp = context.current_parent
+            if cp and cp.tag_name in {"table", "tbody", "thead", "tfoot", "tr"} and cp.parent:
+                context.move_to_element(cp.parent)
+            return result
 
         # Step 8-19: Complex case with furthest block
         if self.debug_enabled:
             print(f"    STEP 8-19: Complex case with furthest block")
         return self._run_complex_adoption_spec(formatting_entry, furthest_block, context, iteration_count)
+
+    # Helper: run adoption repeatedly (spec max 8) until no action
+    def run_until_stable(self, tag_name: str, context, max_runs: int = 8) -> int:
+        """Run the adoption agency algorithm up to max_runs times until it reports no further action.
+
+        Returns the number of successful runs performed. Encapsulates the counter that used
+        to live in various callers so external code no longer manages the iteration variable.
+        """
+        runs = 0
+        while runs < max_runs and self.should_run_adoption(tag_name, context):
+            # iteration_count passed as 1-based for debugging parity
+            if not self.run_algorithm(tag_name, context, runs + 1):
+                break
+            runs += 1
+        return runs
 
     def _find_furthest_block_spec_compliant(self, formatting_element: Node, context) -> Optional[Node]:
         """Find the furthest block element per HTML5 spec"""
@@ -695,27 +721,33 @@ class AdoptionAgencyAlgorithm:
         """Handle the simple case when there's no furthest block (steps 7.1-7.3)"""
         if self.debug_enabled:
             print(f"    Adoption Agency: No furthest block case")
-        # Spec simple case (Steps 7.1-7.3):
-        # - Pop elements from the stack of open elements until the formatting element has been popped.
-        # - Remove the formatting element from the list of active formatting elements.
-        # Our implementation also updates the current insertion point to the new current node
-        # (top of the open elements stack) so that subsequent text or reconstruction occurs
-        # outside of the closed formatting element. Without this, text can continue being
-        # appended under a stale current_parent reference.
+        # Simple case (steps 7.1–7.3): pop until formatting element removed then drop from active list
+        original_parent = context.current_parent
+        # Pop stack until formatting element removed
         while not context.open_elements.is_empty():
             popped = context.open_elements.pop()
             if popped is formatting_element:
                 break
-        # Remove from active formatting elements
+     # Remove from active list
         context.active_formatting_elements.remove(formatting_element)
+        # Adjust insertion point only if current position was inside formatting element subtree
+        cur = original_parent
+        inside = False
+        while cur is not None:
+            if cur is formatting_element:
+                inside = True
+                break
+            cur = cur.parent
+        if inside:
+            new_current = context.open_elements.current() or self._get_body_or_root(context)
+            if new_current:
+                context.move_to_element(new_current)
+        # For <nobr> trigger reconstruction after simple adoption
+        if formatting_element.tag_name == "nobr":
+            # Reconstruct remaining formatting after duplicate <nobr> simple closure
+            self.parser.reconstruct_active_formatting_elements(context)
 
-        # Update current_parent to the new current node (top of stack), or body/root if empty
-        new_current = context.open_elements.current()
-        if not new_current:
-            new_current = self._get_body_or_root(context)
-        # Move insertion point
-        if new_current is not None:
-            context.move_to_element(new_current)
+        # Insertion point remains at formatting element parent (simple case)
         return True
 
     def _get_body_or_root(self, context):
@@ -791,18 +823,14 @@ class AdoptionAgencyAlgorithm:
 
         Ensures node.parent becomes None and sibling pointers are cleared without throwing.
         """
-        try:
-            if node.parent:
-                parent = node.parent
-                if hasattr(parent, "children") and node in parent.children:
-                    parent.remove_child(node)
-                else:
-                    # Inconsistent linkage: clear pointers directly
-                    node.parent = None
-                    node.previous_sibling = None
-                    node.next_sibling = None
-        except Exception:
-            # Best-effort cleanup
+        parent = node.parent
+        if not parent:
+            return
+        # Parent is always a Node with a children list
+        if node in parent.children:
+            parent.remove_child(node)
+        else:
+            # Inconsistent linkage: clear pointers directly
             node.parent = None
             node.previous_sibling = None
             node.next_sibling = None
@@ -1032,7 +1060,7 @@ class AdoptionAgencyAlgorithm:
             would_cycle = False
             try:
                 would_cycle = common_ancestor._would_create_circular_reference(last_node)
-            except Exception:
+            except (RuntimeError, ValueError, TypeError):  # Defensive safety
                 would_cycle = False
             if would_cycle:
                 if self.debug_enabled:
@@ -1041,17 +1069,11 @@ class AdoptionAgencyAlgorithm:
                 if last_node.parent is not None and last_node.parent is not parent:
                     self._safe_detach_node(last_node)
                 if parent:
-                    # Only insert_before if furthest_block is still a child
-                    try:
-                        if furthest_block in parent.children:
-                            parent.insert_before(last_node, furthest_block)
-                        else:
-                            # Ensure detached before appending
-                            if last_node.parent is not parent:
-                                self._safe_detach_node(last_node)
-                            parent.append_child(last_node)
-                    except Exception:
-                        self._safe_detach_node(last_node)
+                    if furthest_block in parent.children:
+                        parent.insert_before(last_node, furthest_block)
+                    else:
+                        if last_node.parent is not parent:
+                            self._safe_detach_node(last_node)
                         parent.append_child(last_node)
                 else:
                     safe_parent = self._get_body_or_root(context)
@@ -1133,9 +1155,7 @@ class AdoptionAgencyAlgorithm:
             print(f"    Removed original {formatting_element.tag_name}")
 
         # Step 18: Insert new entry for formatting_clone in active formatting elements
-        # at the position marked by the bookmark
-        # NOTE: According to HTML5 spec, we should always add the clone back to active formatting
-        # elements, but some implementations may optimize this for certain cases
+        # at the position marked by the bookmark (spec behavior restored).
         if bookmark_index >= 0 and bookmark_index <= len(context.active_formatting_elements):
             context.active_formatting_elements.insert_at_index(
                 bookmark_index, formatting_clone, formatting_entry.token
@@ -1143,22 +1163,31 @@ class AdoptionAgencyAlgorithm:
         else:
             context.active_formatting_elements.push(formatting_clone, formatting_entry.token)
 
-        if self.debug_enabled:
-            print(f"\n--- STEP 18: Add clone to active formatting ---")
-            print(f"    Added {formatting_clone.tag_name} at bookmark index {bookmark_index}")
-
-        # Step 19: Remove formatting_element from open elements and insert formatting_clone
-        # after furthest_block
+        # Step 19: Replace original formatting element in open elements stack with clone after furthest_block.
         context.open_elements.remove_element(formatting_element)
         context.open_elements.insert_after(furthest_block, formatting_clone)
 
-        # Update the current context. When the furthest block is a table container,
-        # subsequent content should be inserted outside the table (at its parent),
-        # not inside the table itself. Otherwise, continue inside the furthest block.
+    # Cleanup: remove empty formatting clone before text when not immediately re-nested
+        if (
+            not formatting_clone.children
+            and formatting_clone.parent
+            and (formatting_clone.next_sibling and formatting_clone.next_sibling.tag_name == "#text")
+            and not (formatting_clone.previous_sibling and formatting_clone.previous_sibling.tag_name == formatting_clone.tag_name)
+        ):
+            parent = formatting_clone.parent
+            parent.remove_child(formatting_clone)
+            afe_entry = context.active_formatting_elements.find_element(formatting_clone)
+            if afe_entry:
+                context.active_formatting_elements.remove_entry(afe_entry)
+            if context.open_elements.contains(formatting_clone):
+                context.open_elements.remove_element(formatting_clone)
+            if self.debug_enabled:
+                print("    Cleanup: removed stray empty formatting clone before text")
+
+    # Insertion point: move outside table container else stay in furthest block
         if is_table_container and furthest_block.parent:
             context.move_to_element(furthest_block.parent)
         else:
-            # This ensures subsequent content goes into the furthest block, not the formatting clone
             context.move_to_element(furthest_block)
 
         # Clean up active formatting elements that are no longer in scope (only if multiple)
@@ -1166,7 +1195,7 @@ class AdoptionAgencyAlgorithm:
             self._cleanup_active_formatting_elements(context, furthest_block)
 
         if self.debug_enabled:
-            print(f"\n--- STEP 19: Update open elements stack ---")
+            print(f"\n--- STEP 18/19: Update stacks ---")
             print(f"    Removed original {formatting_element.tag_name} from stack")
             print(f"    Added {formatting_clone.tag_name} after {furthest_block.tag_name}")
             print(f"    Final stack: {[e.tag_name for e in context.open_elements._stack]}")
@@ -1174,11 +1203,7 @@ class AdoptionAgencyAlgorithm:
             print(f"    Current parent now: {context.current_parent.tag_name}")
             print(f"=== ADOPTION AGENCY ALGORITHM END ===\n")
 
-        # Post-condition cleanup: (temporarily disabled) flatten redundant empty block wrappers.
-        # Disabled because spec tests expect preservation of certain empty nested block chains
-        # (e.g., consecutive empty <div><div></div></div>) which this heuristic removed.
-        # self._flatten_redundant_empty_blocks(furthest_block.parent or furthest_block)
-        # Heuristic normalization: collapse pattern F, B(empty fmt clone), B2(fmt+text)
+        # Normalize intermediate empty formatting patterns
         self._normalize_intermediate_empty_formatting(context)
         return True
 
@@ -1390,6 +1415,16 @@ class AdoptionAgencyAlgorithm:
         # If loop exits normally, no circular reference detected
         return
 
+    def _iter_descendants(self, node: Node):
+        """Yield all descendants (depth-first) of a node."""
+        stack = list(node.children)
+        while stack:
+            cur = stack.pop()
+            yield cur
+            # All nodes have a children list
+            if cur.children:
+                stack.extend(cur.children)
+
     def _flatten_redundant_formatting(self, node: Node) -> None:
         """Flatten nested identical formatting elements with identical attributes.
 
@@ -1401,7 +1436,7 @@ class AdoptionAgencyAlgorithm:
         stack = [node]
         while stack:
             cur = stack.pop()
-            if not getattr(cur, "children", None):
+            if not cur.children:
                 continue
             i = 0
             while i < len(cur.children):
