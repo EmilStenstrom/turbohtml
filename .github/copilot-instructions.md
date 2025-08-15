@@ -73,3 +73,73 @@ The typical development workflow is:
 4. IMPORTANT: **Act with autonomy**: Don't stop and ask for permission to continue, continue iterating until you have improvements to test coverage to show.
 
 This workflow ensures continuous progress while maintaining quality and preventing regressions.
+
+## Coding Standards & Quality Rules
+
+These standards must be followed for all new or modified code.
+
+### 1. Deterministic Control Flow
+- Do not use exceptions for normal control (no try/except around membership tests, stack pops, or flow decisions).
+- Prevalidate conditions with explicit checks (e.g. `if entry in stack` before remove) instead of catching `ValueError`.
+- Avoid hidden fallbacks; all branches should be intentional and spec-aligned.
+
+### 2. Exception Policy
+- Core parsing (tokenizer, handlers, adoption, parser) should be effectively exception-free during normal operation.
+- If an exception is truly unrecoverable, let it surface (no broad `except:` or silent pass).
+- Catch only the narrowest specific exception types when absolutely required for defensive safety.
+
+### 3. Reflection & Introspection
+- Do not use `hasattr`, `getattr` with dynamic names, or duck-typed probing in hot paths.
+- Rely on explicit, guaranteed attributes and interfaces; unexpected absence is a bug, not a branch.
+
+### 4. State Management
+- Do not cache derivable or transient state (e.g. prior document state for `<template>`, adoption counters, last breakout nodes).
+- Infer current conditions from the DOM structure and open element / active formatting stacks.
+- Eliminate write-once flags once their behavior is representable structurally.
+- Keep `ParseContext` lean: only persist state that cannot be recomputed cheaply each step.
+
+### 5. Formatting & Adoption Agency
+- Follow HTML5 spec steps; helper methods may bundle step groups but must preserve semantics.
+- No heuristic flags to shortcut adoption loops; use structural checks and `run_until_stable` style iteration where needed.
+- Reconstruct active formatting elements only when permitted (respect table / row / cell mode constraints).
+
+### 6. Tree Operations
+- Use `Node.append_child` / `insert_before` to preserve sibling linkage except in controlled, well-audited performance-sensitive spots; if bypassing, update sibling pointers correctly.
+- Never create circular references (trust internal guard, do not reimplement it).
+- When relocating nodes, detach safely (no partial pointer updates).
+
+### 7. Comments & Documentation
+- Source comments describe current behavior only (no historical change logs or “removed X” notes).
+- Keep rationale concise; if a heuristic exists, state the invariant or spec clause it enforces—not how code “used to” behave.
+- Debug messages may narrate spec step progression but should not reference past refactors.
+
+### 8. Performance & Allocation
+- Prefer structural inference over auxiliary bookkeeping objects or flags.
+- Avoid per-token small object churn when a stack or existing node relationship suffices.
+- Keep attribute iteration deterministic (sorted output where required by tests) but avoid unnecessary re-sorting elsewhere.
+
+### 9. Testing & Regression Guardrails
+- After any semantic change, run focused test subsets first, then full suite, and inspect `git diff test-summary.txt`.
+- Never accept a net loss in passing tests without an accompanying explanation and an opened TODO to restore them.
+- Add minimal targeted tests only via the existing `.dat` framework—no ad-hoc test harness files.
+
+### 10. Handler Design
+- A handler’s `should_handle_*` must be a pure predicate (no side effects) and cheap.
+- Early-return aggressively for inapplicable contexts (foreign content, template content boundaries, frameset modes).
+- Keep tag-specific logic contained; do not embed unrelated adoption or tokenizer details inside generic handlers.
+
+### 11. Tokenizer Rules
+- No exception-driven entity parsing; validate first, branch explicitly.
+- Keep tight loops allocation-light (reuse local vars, avoid unnecessary slicing).
+- Side effects (position advancement) must be obvious and linear—no rewinding via exceptions.
+
+### 12. Consistency & Style
+- Follow Black (line length 119) but do not reformat unrelated regions in functional PRs.
+- Use descriptive variable names (avoid single letters outside tight loops or spec-correlated indices).
+- Keep public-facing APIs typed; internal hot-path classes may omit annotations if profiling shows benefit.
+
+### 13. Heuristics Policy
+- Only introduce a heuristic if a spec ambiguity or malformed input edge case requires deterministic resolution for tests.
+- Heuristics must be minimal, locally scoped, and reversible without breaking core spec conformance.
+
+Adhering to these standards keeps the parser deterministic, maintainable, and performant while aligned with the HTML5 specification and test expectations.
