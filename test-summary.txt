@@ -1,4 +1,4 @@
-Tests passed: 1448/1729 (84%) (39 skipped)
+Tests passed: 1459/1729 (84%) (39 skipped)
 
 adoption01.dat: 18/18 (100%) [..................]
 adoption02.dat: 2/2 (100%) [..]
@@ -22,7 +22,7 @@ pending-spec-changes.dat: 2/3 (67%) [..x]
 plain-text-unsafe.dat: 30/33 (91%) [..........x.......xx.............]
 quirks01.dat: 4/4 (100%) [....]
 ruby.dat: 21/21 (100%) [.....................]
-scriptdata01.dat: 17/26 (65%) [......x........xxx.xxxx.x.]
+scriptdata01.dat: 26/26 (100%) [..........................]
 scripted/adoption01.dat: 0/0 (N/A) [s] (1 skipped)
 scripted/ark.dat: 0/0 (N/A) [s] (1 skipped)
 scripted/webkit01.dat: 0/0 (N/A) [ss] (2 skipped)
@@ -44,7 +44,7 @@ tests11.dat: 10/13 (77%) [xxx..........]
 tests12.dat: 2/2 (100%) [..]
 tests14.dat: 6/7 (86%) [...x...]
 tests15.dat: 8/14 (57%) [..xxxx....xx..]
-tests16.dat: 151/185 (82%) [..........x......x..........x..........x.....xx...........xx...xxxxxx..............ssssssxx..................x......x..........x..........x.....xx.........xx...xxxxxx..............ssssssxx.......xx] (12 skipped)
+tests16.dat: 153/185 (83%) [..........x......x..........x................xxx..........xx...x.xxxx..............ssssssxx..................x......x..........x................xxx........xx...x.xxxx..............ssssssxx.......xx] (12 skipped)
 tests17.dat: 13/13 (100%) [.............]
 tests18.dat: 21/35 (60%) [....s.........xx.xx.xx.xxxxxxx...x..] (1 skipped)
 tests19.dat: 77/103 (75%) [x....................x.x..............x..x..xx.x.......x.....x.xx.x...........xx..x......xxxxxx..xx..xx]

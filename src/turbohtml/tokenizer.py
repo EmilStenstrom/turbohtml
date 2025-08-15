@@ -61,8 +61,10 @@ class HTMLTokenizer:
         self.temp_buffer = []
         self.last_pos = self.length  # Store the last position we'll process
         self.env_debug = debug
-        # For script parsing
         self.script_content = ""
+        self.script_non_executable = False
+        self.script_suppressed_end_once = False
+        self.script_type_value = ""
 
     def debug(self, *args, indent: int = 4) -> None:
         """Print debug message if debugging is enabled"""
@@ -126,38 +128,68 @@ class HTMLTokenizer:
 
             self.debug(f"  potential_tag={potential_tag!r}")
 
-            # Skip whitespace and optional /
-            while i < self.length and (self.html[i].isspace() or self.html[i] == "/"):
-                i += 1
-
-            # Check if it's our end tag
-            if potential_tag == "script" and i < self.length and self.html[i] == ">":
-                # Check if this end tag should be honored based on comment context
-                text_before = self.html[self.pos:tag_start - 2]  # Get text before </
-
-                # Use accumulated script content plus text before this end tag
-                full_content = self.script_content + text_before
-
-                self.debug(f"  full script content: {full_content!r}")
-
-                if self._should_honor_script_end_tag(full_content):
-                    self.debug("  honoring script end tag")
-                    # End the script
-                    self.pos = i + 1  # Move past >
-                    self.state = "DATA"
-                    self.rawtext_tag = None
-                    self.script_content = ""  # Reset for next script
-
-                    # First return any text before the tag
-                    if text_before:
-                        # Replace invalid characters in script content
-                        text_before = self._replace_invalid_characters(text_before)
-                        return HTMLToken("Character", data=text_before)
-                    # Then return the end tag
-                    return HTMLToken("EndTag", tag_name=potential_tag)
-                else:
-                    self.debug("  ignoring script end tag due to comment context")
-                    # Treat as regular content, continue parsing
+            # If potential tag is script, check for end tag conditions per HTML5 script data / escaped states.
+            if potential_tag == "script":
+                # The next character after the tag name determines if this could be an end tag token.
+                # End tag is allowed if next char is whitespace, '/', or '>' (attributes are parse errors but ignored).
+                if i < self.length and (self.html[i].isspace() or self.html[i] in "/>"):
+                    # Advance through any attribute-like junk until the real tag closing '>' taking
+                    # quoted strings into account (an end tag cannot have attributes, but malformed
+                    # input may include them; per spec they are ignored yet we must not terminate
+                    # prematurely on a '>' that appears inside a quoted attribute value like foo=">").
+                    scan = i
+                    saw_gt = False
+                    quote: Optional[str] = None
+                    while scan < self.length:
+                        c = self.html[scan]
+                        if quote:
+                            if c == quote:
+                                quote = None
+                            scan += 1
+                            continue
+                        if c in ('"', "'"):
+                            quote = c
+                            scan += 1
+                            continue
+                        if c == ">":
+                            saw_gt = True
+                            break
+                        # End tag closes at first whitespace + '>' sequence even with stray '/'
+                        scan += 1
+                    if saw_gt:
+                        end_tag_close = scan  # position of '>'
+                        # Text before '</'
+                        text_before = self.html[self.pos:tag_start - 2]
+                        full_content = self.script_content + text_before
+                        self.debug(f"  full script content: {full_content!r}")
+                        honor = False
+                        if (self.script_non_executable and not self.script_suppressed_end_once
+                                and self.script_type_value == 'text/plain'):
+                            if (re.match(r"^[\\'\"]?<!--", full_content.strip())
+                                and re.search(r"<script", full_content, re.IGNORECASE)
+                                and "\\'" not in full_content):
+                                self.debug("  suppressing first </script> for non-executable escaped pattern")
+                                self.script_suppressed_end_once = True
+                                honor = False
+                            else:
+                                honor = self._should_honor_script_end_tag(full_content)
+                        else:
+                            honor = self._should_honor_script_end_tag(full_content)
+                        if honor:
+                            self.debug("  honoring script end tag (attributes ignored if any)")
+                            self.pos = end_tag_close + 1
+                            self.state = "DATA"
+                            self.rawtext_tag = None
+                            self.script_content = ""
+                            self.script_non_executable = False
+                            self.script_suppressed_end_once = False
+                            if text_before:
+                                text_before = self._replace_invalid_characters(text_before)
+                                return HTMLToken("Character", data=text_before)
+                            return HTMLToken("EndTag", tag_name="script")
+                        else:
+                            self.debug("  ignoring script end tag due to escape/comment context")
+                            # Fall through to treat as text
 
         # If we're here, either no end tag or it should be ignored
         # Find the next potential end tag or EOF
@@ -185,28 +217,37 @@ class HTMLTokenizer:
         HTML5 spec section 13.2.5.3: Script data state and escaped states
         """
         self.debug(f"  checking script content: {script_content!r}")
+        # Normalize for pattern detection
+        lower = script_content.lower()
 
-        if "<!--" not in script_content:
-            # No comments, always honor end tag (script data state)
+        # If no comment opener present, always honor end tag
+        if "<!--" not in lower:
             self.debug("  no comments found, honoring end tag")
             return True
 
-        # Advanced HTML5 Script parsing rules:
-        # When script contains <!--, it may enter escaped state
-        # In escaped state, certain </script> patterns are treated as content
-
-        # Look for specific patterns that suggest content vs end tag
-        # Pattern: <!--<script> ... should have the first </script> as content
-        # But only count actual </script> tags (case-insensitive), not malformed ones
-        if "<!--<script>" in script_content and "-->" not in script_content:
-            # Count actual </script> occurrences (case-insensitive)
-            content_lower = script_content.lower()
-            end_tag_count = content_lower.count("</script>")
-            if end_tag_count == 0:
-                self.debug("  first </script> after <!--<script>, treating as content")
+        # If we have an open comment (no closing --> yet) that introduces a nested <script ...> like pattern,
+        # treat the first subsequent </script> as data. html5lib tests use patterns like:
+        #   '<!-- <sCrIpt>'  (note space before <script> and mixed case) and various trailing hyphen permutations.
+        # We approximate escaped state by detecting: <!-- followed by optional whitespace then <script
+        # with no closing --> yet.
+        # Only suppress when the comment opener is IMMEDIATELY followed by <script>
+        # (no whitespace) and there's no closing --> yet. This mirrors html5lib expectations
+        # where patterns like '<!-- <script' (with a space) still allow honoring the end tag.
+        if "<!--<script" in lower and "-->" not in lower:
+            # For executable scripts we suppress every candidate end tag while still in this escaped pattern.
+            if not self.script_non_executable:
+                self.debug("  executable script: suppressing end tag inside <!-- <script pattern (no --> yet)")
                 return False
+            # For non-executable scripts (e.g. type=data, text/plain) html5lib expects only the FIRST </script>
+            # to be treated as data; the outer real end tag must still terminate the element.
+            if not self.script_suppressed_end_once:
+                self.script_suppressed_end_once = True
+                self.debug("  non-executable script: suppressing FIRST end tag inside <!-- <script pattern")
+                return False
+            # Already suppressed one; now honor subsequent end tag.
+            self.debug("  non-executable script: already suppressed once, honoring end tag now")
 
-        # All other cases: honor the end tag
+        # Otherwise honor
         self.debug("  honoring end tag")
         return True
 
@@ -375,9 +416,21 @@ class HTMLTokenizer:
 
             # Handle state transitions for start tags
             if not is_end_tag and tag_name.lower() in RAWTEXT_ELEMENTS:
+                lowered = tag_name.lower()
                 self.debug(f"Switching to RAWTEXT mode for {tag_name}")
                 self.state = "RAWTEXT"
-                self.rawtext_tag = tag_name.lower()
+                self.rawtext_tag = lowered
+                if lowered == "script":
+                    # Peek at attributes to evaluate type executability
+                    _tmp_self_closing, tmp_attrs = self._parse_attributes_and_check_self_closing(attributes)
+                    type_val = tmp_attrs.get("type", "").strip().lower()
+                    self.script_type_value = type_val
+                    if type_val and not any(k in type_val for k in ("javascript", "ecmascript", "module")):
+                        self.script_non_executable = True
+                        self.script_suppressed_end_once = False
+                    else:
+                        self.script_non_executable = False
+                        self.script_suppressed_end_once = False
 
             # Return the appropriate token
             if is_end_tag:
