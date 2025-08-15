@@ -38,8 +38,8 @@ class ParseContext:
     Holds parser state during the parsing process.
     """
 
-    def __init__(self, length: int, initial_parent: "Node", debug_callback=None):
-        # Basic indexing/state
+    def __init__(self, length, initial_parent, debug_callback=None):
+        # Input bounds
         self.index = 0
         self.length = length
 
@@ -68,12 +68,10 @@ class ParseContext:
         self.template_transparent_depth = 0
 
     @property
-    def current_parent(self) -> "Node":
-        """Read-only access to current parent. Use navigation methods to change."""
+    def current_parent(self):
         return self._current_parent
 
-    def _set_current_parent(self, new_parent: "Node") -> None:
-        """Internal method to update current parent. Should only be called by navigation methods."""
+    def _set_current_parent(self, new_parent):
         if new_parent != self._current_parent:
             if self._debug:
                 old_name = self._current_parent.tag_name if self._current_parent else "None"
@@ -82,28 +80,26 @@ class ParseContext:
         self._current_parent = new_parent
 
     @property
-    def document_state(self) -> DocumentState:
-        """Read-only access to document state. Use transition_to_state() to change."""
+    def document_state(self):
         return self._document_state
 
     @property
-    def content_state(self) -> ContentState:
+    def content_state(self):
         return self._content_state
 
     @content_state.setter
-    def content_state(self, new_state: ContentState) -> None:
+    def content_state(self, new_state):
         if new_state != self._content_state:
             if self._debug:
                 self._debug(f"Content State change: {self._content_state} -> {new_state}")
             self._content_state = new_state
 
-    def debug(self, message: str) -> None:
+    def debug(self, message):
         if self._debug:
             self._debug(message)
 
-    # State transition methods
-    def transition_to_state(self, new_state: DocumentState, new_parent: "Node" = None) -> None:
-        """Transition to any document state, optionally updating current_parent"""
+    # --- State transitions ---
+    def transition_to_state(self, new_state, new_parent=None):
         if new_parent is not None:
             self._set_current_parent(new_parent)
         if new_state != self._document_state:
@@ -111,39 +107,33 @@ class ParseContext:
                 self._debug(f"Document State change: {self._document_state} -> {new_state}")
             self._document_state = new_state
 
-    # Navigation methods for current_parent
-    def move_to_element(self, element: "Node") -> None:
-        """Move current_parent to a specific element"""
+    # --- Insertion point navigation ---
+    def move_to_element(self, element):
         self._set_current_parent(element)
 
-    def move_to_element_with_fallback(self, element: "Node", fallback: "Node") -> None:
-        """Move current_parent to element, or fallback if element is None"""
+    def move_to_element_with_fallback(self, element, fallback):
         self._set_current_parent(element or fallback)
 
-    def move_up_one_level(self) -> bool:
-        """Move current_parent up one level to its parent. Returns True if successful."""
+    def move_up_one_level(self):
         if self._current_parent.parent:
             self._set_current_parent(self._current_parent.parent)
             return True
         return False
 
-    def move_to_ancestor_parent(self, ancestor: "Node") -> bool:
-        """Move current_parent to the parent of the given ancestor. Returns True if successful."""
+    def move_to_ancestor_parent(self, ancestor):
         if ancestor and ancestor.parent:
             self._set_current_parent(ancestor.parent)
             return True
         return False
 
-    def close_element_by_tag(self, tag_name: str, stop_at_boundary: bool = False) -> bool:
-        """Find ancestor by tag name and move to its parent. Returns True if found."""
+    def close_element_by_tag(self, tag_name, stop_at_boundary=False):
         ancestor = self._current_parent.find_ancestor(tag_name, stop_at_boundary=stop_at_boundary)
         if ancestor:
             self._set_current_parent(ancestor.parent or self._current_parent)
             return True
         return False
 
-    def enter_element(self, element: "Node") -> None:
-        """Enter a newly created element (set it as current_parent)"""
+    def enter_element(self, element):
         self._set_current_parent(element)
 
     def __repr__(self):
