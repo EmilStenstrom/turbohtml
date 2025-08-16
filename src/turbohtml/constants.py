@@ -493,10 +493,8 @@ SVG_CASE_SENSITIVE_ATTRIBUTES = {
     "xchannelselector": "xChannelSelector",
     "ychannelselector": "yChannelSelector",
     "zoomandpan": "zoomAndPan",
-    "contentscripttype": "contentScriptType",
-    "contentstyletype": "contentStyleType",
-    "externalresourcesrequired": "externalResourcesRequired",
-    "filterres": "filterRes",
+    # The spec keeps some attributes lowercase; tests expect these untouched
+    # contentscripttype, contentstyletype, externalresourcesrequired, filterres remain lowercase
 }
 
 # MathML case-sensitive attribute adjustments per HTML5 spec

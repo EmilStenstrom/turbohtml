@@ -15,16 +15,24 @@ class Node:
 
     __slots__ = ("tag_name", "attributes", "children", "parent", "text_content", "next_sibling", "previous_sibling")
 
-    def __init__(self, tag_name: str, attributes: Optional[Dict[str, str]] = None):
+    def __init__(self, tag_name: str, attributes: Optional[Dict[str, str]] = None, preserve_attr_case: bool = False):
         self.tag_name = tag_name
         if attributes:
-            # Lowercase attribute names deterministically; keep first occurrence
-            lowered: Dict[str,str] = {}
-            for k,v in attributes.items():
-                lk = k.lower()
-                if lk not in lowered:
-                    lowered[lk] = v
-            self.attributes = lowered
+            if preserve_attr_case:
+                # Keep first occurrence preserving original key casing
+                kept: Dict[str,str] = {}
+                for k, v in attributes.items():
+                    if k not in kept:
+                        kept[k] = v
+                self.attributes = kept
+            else:
+                # Lowercase attribute names deterministically; keep first occurrence
+                lowered: Dict[str,str] = {}
+                for k,v in attributes.items():
+                    lk = k.lower()
+                    if lk not in lowered:
+                        lowered[lk] = v
+                self.attributes = lowered
         else:
             self.attributes = {}
         self.children: List["Node"] = []

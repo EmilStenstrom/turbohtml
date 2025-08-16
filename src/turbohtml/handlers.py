@@ -3987,7 +3987,7 @@ class ForeignTagHandler(TagHandler):
             The created node
         """
         fixed_attrs = self._fix_foreign_attribute_case(attributes, context_type)
-        new_node = Node(f"{context_type} {tag_name}", fixed_attrs)
+        new_node = Node(f"{context_type} {tag_name}", fixed_attrs, preserve_attr_case=True)
 
         # Set foreign context BEFORE appending so downstream handlers in same token sequence
         # (e.g., immediate table-related elements) can detect we're inside foreign content.
@@ -4031,11 +4031,11 @@ class ForeignTagHandler(TagHandler):
                     # Create the new node
                     if tag_name_lower == "math":
                         fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "math")
-                        new_node = Node(f"math {tag_name}", fixed_attrs)
+                        new_node = Node(f"math {tag_name}", fixed_attrs, preserve_attr_case=True)
                         context.current_context = "math"
                     elif tag_name_lower == "svg":
                         fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
-                        new_node = Node(f"svg {tag_name}", fixed_attrs)
+                        new_node = Node(f"svg {tag_name}", fixed_attrs, preserve_attr_case=True)
                         context.current_context = "svg"
 
                     table.parent.children.insert(table_index, new_node)
@@ -4374,7 +4374,7 @@ class ForeignTagHandler(TagHandler):
                 and tnl not in MATHML_ELEMENTS
                 and not open_html_ancestor
             ):
-                new_node = Node(f"svg {tnl}", self._fix_foreign_attribute_case(token.attributes, "svg"))
+                new_node = Node(f"svg {tnl}", self._fix_foreign_attribute_case(token.attributes, "svg"), preserve_attr_case=True)
                 context.current_parent.append_child(new_node)
                 if not token.is_self_closing:
                     context.enter_element(new_node)
@@ -4602,7 +4602,7 @@ class ForeignTagHandler(TagHandler):
             if tag_name_lower in RAWTEXT_ELEMENTS:
                 self.debug(f"Treating {tag_name_lower} as normal element in foreign context")
                 fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
-                new_node = Node(f"svg {tag_name}", fixed_attrs)
+                new_node = Node(f"svg {tag_name}", fixed_attrs, preserve_attr_case=True)
                 context.current_parent.append_child(new_node)
                 context.enter_element(new_node)
                 # Reset tokenizer if it entered RAWTEXT mode
@@ -4624,7 +4624,7 @@ class ForeignTagHandler(TagHandler):
             if tag_name_lower in SVG_CASE_SENSITIVE_ELEMENTS:
                 correct_case = SVG_CASE_SENSITIVE_ELEMENTS[tag_name_lower]
                 fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
-                new_node = Node(f"svg {correct_case}", fixed_attrs)
+                new_node = Node(f"svg {correct_case}", fixed_attrs, preserve_attr_case=True)
                 context.current_parent.append_child(new_node)
                 # Only set as current parent if not self-closing
                 if not token.is_self_closing:
@@ -4645,7 +4645,7 @@ class ForeignTagHandler(TagHandler):
                     self.debug(f"HTML element {tag_name_lower} in SVG integration point, delegating to HTML handlers")
                     return False  # Let other handlers (TableTagHandler, ParagraphTagHandler, etc.) handle it
 
-            new_node = Node(f"svg {tag_name_lower}", self._fix_foreign_attribute_case(token.attributes, "svg"))
+            new_node = Node(f"svg {tag_name_lower}", self._fix_foreign_attribute_case(token.attributes, "svg"), preserve_attr_case=True)
             context.current_parent.append_child(new_node)
             # Only set as current parent if not self-closing
             if not token.is_self_closing:
@@ -4663,7 +4663,7 @@ class ForeignTagHandler(TagHandler):
 
         if tag_name_lower == "svg":
             fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
-            new_node = Node(f"svg {tag_name}", fixed_attrs)
+            new_node = Node(f"svg {tag_name}", fixed_attrs, preserve_attr_case=True)
             context.current_parent.append_child(new_node)
             if not token.is_self_closing:
                 context.enter_element(new_node)
