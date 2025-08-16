@@ -324,6 +324,19 @@ class HTMLTokenizer:
 
         self.debug(f"_try_tag: pos={self.pos}, state={self.state}, next_chars={self.html[self.pos:self.pos+10]!r}")
 
+        # HTML5 spec: In the data state, after a '<' we only start tag / markup parsing if the next
+        # character begins a valid sequence: ASCII letter (start tag), '!' (markup declaration),
+        # '/' (end tag), or '?' (bogus comment / processing instruction). Any other character means
+        # the '<' was just literal text and should be emitted as a character token. This prevents
+        # inputs like '<#' from being treated as a start tag with name '#'. (tests1 bogus tag case)
+        if self.pos + 1 < self.length:
+            nxt = self.html[self.pos + 1]
+            if not (nxt.isalpha() or nxt in "!/ ?"):  # space included? remove space; we only allow ! / ?
+                # Correct set is letters, '!', '/', '?'. Treat everything else as literal '<'.
+                if nxt != '!' and nxt != '/' and nxt != '?' and not nxt.isalpha():
+                    self.pos += 1
+                    return HTMLToken("Character", data="<")
+
         # If this is the last character, treat it as text
         if self.pos + 1 >= self.length:
             self.pos += 1

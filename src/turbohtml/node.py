@@ -331,7 +331,7 @@ class Node:
             stop_at: Node to stop at (exclusive)
             predicate: Optional filter function - only nodes matching this are included
         Returns:
-            List of ancestors in reverse order (outermost first)
+            List of matching ancestors ordered outermost->innermost (rootward first, nearest last)
         """
         ancestors = []
         current = self

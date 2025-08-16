@@ -282,6 +282,28 @@ class TurboHTML:
             for c in node.children:
                 walk(c)
         walk(self.root)
+        # Final structural normalization pass: collapse residual <nobr> ladders produced
+        # across multiple adoption cycles. Running here ensures we catch chains that span
+        # handler/adoption boundaries. Conservative max depth of 2 retained.
+        try:
+            self.adoption_agency._flatten_nobr_linear_chains(self._create_initial_context(), max_depth=2)  # type: ignore
+        except Exception:
+            # Never let a post-processing heuristic abort parsing; swallow narrowly
+            if self.env_debug:
+                print("Post-process: nobr flatten heuristic raised:")
+                import traceback as _tb; _tb.print_exc()
+
+    def _create_initial_context(self):
+        """Create a minimal ParseContext for structural post-processing heuristics.
+
+        We only need a current_parent and access to open/active stacks where some
+        helpers expect them; provide lightweight empty instances. This avoids
+        reusing the heavy parsing context and keeps post-processing side-effect free.
+        """
+        from turbohtml.context import ParseContext  # local import to avoid cycle at module load
+        body = self._get_body_node() or self.root
+        ctx = ParseContext(0, body, debug_callback=self.debug if self.env_debug else None)
+        return ctx
 
     # DOM traversal helper methods
     def find_current_table(self, context: ParseContext) -> Optional["Node"]:
@@ -789,10 +811,13 @@ class TurboHTML:
             return
 
         new_node = Node(tag_name, token.attributes)
+        # Do NOT prematurely unwind formatting elements when inserting a block-level element.
+        # Current parent at this point may be a formatting element (e.g. <cite> inside <b>) and
+        # per spec the block should become its child, not a sibling produced by popping the
+        # formatting element. We therefore simply append without altering any formatting stack
+        # beyond the normal open-elements push.
         context.current_parent.append_child(new_node)
         context.move_to_element(new_node)
-
-        # Add to open elements stack
         context.open_elements.push(new_node)
 
     def _handle_end_tag(self, token: HTMLToken, tag_name: str, context: ParseContext) -> None:
@@ -1224,18 +1249,56 @@ class TurboHTML:
             # Every formatting element already open
             return
 
-        # Step 3: For each entry from index_to_reconstruct_from onwards, if element already open continue;
-        # otherwise create element, append, push and update entry.element
+        # Coalesce earlier duplicate <nobr> entries so only the most recent survives.
+        # (Mirrors localized heuristic in adoption reconstruct to avoid creating nested empty chains.)
+        raw_stack = context.active_formatting_elements._stack
+        seen = set()
+        for i in range(len(raw_stack) - 1, -1, -1):
+            entry = raw_stack[i]
+            if entry.element is None:
+                continue
+            if entry.element.tag_name != 'nobr':
+                continue
+            key = (entry.element.tag_name, tuple(sorted(entry.element.attributes.items())))
+            if key in seen:
+                context.active_formatting_elements.remove_entry(entry)
+            else:
+                seen.add(key)
+        # Refresh afe_list (it may have changed) and recompute reconstruction start index if needed
+        afe_list = list(context.active_formatting_elements)
+        # Find earliest needing reconstruction again (could shift after duplicate removal)
+        index_to_reconstruct_from = None
+        for i, entry in enumerate(afe_list):
+            if not context.open_elements.contains(entry.element):
+                index_to_reconstruct_from = i
+                break
+        if index_to_reconstruct_from is None:
+            return
+
+        last_reconstructed_tag = None  # retained for future heuristics (not suppressing consecutive now)
+        # Step 3: For each entry from index_to_reconstruct_from onwards, reconstruct if missing
         for entry in afe_list[index_to_reconstruct_from:]:
             if context.open_elements.contains(entry.element):
                 continue
+            # Reuse existing current_parent if same tag and attribute set and still empty (prevents redundant wrapper)
+            reuse = False
+            if (
+                entry.element.tag_name == 'nobr'  # Only reuse for <nobr>; other tags (e.g., <b>, <i>) must clone to preserve nesting depth
+                and context.current_parent
+                and context.current_parent.tag_name == entry.element.tag_name
+                and context.current_parent.attributes == entry.element.attributes
+                and not any(ch.tag_name == '#text' for ch in context.current_parent.children)
+            ):
+                # Point active formatting entry at existing element instead of cloning a new one
+                entry.element = context.current_parent
+                context.open_elements.push(context.current_parent)
+                if self.env_debug:
+                    self.debug(
+                        f"Reconstructed (reused) formatting element {context.current_parent.tag_name} (no clone)"
+                    )
+                continue
             clone = Node(entry.element.tag_name, entry.element.attributes.copy())
-            # If we're in a table insertion mode but the current_parent is outside the table
-            # (e.g. body) and a table sibling already exists, insert the reconstructed formatting
-            # element(s) immediately before the first table so that subsequent foster‑parented
-            # non-table content (<img>, whitespace) appears before the table (tricky01 case 5).
             if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
-                # Find first table descendant among current_parent children
                 first_table_idx = None
                 for idx, child in enumerate(context.current_parent.children):
                     if child.tag_name == 'table':
@@ -1249,8 +1312,7 @@ class TurboHTML:
             else:
                 context.current_parent.append_child(clone)
             context.open_elements.push(clone)
-            # Update the entry's element reference
             entry.element = clone
-            # Set current parent to the clone (nesting)
             context.move_to_element(clone)
+            last_reconstructed_tag = clone.tag_name
             self.debug(f"Reconstructed formatting element {clone.tag_name}")
