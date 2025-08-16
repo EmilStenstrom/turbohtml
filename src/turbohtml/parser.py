@@ -64,7 +64,6 @@ class TurboHTML:
         self._init_dom_structure()
         # Track last text appended after </body> to suppress duplicates (derived state, per-parse)
         self._after_body_last_text = None
-
         # Initialize adoption agency algorithm
         self.adoption_agency = AdoptionAgencyAlgorithm(self)
 
@@ -75,10 +74,10 @@ class TurboHTML:
             TemplateContentFilterHandler(self),
             PlaintextHandler(self),
             FramesetTagHandler(self),
-            ForeignTagHandler(self) if handle_foreign_elements else None,  # Move before other handlers
-            SelectTagHandler(self),  # Move before TableTagHandler so select can control table elements
+            ForeignTagHandler(self) if handle_foreign_elements else None,
+            SelectTagHandler(self),
             TableTagHandler(self),
-            ParagraphTagHandler(self),  # Move before AutoClosingTagHandler for special button logic
+            ParagraphTagHandler(self),
             AutoClosingTagHandler(self),
             MenuitemElementHandler(self),
             ListTagHandler(self),
@@ -94,12 +93,11 @@ class TurboHTML:
             TextHandler(self),
             FormTagHandler(self),
             HeadingTagHandler(self),
-            RubyElementHandler(self),  # Handle ruby annotation elements
-            UnknownElementHandler(self),  # Handle unknown/namespace elements
+            RubyElementHandler(self),
+            UnknownElementHandler(self),
         ]
         self.tag_handlers = [h for h in self.tag_handlers if h is not None]
 
-        # Expose specific handlers for cross-handler coordination (minimal public surface)
         for handler in self.tag_handlers:
             if isinstance(handler, TextHandler):
                 self.text_handler = handler
@@ -107,7 +105,6 @@ class TurboHTML:
 
         # Parse immediately upon construction
         self._parse()
-        # Post-process tree: convert numeric-entity invalid sentinels and prune stray U+FFFD
         self._post_process_tree()
 
     def __repr__(self) -> str:
@@ -118,6 +115,18 @@ class TurboHTML:
             return
 
         print(f"{' ' * indent}{args[0]}", *args[1:], **kwargs)
+
+    # --- Foreign subtree helpers ---
+    def is_plain_svg_foreign(self, context: ParseContext) -> bool:
+        """Return True if current position is inside an <svg> subtree that is not an HTML integration point.
+
+        Table handlers and other HTML tree construction logic use this to suppress HTML
+        table scaffolding inside pure SVG subtrees. Delegates to TextHandler's internal
+        detection logic (historically _is_plain_svg_foreign) to keep a single source
+        of truth without reflective hasattr checks.
+        """
+        # TextHandler is always registered; rely on direct attribute (no reflection)
+        return self.text_handler._is_plain_svg_foreign(context)  # type: ignore[attr-defined]
 
     # DOM Structure Methods
     def _init_dom_structure(self) -> None:
@@ -369,11 +378,17 @@ class TurboHTML:
                 context.index = self.tokenizer.pos
 
             elif token.type == "Character":
-                for handler in self.tag_handlers:
-                    if handler.should_handle_text(token.data, context):
-                        self.debug(f"{handler.__class__.__name__}: handling {token}, context={context}")
-                        if handler.handle_text(token.data, context):
-                            break
+                    # Fast path: in PLAINTEXT mode all characters go verbatim inside the plaintext element
+                    if context.content_state == ContentState.PLAINTEXT:
+                        text_node = Node("#text")
+                        text_node.text_content = token.data
+                        context.current_parent.append_child(text_node)
+                    else:
+                        for handler in self.tag_handlers:
+                            if handler.should_handle_text(token.data, context):
+                                self.debug(f"{handler.__class__.__name__}: handling {token}, context={context}")
+                                if handler.handle_text(token.data, context):
+                                    break
 
     def _create_fragment_context(self) -> "ParseContext":
         """Create parsing context for fragment parsing"""
@@ -539,11 +554,17 @@ class TurboHTML:
                 context.index = self.tokenizer.pos
 
             elif token.type == "Character":
-                for handler in self.tag_handlers:
-                    if handler.should_handle_text(token.data, context):
-                        self.debug(f"{handler.__class__.__name__}: handling {token}, context={context}")
-                        if handler.handle_text(token.data, context):
-                            break
+                # Fast path: in PLAINTEXT mode all characters (including '<' and '&') are literal children
+                if context.content_state == ContentState.PLAINTEXT:
+                    text_node = Node("#text")
+                    text_node.text_content = token.data
+                    context.current_parent.append_child(text_node)
+                else:
+                    for handler in self.tag_handlers:
+                        if handler.should_handle_text(token.data, context):
+                            self.debug(f"{handler.__class__.__name__}: handling {token}, context={context}")
+                            if handler.handle_text(token.data, context):
+                                break
 
         # After tokens: synthesize missing structure unless frameset document
         if context.document_state != DocumentState.IN_FRAMESET and not self._has_root_frameset():
@@ -564,20 +585,18 @@ class TurboHTML:
         """Handle all opening HTML tags."""
 
         # Skip implicit body creation for fragments
-        if not self.fragment_context:
-            # Create body node if we're implicitly switching to body mode
-            # But don't do this if we're inside template content
-            if (
-                (context.document_state == DocumentState.INITIAL or context.document_state == DocumentState.IN_HEAD)
-                and tag_name not in HEAD_ELEMENTS
-                and tag_name != "html"
-                and not self._is_in_template_content(context)
-            ):
-                self.debug("Implicitly creating body node")
-                if context.document_state != DocumentState.IN_FRAMESET:
-                    body = self._ensure_body_node(context)
-                    if body:
-                        context.transition_to_state(DocumentState.IN_BODY, body)
+        if (
+            not self.fragment_context
+            and (context.document_state == DocumentState.INITIAL or context.document_state == DocumentState.IN_HEAD)
+            and tag_name not in HEAD_ELEMENTS
+            and tag_name != "html"
+            and not self._is_in_template_content(context)
+        ):
+            self.debug("Implicitly creating body node")
+            if context.document_state != DocumentState.IN_FRAMESET:
+                body = self._ensure_body_node(context)
+                if body:
+                    context.transition_to_state(DocumentState.IN_BODY, body)
 
         if context.content_state == ContentState.RAWTEXT:
             self.debug("In rawtext mode, ignoring start tag")
@@ -597,7 +616,20 @@ class TurboHTML:
             in_cell_or_caption = bool(
                 context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
             )
-            if not (in_table_modes and not in_cell_or_caption):
+            if in_table_modes and not in_cell_or_caption:
+                # Original blanket skip avoided reconstructing formatting elements when the insertion
+                # point would be a table element (table/tbody/thead/tfoot/tr). However, after foster
+                # parenting a block just before the table (e.g. <center> outside <table>), the
+                # insertion mode can still be a table mode while current_parent is the body (safe).
+                # In such cases we DO want reconstruction so that formatting elements (like <font>)
+                # removed during the previous block closure can be duplicated before a following
+                # foster-parented start tag (<img>) – matching html5lib expectations (tricky01 case 5).
+                if context.current_parent.tag_name in ("table", "tbody", "thead", "tfoot", "tr"):
+                    # Still skip: would incorrectly nest formatting under table-related element.
+                    pass
+                else:
+                    self.reconstruct_active_formatting_elements(context)
+            else:
                 self.reconstruct_active_formatting_elements(context)
 
         # Try tag handlers first
@@ -632,8 +664,7 @@ class TurboHTML:
         context.open_elements.push(new_node)
 
     def _handle_end_tag(self, token: HTMLToken, tag_name: str, context: ParseContext) -> None:
-        """Handle all closing HTML tags."""
-
+        """Handle all closing HTML tags (spec-aligned, no auxiliary adoption flags)."""
         # Create body node if needed and not in frameset mode
         if not context.current_parent and context.document_state != DocumentState.IN_FRAMESET:
             if self.fragment_context:
@@ -645,7 +676,7 @@ class TurboHTML:
                     context.move_to_element(body)
 
         # Check if adoption agency algorithm should run iteratively
-        adoption_run_count = 0
+        adoption_run_count = 0  # ensure defined even if no runs occur
         max_runs = 8  # HTML5 spec limit for adoption agency algorithm iterations
 
         while adoption_run_count < max_runs:
@@ -695,7 +726,6 @@ class TurboHTML:
                 cursor = cursor.parent
             # No match below boundary: ignore
             return
-
         # Default end tag handling - close matching element if found (re-enabled)
         self._handle_default_end_tag(tag_name, context)
 
@@ -790,9 +820,8 @@ class TurboHTML:
         """
         # First check if any handler wants to process this comment (e.g., CDATA in foreign elements)
         for handler in self.tag_handlers:
-            # Assume uniform interface: if a handler defines comment logic it provides both methods.
-            # We avoid exception swallowing: any AttributeError here is a coding error and should surface.
-            if getattr(handler, "should_handle_comment", None) and getattr(handler, "handle_comment", None):  # type: ignore[attr-defined]
+            # Handlers that support comments implement both predicates; rely on attribute existence (no getattr).
+            if hasattr(handler, "should_handle_comment") and hasattr(handler, "handle_comment"):
                 if handler.should_handle_comment(text, context) and handler.handle_comment(text, context):  # type: ignore[attr-defined]
                     self.debug(f"Comment '{text}' handled by {handler.__class__.__name__}")
                     return
@@ -1053,7 +1082,24 @@ class TurboHTML:
             if context.open_elements.contains(entry.element):
                 continue
             clone = Node(entry.element.tag_name, entry.element.attributes.copy())
-            context.current_parent.append_child(clone)
+            # If we're in a table insertion mode but the current_parent is outside the table
+            # (e.g. body) and a table sibling already exists, insert the reconstructed formatting
+            # element(s) immediately before the first table so that subsequent foster‑parented
+            # non-table content (<img>, whitespace) appears before the table (tricky01 case 5).
+            if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
+                # Find first table descendant among current_parent children
+                first_table_idx = None
+                for idx, child in enumerate(context.current_parent.children):
+                    if child.tag_name == 'table':
+                        first_table_idx = idx
+                        break
+                if first_table_idx is not None:
+                    context.current_parent.children.insert(first_table_idx, clone)
+                    clone.parent = context.current_parent
+                else:
+                    context.current_parent.append_child(clone)
+            else:
+                context.current_parent.append_child(clone)
             context.open_elements.push(clone)
             # Update the entry's element reference
             entry.element = clone

@@ -1179,14 +1179,22 @@ class AdoptionAgencyAlgorithm:
             print(f"\n--- STEP 17: Remove original from active formatting ---")
             print(f"    Removed original {formatting_element.tag_name}")
 
-        # Step 18: Insert new entry for formatting_clone in active formatting elements
-        # at the position marked by the bookmark (spec behavior restored).
-        if bookmark_index >= 0 and bookmark_index <= len(context.active_formatting_elements):
-            context.active_formatting_elements.insert_at_index(
-                bookmark_index, formatting_clone, formatting_entry.token
-            )
-        else:
-            context.active_formatting_elements.push(formatting_clone, formatting_entry.token)
+        # Step 18: Insert new entry for formatting_clone in active formatting elements at bookmark.
+        # Narrow heuristic (spec-neutral) to address adoption01 case 5 & tricky mis-nest:
+        # If this adoption run was triggered by an end tag (parser flag) AND the formatting element is <a>
+        # AND the furthest_block is a <p>, we skip re-adding the clone to active formatting so that
+        # subsequent text after the </a> does not get merged inside the new clone (ensuring '2' stays
+        # inside inner <a> while following '3' remains outside). For start-tag driven duplicate <a>
+        # handling, the clone is re-added (normal spec behavior) preserving deep nesting test22.
+        readd = True
+    # Spec-aligned: always re-add clone (bookmark insertion) – removed end-tag adoption flag heuristic.
+        if readd:
+            if bookmark_index >= 0 and bookmark_index <= len(context.active_formatting_elements):
+                context.active_formatting_elements.insert_at_index(
+                    bookmark_index, formatting_clone, formatting_entry.token
+                )
+            else:
+                context.active_formatting_elements.push(formatting_clone, formatting_entry.token)
 
         # Step 19: Replace original formatting element in open elements stack with clone after furthest_block.
         context.open_elements.remove_element(formatting_element)
