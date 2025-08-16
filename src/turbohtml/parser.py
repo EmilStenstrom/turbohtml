@@ -771,8 +771,10 @@ class TurboHTML:
             return False
     # Template transparent depth bookkeeping not used (frameset templates stay transparent)
         if tag_name == "html":
-            # Update attributes on existing root element
-            self.html_node.attributes.update(token.attributes)
+            # Merge attributes: do not overwrite existing ones per spec
+            for k, v in token.attributes.items():
+                if k not in self.html_node.attributes:
+                    self.html_node.attributes[k] = v
             context.move_to_element(self.html_node)
 
             # Don't immediately switch to IN_BODY - let the normal flow handle that

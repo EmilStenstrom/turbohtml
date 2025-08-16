@@ -3569,6 +3569,12 @@ class RawtextTagHandler(SelectAwareHandler):
         tag_name = token.tag_name
         self.debug(f"handling {tag_name}")
 
+        # Per spec, certain rawtext elements (e.g. xmp) act like block elements that
+        # implicitly close an open <p>. (Similar handling already exists for plaintext.)
+        if tag_name == "xmp" and context.current_parent.tag_name == "p":
+            self.debug("Closing paragraph before xmp")
+            context.move_up_one_level()
+
         # Create and append the new node
         new_node = self._create_element(token)
         context.current_parent.append_child(new_node)
@@ -5320,13 +5326,15 @@ class HtmlTagHandler(TagHandler):
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         self.debug("handling start tag")
-        # Ignore subsequent html start tags - only the first one should set attributes
-        if self.parser.html_node and self.parser.html_node.attributes:
-            self.debug("Ignoring subsequent html start tag (attributes already set)")
-            return True
-        # Update html node attributes if it exists and has no attributes yet
-        if self.parser.html_node:
-            self.parser.html_node.attributes.update(token.attributes)
+        # Spec: For a second <html> start tag, merge only attributes that are not already present.
+        html_node = self.parser.html_node
+        if html_node:
+            if not html_node.attributes:
+                html_node.attributes.update(token.attributes)
+            else:
+                for k, v in token.attributes.items():
+                    if k not in html_node.attributes:
+                        html_node.attributes[k] = v
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
