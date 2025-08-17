@@ -1242,6 +1242,8 @@ class TurboHTML:
         index_to_reconstruct_from = None
         for i, entry in enumerate(afe_list):
             # Skip markers (not implemented) – all entries treated as normal
+            if entry.element is None:
+                continue
             if not context.open_elements.contains(entry.element):
                 index_to_reconstruct_from = i
                 break
@@ -1249,35 +1251,19 @@ class TurboHTML:
             # Every formatting element already open
             return
 
-        # Coalesce earlier duplicate <nobr> entries so only the most recent survives.
-        # (Mirrors localized heuristic in adoption reconstruct to avoid creating nested empty chains.)
-        raw_stack = context.active_formatting_elements._stack
-        seen = set()
-        for i in range(len(raw_stack) - 1, -1, -1):
-            entry = raw_stack[i]
-            if entry.element is None:
-                continue
-            if entry.element.tag_name != 'nobr':
-                continue
-            key = (entry.element.tag_name, tuple(sorted(entry.element.attributes.items())))
-            if key in seen:
-                context.active_formatting_elements.remove_entry(entry)
-            else:
-                seen.add(key)
-        # Refresh afe_list (it may have changed) and recompute reconstruction start index if needed
+        # Do NOT coalesce duplicate <nobr> entries: allowing multiple entries (subject to Noah's Ark clause)
+        # enables reconstruction to produce sibling <nobr> wrappers expected by html5lib tests (tests26 cases).
+        # Recompute afe_list (unchanged) for clarity.
         afe_list = list(context.active_formatting_elements)
-        # Find earliest needing reconstruction again (could shift after duplicate removal)
-        index_to_reconstruct_from = None
-        for i, entry in enumerate(afe_list):
-            if not context.open_elements.contains(entry.element):
-                index_to_reconstruct_from = i
-                break
+        # index_to_reconstruct_from already computed above; if somehow None (race), abort.
         if index_to_reconstruct_from is None:
             return
 
         last_reconstructed_tag = None  # retained for future heuristics (not suppressing consecutive now)
         # Step 3: For each entry from index_to_reconstruct_from onwards, reconstruct if missing
         for entry in afe_list[index_to_reconstruct_from:]:
+            if entry.element is None:
+                continue
             if context.open_elements.contains(entry.element):
                 continue
             # Reuse existing current_parent if same tag and attribute set and still empty (prevents redundant wrapper)

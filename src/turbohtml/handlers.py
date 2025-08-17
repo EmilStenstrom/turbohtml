@@ -4078,7 +4078,7 @@ class AutoClosingTagHandler(TemplateAwareHandler):
                 self.debug(f"Found formatting element ancestor: {formatting_element}")
             if has_active_formatting:
                 self.debug(
-                    f"Found active formatting elements: {[e.element.tag_name for e in context.active_formatting_elements]}"
+                    f"Found active formatting elements: {[e.element.tag_name if e.element else 'MARKER' for e in context.active_formatting_elements]}"
                 )
 
             # If we're in a container element but have active formatting elements,
