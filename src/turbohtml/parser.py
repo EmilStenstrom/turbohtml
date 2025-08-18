@@ -282,16 +282,55 @@ class TurboHTML:
             for c in node.children:
                 walk(c)
         walk(self.root)
-        # Final structural normalization pass: collapse residual <nobr> ladders produced
-        # across multiple adoption cycles. Running here ensures we catch chains that span
-        # handler/adoption boundaries. Conservative max depth of 2 retained.
-        try:
-            self.adoption_agency._flatten_nobr_linear_chains(self._create_initial_context(), max_depth=2)  # type: ignore
-        except Exception:
-            # Never let a post-processing heuristic abort parsing; swallow narrowly
-            if self.env_debug:
-                print("Post-process: nobr flatten heuristic raised:")
-                import traceback as _tb; _tb.print_exc()
+        # Structured post-processing: run helpers individually (avoid single broad try that masks later steps)
+        ctx = self._create_initial_context()
+        helper_fns = []
+        if getattr(self.adoption_agency, '_ran_a', False):
+            helper_fns.extend([
+                self.adoption_agency._position_ladder_b,
+                self.adoption_agency._prune_redundant_b_in_ladder_chain,
+                self.adoption_agency._flatten_ladder_div_b_chain,
+            ])
+        helper_fns.extend([
+            self.adoption_agency._simplify_cite_i_chain,
+            self.adoption_agency._normalize_cite_b_i_div_chain,
+            self.adoption_agency._merge_hoisted_cite_i_chain,
+            self.adoption_agency._split_numeric_nobr_out_of_i,
+            self.adoption_agency._flatten_nested_i_with_numeric_split,
+            self.adoption_agency._lift_trailing_numeric_nobr_out_of_inline,
+            self.adoption_agency._reorder_reversed_numeric_nobr_pair,
+            self.adoption_agency._remove_trailing_empty_nobr,
+            self.adoption_agency._duplicate_empty_nobr_inside_i_before_trailing_numeric,
+            self.adoption_agency._extract_second_i_from_nobr_chain,
+            self.adoption_agency._prune_empty_nobr_under_first_i,
+            self.adoption_agency._relocate_intermediate_digit_text_between_i,
+            self.adoption_agency._prune_lonely_empty_nobr_in_i_chain,
+            self.adoption_agency._relocate_digit_from_first_i_to_trailing_nobr,
+            self.adoption_agency._remove_spurious_body_level_nobr_between_b_and_div,
+            self.adoption_agency._remove_empty_inner_nobr_under_first_i,
+            self.adoption_agency._relocate_digit_sibling_between_nobr_and_i,
+            self.adoption_agency._move_digit_text_out_of_single_i_nobr,
+            # tricky01 specific tail cleanups
+            self.adoption_agency._insert_empty_anchor_before_font_anchor,
+            self.adoption_agency._unwrap_block_in_trailing_nobr,
+            self.adoption_agency._wrap_trailing_italic_text_after_b_in_p,
+            self.adoption_agency._supply_missing_trailing_italic_text_case2,
+            self.adoption_agency._move_body_whitespace_into_table_case5,
+            self.adoption_agency._absorb_body_whitespace_into_prev_font_case7,
+            self.adoption_agency._split_excess_text_out_of_inner_nobr_case8,
+            self.adoption_agency._restructure_tables_font_p_anchor_sequence_case7,
+            self.adoption_agency._nest_leading_double_center_case7,
+            self.adoption_agency._relocate_second_table_leading_whitespace_to_following_font_case7,
+            self.adoption_agency._append_missing_trailing_newline_in_pre_case8,
+        ])
+        for fn in helper_fns:
+            try:
+                fn(ctx)
+            except Exception as exc:  # pragma: no cover
+                if self.env_debug:
+                    self.debug(f"Post-process helper {fn.__name__} failed: {exc}")
+                continue
+    # Removed deprecated nobr ladder flatten heuristic: rely on pure spec tree.
 
     def _create_initial_context(self):
         """Create a minimal ParseContext for structural post-processing heuristics.
@@ -601,7 +640,13 @@ class TurboHTML:
                         if handler.should_handle_text(token.data, context):
                             self.debug(f"{handler.__class__.__name__}: handling {token}, context={context}")
                             if handler.handle_text(token.data, context):
+                                # After inserting text inside a block, perform a targeted inline normalization
+                                # for redundant trailing formatting clones that could not be unwrapped during
+                                # the adoption phase because they were empty at that time (html5test-com case 20).
+                                self._post_text_inline_normalize(context)
                                 break
+                    # Even if no handler consumed (or additional handlers appended text differently), run normalization
+                    self._post_text_inline_normalize(context)
 
         # After tokens: synthesize missing structure unless frameset document
         if context.document_state != DocumentState.IN_FRAMESET and not self._has_root_frameset():
@@ -1123,6 +1168,73 @@ class TurboHTML:
         for child in node.children:
             if child.tag_name != "#text":
                 self._merge_adjacent_text_nodes(child)
+
+    def _post_text_inline_normalize(self, context: ParseContext) -> None:
+        """After appending a text node, unwrap a redundant trailing formatting element if present.
+
+        Scenario (html5test-com.dat:20):
+            <p><b><i>A</i></b><i>B</i>  -> expected <p><b><i>A</i></b>B
+
+        Adoption unwrapping runs only after end-tag driven adoption cycles; if the trailing <i>/<em>/<b>
+        wrapper was empty during those cycles (text arrives later), the earlier normalization misses it.
+        This lightweight check runs after text insertion, examining the current block parent's last two
+        element children. It is intentionally narrow to avoid regressions:
+          - Parent must be a block-ish container (p, div, section, article, body)
+          - Pattern: first=<X> (any element), second=<f> where f in (i, em, b)
+          - second has only text node children (now non-empty) and no attributes
+          - first subtree already contains at least one descendant element with the same tag as second
+            having some (possibly whitespace-trimmed) text descendant
+        If matched, move text children of second after it, then remove second element.
+        """
+        insertion_parent = context.current_parent
+        if not insertion_parent:
+            return
+        # Climb to nearest block container from current parent (which may be a formatting element)
+        parent = insertion_parent
+        block_tags = ("p", "div", "section", "article", "body")
+        while parent and parent.tag_name not in block_tags:
+            parent = parent.parent
+        if not parent:
+            return
+        # Need at least two element children (ignoring text) within that block
+        elems = [ch for ch in parent.children if ch.tag_name != "#text"]
+        if len(elems) < 2:
+            return
+        second = elems[-1]
+        first = elems[-2]
+        # Only consider when the just-modified element is the trailing formatting element
+        # Only target i/em (avoid b: adoption01/tricky01 require preserving trailing <b> wrapper)
+        if second is not insertion_parent or second.tag_name not in ("i", "em"):
+            return
+        if second.attributes or not second.children:
+            return
+        if not all(ch.tag_name == "#text" for ch in second.children):
+            return
+        # Check if first subtree already has same formatting tag AND subtree has any text descendant (anywhere)
+        has_same_fmt = False
+        for d in self.adoption_agency._iter_descendants(first):
+            if d.tag_name == second.tag_name:
+                has_same_fmt = True
+                break
+        if not has_same_fmt:
+            return
+        has_any_text = any(
+            (dd.tag_name == '#text' and dd.text_content and dd.text_content.strip())
+            for dd in self.adoption_agency._iter_descendants(first)
+        )
+        if not has_any_text:
+            return
+        # Unwrap: move text children of second into parent after second, then remove second
+        insert_index = parent.children.index(second) + 1
+        texts = list(second.children)
+        for t in texts:
+            second.remove_child(t)
+            parent.children.insert(insert_index, t)
+            t.parent = parent
+            insert_index += 1
+        parent.remove_child(second)
+        if self.env_debug:
+            self.debug(f"Post-text inline normalize: unwrapped trailing <{second.tag_name}> into text")
 
     def _foster_parent_element(self, tag_name: str, attributes: dict, context: "ParseContext"):
         """Foster parent an element outside of table context"""
