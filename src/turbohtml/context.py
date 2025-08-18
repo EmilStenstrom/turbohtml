@@ -87,9 +87,6 @@ class ParseContext:
                 self._debug(f"Content State change: {self._content_state} -> {new_state}")
             self._content_state = new_state
 
-    def debug(self, message):
-        if self._debug:
-            self._debug(message)
 
     # --- State transitions ---
     def transition_to_state(self, new_state, new_parent=None):
@@ -119,12 +116,6 @@ class ParseContext:
             return True
         return False
 
-    def close_element_by_tag(self, tag_name, stop_at_boundary=False):
-        ancestor = self._current_parent.find_ancestor(tag_name, stop_at_boundary=stop_at_boundary)
-        if ancestor:
-            self._set_current_parent(ancestor.parent or self._current_parent)
-            return True
-        return False
 
     def enter_element(self, element):
         self._set_current_parent(element)

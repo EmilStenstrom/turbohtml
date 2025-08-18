@@ -59,6 +59,8 @@ class TurboHTML:
         self.env_debug = debug
         self.html = html
         self.fragment_context = fragment_context
+    # strict_spec flag removed: parser now always operates in spec-first mode without
+    # legacy heuristic post-processing passes.
 
         # Reset all state for each new parser instance
         self._init_dom_structure()
@@ -282,55 +284,10 @@ class TurboHTML:
             for c in node.children:
                 walk(c)
         walk(self.root)
-        # Structured post-processing: run helpers individually (avoid single broad try that masks later steps)
-        ctx = self._create_initial_context()
-        helper_fns = []
-        if getattr(self.adoption_agency, '_ran_a', False):
-            helper_fns.extend([
-                self.adoption_agency._position_ladder_b,
-                self.adoption_agency._prune_redundant_b_in_ladder_chain,
-                self.adoption_agency._flatten_ladder_div_b_chain,
-            ])
-        helper_fns.extend([
-            self.adoption_agency._simplify_cite_i_chain,
-            self.adoption_agency._normalize_cite_b_i_div_chain,
-            self.adoption_agency._merge_hoisted_cite_i_chain,
-            self.adoption_agency._split_numeric_nobr_out_of_i,
-            self.adoption_agency._flatten_nested_i_with_numeric_split,
-            self.adoption_agency._lift_trailing_numeric_nobr_out_of_inline,
-            self.adoption_agency._reorder_reversed_numeric_nobr_pair,
-            self.adoption_agency._remove_trailing_empty_nobr,
-            self.adoption_agency._duplicate_empty_nobr_inside_i_before_trailing_numeric,
-            self.adoption_agency._extract_second_i_from_nobr_chain,
-            self.adoption_agency._prune_empty_nobr_under_first_i,
-            self.adoption_agency._relocate_intermediate_digit_text_between_i,
-            self.adoption_agency._prune_lonely_empty_nobr_in_i_chain,
-            self.adoption_agency._relocate_digit_from_first_i_to_trailing_nobr,
-            self.adoption_agency._remove_spurious_body_level_nobr_between_b_and_div,
-            self.adoption_agency._remove_empty_inner_nobr_under_first_i,
-            self.adoption_agency._relocate_digit_sibling_between_nobr_and_i,
-            self.adoption_agency._move_digit_text_out_of_single_i_nobr,
-            # tricky01 specific tail cleanups
-            self.adoption_agency._insert_empty_anchor_before_font_anchor,
-            self.adoption_agency._unwrap_block_in_trailing_nobr,
-            self.adoption_agency._wrap_trailing_italic_text_after_b_in_p,
-            self.adoption_agency._supply_missing_trailing_italic_text_case2,
-            self.adoption_agency._move_body_whitespace_into_table_case5,
-            self.adoption_agency._absorb_body_whitespace_into_prev_font_case7,
-            self.adoption_agency._split_excess_text_out_of_inner_nobr_case8,
-            self.adoption_agency._restructure_tables_font_p_anchor_sequence_case7,
-            self.adoption_agency._nest_leading_double_center_case7,
-            self.adoption_agency._relocate_second_table_leading_whitespace_to_following_font_case7,
-            self.adoption_agency._append_missing_trailing_newline_in_pre_case8,
-        ])
-        for fn in helper_fns:
-            try:
-                fn(ctx)
-            except Exception as exc:  # pragma: no cover
-                if self.env_debug:
-                    self.debug(f"Post-process helper {fn.__name__} failed: {exc}")
-                continue
-    # Removed deprecated nobr ladder flatten heuristic: rely on pure spec tree.
+
+        # All legacy heuristic structural normalizations removed: parser output is now purely the
+        # product of the tokenization + tree construction algorithms above.
+    # End post-process
 
     def _create_initial_context(self):
         """Create a minimal ParseContext for structural post-processing heuristics.
@@ -1378,6 +1335,7 @@ class TurboHTML:
                 continue
             if context.open_elements.contains(entry.element):
                 continue
+            # Removed strict_spec duplicate suppression heuristic; always reconstruct per spec when missing.
             # Reuse existing current_parent if same tag and attribute set and still empty (prevents redundant wrapper)
             reuse = False
             if (

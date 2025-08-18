@@ -756,40 +756,8 @@ class TextHandler(TagHandler):
         #   - Incoming text starts with a single space and contains a non-space character
         #   - There is no existing adjacent emphasis sibling already capturing text.
         # This runs BEFORE _append_text so the appended text lands inside the new wrapper.
-        if text and text.startswith(' ') and any(c != ' ' for c in text) and context.current_parent:
-            parent = context.current_parent
-            # Look for trailing <b> child that contains an <i>/<em> descendant (produced by adoption)
-            last_fmt = None
-            if parent.children:
-                for ch in reversed(parent.children):
-                    if ch.tag_name == '#text' and (not ch.text_content or ch.text_content.strip() == ''):
-                        continue
-                    last_fmt = ch; break
-            if last_fmt and last_fmt.tag_name in ('b','strong'):
-                # Descendant emphasis?
-                has_emphasis = False
-                stack = list(last_fmt.children)
-                while stack:
-                    nd = stack.pop()
-                    if nd.tag_name in ('i','em'):
-                        has_emphasis = True; break
-                    stack.extend(nd.children)
-                if has_emphasis:
-                    # Ensure next significant sibling is not already emphasis
-                    next_sig = None
-                    for ch in parent.children[parent.children.index(last_fmt)+1:]:
-                        if ch.tag_name == '#text' and (not ch.text_content or ch.text_content.strip()==''):
-                            continue
-                        next_sig = ch; break
-                    if not (next_sig and next_sig.tag_name in ('i','em')):
-                        new_i = Node('i')
-                        parent.append_child(new_i)
-                        # Make it current insertion point so text is wrapped
-                        context.move_to_element(new_i)
-                        # Track only on open elements stack (not active formatting) so later adoption not affected
-                        context.open_elements.push(new_i)
-                        self.debug('Inserted narrow heuristic emphasis wrapper for leading-space text after misnested b/i')
 
+        # Removed space-trimming heuristic: rely on tokenizer + spec whitespace handling only.
         self._append_text(text, context)
         return True
         
@@ -1288,10 +1256,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 if gp:
                     cur.parent.remove_child(cur)
                     gp.append_child(cur)
-        # Delegate additional chain flattening & adoption02 adjustments to adoption module
-        self.parser.adoption_agency.maybe_flatten_nobr_chains(new_element, context)
-        if tag_name == 'a':
-            self.parser.adoption_agency.apply_adoption02_case2(new_element, context, debug_cb=self.debug)
+    # Removed delegation to adoption heuristics (maybe_flatten_nobr_chains / adoption02_case2) for strict spec.
         return True
 
 
