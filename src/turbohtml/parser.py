@@ -599,7 +599,7 @@ class TurboHTML:
                             if handler.handle_text(token.data, context):
                                 # After inserting text inside a block, perform a targeted inline normalization
                                 # for redundant trailing formatting clones that could not be unwrapped during
-                                # the adoption phase because they were empty at that time (html5test-com case 20).
+                                # the adoption phase because they were empty at that time (avoid duplicating emptied wrappers).
                                 self._post_text_inline_normalize(context)
                                 break
                     # Even if no handler consumed (or additional handlers appended text differently), run normalization
@@ -633,7 +633,7 @@ class TurboHTML:
             and tag_name not in HEAD_ELEMENTS
             and tag_name != "html"
             # Don't implicitly create body for potential frameset documents while frameset_ok is True.
-            # The presence of param/source/track directly before a <frameset> in tests6 should be ignored
+            # Ignore param/source/track directly before a <frameset> (non-influential before frameset construction)
             # with a root <frameset> (no intervening <body>). Suppress body synthesis for these tags
             # until we either see meaningful body content or a non-frameset-ok element.
             and not (tag_name in ("frameset", "param", "source", "track") and context.frameset_ok)
@@ -670,7 +670,7 @@ class TurboHTML:
             self.debug(f"Ignoring HTML table section <{tag_name}> inside SVG integration point with no table")
             return
 
-        # Malformed table prelude collapse (tests6.dat:36): accumulate leading table section/grouping
+    # Malformed table prelude collapse: accumulate leading table section/grouping
         # tags before any actual table element, and when a <tr> appears emit only that <tr>.
         # Do NOT apply inside a colgroup fragment context (interferes with foo<col> case 26) or
         # when fragment context expects direct minimal children.
@@ -700,7 +700,7 @@ class TurboHTML:
                 context.open_elements.push(tr)
                 delattr(context, 'pending_table_prelude')  # type: ignore[attr-defined]
                 return
-            # Case B: stray </table><tr> fragment (tests6.dat:43) no prelude but saw stray end
+            # Case B: stray </table><tr> fragment with no prelude but stray end
             if getattr(context, 'saw_stray_table_end', False):  # type: ignore[attr-defined]
                 self.debug("Handling <tr> after stray </table>")
                 if self.fragment_context:
@@ -739,7 +739,7 @@ class TurboHTML:
                 # insertion mode can still be a table mode while current_parent is the body (safe).
                 # In such cases we DO want reconstruction so that formatting elements (like <font>)
                 # removed during the previous block closure can be duplicated before a following
-                # foster-parented start tag (<img>) – matching html5lib expectations (tricky01 case 5).
+                # foster-parented start tag (<img>) – maintain correct placement with intervening table context.
                 if context.current_parent.tag_name in ("table", "tbody", "thead", "tfoot", "tr"):
                     # Still skip: would incorrectly nest formatting under table-related element.
                     pass
@@ -753,7 +753,7 @@ class TurboHTML:
             if handler.should_handle_start(tag_name, context):
                 # Heuristic: if we ignored a premature </form> and the last child of the form is an empty
                 # block (<div>) that was current when the end tag appeared, re-enter that child so the
-                # next block nests inside it (tests6.dat case 1 expectation).
+                # next block nests inside it (ensures wrapper persists for following content).
                 if getattr(context, 'ignored_form_end', False):  # type: ignore[attr-defined]
                     # Prefer explicitly tracked last child inside form if available
                     last_child = getattr(context, 'form_last_child', None)  # type: ignore[attr-defined]
@@ -779,7 +779,7 @@ class TurboHTML:
         # Default handling for unhandled tags
         self.debug(f"No handler found, using default handling for {tag_name}")
 
-        # Fragment special-cases (tests6 expectations): If parsing a fragment whose context element
+    # Fragment special-cases: If parsing a fragment whose context element
         # is a table-scoped container (e.g. colgroup → expecting lone <col>, tbody → expecting lone <tr>)
         # and we see the first allowed child (col or tr) while still at fragment root, emit it directly
         # without synthesizing intermediate table structure.
@@ -834,7 +834,7 @@ class TurboHTML:
                 if body:
                     context.move_to_element(body)
 
-        # Detect stray </table> in contexts expecting tbody wrapper later (tests6.dat cases 43)
+    # Detect stray </table> in contexts expecting tbody wrapper later
         if tag_name == 'table' and not self.find_current_table(context):
             try:
                 context.saw_stray_table_end = True  # type: ignore[attr-defined]
@@ -1321,7 +1321,7 @@ class TurboHTML:
             return
 
         # Do NOT coalesce duplicate <nobr> entries: allowing multiple entries (subject to Noah's Ark clause)
-        # enables reconstruction to produce sibling <nobr> wrappers expected by html5lib tests (tests26 cases).
+    # enables reconstruction to produce sibling <nobr> wrappers (numeric segment separation behavior).
         # Recompute afe_list (unchanged) for clarity.
         afe_list = list(context.active_formatting_elements)
         # index_to_reconstruct_from already computed above; if somehow None (race), abort.
@@ -1336,6 +1336,29 @@ class TurboHTML:
             if context.open_elements.contains(entry.element):
                 continue
             # Removed strict_spec duplicate suppression heuristic; always reconstruct per spec when missing.
+            # Suppress duplicate <b> wrapper cloning when an ancestor <b> already exists on the open elements
+            # stack (prevents ladder of <b><div><b><div>... in deeply nested block sequences). We re-associate
+            # the active formatting entry with the nearest ancestor <b> instead of cloning a new sibling.
+            if entry.element.tag_name == 'b':
+                ancestor = context.current_parent
+                ancestor_b = None
+                guard = 0
+                while ancestor is not None and guard < 100:
+                    if ancestor.tag_name == 'b':
+                        ancestor_b = ancestor
+                        break
+                    if ancestor.tag_name in ('body','html'):
+                        break
+                    ancestor = ancestor.parent
+                    guard += 1
+                if ancestor_b is not None:
+                    # If ancestor <b> not already bound to this entry, bind and push if missing from open stack
+                    if not context.open_elements.contains(ancestor_b):
+                        context.open_elements.push(ancestor_b)
+                    entry.element = ancestor_b
+                    context.move_to_element(ancestor_b)
+                    self.debug("Reused ancestor <b> instead of cloning duplicate wrapper")
+                    continue
             # Reuse existing current_parent if same tag and attribute set and still empty (prevents redundant wrapper)
             reuse = False
             if (

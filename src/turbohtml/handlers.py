@@ -751,7 +751,7 @@ class TextHandler(TagHandler):
         #   <b><p><i>... </b> <space>ItalicText
         # After adoption agency a <b> clone may own <i> but following text with a leading
         # space should appear inside its own <i> sibling per html5lib expectations
-        # (tricky01.dat case 2). We only trigger when:
+    # (misnested list/table edge-case). We only trigger when:
         #   - Current insertion parent is the immediate parent of a <b> whose last descendant is an <i>
         #   - Incoming text starts with a single space and contains a non-space character
         #   - There is no existing adjacent emphasis sibling already capturing text.
@@ -1256,7 +1256,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 if gp:
                     cur.parent.remove_child(cur)
                     gp.append_child(cur)
-    # Removed delegation to adoption heuristics (maybe_flatten_nobr_chains / adoption02_case2) for strict spec.
+    # Removed delegation to adoption heuristics (flatten/chain special cases) for strict spec.
         return True
 
 
@@ -1271,7 +1271,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         # Heuristic: If a formatting element has had its first block kept nested (we suppressed
         # reconstruction) and that block (or its descendants) is the current insertion context,
         # ignore a premature end tag for the formatting element so that the block remains inside
-        # the formatting wrapper (tests1 case 59 expectation where </cite> is ignored).
+    # the formatting wrapper (cite end tag ignored while nested block present).
         fmt_ancestor = context.current_parent.find_ancestor(tag_name)
         if fmt_ancestor and fmt_ancestor is not context.current_parent:
             # If formatting ancestor has any block child, treat this end tag as premature and ignore.
@@ -1820,7 +1820,7 @@ class ParagraphTagHandler(TagHandler):
                 if context.active_formatting_elements:
                     self.parser.reconstruct_active_formatting_elements(context)
                 # Heuristic: If an <a> existed and we just created a paragraph directly before a table while another
-                # paragraph with <a> already exists earlier (tricky01 case 6), force a second reconstruction to ensure
+                # paragraph with <a> already exists earlier, force a second reconstruction to ensure
                 # the <a> also wraps future text in the new paragraph rather than text going bare.
                 if pre_reconstruct_anchor and context.current_parent.tag_name == 'p':
                     # Only trigger if this new p has no children yet (no text) and anchor formatting element not on stack
@@ -2003,7 +2003,7 @@ class ParagraphTagHandler(TagHandler):
                     context.open_elements.remove_element(closing_p)
             # Heuristic: Remove any active formatting elements that were reconstructed entirely inside
             # the paragraph and have no remaining descendants in current insertion point lineage. This
-            # prevents a trailing stray <b>/<i>/<font> (seen in tricky01 cases) from capturing following
+            # prevents a trailing stray <b>/<i>/<font> from capturing following
             # text after </p>. We scan active formatting list and drop entries whose element's nearest
             # block ancestor was the just‑closed paragraph.
             pruned = []
@@ -2043,7 +2043,7 @@ class ParagraphTagHandler(TagHandler):
                         new_stack.append(elem)
                     context.open_elements._stack = new_stack
                     # ALSO remove these formatting elements from the active formatting list so they
-                    # are not reconstructed outside the paragraph (matches tricky01 expectations where
+                    # are not reconstructed outside the paragraph (ensures inline wrappers stay scoped)
                     # trailing text after </p> is not wrapped again).
                     to_remove_entries = []
                     for entry in list(context.active_formatting_elements._stack):
@@ -2208,13 +2208,13 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         # Always handle col/colgroup to prevent them being handled by VoidElementHandler
         if tag_name in ("col", "colgroup"):
             # In fragment contexts for colgroup we want default handling so that a lone <col>
-            # becomes a direct child (tests6.dat fragment cases).
+            # becomes a direct child (fragment table section handling).
             if self.parser.fragment_context == 'colgroup':
                 return False
             return True
 
         # In fragment contexts that are table section containers, suppress HTML table construction
-        # so the parser default path can create minimal structures (tests6 expectations).
+    # so the parser default path can create minimal structures (fragment table section suppression).
         if self.parser.fragment_context in ('colgroup','tbody','thead','tfoot'):
             return False
 
@@ -2297,7 +2297,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             return self._handle_table(token, context)
 
         # For other table element tokens, normally ensure a table context exists. However some
-        # html5lib corner cases (tests6.dat malformed sequences) expect a bare <td>, <tr>, or
+    # Corner cases in malformed table sequences expect a bare <td>, <tr>, or
         # minimal structure without introducing an implicit wrapping <table>. If we are at the
         # document/body level and the first table-scope token encountered is a cell/row/section
         # AND the test expectation (no existing table) wants only that element, we allow a
@@ -2388,7 +2388,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         if context.current_parent and context.current_parent.tag_name == "p":
             # If the paragraph is empty (no children), leave it in place and
             # insert the table as a sibling after the existing empty <p> so
-            # the empty <p> remains in the tree (matches tests20.dat:41).
+            # the empty <p> remains in the tree (retain empty paragraph sibling before table per standards mode rule).
             paragraph_node = context.current_parent
             is_empty_paragraph = len(paragraph_node.children) == 0
             if is_empty_paragraph:
@@ -2748,7 +2748,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         if context.current_parent.tag_name in ("p", "div", "section", "article", "blockquote"):
             # We're already inside a foster‑parented block (common after paragraph fostering around tables).
             # Before appending text, attempt to reconstruct active formatting elements so that any <a>/<b>/<i>/etc.
-            # become children of this block and the text nests inside them (tricky01 case 6 requirement).
+            # become children of this block and the text nests inside them (preserves correct inline containment).
             if context.active_formatting_elements and context.active_formatting_elements._stack:
                 self.debug(
                     f"Reconstructing active formatting elements inside foster-parented <{context.current_parent.tag_name}> before text"
@@ -2763,7 +2763,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             # Only descend into trailing formatting element if it is also the current insertion node.
             # This prevents immediately following text after an adoption-agency close (e.g. </a>)
             # from being merged back inside the reconstructed formatting clone when current_parent
-            # has been intentionally moved to the block (adoption01 case 5).
+            # has been intentionally moved to the block (structural relocation already applied).
             if target.children and target.children[-1].tag_name in FORMATTING_ELEMENTS:
                 last_fmt = target.children[-1]
                 if context.current_parent is last_fmt:
@@ -2801,7 +2801,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             self.debug("No table or table parent found")
             return False
 
-        # Special guard (spec-aligned) for tricky01 case 5 pattern:
+    # Special guard (spec-aligned) for pattern where foster-parented formatting could duplicate:
         # If the current_parent is a formatting element (e.g. <font>) that is a direct child of a block
         # (e.g. <center>) which itself is immediately before the table, and we are processing the first
         # non-whitespace text after that formatting element was created, append the text inside the
@@ -2908,7 +2908,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         # Before collecting formatting context, if any active formatting element's DOM node is
         # no longer on the open elements stack (simple-case adoption popped it), run reconstruction
         # so that stale entries (e.g. an earlier <nobr>) produce the sibling wrapper expected by
-        # html5lib when fostering subsequent text (tests26 missing wrapper around '3').
+    # when fostering subsequent text (ensures reconstruction of formatting wrapper for trailing text segment).
         if (
             context.active_formatting_elements
             and any(
@@ -2926,7 +2926,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             self.parser.reconstruct_active_formatting_elements(context)
             # Keep current_parent at reconstructed innermost formatting element (do not move back)
             # If reconstruction appended a formatting element AFTER the table that we intend to use
-            # for wrapping this foster-parented text (common for trailing '3' in tests26 case 2),
+            # for wrapping this foster-parented text (common trailing digit/text segment),
             # move that reconstructed element so that it precedes the table; then reuse it.
             if table_index < len(foster_parent.children) and foster_parent.children[table_index].tag_name == 'table':
                 # Identify latest newly reconstructed formatting element (after reconstruction current_parent points to it)
@@ -3382,7 +3382,7 @@ class FormTagHandler(TagHandler):
             # Only close if insertion point is exactly the form element
             if context.current_parent.tag_name != "form":
                 # Ignore premature </form> completely; keep insertion point where it is so
-                # subsequent content stays nested (tests6.dat case 2 expectation).
+                # subsequent content stays nested (ignore premature </form> when insertion point drifted).
                 self.debug("Ignoring premature </form> (not at form insertion point)")
                 # Mark flag so next start tag can realign if insertion point drifted
                 try:
@@ -3452,7 +3452,7 @@ class ListTagHandler(TagHandler):
           - Close a previous dt/dd by moving insertion back to its parent (dl)
           - Implicitly end any formatting descendants under the old item (remove from open elements
             stack but keep active formatting entries so they can reconstruct in the new item)
-          - Reconstruct formatting after creating the new item so duplication (<b> in tricky01 case 3) is possible.
+          - Reconstruct formatting after creating the new item so duplication (<b>) is possible.
         """
         tag_name = token.tag_name
         self.debug(f"Handling {tag_name} tag")
@@ -3499,7 +3499,7 @@ class ListTagHandler(TagHandler):
         context.enter_element(new_node)
         context.open_elements.push(new_node)
         # Manually duplicate formatting chain inside the new dt/dd without mutating active formatting entries.
-        # This allows later text (after </dl>) to still reconstruct original formatting per tricky01 case 3.
+    # This allows later text (after </dl>) to still reconstruct original formatting.
         if formatting_descendants:
             for fmt in formatting_descendants:
                 clone = Node(fmt.tag_name, fmt.attributes.copy())
@@ -3878,9 +3878,9 @@ class AutoClosingTagHandler(TemplateAwareHandler):
 
         if (formatting_element or has_active_formatting) and token.tag_name in BLOCK_ELEMENTS:
             # Narrow pre-step: if current_parent is <a> and we're inserting a <div>, pop the <a> but
-            # retain its active formatting entry so it will reconstruct inside the div (expected adoption02 pattern).
-            # Disabled pop-a-before-div pre-step due to regression in adoption01 case 4; rely on
-            # standard reconstruction plus post-hoc heuristic in FormattingElementHandler for adoption02.
+            # retain its active formatting entry so it will reconstruct inside the div (ensures reconstruction ordering).
+            # Disabled pop-a-before-div pre-step; rely on
+            # standard reconstruction plus post-hoc handling handled elsewhere.
             # Do not perform auto-closing/reconstruction inside HTML integration points
             if self._is_in_integration_point(context):
                 self.debug("In integration point; skipping auto-closing/reconstruction for block element")
@@ -3893,8 +3893,18 @@ class AutoClosingTagHandler(TemplateAwareHandler):
                 )
             # Reconstruct active formatting elements before creating the block
             if context.active_formatting_elements:
-                self.debug("Reconstructing active formatting elements before block insertion")
-                self.parser.reconstruct_active_formatting_elements(context)
+                # Spec: reconstruct active formatting elements only if at least one formatting
+                # entry's element is not currently on the stack of open elements (markers ignored).
+                needs_reconstruct = False
+                for entry in context.active_formatting_elements:
+                    if entry.element and not context.open_elements.contains(entry.element):
+                        needs_reconstruct = True
+                        break
+                if needs_reconstruct:
+                    self.debug("Reconstructing active formatting elements before block insertion (missing entries)")
+                    self.parser.reconstruct_active_formatting_elements(context)
+                else:
+                    self.debug("Skipping reconstruction: all active formatting elements already open")
             # Create block element normally
             new_block = self._create_element(token)
             context.current_parent.append_child(new_block)

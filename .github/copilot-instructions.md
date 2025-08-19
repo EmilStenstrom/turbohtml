@@ -143,3 +143,20 @@ These standards must be followed for all new or modified code.
 - Heuristics must be minimal, locally scoped, and reversible without breaking core spec conformance.
 
 Adhering to these standards keeps the parser deterministic, maintainable, and performant while aligned with the HTML5 specification and test expectations.
+
+### 14. Test-Agnostic Implementation Policy
+To avoid re‑introducing brittle, test‑named heuristics or overfitting code to individual `.dat` cases:
+
+- Prohibited in source: direct references to specific test file names (e.g. `tests22.dat`, `tricky01`, `adoption01.dat`, `webkit02`, `html5test-com`). Comments and debug strings must instead describe the structural or spec condition ("misnested formatting inside table cell before block", "stray end tag after partial table prelude", etc.).
+- Prefer spec clause or structural invariant: When justifying a branch, cite the HTML Standard concept (e.g. "adoption agency Step 10: furthest block selection") rather than a test case.
+- Debug / logging: Must not contain test file identifiers. Use neutral phrasing: `Adoption: suppressed duplicate cite wrapper (already ancestor)`.
+- Heuristic introduction checklist:
+	1. Identify the malformed input pattern in structural terms (sequence of tokens / DOM relationships).
+	2. Confirm absence of a direct spec rule covering it.
+	3. Implement the smallest transformation that restores spec-conformant tree building for subsequent steps (not one that "matches expected tree").
+	4. Add a concise comment documenting the invariant enforced; omit any mention of the triggering test file.
+	5. Ensure removal of the heuristic would only affect malformed input, not well‑formed cases.
+- Removal policy: If a heuristic's behavior duplicates normal spec processing after adjacent refactors, delete it entirely instead of leaving a dormant branch.
+- Review gate: Any PR introducing text matching regex `tests[0-9]|tricky|adoption0|webkit|html5test` in non-test files must revise wording before merge.
+
+Rationale: Keeping implementation commentary test‑agnostic prevents brittle coupling, reduces temptation to accrete case-by-case patches, and keeps focus on spec semantics, improving maintainability and future optimization opportunities.

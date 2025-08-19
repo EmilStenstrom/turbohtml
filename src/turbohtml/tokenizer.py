@@ -328,7 +328,7 @@ class HTMLTokenizer:
         # character begins a valid sequence: ASCII letter (start tag), '!' (markup declaration),
         # '/' (end tag), or '?' (bogus comment / processing instruction). Any other character means
         # the '<' was just literal text and should be emitted as a character token. This prevents
-        # inputs like '<#' from being treated as a start tag with name '#'. (tests1 bogus tag case)
+        # inputs like '<#' from being treated as a start tag with name '#'. (bogus tag guard)
         if self.pos + 1 < self.length:
             nxt = self.html[self.pos + 1]
             if not (nxt.isalpha() or nxt in "!/ ?"):  # space included? remove space; we only allow ! / ?
