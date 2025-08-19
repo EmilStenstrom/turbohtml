@@ -757,7 +757,7 @@ class TextHandler(TagHandler):
         #   - There is no existing adjacent emphasis sibling already capturing text.
         # This runs BEFORE _append_text so the appended text lands inside the new wrapper.
 
-        # Removed space-trimming heuristic: rely on tokenizer + spec whitespace handling only.
+        # Whitespace handling deferred to tokenizer and spec rules (no additional trimming here).
         self._append_text(text, context)
         return True
         
@@ -1256,7 +1256,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 if gp:
                     cur.parent.remove_child(cur)
                     gp.append_child(cur)
-    # Removed delegation to adoption heuristics (flatten/chain special cases) for strict spec.
+        # Delegation to adoption heuristics (flatten/chain special cases) omitted; strict spec path only.
         return True
 
 
@@ -3981,8 +3981,7 @@ class AutoClosingTagHandler(TemplateAwareHandler):
 
             self.debug(f"Found matching block element: {current}")
 
-            # (Removed pending_formatting_detach heuristic: formatting element duplication now relies solely on
-            # standard reconstruction without deferred detach.)
+            # Formatting element duplication relies solely on standard reconstruction (no deferred detach phase).
 
             # If we're inside a boundary element, stay there
             boundary = context.current_parent.find_ancestor(lambda n: n.tag_name in BOUNDARY_ELEMENTS)

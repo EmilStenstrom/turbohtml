@@ -264,7 +264,6 @@ class AdoptionAgencyAlgorithm:
         # Track whether we actually ran adoption for </a> during parse (used by post-process gating)
         self._ran_a = False
 
-    # Removed unused *_find_formatting_element_for_reconstruction and _find_for_adoption helpers.
 
     def should_run_adoption(self, tag_name: str, context) -> bool:
         """
@@ -280,7 +279,6 @@ class AdoptionAgencyAlgorithm:
         # list of active formatting elements. However, running the full algorithm when the
         # element is the current node and there are no block elements after it is equivalent
         # to a simple pop. For those simple cases we let the normal end-tag handling do the work
-        # to avoid side‑effects from our heuristic implementation.
         entry = context.active_formatting_elements.find(tag_name)
         if not entry:
             return False
@@ -368,7 +366,7 @@ class AdoptionAgencyAlgorithm:
                 f"    Selected formatting element (most recent spec): {formatting_element} at stack index {context.open_elements.index_of(formatting_element)}"
             )
 
-    # (Removed earlier heuristic that pruned intervening <b> active formatting entry for </a> on iterations>1)
+    # Intervening <b> entries are retained; no pruning of active formatting entries during multi-iteration adoption.
 
         # Step 1: If the current node is an HTML element whose tag name is subject,
         # and the current node is not in the list of active formatting elements,
@@ -489,10 +487,6 @@ class AdoptionAgencyAlgorithm:
                 context.move_to_element(deepest_cell)
                 moved_into_cell = True
             # Guarded outward move: only apply when we did NOT just relocate into a cell.
-            # Original heuristic sometimes moved insertion point out of the table subtree
-            # even when the formatting content properly belongs inside an open cell,
-            # causing inline wrappers (e.g. <i>, <nobr>) to appear before the table
-            # instead of leaving formatting wrappers outside the cell boundary.
             cp = context.current_parent
             if (
                 not moved_into_cell
@@ -639,7 +633,7 @@ class AdoptionAgencyAlgorithm:
         """Find the furthest block element per HTML5 spec.
 
         Spec definition: the furthest block is the last (highest index) element in the stack of open
-        elements, after the formatting element, that is a special category element. Previous heuristic
+        elements, after the formatting element, that is a special category element.
         incorrectly returned the first such element (nearest block), preventing correct cloning depth
         (covers scenarios expecting nested additional formatting inside deepest block).
         (covers scenarios where additional formatting should remain nested inside the deepest block).
@@ -768,7 +762,6 @@ class AdoptionAgencyAlgorithm:
         # causes an immediate reconstruction on the next text token which can introduce an
         # unnecessary additional wrapper (<i> duplicate around trailing text). Limit to a narrow
         # set ('i','em') to avoid over-pruning entries relied upon for later complex adoption.
-    # (Reverted heuristic stale same-tag pruning for 'i'/'em'; retain original active formatting entries
     # so that subsequent adoption iterations relying on them still occur. Prior pruning reduced pass count.)
         # Additional pruning: remove earlier stale duplicate <nobr> entries whose DOM element was popped
         if formatting_element.tag_name == 'nobr':
@@ -861,17 +854,10 @@ class AdoptionAgencyAlgorithm:
             if self.debug_enabled:
                 print(f"    Simple-case adoption adjust: moved insertion point into cell <{cell_parent.tag_name}>")
         # For <nobr> perform localized child chain collapse (no reconstruction here)
-        # (Removed localized ladder collapse for <nobr>; relying on global flatten pass)
 
         # Insertion point remains at formatting element parent (simple case)
-        # Post-adoption numeric <nobr> refinements (legacy heuristics removed): apply narrowly scoped
-        # Post-adoption numeric <nobr> refinements (removed non-spec numeric positioning heuristics): apply narrowly scoped
-        # normalization helpers to adjust placement of trailing numeric nobr segments.
-        # Removed numeric <nobr> heuristic normalizations (previous numeric-specific tweaks) for pure spec output.
-        # Removed numeric <nobr> heuristic normalizations (previous numeric-specific tweaks) for pure spec output.
         return True
 
-    # Removed nobr chain flattening and earlier case-specific heuristic methods (dead code).
 
     def _get_body_or_root(self, context):
         """Get the body element or fallback to root"""
@@ -959,7 +945,7 @@ class AdoptionAgencyAlgorithm:
             node.next_sibling = None
 
     def reconstruct_active_formatting_elements(self, context):
-        """Reconstruct active formatting elements per spec (no custom <nobr> heuristics)."""
+        """Reconstruct active formatting elements per spec."""
         stack = context.active_formatting_elements._stack
         if not stack:
             return
@@ -1134,6 +1120,7 @@ class AdoptionAgencyAlgorithm:
                     stack.append(ch)
         return None
 
+
     def _run_complex_adoption_spec(
         self, formatting_entry: FormattingElementEntry, furthest_block: Node, context, iteration_count: int = 0
     ) -> bool:
@@ -1146,7 +1133,6 @@ class AdoptionAgencyAlgorithm:
             iteration_count: Which iteration of the algorithm this is (1-8)
         """
         formatting_element = formatting_entry.element
-        # Removed deprecated insertion_point_override heuristic: rely solely on spec ordered insertion.
         if self.debug_enabled:
             print(f"\n=== COMPLEX ADOPTION ALGORITHM (Steps 8-19) ===")
             print(f"    Formatting element: {formatting_element.tag_name}")
@@ -1251,7 +1237,6 @@ class AdoptionAgencyAlgorithm:
                     print(f"        STEP 12.2: Node is formatting element, breaking loop")
                 break
 
-            # Removed non-spec early break heuristics
 
             # Step 12.3: If node is not in active formatting elements, remove it
             node_entry = context.active_formatting_elements.find_element(node)
@@ -1323,8 +1308,9 @@ class AdoptionAgencyAlgorithm:
                 continue
 
 
-            # Step 12.4: If we've been through this loop 3 times and node is still in
-            # the list of active formatting elements, remove it
+            # Step 12.4 (spec): If we've been through this loop three times already and node is
+            # still in the list of active formatting elements, then remove node from that list
+            # (without touching the DOM) and stop processing this node (continue loop).
             if inner_loop_counter > 3:
                 if self.debug_enabled:
                     print(f"        STEP 12.4: Loop count > 3, removing {node.tag_name} from active formatting")
@@ -1393,12 +1379,10 @@ class AdoptionAgencyAlgorithm:
         # we rewrite it to the deepest <div> ancestor of the formatting element (if any) so each
         # successive iteration produces a deeper nested <div><a><div><a> ladder instead of a flat
         # sequence of sibling <div>/<a> pairs.
-        # (Removed legacy conditional redirection)
         # Additional Step 13 adjustment for </a> ladder iterations:
         # After first complex iteration, the cloned <b> (last_node) should become a top-level sibling
         # of the outer <div>, not remain nested inside it. Mark that <b> so later iterations can
         # target it as the common ancestor for appended nested <div> blocks.
-    # (Removed legacy ladder redirection comment)
         if self.debug_enabled:
             print(f"\n--- STEP 13: Insert last_node into common ancestor ---")
             print(f"    last_node={last_node.tag_name}, common_ancestor={common_ancestor.tag_name}, furthest_block={furthest_block.tag_name}")
@@ -1433,16 +1417,13 @@ class AdoptionAgencyAlgorithm:
                     print(f"    Step 13: appended {last_node.tag_name} under {common_ancestor.tag_name}")
                     print("    STEP 13 CONTEXT: common_ancestor_children_after=", [c.tag_name for c in common_ancestor.children])
 
-            # (Removed ladder hoist / existence check)
 
-            # (Removed post-Step-13 ordering adjustment heuristic)
 
             # Post-Step-13 targeted relocation: If we are processing an <a>
             # on a later iteration and the common ancestor was the body/html, we want the newly
             # inserted last_node (typically a <div>) to become nested inside the existing top-level
             # <div> ladder instead of remaining a sibling under <body>. Expected tree shows exactly
             # one top-level <div> with a cascading <div><a><div><a> structure.
-            # (Removed div relocation under ladder)
 
         # Step 14: Create a clone of the formatting element (spec always clones)
         # NOTE: Previous optimization to skip cloning for trivial empty case caused
@@ -1494,7 +1475,6 @@ class AdoptionAgencyAlgorithm:
                 furthest_block.append_child(formatting_clone)
                 if self.debug_enabled:
                     print(f"--- STEP 16: Appended clone under furthest_block <{furthest_block.tag_name}>")
-    # (Removed experimental non-spec wrapper insertion heuristic)
 
         # Safety check: Ensure no circular references were created
         self._validate_no_circular_references(formatting_clone, furthest_block)
@@ -1577,7 +1557,6 @@ class AdoptionAgencyAlgorithm:
         # Insertion point: per spec set to furthest_block (current node)
         context.move_to_element(furthest_block)
 
-        # (Removed non-spec active formatting cleanup step to restore spec fidelity.)
 
         if self.debug_enabled:
             print(f"\n--- STEP 18/19: Update stacks ---")
@@ -1592,8 +1571,6 @@ class AdoptionAgencyAlgorithm:
                     [c.tag_name for c in furthest_block.children],
                 )
             print(f"=== ADOPTION AGENCY ALGORITHM END ===\n")
-        # Heuristic / test-shaping normalizations (skipped in strict spec mode)
-    # (Removed all post-adoption heuristic normalization)
         return True
 
 
@@ -1748,17 +1725,6 @@ class AdoptionAgencyAlgorithm:
         if self.debug_enabled:
             print('    LadderRootNorm: wrapped ladder <b> children in leading <div>')
 
-    # Removed numerous legacy post-adoption numeric <nobr> and italic chain normalization helpers
-    # (_split_numeric_nobr_out_of_i, _relocate_digit_*, etc.) to preserve strict spec tree. Their
-    # previous behaviors were purely heuristic and not part of the HTML5 tree construction algorithm.
-
-
-
-    # Removed legacy post-processing cleanup helpers once used for heuristic tree normalization:
-    # _flatten_redundant_empty_blocks, _cleanup_open_elements_stack,
-    # _cleanup_active_formatting_elements, and _flatten_redundant_formatting. They are not part of
-    # the HTML5 adoption agency algorithm and had become dead code. Eliminating them reduces
-    # maintenance surface and clarifies that we now perform only spec-mandated steps.
 
     def _validate_no_circular_references(self, formatting_clone: Node, furthest_block: Node) -> None:
         """Validate that no circular references were created in the DOM tree"""
@@ -1814,8 +1780,6 @@ class AdoptionAgencyAlgorithm:
             if cur.children:
                 stack.extend(cur.children)
 
-
-    # (Former _flatten_redundant_formatting removed – see note above.)
 
     def _should_foster_parent(self, common_ancestor: Node) -> bool:
         """Check if foster parenting is needed"""

@@ -59,8 +59,6 @@ class TurboHTML:
         self.env_debug = debug
         self.html = html
         self.fragment_context = fragment_context
-    # strict_spec flag removed: parser now always operates in spec-first mode without
-    # legacy heuristic post-processing passes.
 
         # Reset all state for each new parser instance
         self._init_dom_structure()
@@ -285,9 +283,6 @@ class TurboHTML:
                 walk(c)
         walk(self.root)
 
-        # All legacy heuristic structural normalizations removed: parser output is now purely the
-        # product of the tokenization + tree construction algorithms above.
-    # End post-process
 
     def _create_initial_context(self):
         """Create a minimal ParseContext for structural post-processing heuristics.
