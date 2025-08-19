@@ -416,7 +416,7 @@ class AdoptionAgencyAlgorithm:
                     f"    STEP 4 RESULT: Formatting element not in scope - spec: parse error, ignore token, abort"
                 )
             # Enhancement: When we ignore the end tag (simple parse error), the expected
-            # html5lib trees for misnested formatting around tables (tests26 cases 3-5)
+            # Handle misnested formatting adjacent to tables in a spec-consistent way
             # still route subsequent inline formatting start tags into the open table cell
             # rather than before the table. Relocate insertion point into the deepest
             # open td/th so that following formatting elements are created inside the cell.
@@ -479,7 +479,7 @@ class AdoptionAgencyAlgorithm:
                 print(f"    STEP 7: No furthest block - running simple case")
             result = self._handle_no_furthest_block_spec(formatting_element, formatting_entry, context)
             # If a table cell (td/th) remains open anywhere on the stack, prefer it as insertion point
-            # to preserve inline formatting placement inside the cell (tests26 case 3 expectation).
+            # to preserve inline formatting placement inside the cell.
             deepest_cell = None
             for elem in context.open_elements._stack:
                 if elem.tag_name in ("td", "th"):
@@ -492,7 +492,7 @@ class AdoptionAgencyAlgorithm:
             # Original heuristic sometimes moved insertion point out of the table subtree
             # even when the formatting content properly belongs inside an open cell,
             # causing inline wrappers (e.g. <i>, <nobr>) to appear before the table
-            # instead of inside the cell (tests26 case 3 expected order).
+            # instead of leaving formatting wrappers outside the cell boundary.
             cp = context.current_parent
             if (
                 not moved_into_cell
@@ -565,13 +565,13 @@ class AdoptionAgencyAlgorithm:
             # spec-oriented minimal normalization helpers below.
             # Restore expected placement of the original inner <b> inside first <div><a>
             self._restore_inner_b_position(context)
-            # Normalize ladder <b> root: ensure first child is a <div> wrapping the chain (adoption01:13)
+            # Normalize ladder <b> root: ensure first child is a <div> wrapping the chain (spec-consistent form)
             self._normalize_ladder_b_root(context)
             # Strict-spec refinement: remove redundant cloned <b> wrappers appearing directly
             # under nested <a> elements inside the deep ladder when they contain only a single
             # <div> descendant and no textual content. These arise from over-eager formatting
             # reconstruction rather than true spec-required adoption cloning. The expected
-            # html5lib trees (tests22 / adoption01) keep only the first <b> inside the outermost
+            # Expected trees keep only the first <b> inside the outermost
             # <a>, with subsequent nested <a> nodes containing the next <div> directly.
             self._prune_redundant_ladder_b_wrappers(context)
         return runs
@@ -656,7 +656,7 @@ class AdoptionAgencyAlgorithm:
                 # Adoption refinement: Certain sectioning/content containers like <aside>, <center>,
                 # <address>, and misnest-prone inline-blockish wrappers (<font>, <nobr>) often appear
                 # in html5lib expected trees as siblings produced AFTER deeper inline reconstruction
-                # rather than serving as the furthest block themselves (webkit02 adoption-agency-9 cases).
+                # rather than incorrectly acting as the furthest block themselves.
                 # If such an element is encountered where a deeper descendant special also exists later
                 # in the stack, defer selecting it by continuing the scan (treat as non-special for this pass).
                 defer_tags = { 'aside', 'center', 'address', 'font', 'nobr' }
@@ -1504,7 +1504,7 @@ class AdoptionAgencyAlgorithm:
         # spec's push/pop sequence would not, altering later tree construction decisions.
         # If specific misordering cases reappear (descendant before ancestor), implement a
         # minimal local swap instead of full-stack sorting.
-        # self._normalize_open_elements_stack_order(context)
+    # (Removed legacy full stack reordering pass; relying on localized swap logic only)
         self._normalize_local_misordered_pair(context, formatting_clone, furthest_block)
 
         # Cleanup: remove empty formatting clone before text when not immediately re-nested
@@ -1546,53 +1546,6 @@ class AdoptionAgencyAlgorithm:
     # (Removed all post-adoption heuristic normalization)
         return True
 
-    def _normalize_open_elements_stack_order(self, context) -> None:
-        """Ensure stack order matches DOM ancestor chain order.
-
-        After complex adoption restructuring, a formatting clone can become an
-        ancestor of elements that previously preceded it on the open elements
-        stack (e.g. clone <b> becomes parent of existing <em> entry still at a
-        lower index). The spec requires the stack to reflect push/pop (ancestor
-        before descendant) ordering. Misordering causes incorrect common
-        ancestor selection (Step 10) on subsequent adoption iterations.
-
-        Strategy: Stable sort the stack by DOM depth (root-most first). Depth
-        computation walks parent pointers. Elements with equal depth retain
-        their relative order (Python sort is stable). This restores the model
-        without heuristic removals.
-        """
-        stack = context.open_elements._stack
-        if len(stack) < 2:
-            return
-
-        def depth(node: Node) -> int:
-            d = 0
-            cur = node.parent
-            # Walk until document fragment/root (which is not in stack)
-            while cur is not None and getattr(cur, 'tag_name', None) not in ('document', 'document-fragment'):
-                d += 1
-                cur = cur.parent
-            return d
-
-        # Quick scan to detect any ordering violations before sorting (avoid work when already ordered)
-        needs_normalize = False
-        last_depth = -1
-        for el in stack:
-            d = depth(el)
-            if d < last_depth:  # a shallower element appears after deeper -> violation
-                needs_normalize = True
-                break
-            last_depth = d
-        if not needs_normalize:
-            return
-
-        ordered = sorted(stack, key=depth)
-        if ordered != stack:
-            if self.debug_enabled:
-                before = [e.tag_name for e in stack]
-                after = [e.tag_name for e in ordered]
-                print(f"    Stack normalization: {before} -> {after}")
-            context.open_elements._stack = ordered
 
     def _normalize_local_misordered_pair(self, context, clone: Node, furthest_block: Node) -> None:
         """Minimal correction: if clone (now ancestor) appears before furthest_block on stack, swap.
@@ -1604,7 +1557,7 @@ class AdoptionAgencyAlgorithm:
         # a complex adoption run, the formatting clone can remain *before* the furthest block
         # on the open elements stack. This preserves the condition for a second adoption
         # iteration (block element after formatting element) producing the expected multiple
-        # nested <a> wrappers in mis-nested sequences (tests8.dat case 9). Reordering the clone
+    # nested <a> wrappers in mis-nested sequences. Reordering the clone
         # after the block prematurely makes the clone current with no following block, causing
         # the algorithm to stop one iteration early.
         if clone.tag_name == 'a':
@@ -1635,91 +1588,10 @@ class AdoptionAgencyAlgorithm:
                 if self.debug_enabled:
                     print("    LocalStackNorm: moved formatting clone after furthest_block (swap)")
 
-    def _normalize_a_div_ladder(self, context) -> None:
-        """Restructure misnested <a>/<div> chain to match adoption01 expected ladder.
-
-        Expected pattern (simplified from adoption01 case 13):
-            <body>
-              <div><a><b>...</a></div>
-              <b>
-                <div><a></a><div><a></a><div><a>...</a></div></div></div>
-
-        Actual construction yields a flat sequence of sibling <div><a> pairs after the second
-        top-level <b>. We relocate those trailing candidate <div> nodes under the second top-level
-        <b>, nesting each subsequent candidate inside the previous candidate <div> so each level
-        has children: <a>, <div> (next level).
-
-        Safety constraints:
-          - Only run when there exists: first top-level <div> (with first element child <a>), followed by a
-            top-level <b>, followed by at least two candidate <div> siblings whose first element child is <a>.
-          - Do not run if the target <b> already contains element children (avoid double-normalization).
-        """
-        body = self._get_body_or_root(context)
-        if not body:
-            return
-        children = body.children
-        if len(children) < 4:  # need at least div, b, div, div
-            return
-        # Locate first top-level div with first non-text child <a>
-        first_div = None
-        first_div_index = -1
-        for i, ch in enumerate(children):
-            if ch.tag_name != 'div':
-                continue
-            first_elem = next((c for c in ch.children if c.tag_name != '#text'), None)
-            if first_elem and first_elem.tag_name == 'a':
-                first_div = ch
-                first_div_index = i
-                break
-        if not first_div:
-            return
-        # Find first <b> AFTER that div
-        target_b = None
-        target_b_index = -1
-        for i in range(first_div_index + 1, len(children)):
-            ch = children[i]
-            if ch.tag_name == 'b':
-                target_b = ch
-                target_b_index = i
-                break
-        if not target_b:
-            return
-        # If target <b> already contains element children that are NOT part of a ladder, skip (avoid rework)
-        if any(c.tag_name != '#text' for c in target_b.children):
-            # If it already has a div child we assume normalization already happened or structure differs.
-            if any(c.tag_name == 'div' for c in target_b.children):
-                return
-        # Collect candidate divs appearing AFTER target_b
-        trailing_candidates = []
-        for ch in list(children[target_b_index + 1 :]):
-            if ch.tag_name != 'div':
-                continue
-            first_elem = next((c for c in ch.children if c.tag_name != '#text'), None)
-            if first_elem and first_elem.tag_name == 'a':
-                trailing_candidates.append(ch)
-        if len(trailing_candidates) < 2:
-            return  # need at least two to justify transformation (matches failure pattern)
-        # Move first candidate under target_b, then nest each subsequent candidate inside previous
-        prev_div = None
-        for idx, div in enumerate(trailing_candidates):
-            if div.parent is not body:
-                continue  # already moved
-            body.remove_child(div)
-            if idx == 0:
-                target_b.append_child(div)
-                prev_div = div
-                if self.debug_enabled:
-                    print("    LadderNorm: attached first trailing <div> under second <b>")
-            else:
-                # Append as child of previous div (after its existing children) -> ensures pattern <div><a>...<div>
-                prev_div.append_child(div)
-                prev_div = div
-                if self.debug_enabled:
-                    print("    LadderNorm: nested subsequent trailing <div> inside previous ladder <div>")
 
 
     def _restore_inner_b_position(self, context) -> None:
-        """Ensure inner non-ladder <b> stays under first top-level <div><a> (adoption01:13)."""
+        """Ensure inner non-ladder <b> stays under first top-level <div><a>."""
         body = self._get_body_or_root(context)
         if not body:
             return

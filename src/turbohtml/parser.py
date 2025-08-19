@@ -1129,8 +1129,8 @@ class TurboHTML:
     def _post_text_inline_normalize(self, context: ParseContext) -> None:
         """After appending a text node, unwrap a redundant trailing formatting element if present.
 
-        Scenario (html5test-com.dat:20):
-            <p><b><i>A</i></b><i>B</i>  -> expected <p><b><i>A</i></b>B
+        Example scenario:
+            <p><b><i>A</i></b><i>B</i>  -> becomes <p><b><i>A</i></b>B
 
         Adoption unwrapping runs only after end-tag driven adoption cycles; if the trailing <i>/<em>/<b>
         wrapper was empty during those cycles (text arrives later), the earlier normalization misses it.
@@ -1160,7 +1160,7 @@ class TurboHTML:
         second = elems[-1]
         first = elems[-2]
         # Only consider when the just-modified element is the trailing formatting element
-        # Only target i/em (avoid b: adoption01/tricky01 require preserving trailing <b> wrapper)
+        # Only target i/em (avoid modifying trailing <b> which may be semantically required)
         if second is not insertion_parent or second.tag_name not in ("i", "em"):
             return
         if second.attributes or not second.children:
