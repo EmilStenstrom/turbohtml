@@ -5,6 +5,15 @@ from contextlib import redirect_stdout
 from dataclasses import dataclass
 from typing import List, Optional
 from pathlib import Path
+import signal
+
+# Minimal Unix-friendly fix: if stdout is a pipe and the reader (e.g. `head`) closes early,
+# writes would raise BrokenPipeError at interpreter shutdown. Reset SIGPIPE so the process
+# exits quietly instead of emitting a traceback. Guard for non-POSIX platforms.
+try:  # pragma: no cover - platform dependent
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+except (AttributeError, OSError, RuntimeError):  # AttributeError on non-Unix, others just in case
+    pass
 
 
 @dataclass
