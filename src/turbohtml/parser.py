@@ -1331,29 +1331,9 @@ class TurboHTML:
             if context.open_elements.contains(entry.element):
                 continue
             # Removed strict_spec duplicate suppression heuristic; always reconstruct per spec when missing.
-            # Suppress duplicate <b> wrapper cloning when an ancestor <b> already exists on the open elements
-            # stack (prevents ladder of <b><div><b><div>... in deeply nested block sequences). We re-associate
-            # the active formatting entry with the nearest ancestor <b> instead of cloning a new sibling.
-            if entry.element.tag_name == 'b':
-                ancestor = context.current_parent
-                ancestor_b = None
-                guard = 0
-                while ancestor is not None and guard < 100:
-                    if ancestor.tag_name == 'b':
-                        ancestor_b = ancestor
-                        break
-                    if ancestor.tag_name in ('body','html'):
-                        break
-                    ancestor = ancestor.parent
-                    guard += 1
-                if ancestor_b is not None:
-                    # If ancestor <b> not already bound to this entry, bind and push if missing from open stack
-                    if not context.open_elements.contains(ancestor_b):
-                        context.open_elements.push(ancestor_b)
-                    entry.element = ancestor_b
-                    context.move_to_element(ancestor_b)
-                    self.debug("Reused ancestor <b> instead of cloning duplicate wrapper")
-                    continue
+            # NOTE: Intentionally do NOT suppress duplicate <b> cloning here; per spec each missing
+            # formatting element entry must be reconstructed, producing nested <b> wrappers when
+            # multiple <b> elements were active at the time a block element interrupted them.
             # Reuse existing current_parent if same tag and attribute set and still empty (prevents redundant wrapper)
             reuse = False
             if (

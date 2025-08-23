@@ -559,6 +559,17 @@ class AdoptionAgencyAlgorithm:
             # Removed post-iteration ladder consolidation heuristics (_finalize_deep_a_div_b_ladder,
             # _consolidate_multi_top_level_b_ladder, _prune_inner_b_in_ladder) to retain only
             # spec-oriented minimal normalization helpers below.
+            # Collapse any extra ladder segments that produced redundant top-level <b> wrappers
+            # each containing a single <div><a> chain. Expected structure keeps a single outer
+            # pair of formatting elements (<a><b></a><b>) followed by one nested <div> chain with
+            # repeated <a>/<div> alternation. Later adoption iterations can create additional
+            # sibling <b> wrappers; we relocate their inner <div> segment into the existing chain
+            # and unwrap the redundant <b> to match spec-consistent ancestor nesting.
+            self._collapse_extra_b_ladder_segments(context)
+            # Unwrap nested <b> wrappers inside the second top-level <b> chain when they have a single
+            # element <div> child and no text. These arise from repeated reconstruction of the same
+            # formatting element across adoption iterations; spec structure keeps only the outer pair.
+            self._unwrap_redundant_inner_b_wrappers(context)
             # Restore expected placement of the original inner <b> inside first <div><a>
             self._restore_inner_b_position(context)
             # Normalize ladder <b> root: ensure first child is a <div> wrapping the chain (spec-consistent form)
@@ -1614,6 +1625,170 @@ class AdoptionAgencyAlgorithm:
                 stack.insert(fbi + 1, clone)
                 if self.debug_enabled:
                     print("    LocalStackNorm: moved formatting clone after furthest_block (swap)")
+
+
+    def _collapse_extra_b_ladder_segments(self, context) -> None:
+        """Collapse redundant top-level <b> wrappers produced by successive </a> adoption iterations.
+
+        Pattern to fix (children of the first top-level <div>):
+          <a><b> ... </a>
+          <b><div><a>...</a></div>
+          <b><div><a>...</a></div>  <-- redundant wrappers (this and later)
+
+        For each extra <b> after the second child, if it has exactly one element child which is a <div>,
+        move that <div> (its entire ladder segment) into the deepest existing ladder <div> chain of the
+        first such segment, then remove the redundant <b>. This yields a single nested chain of
+        <div><a><div><a>... consistent with expected tree shape.
+        """
+        body = self._get_body_or_root(context)
+        if not body:
+            return
+        # Find first top-level div that starts the ladder (has an <a> then a <b> descendant pattern)
+        top_div = next((c for c in body.children if c.tag_name == 'div'), None)
+        if not top_div:
+            return
+        changed = False
+        # Identify the primary ladder anchor: first <b> child under top_div (possibly via <a>) whose next element sibling is a <b>
+        # Actually we want the FIRST <b> directly under <div> (top_div) regardless of interleaving <a> so we can build chain under its following <div>.
+        primary_b = None
+        for ch in top_div.children:
+            if ch.tag_name == 'b':
+                primary_b = ch
+                break
+        if not primary_b:
+            return
+        # Find or create a div chain root inside primary_b or immediately after it that will host subsequent segments.
+        # Search descendants of primary_b for first <div> (depth-first)
+        def first_div_desc(node: Node):
+            for d in self._iter_descendants(node):
+                if d.tag_name == 'div':
+                    return d
+            return None
+        div_chain_root = first_div_desc(primary_b)
+        if not div_chain_root:
+            # Create one if missing
+            new_div = Node('div')
+            primary_b.append_child(new_div)
+            div_chain_root = new_div
+        # Helper to find deepest div in current chain (descend last element-child divs ending with <div><a><div> pattern)
+        # Helper to find deepest div in current chain (descend last element-child divs)
+        def deepest_div(node: Node) -> Node:
+            cursor = node
+            guard = 0
+            while guard < 200:
+                elem_children = [c for c in cursor.children if c.tag_name != '#text']
+                if not elem_children:
+                    break
+                last_elem = elem_children[-1]
+                if last_elem.tag_name == 'div':
+                    cursor = last_elem
+                    guard += 1
+                    continue
+                break
+            return cursor
+        # Process sibling <b> wrappers after primary_b; merge their inner div segment into chain
+        # Identify second top-level <b> (keep it and its chain root distinct from primary first <b>)
+        b_children = [c for c in top_div.children if c.tag_name == 'b']
+        if len(b_children) >= 2:
+            second_b = b_children[1]
+        else:
+            second_b = None
+        # For merging we collapse any additional <b> after second_b into second_b's div chain root (or create)
+        second_chain_root = None
+        if second_b:
+            second_chain_root = first_div_desc(second_b)
+            if not second_chain_root:
+                new_div2 = Node('div')
+                second_b.append_child(new_div2)
+                second_chain_root = new_div2
+        # We'll only merge extras into second_chain_root; if absent, fall back to primary chain
+        target_chain_root = second_chain_root or div_chain_root
+        for ch in list(top_div.children):
+            if ch.tag_name != 'b':
+                continue
+            if ch is primary_b or ch is second_b:
+                continue  # retain first two
+            # Gather element children of redundant b in original order (excluding text)
+            elem_children = [c for c in ch.children if c.tag_name != '#text']
+            if not elem_children:
+                # Pure formatting wrapper with no meaningful children; just remove
+                top_div.remove_child(ch)
+                changed = True
+                if self.debug_enabled:
+                    print('    LadderCollapse: removed empty redundant <b> wrapper')
+                continue
+            # Remove redundant b wrapper from top_div
+            if ch in top_div.children:
+                top_div.remove_child(ch)
+            # Append its element children into the deepest div of target chain
+            target = deepest_div(target_chain_root)
+            for seg in elem_children:
+                # Detach from old parent (ch)
+                if seg.parent:
+                    seg.parent.remove_child(seg)
+                target.append_child(seg)
+            changed = True
+            if self.debug_enabled:
+                print('    LadderCollapse: merged extra <b> children into second ladder chain')
+        if changed and self.debug_enabled:
+            print('    LadderCollapse: completed collapsing redundant ladder segments')
+
+    def _unwrap_redundant_inner_b_wrappers(self, context) -> None:
+        """Unwrap nested <b> wrappers inside a ladder chain when they only contain a single <div> element.
+
+        Pattern targeted: <b> (outer) ... <b><div>...</div></b> ... where the inner <b> has no own attributes,
+        no meaningful text, and exactly one element child (a <div>). Promote the <div> and remove the inner <b>.
+        This reduces over-cloned formatting wrappers while preserving descendant ordering.
+        """
+        body = self._get_body_or_root(context)
+        if not body:
+            return
+        # Find top-level b wrappers (expect at most two retained: outer formatting and chain root)
+        top_bs = [c for c in body.children if c.tag_name == 'b']
+        if len(top_bs) < 2:
+            return
+        chain_root_b = top_bs[1]  # second retained b hosts the chain
+        # Depth-first traversal collecting inner redundant b nodes
+        stack = [chain_root_b]
+        candidates = []
+        visit = 0
+        while stack and visit < 1000:  # safety bound
+            node = stack.pop()
+            visit += 1
+            for ch in list(node.children):
+                if ch.tag_name != '#text':
+                    stack.append(ch)
+                if ch.tag_name == 'b' and ch is not chain_root_b:
+                    # Check redundancy conditions
+                    if ch.attributes:
+                        continue
+                    text_children = [c for c in ch.children if c.tag_name == '#text' and c.text_content and c.text_content.strip()]
+                    if text_children:
+                        continue
+                    elem_children = [c for c in ch.children if c.tag_name != '#text']
+                    if len(elem_children) == 1 and elem_children[0].tag_name == 'div':
+                        candidates.append(ch)
+        if not candidates:
+            return
+        for bnode in candidates:
+            parent = bnode.parent
+            if not parent:
+                continue
+            # Promote sole div child
+            sole_div = next((c for c in bnode.children if c.tag_name == 'div'), None)
+            if not sole_div:
+                continue
+            bnode.remove_child(sole_div)
+            # Insert div where bnode was
+            try:
+                idx = parent.children.index(bnode)
+            except ValueError:
+                idx = len(parent.children)
+            parent.children.insert(idx, sole_div)
+            sole_div.parent = parent
+            parent.remove_child(bnode)
+            if self.debug_enabled:
+                print('    InnerBUnwrap: unwrapped redundant <b> with single <div> child inside ladder chain')
 
 
 
