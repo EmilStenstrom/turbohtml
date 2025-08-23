@@ -622,32 +622,16 @@ class TextHandler(TagHandler):
 
         # AFTER_BODY handling (stay in AFTER_BODY)
         if context.document_state == DocumentState.AFTER_BODY:
-            body = self.parser._ensure_body_node(context)
-            # Attempt to route text after </body> into last open table cell if a table remains open
-            table = self.parser.find_current_table(context)
-            if table:
-                last_tr = None
-                last_section = None
-                for ch in table.children:
-                    if ch.tag_name in ("tbody", "thead", "tfoot"):
-                        last_section = ch
-                if last_section:
-                    for ch in last_section.children:
-                        if ch.tag_name == 'tr':
-                            last_tr = ch
-                if not last_tr:
-                    for ch in table.children:
-                        if ch.tag_name == 'tr':
-                            last_tr = ch
-                if last_tr:
-                    last_cell = None
-                    for ch in last_tr.children:
-                        if ch.tag_name in ("td", "th"):
-                            last_cell = ch
-                    if not last_cell:
-                        last_cell = Node("td"); last_tr.append_child(last_cell)
-                    tn = Node('#text'); tn.text_content = text; last_cell.append_child(tn)
-                    return True
+            # If foreign root (math/svg) will follow, we want its preceding character data coerced into body.
+            # For simplicity, always append AFTER_BODY character data straight into body (not preserving current_parent)
+            body = self.parser._get_body_node() or self.parser._ensure_body_node(context)
+            if not body:
+                return True
+            # Suppress leading text that will be duplicated by later reconstruction of foreign subtree text (<mi>foo)</mi>)
+            # Heuristic: if text consists only of concatenated identifiers (letters) without whitespace and next token is '<math>', skip.
+            # We cannot peek next token easily here; so only suppress if text is empty/whitespace.
+            if not text:
+                return True
             prev_parent = context.current_parent
             context.move_to_element(body)
             self._append_text(text, context)
@@ -1549,8 +1533,14 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         # If we're in a select, handle all tags to prevent formatting elements
         # BUT only if we're not in template content (template elements should be handled by template handlers)
         if self._is_in_select(context) and not self._is_in_template_content(context):
-            return True
+            return True  # Intercept every tag inside <select>
         return tag_name in ("select", "option", "optgroup", "datalist")
+
+    # Override to widen interception scope inside select (TemplateAwareHandler limits to handled_tags otherwise)
+    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        if self._is_in_select(context) and not self._is_in_template_content(context):
+            return True
+        return super().should_handle_start(tag_name, context)
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         tag_name = token.tag_name
@@ -1645,9 +1635,17 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             self.debug(f"Ignoring formatting element {tag_name} inside select")
             return True
 
-        # If we're in a select, ignore any foreign elements (svg, math)
-        if self._is_in_select(context) and tag_name in ("svg", "math"):
-            self.debug(f"Ignoring foreign element {tag_name} inside select")
+        # If we're in a select, ignore any foreign elements (svg, math) and MathML leaf/content tags.
+        if self._is_in_select(context) and (tag_name in ("svg", "math") or tag_name in MATHML_ELEMENTS):
+            # Instead of silently ignoring, treat the foreign element as a text integration boundary;
+            # flatten its textual descendants (MathML identifiers) into the select's text per spec recovery.
+            self.debug(f"Flattening foreign/MathML element {tag_name} inside select to text context")
+            # We don't create a node—subsequent character tokens will just append text normally (handled elsewhere).
+            return True
+
+        # Additional safeguard: if inside select and previous handler failed to suppress a MathML leaf (prefixed), drop it.
+        if self._is_in_select(context) and tag_name in {"mi","mo","mn","ms","mtext"}:
+            self.debug(f"Explicitly dropping MathML leaf {tag_name} inside select")
             return True
 
         # Paragraph integration inside table cells following foreign (math/svg) content: ensure <p> stays in cell.
@@ -2006,52 +2004,96 @@ class ParagraphTagHandler(TagHandler):
         # Check if we need to foster parent the paragraph due to table context FIRST
         # before closing formatting elements
         if (
-            context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW)
-            and token.tag_name == "p"
+            token.tag_name == "p"
             and not self._is_in_template_content(context)
+            and (
+                context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW)
+                or (
+                    context.document_state == DocumentState.IN_BODY
+                    and (
+                        self.parser.find_current_table(context) is not None
+                        or any(el.tag_name == 'table' for el in context.open_elements._stack)
+                    )
+                    and context.current_parent.tag_name not in ("td","th")
+                )
+            )
         ):
-            # Do not foster parent when inside SVG/MathML integration points
-            in_svg_ip = context.current_parent.tag_name in (
-                "svg foreignObject",
-                "svg desc",
-                "svg title",
-            ) or context.current_parent.has_ancestor_matching(
-                lambda n: n.tag_name in ("svg foreignObject", "svg desc", "svg title")
-            )
-            in_math_ip = context.current_parent.find_ancestor(
-                lambda n: n.tag_name in ("math mtext", "math mi", "math mo", "math mn", "math ms")
-            ) is not None or (
-                context.current_parent.tag_name == "math annotation-xml"
-                and context.current_parent.attributes.get("encoding", "").lower()
-                in ("text/html", "application/xhtml+xml")
-            )
-            if in_svg_ip or in_math_ip:
-                self.debug("In integration point inside table; not foster-parenting <p>")
+            # Do NOT foster parent when current insertion point is inside a table cell.
+            # Standard HTML5 algorithm: while in table insertion modes, foster parenting applies only when
+            # the current node is table-related (table, tbody, tr, etc.) *not* when inside a cell (td/th).
+            if context.current_parent.tag_name in ("td", "th") or context.current_parent.find_ancestor(lambda n: n.tag_name in ("td","th")):
+                self.debug("Inside table cell; skipping foster-parenting <p> (will insert inside cell)")
             else:
-                self.debug(f"Foster parenting paragraph out of table")
-                pre_reconstruct_anchor = None
-                if context.active_formatting_elements:
-                    # Record if an <a> formatting element is active so we can ensure duplication after second foster
-                    pre_reconstruct_anchor = context.active_formatting_elements.find('a')
-                self.parser._foster_parent_element(token.tag_name, token.attributes, context)
-                # After fostering a paragraph out, reconstruct formatting so inline elements (e.g. <a>) appear/cloned inside.
-                if context.active_formatting_elements:
-                    self.parser.reconstruct_active_formatting_elements(context)
-                # Heuristic: If an <a> existed and we just created a paragraph directly before a table while another
-                # paragraph with <a> already exists earlier, force a second reconstruction to ensure
-                # the <a> also wraps future text in the new paragraph rather than text going bare.
-                if pre_reconstruct_anchor and context.current_parent.tag_name == 'p':
-                    # Only trigger if this new p has no children yet (no text) and anchor formatting element not on stack
-                    if not context.current_parent.children:
-                        # If the formatting element's DOM position is earlier paragraph, force adoption-like clone here
+                # Special case: if the current parent is a foster-parented foreign root (math/svg) immediately
+                # before an open table, we still need to foster parent the paragraph so it appears before the table
+                # (tests9:16 expects <math> then <p> then <table>). Detect by seeing an open table element whose parent
+                # contains current_parent directly before it.
+                if context.document_state == DocumentState.IN_BODY:
+                    table = self.parser.find_current_table(context)
+                    if table and table.parent and table in table.parent.children:
+                        # Ascend from current_parent until we reach a direct child of table.parent (or root)
+                        probe = context.current_parent
+                        foreign_before_table = None
+                        while probe and probe.parent is not table.parent and probe.parent is not None:
+                            probe = probe.parent
+                        if (
+                            probe
+                            and probe.parent is table.parent
+                            and probe.tag_name.startswith(("math ", "svg "))
+                        ):
+                            # Ensure probe actually precedes table among siblings
+                            siblings = table.parent.children
+                            try:
+                                if siblings.index(probe) < siblings.index(table):
+                                    foreign_before_table = probe
+                            except ValueError:
+                                foreign_before_table = None
+                        if foreign_before_table:
+                            self.debug("Foster parent <p> after foreign subtree directly preceding open table")
+                            self.parser._foster_parent_element(token.tag_name, token.attributes, context)
+                            return True
+                # Do not foster parent when inside SVG/MathML integration points
+                in_svg_ip = context.current_parent.tag_name in (
+                    "svg foreignObject",
+                    "svg desc",
+                    "svg title",
+                ) or context.current_parent.has_ancestor_matching(
+                    lambda n: n.tag_name in ("svg foreignObject", "svg desc", "svg title")
+                )
+                in_math_ip = context.current_parent.find_ancestor(
+                    lambda n: n.tag_name in ("math mtext", "math mi", "math mo", "math mn", "math ms")
+                ) is not None or (
+                    context.current_parent.tag_name == "math annotation-xml"
+                    and context.current_parent.attributes.get("encoding", "").lower()
+                    in ("text/html", "application/xhtml+xml")
+                )
+                if in_svg_ip or in_math_ip:
+                    self.debug("In integration point inside table; not foster-parenting <p>")
+                else:
+                    self.debug(f"Foster parenting paragraph out of table")
+                    pre_reconstruct_anchor = None
+                    if context.active_formatting_elements:
+                        # Record if an <a> formatting element is active so we can ensure duplication after second foster
+                        pre_reconstruct_anchor = context.active_formatting_elements.find('a')
+                    self.parser._foster_parent_element(token.tag_name, token.attributes, context)
+                    # After fostering a paragraph out, reconstruct formatting so inline elements (e.g. <a>) appear/cloned inside.
+                    if context.active_formatting_elements:
                         self.parser.reconstruct_active_formatting_elements(context)
-                        # If still no anchor child, manually create one referencing active formatting entry
-                        if not any(ch.tag_name == 'a' for ch in context.current_parent.children):
-                            entry = context.active_formatting_elements.find('a')
-                            if entry:
-                                clone = Node('a', entry.element.attributes.copy())
-                                context.current_parent.append_child(clone)
-                                context.enter_element(clone)
+                    # Heuristic: If an <a> existed and we just created a paragraph directly before a table while another
+                    # paragraph with <a> already exists earlier, force a second reconstruction to ensure
+                    # the <a> also wraps future text in the new paragraph rather than text going bare.
+                    if pre_reconstruct_anchor and context.current_parent.tag_name == 'p':
+                        # Only trigger if this new p has no children yet (no text) and anchor formatting element not on stack
+                        if not context.current_parent.children:
+                            # If the formatting element's DOM position is earlier paragraph, force adoption-like clone here
+                            self.parser.reconstruct_active_formatting_elements(context)
+                            # If still no anchor child, manually create one referencing active formatting entry
+                            if not any(ch.tag_name == 'a' for ch in context.current_parent.children):
+                                entry = context.active_formatting_elements.find('a')
+                                if entry:
+                                    clone = Node('a', entry.element.attributes.copy())
+                                    context.current_parent.append_child(clone)
+                                    context.enter_element(clone)
                                 context.open_elements.push(clone)
                                 # Point active formatting entry to new clone so later text stays inside it
                                 entry.element = clone
@@ -4422,6 +4464,12 @@ class ForeignTagHandler(TagHandler):
             self._create_foreign_element(tag_name, token.attributes, "svg", context, token)
             return True
         if lower == "math":
+            # If parser is in AFTER_BODY state, redirect insertion to body and resume IN_BODY parsing
+            if context.document_state == DocumentState.AFTER_BODY:
+                body = self.parser._get_body_node() or self.parser._ensure_body_node(context)
+                if body:
+                    context.move_to_element(body)
+                    self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
             self._create_foreign_element(tag_name, token.attributes, "math", context, token)
             return True
 
@@ -4467,8 +4515,10 @@ class ForeignTagHandler(TagHandler):
                     table.parent.children.insert(table_index, new_node)
                     new_node.parent = table.parent
                     context.enter_element(new_node)
-
-                    # We are no longer in the table, so switch state
+                    # After fostering a foreign root before a table, we leave table insertion modes
+                    # (transition to IN_BODY) per earlier implementation so that descendant text of the
+                    # foreign element is not mis-foster-parented as table text. Paragraph handler will
+                    # explicitly detect open table-in-body scenarios to continue foster-parenting where needed.
                     self.parser.transition_to_state(context, DocumentState.IN_BODY)
                     return True
         return False
@@ -4643,9 +4693,10 @@ class ForeignTagHandler(TagHandler):
                 if not inside:
                     context.current_context = None
 
-        # 1. Restricted contexts: inside <select> we don't start foreign elements
-        if tag_name in ("svg", "math") and context.current_parent.is_inside_tag("select"):
-            return False
+        # 1. Restricted contexts: inside <select> we don't start foreign elements (including MathML leafs)
+        if context.current_parent.is_inside_tag("select"):
+            if tag_name in ("svg", "math") or tag_name in MATHML_ELEMENTS:
+                return False
 
         # 1b. SVG integration point fragment contexts: delegate HTML elements before generic SVG handling.
         if self.parser.fragment_context in ("svg foreignObject", "svg desc", "svg title"):
@@ -4873,11 +4924,18 @@ class ForeignTagHandler(TagHandler):
                     context.enter_element(new_node)
                 return True
 
+            # Inside a <select>, suppress creation of MathML subtree including leaf elements (flatten to text)
+            if context.current_parent.is_inside_tag("select"):
+                return True
+
             # Special case: Nested MathML text integration point elements (mi/mo/mn/ms/mtext)
             # inside an existing MathML text integration point should be treated as HTML elements
             # (no MathML prefix) per html5lib expectations in foreign-fragment tests. Example:
             # context element <math ms> then encountering <ms/> should yield <ms> not <math ms>.
             if tag_name_lower in {"mi", "mo", "mn", "ms", "mtext"}:
+                # Suppress entirely inside select (flatten)
+                if context.current_parent.is_inside_tag("select"):
+                    return True
                 ancestor_text_ip = context.current_parent.find_ancestor(
                     lambda n: n.tag_name in (
                         "math mi",
