@@ -218,6 +218,10 @@ class TemplateTagHandler(TagHandler):
         # Do not treat <template> specially when in foreign (SVG/MathML) contexts; let foreign handlers manage it
         if context.current_context in ("math", "svg"):
             return False
+        # Suppress special handling inside existing template content; nested <template> should be treated
+        # as a normal element inside the content subtree, not create a second content container.
+        if context.current_parent.find_ancestor(lambda n: n.tag_name == 'template') and context.current_parent.tag_name == 'content':
+            return False
         return tag_name == "template"
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
@@ -608,6 +612,14 @@ class TextHandler(TagHandler):
         if frag == 'colgroup' and context.current_parent.tag_name == 'document-fragment':
             if not text.isspace() and not any(ch.tag_name != '#text' for ch in context.current_parent.children):
                 return True
+
+        # Foreign (MathML/SVG) content: append text directly to current foreign element without
+        # triggering body/table salvage heuristics. This preserves correct subtree placement
+        # for cases like post-body <math><mi>foo</mi> where previous logic routed text to body.
+        if context.current_context in ("math", "svg"):
+            if text:
+                self._append_text(text, context)
+            return True
 
         # Malformed DOCTYPE tail
         if context.document_state == DocumentState.INITIAL and text.strip() == "]>":
@@ -1224,14 +1236,12 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                     if depth > 8:
                         break
                 if depth >= 2:
-                    # Reuse current innermost nobr instead of creating new one; adjust so subsequent content goes inside it.
-                    # Move insertion point outward one level so new potential nobr creation becomes a sibling (effectively suppressed).
+                    # Structural suppression: move insertion point one level up so the attempted new <nobr>
+                    # will be treated as a sibling and then skip creating it (no context flag needed).
                     if context.current_parent.parent:
                         context.move_to_element(context.current_parent.parent)
-                        # Mark a transient flag to signal suppression; FormattingElement creation below will honor it.
-                        setattr(context, '_suppress_next_nobr', True)  # type: ignore[attr-defined]
-                        if self.parser.env_debug:
-                            self.debug(f"    Depth {depth} >=2: suppressing creation of additional <nobr>; insertion parent now {context.current_parent.tag_name}")
+                    if self.parser.env_debug:
+                        self.debug(f"    Depth {depth} >=2: structurally suppressing creation of additional <nobr>")
             if self.parser.env_debug:
                 self.debug(
                     f"Post-duplicate handling before element creation: parent={context.current_parent.tag_name}, open={[e.tag_name for e in context.open_elements._stack]}, active={[e.element.tag_name for e in context.active_formatting_elements if e.element]}"
@@ -1244,11 +1254,18 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         if tag_name != "nobr":
             context.open_elements.push(new_element)
         else:
-            # If suppression flag set (linear depth limit reached), skip creating/pushing entirely.
-            if getattr(context, '_suppress_next_nobr', False):  # type: ignore[attr-defined]
-                # Clear flag and abort further <nobr> handling.
-                delattr(context, '_suppress_next_nobr')  # type: ignore[attr-defined]
-                return True
+            # Structural suppression: if immediate parent already has a terminal <nobr> chain of depth >=2
+            # (successive only-child <nobr>), skip creating another to avoid unbounded nesting.
+            if context.current_parent.tag_name == 'nobr':
+                depth = 1
+                cur = context.current_parent
+                while cur.parent and cur.parent.tag_name == 'nobr' and len(cur.parent.children) == 1:
+                    depth += 1
+                    cur = cur.parent
+                    if depth > 8:
+                        break
+                if depth >= 2:
+                    return True
 
     # Removed non-spec pre-insertion before-table/trailing <b> positioning heuristic.
 
@@ -1649,6 +1666,11 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             return True
 
         # Paragraph integration inside table cells following foreign (math/svg) content: ensure <p> stays in cell.
+        if self._is_in_select(context) and tag_name == 'p':
+            # Flatten paragraph start tag inside select: ignore tag, keep accumulating its text
+            # into the select's text node sequence (tree expects inline concatenation).
+            self.debug("Flattening <p> inside select (ignored start tag)")
+            return True
         if tag_name == 'p' and context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW, DocumentState.IN_CELL):
             # If a td/th is open on stack, move insertion point there (if not already) before letting generic handlers process.
             deepest_cell = None
@@ -2688,26 +2710,104 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
-        return tag_name == "table"
+        return tag_name in {"table","tbody","thead","tfoot","tr","td","th","caption","colgroup"}
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
-        # Close current table: pop open elements up to table, clear formatting to marker
-        current_table = self.parser.find_current_table(context)
-        if not current_table:
-            return True
-        # Pop open elements until we remove this table
-        while context.open_elements._stack:
-            popped = context.open_elements.pop()
-            if popped is current_table:
-                break
-        # Move insertion point to parent of table (if exists)
-        if current_table.parent:
-            context.move_to_element(current_table.parent)
-        # Clear active formatting entries up to last marker for this table boundary
-        context.active_formatting_elements.clear_up_to_last_marker()
-        # Transition back to body (or appropriate containing state)
-        self.parser.transition_to_state(context, DocumentState.IN_BODY)
-        self.debug("Closed </table>, popped formatting marker")
+        tag = token.tag_name
+        # Find matching ancestor for this table-scoped element. The current insertion point
+        # may already have been moved outside the table subtree (e.g. due to earlier foster
+        # parenting or foreign content adjustments) while the table and its descendants are
+        # still on the open elements stack. In that case, a simple ancestor walk from
+        # current_parent would fail to find the target and we would incorrectly ignore the
+        # end tag, leaving residual table elements open (causing later flow content to be
+        # salvaged back into a cell). To avoid that, fall back to searching the open
+        # elements stack for the most recently opened element matching the end tag.
+        target = context.current_parent.find_ancestor(tag)
+        if not target:
+            for element in reversed(context.open_elements._stack):  # type: ignore[attr-defined]
+                if element.tag_name == tag:
+                    target = element
+                    break
+        if not target:
+            return True  # Ignore unmatched end tag entirely
+        # If closing a table and an open <select> still exists inside it (misnested per spec),
+        # pop the select first so that subsequent flow content (e.g. <p>) appears after the table
+        # rather than as a descendant/misplaced sibling inside the cell.
+        if tag == 'table':
+            if self.parser.env_debug:
+                self.debug(f"</table> pre-pop open stack: {[e.tag_name for e in context.open_elements._stack]}")
+            # If a <select> is currently open inside this table (descendant, not ancestor),
+            # pop it first so subsequent flow content inserts after the table. We scan the
+            # open elements stack top-down until we reach the table target.
+            if context.open_elements.contains(target):
+                stack = context.open_elements._stack  # type: ignore[attr-defined]
+                # Walk from top until table encountered, looking for the first select
+                select_to_pop = None
+                for el in reversed(stack):
+                    if el is target:
+                        break
+                    if el.tag_name == 'select':
+                        select_to_pop = el
+                        break
+                if select_to_pop:
+                    while not context.open_elements.is_empty():
+                        popped = context.open_elements.pop()
+                        if popped is select_to_pop:
+                            # Move insertion to parent of select (may still be inside table)
+                            if select_to_pop.parent:
+                                context.move_to_element(select_to_pop.parent)
+                            break
+        
+        # Pop open elements until target removed (if present)
+        if context.open_elements.contains(target):
+            while not context.open_elements.is_empty():
+                popped = context.open_elements.pop()
+                if popped is target:
+                    break
+        # Move insertion point to parent of target
+        if target.parent:
+            context.move_to_element(target.parent)
+        # State transitions mirroring simplified insertion mode changes
+        if tag == 'table':
+            # Auto-close any open select descendant before finalizing </table> so that subsequent
+            # flow content (e.g. <p>) appears after the table rather than nested within select in cell.
+            select_desc = target.find_ancestor('select') if target else None
+            # If select is a descendant (not ancestor), search within table subtree
+            if not select_desc:
+                # Depth-first search for select inside table
+                stack = [target]
+                found_select = None
+                while stack:
+                    node = stack.pop()
+                    if node.tag_name == 'select':
+                        found_select = node
+                        break
+                    stack.extend(reversed(node.children))
+                select_desc = found_select
+            if select_desc and context.open_elements.contains(select_desc):
+                while not context.open_elements.is_empty():
+                    popped = context.open_elements.pop()
+                    if popped is select_desc:
+                        break
+                # Leave insertion at table for normal closure below
+            # Clear active formatting elements up to marker at table boundary
+            context.active_formatting_elements.clear_up_to_last_marker()
+            self.parser.transition_to_state(context, DocumentState.IN_BODY, context.current_parent)
+            self.debug("Closed </table>, popped formatting marker")
+            if self.parser.env_debug:
+                self.debug(f"</table> post-pop open stack: {[e.tag_name for e in context.open_elements._stack]}")
+            # Ensure the table element is fully removed from the open elements stack (some malformed
+            # sequences may have skipped the earlier pop loop if target identity mismatched). This
+            # prevents subsequent paragraph salvage logic from considering the table still open.
+            context.open_elements.remove_element(target)
+        elif tag in ('tbody','thead','tfoot'):
+            self.parser.transition_to_state(context, DocumentState.IN_TABLE, context.current_parent)
+        elif tag == 'tr':
+            self.parser.transition_to_state(context, DocumentState.IN_TABLE_BODY, context.current_parent)
+        elif tag in ('td','th'):
+            self.parser.transition_to_state(context, DocumentState.IN_ROW, context.current_parent)
+        elif tag == 'caption':
+            self.parser.transition_to_state(context, DocumentState.IN_TABLE, context.current_parent)
         return True
 
     def _handle_colgroup(self, token: "HTMLToken", context: "ParseContext") -> bool:
@@ -3689,16 +3789,6 @@ class FormTagHandler(TagHandler):
                 # Ignore premature </form> completely; keep insertion point where it is so
                 # subsequent content stays nested (ignore premature </form> when insertion point drifted).
                 self.debug("Ignoring premature </form> (not at form insertion point)")
-                # Mark flag so next start tag can realign if insertion point drifted
-                try:
-                    context.ignored_form_end = True  # type: ignore[attr-defined]
-                    context.form_ignore_target = context.current_parent  # type: ignore[attr-defined]
-                    # Track deepest current element inside form for nesting of next block
-                    form_ancestor = context.current_parent.find_ancestor("form")
-                    if form_ancestor:
-                        context.form_last_child = context.current_parent  # type: ignore[attr-defined]
-                except Exception:
-                    pass
                 return True
             # Pop form from open elements and move out
             context.open_elements.remove_element(context.current_parent)
@@ -4280,15 +4370,12 @@ class AutoClosingTagHandler(TemplateAwareHandler):
             return False
 
         # Handle end tags for block elements and elements that close when their parent closes
+        if tag_name == 'form':
+            return False  # Let FormTagHandler handle explicit form closure semantics
         return (
             tag_name in CLOSE_ON_PARENT_CLOSE
             or tag_name in BLOCK_ELEMENTS
-            or tag_name
-            in (
-                "tr",
-                "td",
-                "th",
-            )
+            or tag_name in ("tr", "td", "th")
         )  # Add table elements
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
