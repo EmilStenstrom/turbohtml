@@ -279,7 +279,6 @@ FORMATTING_ELEMENTS = [
     "strong",
     "tt",
     "u",
-    "cite",
 ]
 
 # HTML elements that break out of foreign content (SVG/MathML)

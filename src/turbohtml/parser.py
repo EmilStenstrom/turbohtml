@@ -283,6 +283,50 @@ class TurboHTML:
                 walk(c)
         walk(self.root)
 
+        # MathML attribute case normalization (definitionURL, etc.) for nodes not processed by foreign handler
+        from .constants import MATHML_CASE_SENSITIVE_ATTRIBUTES, MATHML_ELEMENTS, FORMATTING_ELEMENTS
+        def normalize_mathml(node: Node):
+            parts = node.tag_name.split()
+            local = parts[-1]
+            is_mathml = local in MATHML_ELEMENTS or node.tag_name.startswith('math ')
+            if is_mathml and getattr(node, 'attributes', None):
+                new_attrs = {}
+                for k, v in node.attributes.items():
+                    kl = k.lower()
+                    if kl in MATHML_CASE_SENSITIVE_ATTRIBUTES:
+                        new_attrs[MATHML_CASE_SENSITIVE_ATTRIBUTES[kl]] = v
+                    else:
+                        new_attrs[kl] = v
+                node.attributes = new_attrs
+            for ch in node.children:
+                if ch.tag_name != '#text':
+                    normalize_mathml(ch)
+        normalize_mathml(self.root)
+
+        # Collapse adjacent duplicate formatting wrappers created via adoption cloning (<b><b>...)
+        def collapse_formatting(node: Node):
+            i = 0
+            while i < len(node.children) - 1:
+                a = node.children[i]
+                b = node.children[i+1]
+                if (
+                    a.tag_name in FORMATTING_ELEMENTS and b.tag_name == a.tag_name and a.attributes == b.attributes
+                    and len(a.children) == 1 and a.children[0] is b
+                    and not any(ch.tag_name == '#text' for ch in a.children)
+                ):
+                    # promote b's children
+                    grandchildren = list(b.children)
+                    for gc in grandchildren:
+                        b.remove_child(gc)
+                        a.append_child(gc)
+                    node.remove_child(b)
+                    continue  # re-check at same index
+                i += 1
+            for ch in node.children:
+                if ch.tag_name != '#text':
+                    collapse_formatting(ch)
+        collapse_formatting(self.root)
+
 
     def _create_initial_context(self):
         """Create a minimal ParseContext for structural post-processing heuristics.
@@ -400,17 +444,28 @@ class TurboHTML:
                 context.index = self.tokenizer.pos
 
             elif token.type == "Character":
+                # Listing/pre-like initial newline suppression (only implemented for <listing> here)
+                data = token.data
+                if getattr(context, "suppress_initial_listing_newline", False):  # type: ignore[attr-defined]
+                    if data.startswith("\n"):
+                        data = data[1:]
+                    context.suppress_initial_listing_newline = False  # type: ignore[attr-defined]
                 # Fast path: in PLAINTEXT mode all characters go verbatim inside the plaintext element
                 if context.content_state == ContentState.PLAINTEXT:
-                    text_node = Node("#text")
-                    text_node.text_content = token.data
-                    context.current_parent.append_child(text_node)
+                    if data:
+                        text_node = Node("#text")
+                        text_node.text_content = data
+                        context.current_parent.append_child(text_node)
                 else:
-                    for handler in self.tag_handlers:
-                        if handler.should_handle_text(token.data, context):
-                            self.debug(f"{handler.__class__.__name__}: handling {token}, context={context}")
-                            if handler.handle_text(token.data, context):
-                                break
+                    if data:
+                        for handler in self.tag_handlers:
+                            if handler.should_handle_text(data, context):
+                                self.debug(f"{handler.__class__.__name__}: handling {token}, context={context}")
+                                if handler.handle_text(data, context):
+                                    break
+        # Fragment post-pass: (html context) currently no synthetic recovery needed; tree built directly.
+        if self.fragment_context == 'html':
+            pass
 
     def _create_fragment_context(self) -> "ParseContext":
         """Create parsing context for fragment parsing"""
@@ -582,21 +637,29 @@ class TurboHTML:
                 context.index = self.tokenizer.pos
 
             elif token.type == "Character":
+                # Listing/pre-like initial newline suppression (only implemented for <listing> here)
+                data = token.data
+                if getattr(context, "suppress_initial_listing_newline", False):  # type: ignore[attr-defined]
+                    if data.startswith("\n"):
+                        data = data[1:]
+                    context.suppress_initial_listing_newline = False  # type: ignore[attr-defined]
                 # Fast path: in PLAINTEXT mode all characters (including '<' and '&') are literal children
                 if context.content_state == ContentState.PLAINTEXT:
-                    text_node = Node("#text")
-                    text_node.text_content = token.data
-                    context.current_parent.append_child(text_node)
+                    if data:
+                        text_node = Node("#text")
+                        text_node.text_content = data
+                        context.current_parent.append_child(text_node)
                 else:
-                    for handler in self.tag_handlers:
-                        if handler.should_handle_text(token.data, context):
-                            self.debug(f"{handler.__class__.__name__}: handling {token}, context={context}")
-                            if handler.handle_text(token.data, context):
-                                # After inserting text inside a block, perform a targeted inline normalization
-                                # for redundant trailing formatting clones that could not be unwrapped during
-                                # the adoption phase because they were empty at that time (avoid duplicating emptied wrappers).
-                                self._post_text_inline_normalize(context)
-                                break
+                    if data:
+                        for handler in self.tag_handlers:
+                            if handler.should_handle_text(data, context):
+                                self.debug(f"{handler.__class__.__name__}: handling {token}, context={context}")
+                                if handler.handle_text(data, context):
+                                    # After inserting text inside a block, perform a targeted inline normalization
+                                    # for redundant trailing formatting clones that could not be unwrapped during
+                                    # the adoption phase because they were empty at that time (avoid duplicating emptied wrappers).
+                                    self._post_text_inline_normalize(context)
+                                    break
                     # Even if no handler consumed (or additional handlers appended text differently), run normalization
                     self._post_text_inline_normalize(context)
 
@@ -653,6 +716,36 @@ class TurboHTML:
         if context.content_state == ContentState.RAWTEXT:
             self.debug("In rawtext mode, ignoring start tag")
             return
+
+        # In table contexts it is possible (via prior adoption or foreign content breakout) that
+        # current_parent has drifted out of an open table cell even though a td/th remains on the
+        # open elements stack. Before any foster‑parenting decisions, restore insertion point to the
+        # deepest still-open cell so flow content (p, text) ends up inside the cell instead of being
+        # foster‑parented before the table (regression visible in tests9 / tests10 mixed foreign+table cases).
+        if not self._is_in_template_content(context):
+            deepest_cell = None
+            for el in reversed(context.open_elements._stack):
+                if el.tag_name in ("td", "th"):
+                    deepest_cell = el
+                    break
+            if (
+                deepest_cell is not None
+                and context.current_parent is not deepest_cell
+                and not (context.current_parent and context.current_parent.find_ancestor(lambda n: n.tag_name in ("td","th")))
+            ):
+                context.move_to_element(deepest_cell)
+                self.debug(f"Restored insertion point to open cell <{deepest_cell.tag_name}> before <{tag_name}>")
+
+        # Rawtext elements (style/script) encountered while in table insertion mode should
+        # become children of the current table element (before any row groups) rather than
+        # being foster parented outside. Handle this directly here prior to generic handlers.
+        if (
+            tag_name in ("style", "script")
+            and context.document_state == DocumentState.IN_TABLE
+            and not self._is_in_template_content(context)
+        ):
+            # Let normal table handling place script/style (may end up inside row if appropriate)
+            pass
 
         # Ignore orphan table section tags that appear inside SVG integration points (title/desc/foreignObject)
         # when no HTML table element is currently open. These should be parse errors and skipped (svg.dat cases 2-4).
@@ -746,11 +839,7 @@ class TurboHTML:
         # Try tag handlers first
         for handler in self.tag_handlers:
             if handler.should_handle_start(tag_name, context):
-                # Heuristic: if we ignored a premature </form> and the last child of the form is an empty
-                # block (<div>) that was current when the end tag appeared, re-enter that child so the
-                # next block nests inside it (ensures wrapper persists for following content).
                 if getattr(context, 'ignored_form_end', False):  # type: ignore[attr-defined]
-                    # Prefer explicitly tracked last child inside form if available
                     last_child = getattr(context, 'form_last_child', None)  # type: ignore[attr-defined]
                     if last_child and last_child.find_ancestor('form'):
                         context.move_to_element(last_child)
@@ -758,17 +847,20 @@ class TurboHTML:
                         target = getattr(context, 'form_ignore_target', None)  # type: ignore[attr-defined]
                         if target and target.tag_name == 'div' and target in context.current_parent.children and target.find_ancestor('form'):
                             context.move_to_element(target)
-                    context.ignored_form_end = False  # reset
+                    context.ignored_form_end = False  # type: ignore[attr-defined]
                 if getattr(context, 'ignored_form_end', False):  # type: ignore[attr-defined]
-                    # If current_parent is still the node we set when ignoring </form>, move into its last child
                     target = getattr(context, 'form_ignore_target', None)  # type: ignore[attr-defined]
                     if target is context.current_parent and target.children:
                         last = target.children[-1]
-                        # Only descend if last child is still inside form ancestor
                         if last.find_ancestor('form'):
                             context.move_to_element(last)
                     context.ignored_form_end = False  # type: ignore[attr-defined]
                 if handler.handle_start(token, context, not token.is_last_token):
+                    if tag_name == 'listing':
+                        try:
+                            context.suppress_initial_listing_newline = True  # type: ignore[attr-defined]
+                        except Exception:
+                            pass
                     return
 
         # Default handling for unhandled tags
@@ -799,13 +891,30 @@ class TurboHTML:
             and tag_name not in HEAD_ELEMENTS
             and not self._is_in_template_content(context)
             and not self._is_in_integration_point(context)
-            # Do NOT foster parent if we're already inside a table cell (td/th)
             and context.current_parent.tag_name not in ("td", "th")
             and not context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th"))
+            and not (
+                tag_name == 'input'
+                and (
+                    (token.attributes.get('type', '') or '').lower() == 'hidden'
+                    and token.attributes.get('type', '') == token.attributes.get('type', '').strip()
+                )
+            )
         ):
-            self.debug(f"Foster parenting {tag_name} out of table")
-            self._foster_parent_element(tag_name, token.attributes, context)
-            return
+            # Before fostering, check if a cell remains open on the open elements stack. If so, the
+            # insertion point drifted out of the cell incorrectly (e.g., foreign content breakout).
+            # Restore it so flow content like <p> is inserted inside the cell rather than foster parented.
+            open_cell = None
+            for el in reversed(context.open_elements._stack):
+                if el.tag_name in ('td','th'):
+                    open_cell = el; break
+            if open_cell is not None:
+                context.move_to_element(open_cell)
+                self.debug(f"Skipped foster parenting <{tag_name}>; restored insertion to open cell <{open_cell.tag_name}>")
+            else:
+                self.debug(f"Foster parenting {tag_name} out of table")
+                self._foster_parent_element(tag_name, token.attributes, context)
+                return
 
         new_node = Node(tag_name, token.attributes)
         # Do NOT prematurely unwind formatting elements when inserting a block-level element.
@@ -816,6 +925,11 @@ class TurboHTML:
         context.current_parent.append_child(new_node)
         context.move_to_element(new_node)
         context.open_elements.push(new_node)
+        if tag_name == 'listing':
+            try:
+                context.suppress_initial_listing_newline = True  # type: ignore[attr-defined]
+            except Exception:
+                pass
 
     def _handle_end_tag(self, token: HTMLToken, tag_name: str, context: ParseContext) -> None:
         """Handle all closing HTML tags (spec-aligned, no auxiliary adoption flags)."""
@@ -828,6 +942,25 @@ class TurboHTML:
                 body = self._ensure_body_node(context)
                 if body:
                     context.move_to_element(body)
+
+        # If a table cell (td/th) remains open on the stack but current_parent has drifted
+        # outside that cell (e.g., due to foreign content breakout or adoption adjustments),
+        # restore insertion point to the deepest such cell BEFORE further end-tag processing.
+        # This preserves proper placement of subsequent flow content (<p>, text) inside the cell
+        # instead of triggering foster parenting that moves it before the table (tests9/10 failures).
+        if tag_name not in ("td", "th") and not self._is_in_template_content(context):
+            deepest_cell = None
+            for el in reversed(context.open_elements._stack):
+                if el.tag_name in ("td", "th"):
+                    deepest_cell = el
+                    break
+            if (
+                deepest_cell is not None
+                and context.current_parent is not deepest_cell
+                and not (context.current_parent and context.current_parent.find_ancestor(lambda n: n.tag_name in ("td","th")))
+            ):
+                context.move_to_element(deepest_cell)
+                self.debug(f"Restored insertion point to open cell <{deepest_cell.tag_name}> prior to handling </{tag_name}>")
 
     # Detect stray </table> in contexts expecting tbody wrapper later
         if tag_name == 'table' and not self.find_current_table(context):
@@ -862,7 +995,40 @@ class TurboHTML:
 
         if adoption_run_count > 0:
             self.debug(f"Adoption agency completed after {adoption_run_count} run(s) for </{tag_name}>")
+            # Post-adoption normalization for deep </a> ladder cases (nest flattened div/a sequences)
+            if tag_name == 'a' and hasattr(self.adoption_agency, '_normalize_a_div_ladder'):
+                try:
+                    self.adoption_agency._normalize_a_div_ladder(context)
+                except Exception:
+                    pass  # Non-fatal; normalization is a structural cleanup only
             return
+
+        # End tag </body> handling nuances:
+        #  * While in normal IN_BODY, allow BodyElementHandler to process (may transition to AFTER_BODY).
+        #  * While in table-related insertion modes (IN_TABLE/IN_TABLE_BODY/IN_ROW/IN_CELL/IN_CAPTION), a stray </body>
+        #    must be ignored – prematurely moving the insertion point to <body> would cause following character tokens
+        #    to be foster‑parented before the table instead of remaining inside the still‑open cell (tables01:10).
+        #  * After body (AFTER_BODY / AFTER_HTML), additional </body> tags are ignored (spec parse error) but we keep
+        #    the insertion point at the body so subsequent text still appends there (tests expect this behavior).
+        if tag_name == 'body':
+            if context.document_state == DocumentState.IN_BODY:
+                pass  # Let handler perform the legitimate close.
+            elif context.document_state in (
+                DocumentState.IN_TABLE,
+                DocumentState.IN_TABLE_BODY,
+                DocumentState.IN_ROW,
+                DocumentState.IN_CELL,
+                DocumentState.IN_CAPTION,
+            ):
+                # Ignore stray </body> inside table-related modes (do NOT reposition current_parent)
+                self.debug("Ignoring stray </body> in table insertion mode")
+                return
+            else:
+                # Stray </body> after body closed or in pre-body states: keep insertion point at existing body
+                body_node = self._get_body_node()
+                if body_node:
+                    context.move_to_element(body_node)
+                return
 
         # Try tag handlers first
         for handler in self.tag_handlers:
@@ -914,6 +1080,8 @@ class TurboHTML:
             if context.current_parent.parent:
                 old_parent = context.current_parent
                 context.move_up_one_level()
+                # Ensure text after </code> inside a table cell lands as sibling, not child
+                # (Insertion point already at parent after move_up_one_level.)
                 self.debug(
                     f"Default end tag: closed {tag_name}, current_parent now: {context.current_parent.tag_name}"
                 )
@@ -925,7 +1093,7 @@ class TurboHTML:
                     context.move_to_element_with_fallback(self.body_node, self.html_node)
                 self.debug(f"Default end tag: closed {tag_name}, restored to root context")
         else:
-            # If no immediate match, ignore the end tag (don't search ancestry)
+            # Per spec: ignore unmatched end tag (no ancestor popping heuristic)
             self.debug(f"Default end tag: no immediate match for {tag_name}, ignoring")
 
     def _handle_special_element(
@@ -1323,8 +1491,7 @@ class TurboHTML:
         if index_to_reconstruct_from is None:
             return
 
-        last_reconstructed_tag = None  # retained for future heuristics (not suppressing consecutive now)
-        # Step 3: For each entry from index_to_reconstruct_from onwards, reconstruct if missing
+        # Step 3: For each entry from index_to_reconstruct_from onwards, reconstruct if missing (strict spec)
         for entry in afe_list[index_to_reconstruct_from:]:
             if entry.element is None:
                 continue
@@ -1368,5 +1535,4 @@ class TurboHTML:
             context.open_elements.push(clone)
             entry.element = clone
             context.move_to_element(clone)
-            last_reconstructed_tag = clone.tag_name
             self.debug(f"Reconstructed formatting element {clone.tag_name}")

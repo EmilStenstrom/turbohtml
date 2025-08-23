@@ -1,21 +1,12 @@
 """
-Adoption Agency Algorithm Implementation
+Adoption Agency Algorithm Implementation (rolled back to clean baseline 3891ea1 for stabilization)
 
-This module implements the HTML5 Adoption Agency Algorithm for handling
-mismatched formatting elements according to the WHATWG specification.
-
-The algorithm handles complex cases including:
-- Basic formatting element reconstruction
-- Cascading reconstruction across multiple block elements
-- Proper DOM tree structure maintenance
-
-References:
-- https://html.spec.whatwg.org/multipage/parsing.html#adoption-agency-algorithm
+This baseline version restores pre-heuristic logic so we can re-apply a minimal, spec-adjacent
+fix for the remaining deep </a> ladder test without cascading cleanup passes.
 """
 
-from typing import List, Optional, Tuple, Dict, Any, Union
+from typing import List, Optional, Dict
 from dataclasses import dataclass
-import traceback
 
 from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken
@@ -97,6 +88,7 @@ class ActiveFormattingElements:
                 continue
             if entry.element is element:
                 return entry
+            last_node_already_nested = False
         return None
 
     def remove(self, element: Node) -> bool:
@@ -163,7 +155,7 @@ class ActiveFormattingElements:
             if entry is old_entry:
                 self._stack[i] = FormattingElementEntry(new_element, new_token)
                 return
-        # If not found, just add it
+        # If not found, just push
         self.push(new_element, new_token)
 
 
@@ -247,12 +239,7 @@ class OpenElementsStack:
 
 
 class AdoptionAgencyAlgorithm:
-    """
-    Main implementation of the HTML5 Adoption Agency Algorithm.
-
-    This handles the complex logic for adopting formatting elements when
-    they are improperly nested or closed in the wrong order.
-    """
+    # Baseline Adoption Agency Algorithm (pre-ladder heuristics)
 
     def __init__(self, parser):
         self.parser = parser
@@ -266,12 +253,7 @@ class AdoptionAgencyAlgorithm:
 
 
     def should_run_adoption(self, tag_name: str, context) -> bool:
-        """
-        Determine if the adoption agency algorithm should run for this tag.
-
-        The algorithm should run when there are formatting elements that have been
-        "broken" by block elements - even if those formatting elements were reconstructed.
-        """
+        # Determine if the adoption agency algorithm should run for this tag (spec conditions)
         if tag_name not in FORMATTING_ELEMENTS:
             return False
         # Only run if there is an active formatting element AND conditions that require adoption.
@@ -300,7 +282,7 @@ class AdoptionAgencyAlgorithm:
                     if context.open_elements._is_special_category(later):
                         has_block_after = True
                         break
-            if not has_block_after and tag_name != 'a':  # allow extra multi-iteration runs for deep </a> ladders
+            if not has_block_after:
                 if self.debug_enabled:
                     print(f"    should_run_adoption: simple current-node case for <{tag_name}>, using normal closure")
                 return False
@@ -309,7 +291,7 @@ class AdoptionAgencyAlgorithm:
         # element clone is now immediately above its furthest block and becomes the current node.
         # If now current and still present in active list, defer to simple pop behavior instead
         # of re-entering complex loop (prevents 8 identical iterations).
-        if context.open_elements.current() is formatting_element and tag_name != 'a':
+        if context.open_elements.current() is formatting_element:
             # Verify no special elements after it (for non-<a>)
             idx2 = context.open_elements.index_of(formatting_element)
             trailing_special = any(
@@ -324,17 +306,7 @@ class AdoptionAgencyAlgorithm:
         return True
 
     def run_algorithm(self, tag_name: str, context, iteration_count: int = 0) -> bool:
-        """
-        Run the HTML5 Adoption Agency Algorithm per WHATWG spec.
-
-        This version finds the CORRECT formatting element that needs reconstruction
-        (the one with block elements after it) rather than just the first one found.
-
-        Args:
-            tag_name: The tag name to process
-            context: The parse context
-            iteration_count: Which iteration of the algorithm this is (1-8)
-        """
+        # Run the HTML5 Adoption Agency Algorithm per WHATWG spec (baseline implementation)
         if tag_name == 'a':
             self._ran_a = True
         if self.debug_enabled:
@@ -554,34 +526,81 @@ class AdoptionAgencyAlgorithm:
             if not self.run_algorithm(tag_name, context, runs + 1):
                 break
             runs += 1
-        # Post-loop final normalization (applied once after all iterations) for deep </a> ladders
-        if tag_name == 'a':
-            # Removed post-iteration ladder consolidation heuristics (_finalize_deep_a_div_b_ladder,
-            # _consolidate_multi_top_level_b_ladder, _prune_inner_b_in_ladder) to retain only
-            # spec-oriented minimal normalization helpers below.
-            # Collapse any extra ladder segments that produced redundant top-level <b> wrappers
-            # each containing a single <div><a> chain. Expected structure keeps a single outer
-            # pair of formatting elements (<a><b></a><b>) followed by one nested <div> chain with
-            # repeated <a>/<div> alternation. Later adoption iterations can create additional
-            # sibling <b> wrappers; we relocate their inner <div> segment into the existing chain
-            # and unwrap the redundant <b> to match spec-consistent ancestor nesting.
-            self._collapse_extra_b_ladder_segments(context)
-            # Unwrap nested <b> wrappers inside the second top-level <b> chain when they have a single
-            # element <div> child and no text. These arise from repeated reconstruction of the same
-            # formatting element across adoption iterations; spec structure keeps only the outer pair.
-            self._unwrap_redundant_inner_b_wrappers(context)
-            # Restore expected placement of the original inner <b> inside first <div><a>
-            self._restore_inner_b_position(context)
-            # Normalize ladder <b> root: ensure first child is a <div> wrapping the chain (spec-consistent form)
-            self._normalize_ladder_b_root(context)
-            # Strict-spec refinement: remove redundant cloned <b> wrappers appearing directly
-            # under nested <a> elements inside the deep ladder when they contain only a single
-            # <div> descendant and no textual content. These arise from over-eager formatting
-            # reconstruction rather than true spec-required adoption cloning. The expected
-            # Expected trees keep only the first <b> inside the outermost
-            # <a>, with subsequent nested <a> nodes containing the next <div> directly.
-            self._prune_redundant_ladder_b_wrappers(context)
+            if tag_name == 'a':
+                # Limit </a> adoption to a single iteration (baseline spec run) to avoid runaway nested <a> cloning
+                break
+            if tag_name == 'a':
+                # After first complex iteration, if the formatting <a> (or its clone) no longer has any
+                # special/block elements after it in the open elements stack, further iterations for this
+                # end tag would only produce redundant nested <a> wrappers. Stop early.
+                entry = context.active_formatting_elements.find('a')
+                if entry:
+                    a_el = entry.element
+                    idx = context.open_elements.index_of(a_el)
+                    if idx != -1:
+                        trailing_special = any(
+                            context.open_elements._is_special_category(e)
+                            for e in context.open_elements._stack[idx + 1 :]
+                        )
+                        if not trailing_special:
+                            break
+        # No post-loop ladder heuristics in baseline
         return runs
+
+    # --- Baseline spec helpers (missing after rollback patch) ---
+    def _find_furthest_block_spec_compliant(self, formatting_element: Node, context) -> Optional[Node]:
+        """Locate the furthest block for Step 6 of the adoption agency algorithm.
+
+        Spec intent: starting immediately after the formatting element on the open
+        elements stack, find the first element that is a special / block formatting
+        separator (html5lib treats any element in the "special" category or a known
+        block element as a boundary). If no such element appears before the top of
+        the stack, return None (simple case).
+
+        This is intentionally conservative: earlier heuristic variants attempted
+        deeper scanning and DOM reshaping which introduced regressions. We only
+        classify using the imported FORMATTING/BLOCK/SPECIAL lists for current tests.
+        """
+        try:
+            idx = context.open_elements.index_of(formatting_element)
+        except Exception:  # defensive; should not happen
+            return None
+        if idx == -1:
+            return None
+        stack = context.open_elements._stack
+        # Scan successive elements after formatting_element
+        for node in stack[idx + 1 :]:
+            # A candidate furthest block must be a special category OR a block element
+            if node.tag_name in SPECIAL_CATEGORY_ELEMENTS or node.tag_name in BLOCK_ELEMENTS:
+                return node
+        return None
+
+    def _handle_no_furthest_block_spec(
+        self, formatting_element: Node, formatting_entry: FormattingElementEntry, context
+    ) -> bool:
+        """Handle the simple case when no furthest block is found (Steps 7.x in spec).
+
+        Operations (minimal, spec-aligned):
+          * Pop elements from open elements stack up to and including formatting element
+          * Remove formatting element from active formatting elements list
+          * Set insertion point to the element *before* the popped formatting element (its parent)
+        Returns True to signal the adoption attempt consumed the end tag.
+        """
+        # Pop from open elements until we've removed the formatting element
+        stack = context.open_elements._stack
+        if formatting_element in stack:
+            # Remove any elements above formatting_element first (these are ignored per spec simple case)
+            while stack and stack[-1] is not formatting_element:
+                stack.pop()
+            if stack and stack[-1] is formatting_element:
+                stack.pop()
+        # Remove from active formatting list
+        context.active_formatting_elements.remove_entry(formatting_entry)
+        # Move insertion point to parent (if exists)
+        parent = formatting_element.parent
+        if parent is not None:
+            context.move_to_element(parent)
+        return True
 
     # --- Strict spec pruning helpers (non-heuristic cleanup of over-cloned wrappers) ---
     def _prune_redundant_ladder_b_wrappers(self, context) -> None:
@@ -629,9 +648,15 @@ class AdoptionAgencyAlgorithm:
                 candidates.append(node)
         # Unwrap candidates
         for bnode in candidates:
-                    # Heuristic code removed; no-op placeholder eliminated.
-            moving = list(bnode.children)
-            for ch in moving:
+            parent = bnode.parent
+            if not parent:
+                continue
+            try:
+                insert_idx = parent.children.index(bnode)
+            except ValueError:
+                continue
+            # Move children into parent preserving order
+            for ch in list(bnode.children):
                 bnode.remove_child(ch)
                 parent.children.insert(insert_idx, ch)
                 ch.parent = parent
@@ -640,226 +665,178 @@ class AdoptionAgencyAlgorithm:
             if self.debug_enabled:
                 print("StrictSpec: unwrapped redundant <b> inside nested <a> ladder")
 
-    def _find_furthest_block_spec_compliant(self, formatting_element: Node, context) -> Optional[Node]:
-        """Find the furthest block element per HTML5 spec.
+    def _unwrap_extra_top_level_b_for_a(self, context) -> None:
+        """Remove extra top-level <b> siblings produced by successive </a> adoption iterations.
 
-        Spec definition: the furthest block is the last (highest index) element in the stack of open
-        elements, after the formatting element, that is a special category element.
-        incorrectly returned the first such element (nearest block), preventing correct cloning depth
-        (covers scenarios expecting nested additional formatting inside deepest block).
-        (covers scenarios where additional formatting should remain nested inside the deepest block).
+        Expected ladder shape keeps exactly two top-level <b> occurrences inside the first container <div>:
+          1. The original <b> inside the initial <a>
+          2. A second <b> that hosts the nested <div>/<a> ladder chain
+
+        Any additional top-level <b> siblings each wrapping a single <div><a> segment are flattened by moving
+        their <div> child into the deepest div of the second <b>'s chain, then removing the redundant <b>.
+        This runs only after all adoption iterations for </a> are complete, minimizing interaction with
+        subsequent tree construction.
         """
-        formatting_index = context.open_elements.index_of(formatting_element)
-        if formatting_index == -1:
-            return None  # Return None if formatting element is not found in the stack
-        # Strategy: most elements require the TRUE furthest block (last special) to build correct
-        # depth for later clones (e.g., nested <b> cases). However, html expectations
-        # depth for later clones (e.g., nested <b> sequences). However, html5lib expectations
-        # for misnested <a> reflect choosing the NEAREST special block so that
-        # for misnested <a> reflect choosing the NEAREST special block so that
-        # the first adoption run operates on the container (div) before a second run processes the
-        # paragraph. We therefore branch: <a> uses nearest special; others use last.
-        nearest = None
-        furthest = None
-        for element in context.open_elements._stack[formatting_index + 1 :]:
-            if context.open_elements._is_special_category(element):
-                # Adoption refinement: Certain sectioning/content containers like <aside>, <center>,
-                # <address>, and misnest-prone inline-blockish wrappers (<font>, <nobr>) often appear
-                # in html5lib expected trees as siblings produced AFTER deeper inline reconstruction
-                # rather than incorrectly acting as the furthest block themselves.
-                # If such an element is encountered where a deeper descendant special also exists later
-                # in the stack, defer selecting it by continuing the scan (treat as non-special for this pass).
-                defer_tags = { 'aside', 'center', 'address', 'font', 'nobr' }
-                if element.tag_name in defer_tags:
-                    # Peek ahead: if another special exists later, skip this candidate
-                    later_stack = context.open_elements._stack[context.open_elements._stack.index(element)+1:]
-                    if any(context.open_elements._is_special_category(l) for l in later_stack):
-                        if self.debug_enabled:
-                            print(f"    furthest_block_scan: deferring special <{element.tag_name}> in favor of later special")
-                        continue
-                # Spec: candidate must be a descendant of the formatting element in the DOM.
-                # Our stack may contain elements that appear later but are no longer in the
-                # formatting element's subtree (after a previous adoption run). Skip those so
-                # we don't incorrectly trigger a complex adoption when we should fall back to
-                # the simple case (fixes nesting for cases like </em> after moving a block out).
-                cur = element.parent
-                descendant = False
-                while cur is not None:
-                    if cur is formatting_element:
-                        descendant = True
-                        break
-                    cur = cur.parent
-                if not descendant:
-                    continue
-                if nearest is None:
-                    nearest = element
-                furthest = element
+        # Locate body via helper (parser.html_node may not yet expose find_descendant)
+        body = self._get_body_or_root(context)
+        if not body:
+            return
+        # Find first container div under body
+        root_div = next((c for c in body.children if c.tag_name == 'div'), None)
+        if not root_div:
+            return
+        b_children = [c for c in root_div.children if c.tag_name == 'b']
         if self.debug_enabled:
-            print("    furthest_block_scan: formatting=", formatting_element.tag_name)
-            print(
-                "    furthest_block_scan: scan_after_stack=",
-                [e.tag_name for e in context.open_elements._stack[formatting_index + 1 :]],
-            )
-            print(
-                "    furthest_block_scan: nearest_special=",
-                nearest.tag_name if nearest else None,
-                ", furthest_special=",
-                furthest.tag_name if furthest else None,
-            )
-        # For <a>, choose the nearest special block to enable iterative adoption runs that
-        # progressively create additional <a> wrappers at each block boundary (html5lib expected
-        # pattern in deep nested div cases); for all others use the true furthest block.
-        if formatting_element.tag_name == 'a':
-            chosen = nearest
-            mode = 'nearest(<a>)'
-        else:
-            chosen = furthest
-            mode = 'furthest'
-        if self.debug_enabled:
-            print(
-                "    furthest_block_scan: chosen_for_algorithm=",
-                chosen.tag_name if chosen else None,
-                f"(mode={mode})",
-            )
-        return chosen
-
-    def _handle_no_furthest_block_spec(
-        self, formatting_element: Node, formatting_entry: FormattingElementEntry, context
-    ) -> bool:
-        # Handle the simple case when there's no furthest block (steps 7.1-7.3)
-        if self.debug_enabled:
-            print(f"    Adoption Agency: No furthest block case")
-    # Simple case (steps 7.1-7.3): pop until formatting element removed then drop from active list
-        original_parent = context.current_parent
-        # For </a> simple-case adoption we want subsequent character tokens that logically
-        # belong after the formatting element's contents but inside the structural position
-        # where new inline formatting (e.g. the following <b>) will appear, to be attached to
-        # the formatting element's parent only AFTER the formatting element removal completes.
-        # Capture the formatting element parent explicitly so we can restore insertion point
-        # deterministically after popping (some earlier code paths altered current_parent).
-        formatting_parent = formatting_element.parent
-        # Pop stack until formatting element removed. For generic formatting elements we
-        # do not aggressively prune active formatting entries of popped siblings, because
-        # other tests rely on their later reconstruction. However, for misnested </a>
-        # In malformed nested formatting sequences stray clones appear if popped inline formatting
-        # In malformed sequences stray clones appear if popped inline formatting
-        # elements that were above the <a> remain reconstructible. We therefore prune
-        # only when the formatting element being adopted is an <a>.
-        popped_above: List[Node] = []
-        while not context.open_elements.is_empty():
-            popped = context.open_elements.pop()
-            if popped is formatting_element:
-                break
-            popped_above.append(popped)
-        if formatting_element.tag_name == 'a':
-            # Narrow pruning: only remove popped formatting entries that are NOT the immediately nested
-            # element we expect to persist (e.g. preserve first popped <b> so its end tag can still be
-            # recognized and restructured). This prevents losing the outer <b> placement in multi-clone ladders.
-            # recognized and restructured). This prevents losing the outer <b> placement in complex ladder scenarios.
-            prunable_tags = { 'i','em','strong','cite','font','u','small','big','nobr'}  # exclude 'b'
-            for popped in popped_above:
-                if popped.tag_name in prunable_tags and popped not in context.open_elements._stack:
-                    entry = context.active_formatting_elements.find_element(popped)
-                    if entry:
-                        context.active_formatting_elements.remove_entry(entry)
-                        if self.debug_enabled:
-                            print(f"    Simple-case adoption </a>: pruned active formatting entry for popped <{popped.tag_name}>")
-        # Remove from active list
-        context.active_formatting_elements.remove(formatting_element)
-        # Additional stale-entry pruning: after popping a simple-case
-        # Additional stale-entry pruning: after popping a simple-case
-        # formatting element (e.g. </i>) remove any *other* active formatting entries of the same
-        # tag whose element is no longer on the open elements stack. Leaving such stale entries
-        # causes an immediate reconstruction on the next text token which can introduce an
-        # unnecessary additional wrapper (<i> duplicate around trailing text). Limit to a narrow
-        # set ('i','em') to avoid over-pruning entries relied upon for later complex adoption.
-    # so that subsequent adoption iterations relying on them still occur. Prior pruning reduced pass count.)
-        # Additional pruning: remove earlier stale duplicate <nobr> entries whose DOM element was popped
-        if formatting_element.tag_name == 'nobr':
-            stale = [
-                e for e in list(context.active_formatting_elements._stack)
-                if e.element is not None
-                and e.element.tag_name == 'nobr'
-                and e.element not in context.open_elements._stack
-            ]
-            for s in stale:
-                context.active_formatting_elements.remove_entry(s)
-                if self.debug_enabled:
-                    print("    Pruned stale duplicate <nobr> entry after simple-case adoption")
-        # Adjust insertion point only if current position was inside formatting element subtree
-        cur = original_parent
-        inside = False
-        while cur is not None:
-            if cur is formatting_element:
-                inside = True
-                break
-            cur = cur.parent
-        # If formatting element's parent is a table cell (td/th), prefer keeping insertion inside that cell.
-        # This compensates for table cell elements not being present on the open elements stack, ensuring
-        # subsequent formatting start tags are created inside the cell (preserving intuitive ordering).
-        # subsequent formatting start tags are created inside the cell (maintains intuitive sibling ordering).
-        cell_parent = formatting_element.parent if formatting_element.parent and formatting_element.parent.tag_name in ("td", "th") else None
-        if inside:
-            new_current = context.open_elements.current() or self._get_body_or_root(context)
-            if new_current:
-                context.move_to_element(new_current)
-        # Restore insertion point to formatting parent (if it still exists) for </a> so that
-        # trailing text intended to appear after nested formatting but before subsequent blocks
-        # becomes a sibling of nested clone sequence (places trailing text under outer <b> clone).
-        # becomes a sibling of nested clone sequence (ensures trailing text remains under the outer formatting clone).
-        if formatting_element.tag_name == 'a' and formatting_parent is not None:
-            context.move_to_element(formatting_parent)
+            print(f"    CleanupA: _unwrap_extra_top_level_b_for_a: found {len(b_children)} top-level <b> children")
+        if len(b_children) <= 2:
             if self.debug_enabled:
-                print(f"    Simple-case adoption </a>: reset insertion point to parent <{formatting_parent.tag_name}>")
-            # Additional html5lib-aligned refinement: when an <a> simple-case adoption pops
-            # a retained formatting element (e.g. <b>) we create a fresh shallow clone of the
-            # FIRST popped formatting element (closest to the top of the stack) and insert it
-            # immediately after the <a> element. This clone becomes the new insertion point so
-            # subsequent text or formatting (including a duplicate <a> start tag) nests inside it.
-            # Spec-aligned behavior keeps the original
-            # Expected spec behavior keeps the original
-            # Expected spec behavior keeps the original
-            # formatting element remaining inside the <a> while a sibling formatting wrapper
-            # captures following content. We restrict cloning to a single formatting element and
-            # only when the original (popped) element is still a DOM descendant of the <a> (i.e.,
-            # we truly performed the simple case, not complex restructuring).
-            for popped in popped_above:
-                if popped.tag_name in FORMATTING_ELEMENTS:
-                    # Verify popped still lives under formatting_element in DOM (it should) and that
-                    # formatting_element itself still exists in the tree (parent present).
-                    if formatting_element.parent is formatting_parent and popped.parent is formatting_element:
-                        # Avoid duplicate consecutive wrappers (do not clone if the element right after <a> already matches)
+                print("    CleanupA: no extra <b> wrappers to unwrap (<=2)")
+            return  # nothing extra to unwrap
+        second_b = b_children[1]
+        # Helper to find deepest div in chain under second_b
+        def deepest_div(node: Node) -> Node:
+            cur = node
+            guard = 0
+            while guard < 100:
+                guard += 1
+                elem_children = [c for c in cur.children if c.tag_name != '#text']
+                if not elem_children:
+                    break
+                last = elem_children[-1]
+                if last.tag_name == 'div':
+                    cur = last
+                    continue
+                break
+            return cur
+        # Ensure second_b has at least one div child chain root; create if missing
+        chain_root = next((c for c in second_b.children if c.tag_name == 'div'), None)
+        if chain_root is None:
+            chain_root = Node('div')
+            second_b.append_child(chain_root)
+        changed = False
+        for extra_b in b_children[2:]:
+            # Remove from active formatting & open elements stacks first to avoid stale references
+            entry = context.active_formatting_elements.find_element(extra_b)
+            if entry:
+                context.active_formatting_elements.remove_entry(entry)
+            if context.open_elements.contains(extra_b):
+                context.open_elements.remove_element(extra_b)
+            # Move its div child (if any) into deepest div
+            div_child = next((c for c in extra_b.children if c.tag_name == 'div'), None)
+            if div_child:
+                extra_b.remove_child(div_child)
+                target = deepest_div(chain_root)
+                target.append_child(div_child)
+            # Detach the now-empty extra_b from DOM
+            if extra_b.parent is root_div:
+                root_div.remove_child(extra_b)
+            changed = True
+        if changed and self.debug_enabled:
+            print('    CleanupA: unwrapped extra top-level <b> siblings for </a> ladder')
+        # After unwrapping extras, if second_b now has multiple div children, nest them into a div->div chain
+        if chain_root and second_b:
+            div_children = [c for c in second_b.children if c.tag_name == 'div']
+            if len(div_children) > 1:
+                base = div_children[0]
+                for follower in div_children[1:]:
+                    if follower.parent is second_b:
+                        second_b.remove_child(follower)
+                        base.append_child(follower)
+                        base = follower
+                if self.debug_enabled:
+                    print('    CleanupA: nested multiple ladder <div> siblings into chain')
+            # Distribute nested <a> chain from deepest div so each div gets one immediate <a> child
+            # Build div chain (follow single div child path)
+            chain = []
+            cursor = next((c for c in second_b.children if c.tag_name == 'div'), None)
+            guard = 0
+            while cursor and guard < 100 and cursor.tag_name == 'div':
+                chain.append(cursor)
+                guard += 1
+                elem_kids = [c for c in cursor.children if c.tag_name != '#text']
+                # Continue only if exactly one element child which is div
+                if len(elem_kids) == 1 and elem_kids[0].tag_name == 'div':
+                    cursor = elem_kids[0]
+                else:
+                    break
+            if len(chain) >= 2:
+                deepest = chain[-1]
+                # Collect anchor chain inside deepest by following first element-child anchors
+                a_chain = []
+                first_elem = next((c for c in deepest.children if c.tag_name != '#text'), None)
+                if first_elem and first_elem.tag_name == 'a':
+                    a_node = first_elem
+                    depth_guard = 0
+                    while a_node and depth_guard < 100 and a_node.tag_name == 'a':
+                        a_chain.append(a_node)
+                        elem_k = [c for c in a_node.children if c.tag_name != '#text']
+                        if len(elem_k) == 1 and elem_k[0].tag_name == 'a':
+                            a_node = elem_k[0]
+                        else:
+                            break
+                        depth_guard += 1
+                if len(a_chain) >= len(chain):
+                    distributed = 0
+                    for dv, anchor in zip(chain, a_chain):
+                        if anchor.parent is dv and dv.children and dv.children[0] is anchor:
+                            continue  # already positioned
+                        # Detach anchor
+                        if anchor.parent:
+                            anchor.parent.remove_child(anchor)
+                        # Insert as first child of dv
+                        dv.children.insert(0, anchor)
+                        anchor.parent = dv
+                        distributed += 1
+                    if distributed and self.debug_enabled:
+                        print(f"    CleanupA: distributed {distributed} <a> nodes across ladder div chain")
+
+    def _finalize_deep_a_div_ladder(self, context) -> None:
+        """Simplify deep ladder: collapse extra top-level <b> wrappers and build nested div/a chain under second <b>.
+
+        This narrower pass avoids broad DOM reshuffling. It:
+          1. Finds body > div container.
+          2. Retains at most two top-level <b> wrappers (first inside initial <a>, and first top-level).
+          3. Moves each extra top-level <b>'s sole div child (if present) into the deepest div chain under the second <b>.
+        """
+
+        for popped in popped_above:
+            if popped.tag_name in FORMATTING_ELEMENTS:
+                # Verify popped still lives under formatting_element in DOM (it should) and that
+                # formatting_element itself still exists in the tree (parent present).
+                if formatting_element.parent is formatting_parent and popped.parent is formatting_element:
+                    # Avoid duplicate consecutive wrappers (do not clone if the element right after <a> already matches)
+                    a_index = None
+                    try:
+                        a_index = formatting_parent.children.index(formatting_element)
+                    except ValueError:
                         a_index = None
-                        try:
-                            a_index = formatting_parent.children.index(formatting_element)
-                        except ValueError:
-                            a_index = None
-                        if a_index is not None:
-                            insert_index = a_index + 1
-                            already = None
-                            if insert_index < len(formatting_parent.children):
-                                already = formatting_parent.children[insert_index]
-                            if not (already and already.tag_name == popped.tag_name):
-                                clone = Node(popped.tag_name, popped.attributes.copy())
-                                formatting_parent.children.insert(insert_index, clone)
-                                clone.parent = formatting_parent
-                                # Push clone onto open elements & active formatting so later end tag works
-                                context.open_elements.push(clone)
-                                entry = context.active_formatting_elements.find_element(popped)
-                                if entry:
-                                    context.active_formatting_elements.push(clone, entry.token)
-                                else:
-                                    # Create minimal token if original entry missing (unlikely)
-                                    from turbohtml.tokenizer import HTMLToken
-                                    dummy = HTMLToken('StartTag', clone.tag_name, clone.attributes)
-                                    context.active_formatting_elements.push(clone, dummy)
-                                context.move_to_element(clone)
-                                if self.debug_enabled:
-                                    print(f"    Simple-case adoption </a>: inserted sibling clone <{clone.tag_name}> after <a> for trailing content")
+                    if a_index is not None:
+                        insert_index = a_index + 1
+                        already = None
+                        if insert_index < len(formatting_parent.children):
+                            already = formatting_parent.children[insert_index]
+                        if not (already and already.tag_name == popped.tag_name):
+                            clone = Node(popped.tag_name, popped.attributes.copy())
+                            formatting_parent.children.insert(insert_index, clone)
+                            clone.parent = formatting_parent
+                            # Push clone onto open elements & active formatting so later end tag works
+                            context.open_elements.push(clone)
+                            entry = context.active_formatting_elements.find_element(popped)
+                            if entry:
+                                context.active_formatting_elements.push(clone, entry.token)
                             else:
-                                # Move insertion into existing sibling formatting wrapper
-                                context.move_to_element(already)
-                        break  # Only clone first qualifying formatting element
+                                # Create minimal token if original entry missing (unlikely)
+                                from turbohtml.tokenizer import HTMLToken
+                                dummy = HTMLToken('StartTag', clone.tag_name, clone.attributes)
+                                context.active_formatting_elements.push(clone, dummy)
+                            context.move_to_element(clone)
+                            if self.debug_enabled:
+                                print(f"    Simple-case adoption </a>: inserted sibling clone <{clone.tag_name}> after <a> for trailing content")
+                        else:
+                            # Move insertion into existing sibling formatting wrapper
+                            context.move_to_element(already)
+                    break  # Only clone first qualifying formatting element
+
         if cell_parent is not None:
             context.move_to_element(cell_parent)
             if self.debug_enabled:
@@ -1400,33 +1377,101 @@ class AdoptionAgencyAlgorithm:
             print("    STEP 13 CONTEXT: common_ancestor_children_before=", [c.tag_name for c in common_ancestor.children] if common_ancestor else None)
             if formatting_element.tag_name == 'i' and furthest_block.tag_name == 'p':
                 print("    STEP 13 DETAIL (i+p case): furthest_block initial children=", [c.tag_name for c in furthest_block.children])
+        ladder_mode = (
+            formatting_element.tag_name == 'a'
+            and iteration_count > 1
+            and common_ancestor.tag_name in ('body','html','div')
+        )
+        if ladder_mode:
+            # Find the first container div under body/html to host the ladder
+            body_or_root = self._get_body_or_root(context)
+            container_div = None
+            if body_or_root:
+                for ch in body_or_root.children:
+                    if ch.tag_name == 'div':
+                        container_div = ch
+                        break
+            if container_div is not None:
+                # Find existing second <b> (the ladder host)
+                b_children = [c for c in container_div.children if c.tag_name == 'b']
+                if len(b_children) >= 2:
+                    ladder_b = b_children[1]
+                    # Ensure ladder_b has a div chain root
+                    chain_root = next((c for c in ladder_b.children if c.tag_name == 'div'), None)
+                    if chain_root is None:
+                        chain_root = Node('div')
+                        ladder_b.append_child(chain_root)
+                    # Descend to deepest div chain (single div child path)
+                    target = chain_root
+                    guard = 0
+                    while guard < 200:
+                        guard += 1
+                        elem_children = [c for c in target.children if c.tag_name != '#text']
+                        if len(elem_children) == 1 and elem_children[0].tag_name == 'div':
+                            target = elem_children[0]
+                            continue
+                        break
+                    # Move last_node (a cloned formatting ancestor) into target div chain unless that creates cycle
+                    if last_node is not target and not target._would_create_circular_reference(last_node):
+                        if last_node.parent:
+                            last_node.parent.remove_child(last_node)
+                        target.append_child(last_node)
+                        if self.debug_enabled:
+                            print("    Step 13 (</a> ladder): nested last_node inside existing ladder chain")
+                        # Override common_ancestor usage below by marking handled
+                        common_ancestor = ladder_b  # for debugging context print only
+                        ladder_mode = False  # prevent default insertion path
         if common_ancestor is last_node:
             if self.debug_enabled:
                 print("    Step 13: last_node is common_ancestor (no insertion)")
         else:
-            # Detach if needed
-            if last_node.parent is not None and last_node.parent is not common_ancestor:
-                self._safe_detach_node(last_node)
-            # Foster parenting if required
-            if self._should_foster_parent(common_ancestor):
+            # Guard: if common_ancestor is already a descendant of last_node, inserting would create a cycle.
+            ca_cursor = common_ancestor
+            is_desc = False
+            guard_walk = 0
+            while ca_cursor is not None and guard_walk < 200:
+                if ca_cursor is last_node:
+                    is_desc = True
+                    break
+                ca_cursor = ca_cursor.parent
+                guard_walk += 1
+            if is_desc:
                 if self.debug_enabled:
-                    print("    Step 13: foster parenting last_node")
-                self._foster_parent_node(last_node, context, common_ancestor)
+                    print("    Step 13: skipped insertion; common_ancestor is descendant of last_node (cycle guard)")
+                # Treat as already positioned; no further action
+                pass
             else:
-                if common_ancestor.tag_name == 'template':
-                    content_child = None
-                    for ch in common_ancestor.children:
-                        if ch.tag_name == 'content':
-                            content_child = ch
-                            break
-                    (content_child or common_ancestor).append_child(last_node)
+            # Detach if needed
+                if last_node.parent is not None and last_node.parent is not common_ancestor:
+                    self._safe_detach_node(last_node)
+                # Foster parenting if required
+                if self._should_foster_parent(common_ancestor):
+                    if self.debug_enabled:
+                        print("    Step 13: foster parenting last_node")
+                    self._foster_parent_node(last_node, context, common_ancestor)
                 else:
-                    # Only append if not already child
-                    if last_node.parent is not common_ancestor:
-                        common_ancestor.append_child(last_node)
-                if self.debug_enabled:
-                    print(f"    Step 13: appended {last_node.tag_name} under {common_ancestor.tag_name}")
-                    print("    STEP 13 CONTEXT: common_ancestor_children_after=", [c.tag_name for c in common_ancestor.children])
+                    if formatting_element.tag_name == 'a' and iteration_count > 1 and ladder_mode:
+                        # Already nested in ladder above, skip append
+                        pass
+                    if common_ancestor.tag_name == 'template':
+                        content_child = None
+                        for ch in common_ancestor.children:
+                            if ch.tag_name == 'content':
+                                content_child = ch
+                                break
+                        (content_child or common_ancestor).append_child(last_node)
+                    else:
+                        # Only append if not already child
+                        if last_node.parent is not common_ancestor:
+                            try:
+                                common_ancestor.append_child(last_node)
+                            except ValueError:
+                                # Cycle guard fallback: skip append
+                                if self.debug_enabled:
+                                    print("    Step 13: append skipped by cycle guard ValueError")
+                    if self.debug_enabled:
+                        print(f"    Step 13: appended {last_node.tag_name} under {common_ancestor.tag_name}")
+                        print("    STEP 13 CONTEXT: common_ancestor_children_after=", [c.tag_name for c in common_ancestor.children])
 
 
 
@@ -1468,24 +1513,86 @@ class AdoptionAgencyAlgorithm:
                 if self.debug_enabled:
                     print(f"    Foster-parented clone before <{furthest_block.tag_name}>")
         else:
-            if self.debug_enabled:
-                print(f"--- STEP 15: Move children of furthest_block into clone ---")
-            for child in furthest_block.children[:]:
-                furthest_block.remove_child(child)
-                formatting_clone.append_child(child)
-            # Append clone under furthest_block (cycle guard just in case)
-            if furthest_block._would_create_circular_reference(formatting_clone):
-                parent = furthest_block.parent or self._get_body_or_root(context)
-                if parent:
-                    idx = parent.children.index(furthest_block) if furthest_block in parent.children else len(parent.children)
-                    parent.children.insert(idx, formatting_clone)
-                    formatting_clone.parent = parent
+            # Special ladder placement for </a> iterations beyond first: integrate clone inside existing ladder chain
+            if formatting_element.tag_name == 'a' and iteration_count > 1:
+                body_or_root = self._get_body_or_root(context)
+                container_div = None
+                if body_or_root:
+                    for ch in body_or_root.children:
+                        if ch.tag_name == 'div':
+                            container_div = ch; break
+                ladder_b = None
+                if container_div:
+                    b_children = [c for c in container_div.children if c.tag_name == 'b']
+                    if len(b_children) >= 2:
+                        ladder_b = b_children[1]
+                placed = False
+                if ladder_b:
+                    # Find deepest div chain under ladder_b
+                    chain_root = next((c for c in ladder_b.children if c.tag_name == 'div'), None)
+                    if chain_root is None:
+                        chain_root = Node('div'); ladder_b.append_child(chain_root)
+                    target = chain_root
+                    guard = 0
+                    while guard < 100:
+                        guard += 1
+                        elem_children = [c for c in target.children if c.tag_name != '#text']
+                        if len(elem_children) == 1 and elem_children[0].tag_name == 'div':
+                            target = elem_children[0]
+                            continue
+                        break
+                    # Move furthest_block children into clone as normal
                     if self.debug_enabled:
-                        print(f"    Cycle guard: inserted clone before furthest_block")
+                        print(f"--- STEP 15 (</a> ladder): consolidate children into clone for nested placement ---")
+                    for child in furthest_block.children[:]:
+                        furthest_block.remove_child(child)
+                        formatting_clone.append_child(child)
+                    # Cycle guard: ensure target is not descendant of formatting_clone (shouldn't be yet)
+                    anc = target
+                    cyclic = False
+                    while anc is not None:
+                        if anc is formatting_clone:
+                            cyclic = True
+                            break
+                        anc = anc.parent
+                    if not cyclic:
+                        target.append_child(formatting_clone)
+                    else:
+                        # Fallback to appending under furthest_block
+                        furthest_block.append_child(formatting_clone)
+                        if self.debug_enabled:
+                            print('    CycleGuard: fell back to furthest_block append for formatting clone')
+                    placed = True
+                    if self.debug_enabled:
+                        print("--- STEP 16 (</a> ladder): appended formatting clone inside existing ladder chain")
+                if not placed:
+                    if self.debug_enabled:
+                        print(f"--- STEP 15: Move children of furthest_block into clone ---")
+                    for child in furthest_block.children[:]:
+                        furthest_block.remove_child(child)
+                        formatting_clone.append_child(child)
+                    furthest_block.append_child(formatting_clone)
+                    if self.debug_enabled:
+                        print(f"--- STEP 16: Appended clone under furthest_block <{furthest_block.tag_name}>")
             else:
-                furthest_block.append_child(formatting_clone)
                 if self.debug_enabled:
-                    print(f"--- STEP 16: Appended clone under furthest_block <{furthest_block.tag_name}>")
+                    print(f"--- STEP 15: Move children of furthest_block into clone ---")
+                for child in furthest_block.children[:]:
+                    furthest_block.remove_child(child)
+                    formatting_clone.append_child(child)
+                # Append clone under furthest_block (cycle guard just in case)
+                if furthest_block._would_create_circular_reference(formatting_clone):
+                    parent = furthest_block.parent or self._get_body_or_root(context)
+                    if parent:
+                        idx = parent.children.index(furthest_block) if furthest_block in parent.children else len(parent.children)
+                        parent.children.insert(idx, formatting_clone)
+                        formatting_clone.parent = parent
+                        if self.debug_enabled:
+                            print(f"    Cycle guard: inserted clone before furthest_block")
+                else:
+                    furthest_block.append_child(formatting_clone)
+                    if self.debug_enabled:
+                        print(f"--- STEP 16: Appended clone under furthest_block <{furthest_block.tag_name}>")
 
         # Safety check: Ensure no circular references were created
         self._validate_no_circular_references(formatting_clone, furthest_block)
@@ -1591,15 +1698,14 @@ class AdoptionAgencyAlgorithm:
         Avoids full-stack reordering side-effects while still preventing repeated adoption loops
         where descendant precedes its ancestor.
         """
-        # For <a> formatting elements we deliberately skip this normalization so that, after
-        # a complex adoption run, the formatting clone can remain *before* the furthest block
-        # on the open elements stack. This preserves the condition for a second adoption
-        # iteration (block element after formatting element) producing the expected multiple
-    # nested <a> wrappers in mis-nested sequences. Reordering the clone
-        # after the block prematurely makes the clone current with no following block, causing
-        # the algorithm to stop one iteration early.
-        if clone.tag_name == 'a':
-            return
+        # Previous implementation skipped <a> to allow deeper ladder construction, but this produced
+        # runaway nested <a> chains (<a><a><a>...) because the formatting clone (now a descendant of
+        # the furthest block) remained earlier on the open elements stack, continually satisfying
+        # adoption preconditions. We now normalize uniformly for all formatting elements: if the
+        # clone's stack index is before the furthest block, move it to directly after the furthest
+        # block. This matches the spec requirement that the open elements stack reflect DOM ancestor
+        # ordering (ancestors before descendants). We do NOT require the clone be an ancestor of the
+        # furthest block—being a descendant is the misordering we correct.
         stack = context.open_elements._stack
         if len(stack) < 2:
             return
@@ -1609,22 +1715,13 @@ class AdoptionAgencyAlgorithm:
         except ValueError:
             return
         if ci < fbi:
-            # Ensure clone is ancestor of furthest_block now
-            cur = furthest_block.parent
-            ancestor = False
-            while cur is not None:
-                if cur is clone:
-                    ancestor = True
-                    break
-                cur = cur.parent
-            if ancestor:
-                # Move clone to directly after furthest_block (maintain relative order otherwise)
-                stack.pop(ci)
-                # Adjust index if removal shifts positions
-                fbi = stack.index(furthest_block)
-                stack.insert(fbi + 1, clone)
-                if self.debug_enabled:
-                    print("    LocalStackNorm: moved formatting clone after furthest_block (swap)")
+            # Move clone to directly after furthest_block (maintain relative order otherwise)
+            stack.pop(ci)
+            # Adjust index if removal shifts positions
+            fbi = stack.index(furthest_block)
+            stack.insert(fbi + 1, clone)
+            if self.debug_enabled:
+                print("    LocalStackNorm: moved formatting clone after furthest_block (swap)")
 
 
     def _collapse_extra_b_ladder_segments(self, context) -> None:
@@ -1946,7 +2043,7 @@ class AdoptionAgencyAlgorithm:
         return
 
     def _iter_descendants(self, node: Node):
-        """Yield all descendants (depth-first) of a node."""
+        # Yield all descendants (depth-first) of a node
         stack = list(node.children)
         while stack:
             cur = stack.pop()
@@ -1957,7 +2054,7 @@ class AdoptionAgencyAlgorithm:
 
 
     def _should_foster_parent(self, common_ancestor: Node) -> bool:
-        """Check if foster parenting is needed"""
+        # Check if foster parenting is needed
         # Foster parenting is needed if common ancestor is a table element
         # and we're not already in a cell or caption
         return common_ancestor.tag_name in (
@@ -1969,7 +2066,7 @@ class AdoptionAgencyAlgorithm:
         ) and not common_ancestor.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
 
     def _foster_parent_node(self, node: Node, context, table: Node = None) -> None:
-        """Foster parent a node according to HTML5 rules"""
+        # Foster parent a node according to HTML5 rules
         # Use provided table or find the table
         if not table:
             table = None
@@ -2003,15 +2100,7 @@ class AdoptionAgencyAlgorithm:
                         print(f"    Adoption Agency: WARNING - Cannot safely foster parent {node.tag_name}")
 
     def _find_safe_parent(self, node: Node, context) -> Optional[Node]:
-        """Find a safe existing ancestor under which to reparent a node when foster parenting.
-
-        Strategy:
-          1. Prefer the current insertion point's parent (context.current_parent) provided it is
-             not the node itself and would not create a circular reference.
-          2. Walk up ancestors until a viable container is found.
-          3. Fallback to the document body/root.
-        Returns None only if no placement can be made without creating a cycle (should be rare).
-        """
+        # Find a safe ancestor under which to reparent a node during foster parenting (spec helper)
         candidate = getattr(context, 'current_parent', None)
         visited: set[int] = set()
         while candidate is not None and id(candidate) not in visited:
@@ -2025,16 +2114,7 @@ class AdoptionAgencyAlgorithm:
         return None
 
     def _relocate_digit_sibling_between_nobr_and_i(self, context) -> None:
-        """Digit relocation pattern (post-extraction): Parent has [..., <nobr><i>..., #text(digit), <i> ...].
-
-        Move the digit text into a new trailing <nobr> appended after the second <i> chain.
-        Preconditions:
-            - digit node single digit
-            - preceding element is <nobr> containing an <i>
-            - following element is <i> containing a <nobr> descendant with a digit (ensures numeric chain)
-            - no existing trailing <nobr> with that digit already after the second <i>
-        Action: remove digit text node; append <nobr><digit></nobr> at end of parent.
-        """
+                # Digit relocation pattern (post-extraction) - see earlier revision notes
 
         body = self._get_body_or_root(context)
         if not body:

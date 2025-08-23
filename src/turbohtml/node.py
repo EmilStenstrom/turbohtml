@@ -188,7 +188,19 @@ class Node:
         # Add attributes on their own line if present (sorted alphabetically)
         if self.attributes:
             for key, value in sorted(self.attributes.items()):
-                result += f'\n| {" " * (indent+2)}{key}="{value}"'
+                # Namespaced attribute presentation rules:
+                #  * Inside foreign (svg/math prefixed tag_name) elements, tests expect prefixes separated
+                #    by a space: xlink:href -> xlink href, xml:lang -> xml lang, xmlns:xlink -> xmlns xlink.
+                #  * On pure HTML elements, retain the original colon form (body xlink:href remains xlink:href).
+                if ':' in key and (self.tag_name.startswith('svg ') or self.tag_name.startswith('math ')):
+                    prefix, local = key.split(':', 1)
+                    if prefix in ("xlink", "xml", "xmlns") and local:
+                        display_key = f"{prefix} {local}"
+                    else:
+                        display_key = key
+                else:
+                    display_key = key
+                result += f'\n| {" " * (indent+2)}{display_key}="{value}"'
 
         # Add children
         for child in self.children:
