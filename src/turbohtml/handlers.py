@@ -1104,6 +1104,49 @@ class TextHandler(TagHandler):
 class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
     """Handles formatting elements like <b>, <i>, etc."""
 
+    # --- Formatting element unified insertion helper ---
+    def _insert_formatting_element(
+        self,
+        token: "HTMLToken",
+        context: "ParseContext",
+        *,
+        parent: "Node" = None,
+        before: "Node" = None,
+        push_nobr_late: bool = False,
+    ) -> "Node":
+        """Create + insert a formatting element using parser.insert_element unifying stack semantics.
+
+        For all formatting elements except <nobr>, the element is pushed onto the open elements stack
+        immediately (spec normal). For <nobr> we emulate the prior behavior: delay the open elements
+        push until structural placement decisions (suppression / relocation) are complete. That is
+        achieved by forcing push_override=False and performing a manual push after insertion when
+        requested via push_nobr_late.
+        """
+        tag_name = token.tag_name
+        if tag_name == "nobr":
+            # Force no automatic push; we'll push manually later if not suppressed.
+            node = self.parser.insert_element(
+                token,
+                context,
+                parent=parent,
+                before=before,
+                mode="normal",
+                enter=True,
+                push_override=False,
+            )
+            if push_nobr_late:
+                context.open_elements.push(node)
+            return node
+        # Non-nobr formatting element: default normal insertion
+        return self.parser.insert_element(
+            token,
+            context,
+            parent=parent,
+            before=before,
+            mode="normal",
+            enter=True,
+        )
+
     def _should_handle_start_impl(self, tag_name: str, context: "ParseContext") -> bool:
         return tag_name in FORMATTING_ELEMENTS
 
@@ -1231,25 +1274,17 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                     f"Post-duplicate handling before element creation: parent={context.current_parent.tag_name}, open={[e.tag_name for e in context.open_elements._stack]}, active={[e.element.tag_name for e in context.active_formatting_elements if e.element]}"
                 )
 
-        # Create element after any adoption agency handling.
-        new_element = self._create_element(token)
-        # For nobr, delay pushing to open elements until after DOM insertion so sibling
-        # adjustment (preventing unintended nesting) can relocate insertion point first.
-        if tag_name != "nobr":
-            context.open_elements.push(new_element)
-        else:
-            # Structural suppression: if immediate parent already has a terminal <nobr> chain of depth >=2
-            # (successive only-child <nobr>), skip creating another to avoid unbounded nesting.
-            if context.current_parent.tag_name == 'nobr':
-                depth = 1
-                cur = context.current_parent
-                while cur.parent and cur.parent.tag_name == 'nobr' and len(cur.parent.children) == 1:
-                    depth += 1
-                    cur = cur.parent
-                    if depth > 8:
-                        break
-                if depth >= 2:
-                    return True
+        # Before creation: Structural suppression for nested <nobr> chains (depth >= 2) – skip creating.
+        if tag_name == "nobr" and context.current_parent.tag_name == "nobr":
+            depth = 1
+            cur = context.current_parent
+            while cur.parent and cur.parent.tag_name == 'nobr' and len(cur.parent.children) == 1:
+                depth += 1
+                cur = cur.parent
+                if depth > 8:
+                    break
+            if depth >= 2:
+                return True
 
     # Removed non-spec pre-insertion before-table/trailing <b> positioning heuristic.
 
@@ -1262,18 +1297,12 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
 
         # If we're in a table cell, handle normally
         if self._is_in_table_cell(context):
-            self.debug("Inside table cell, creating formatting element normally")
-            # Use centralized insertion for DOM append + entering; still need to manage
-            # open elements (already pushed earlier unless nobr) and active formatting list manually.
-            # We already created new_element and pushed (except potentially nobr) before, so only append+enter.
-            # insert_element will create a new Node, so we cannot call it directly here without duplicating logic;
-            # For now we leave this branch manual until a safe path for passing pre-created nodes exists.
-            context.current_parent.append_child(new_element)
-            context.enter_element(new_element)
+            self.debug("Inside table cell, inserting formatting element via unified helper")
+            new_element = self._insert_formatting_element(
+                token, context, parent=context.current_parent, push_nobr_late=(tag_name == "nobr")
+            )
             if not inside_object:
                 context.active_formatting_elements.push(new_element, token)
-            if tag_name == "nobr" and not context.open_elements.contains(new_element):
-                context.open_elements.push(new_element)
             return True
 
         # If we're in a table but not in a cell, foster parent. Also guard the case where
@@ -1289,19 +1318,18 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
             cell = context.current_parent.find_first_ancestor_in_tags(["td", "th"])
             if cell:
                 self.debug(f"Found table cell {cell.tag_name}, placing formatting element inside")
-                cell.append_child(new_element)
-                context.enter_element(new_element)
-
-                # Add to active formatting elements
-                context.active_formatting_elements.push(new_element, token)
+                new_element = self._insert_formatting_element(token, context, parent=cell, push_nobr_late=(tag_name == "nobr"))
+                if not inside_object:
+                    context.active_formatting_elements.push(new_element, token)
                 return True
 
             # If current parent is a foster-parented paragraph (p before table), insert inside it
             table = self.parser.find_current_table(context)
             if context.current_parent.tag_name == 'p' and table and table.parent == context.current_parent.parent:
                 self.debug("In foster-parented paragraph before table; inserting formatting element inside paragraph")
-                context.current_parent.append_child(new_element)
-                context.enter_element(new_element)
+                new_element = self._insert_formatting_element(
+                    token, context, parent=context.current_parent, push_nobr_late=(tag_name == "nobr")
+                )
                 if not inside_object:
                     context.active_formatting_elements.push(new_element, token)
                 return True
@@ -1310,16 +1338,15 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
             if table and table.parent:
                 self.debug("Foster parenting formatting element before table")
                 # Simple strategy: always insert directly before table
-                table_index = table.parent.children.index(table)
-                table.parent.children.insert(table_index, new_element)
-                new_element.parent = table.parent
-                context.enter_element(new_element)
-
-                # Add to active formatting elements
+                new_element = self._insert_formatting_element(
+                    token,
+                    context,
+                    parent=table.parent,
+                    before=table,
+                    push_nobr_late=(tag_name == "nobr"),
+                )
                 if not inside_object:
                     context.active_formatting_elements.push(new_element, token)
-                if tag_name == "nobr" and not context.open_elements.contains(new_element):
-                    context.open_elements.push(new_element)
                 return True
 
         # Create new formatting element normally
@@ -1338,28 +1365,33 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
             parent = context.current_parent
             last_child = parent.children[-1] if parent.children else None
             if last_child and last_child.tag_name == "table":
-                parent.insert_before(new_element, last_child)
-                # Update current parent to the new formatting element for nesting
-                context.enter_element(new_element)
-                if tag_name == "nobr":
-                    context.open_elements.push(new_element)
+                new_element = self._insert_formatting_element(
+                    token,
+                    context,
+                    parent=parent,
+                    before=last_child,
+                    push_nobr_late=(tag_name == "nobr"),
+                )
                 if not inside_object:
                     context.active_formatting_elements.push(new_element, token)
                 return True
         if pending_target and pending_target.parent is context.current_parent:
-            context.current_parent.insert_before(new_element, pending_target)
+            new_element = self._insert_formatting_element(
+                token,
+                context,
+                parent=context.current_parent,
+                before=pending_target,
+                push_nobr_late=(tag_name == "nobr"),
+            )
         else:
-            context.current_parent.append_child(new_element)
-
-        # Update current parent to the new formatting element for nesting
-        context.enter_element(new_element)
-
-        # Add to active formatting elements
+            new_element = self._insert_formatting_element(
+                token,
+                context,
+                parent=context.current_parent,
+                push_nobr_late=(tag_name == "nobr"),
+            )
         if not inside_object:
             context.active_formatting_elements.push(new_element, token)
-        # Ensure nobr tracked in open elements if inserted after delayed logic
-        if tag_name == "nobr" and not context.open_elements.contains(new_element):
-            context.open_elements.push(new_element)
         # Normalize nested empty nobr chains
         if tag_name == "nobr":
             parent = new_element.parent
@@ -2451,12 +2483,13 @@ class TableElementHandler(TagHandler):
     def _create_table_element(self, token: "HTMLToken", context: "ParseContext") -> "Node":
         """Create a table element and ensure table context"""
         if not self.parser.find_current_table(context):
-            new_table = Node("table")
-            context.current_parent.append_child(new_table)
-            context.enter_element(new_table)
+            # Create table element via unified insertion (push + enter)
+            new_table_token = self._synth_token("table") if hasattr(self, "_synth_token") else token
+            new_table = self.parser.insert_element(new_table_token, context, mode='normal', enter=True)
             self.parser.transition_to_state(context, DocumentState.IN_TABLE)
 
-        return self._create_element(token)
+        # Create and return the requested element (may be the table or a descendant)
+        return self.parser.insert_element(token, context, mode='normal', enter=True)
 
     def _append_to_table_level(self, element: "Node", context: "ParseContext") -> None:
         """Append element at table level"""
@@ -2871,9 +2904,15 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         else:
             self.debug(f"Reusing existing colgroup: {last_colgroup}")
 
-        # Rule 4: Add col to colgroup (manual creation – col elements aren't part of open elements stack)
-        new_col = self._create_element(token)
-        last_colgroup.append_child(new_col)
+        # Rule 4: Add col to colgroup using centralized insertion (no stack push, no enter)
+        new_col = self.parser.insert_element(
+            token,
+            context,
+            mode='normal',
+            enter=False,
+            parent=last_colgroup,
+            push_override=False,
+        )
         self.debug(f"Added col to colgroup: {new_col}")
 
         # Rule 5: Check context and create new tbody if needed
@@ -2934,16 +2973,25 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         """Handle td/th elements"""
         # Check if we're inside template content
         if self._is_in_template_content(context):
-            # Inside template content, just create the cell directly without table structure
-            new_cell = self._create_element(token)
-            context.current_parent.append_child(new_cell)
-            context.enter_element(new_cell)
+            # Inside template content, represent cell but do not push onto open elements stack
+            self.parser.insert_element(
+                token,
+                context,
+                mode='transient',  # do not participate in scope/adoption algorithms
+                enter=True,
+            )
             return True
 
         tr = self._find_or_create_tr(context)
-        new_cell = self._create_element(token)
-        tr.append_child(new_cell)
-        context.enter_element(new_cell)
+        # Use unified insertion (suppress open elements push to preserve prior semantics)
+        self.parser.insert_element(
+            token,
+            context,
+            mode='normal',
+            enter=True,
+            parent=tr,
+            push_override=False,
+        )
         return True
 
     def _find_or_create_tbody(self, context: "ParseContext") -> "Node":
