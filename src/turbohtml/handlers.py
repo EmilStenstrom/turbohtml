@@ -2608,8 +2608,17 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
     def _handle_caption(self, token: "HTMLToken", context: "ParseContext") -> bool:
         """Handle caption element"""
         # Always create caption at table level
-        new_caption = self._create_element(token)
-        self._append_to_table_level(new_caption, context)
+        # Ensure caption attaches directly under the current table regardless of current_parent drift.
+        table_parent = self.parser.find_current_table(context)
+        new_caption = self.parser.insert_element(
+            token,
+            context,
+            mode='normal',
+            enter=True,
+            parent=table_parent if table_parent else context.current_parent,
+        )
+        # _append_to_table_level previously appended + entered; insert_element already entered and pushed.
+        # Ensure correct state transition handled below.
         self.parser.transition_to_state(context, DocumentState.IN_CAPTION)
         return True
 
@@ -2676,11 +2685,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 else:
                     self.debug("Quirks mode: keep table inside non-empty <p>")
 
-        new_table = self._create_element(token)
-        context.current_parent.append_child(new_table)
-
-        context.enter_element(new_table)
-        context.open_elements.push(new_table)  # Add table to open elements stack
+        new_table = self.parser.insert_element(token, context, mode='normal', enter=True)
         # Insert active formatting marker to bound formatting across table boundary
         context.active_formatting_elements.push_marker()
         self.debug("Pushed active formatting marker at <table> boundary")
@@ -2799,12 +2804,13 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
         # Rule 2: Always create new colgroup at table level
         self.debug("Creating new colgroup")
-        new_colgroup = self._create_element(token)
-        self.parser.find_current_table(context).append_child(new_colgroup)
-
-        # Rule 3: Enter the colgroup context so content goes inside it
-        self.debug("Entering colgroup context")
-        context.enter_element(new_colgroup)
+        new_colgroup = self.parser.insert_element(
+            token,
+            context,
+            mode='normal',
+            enter=True,
+            parent=self.parser.find_current_table(context),
+        )
 
         # Rule 4: Check context and create new tbody if needed after colgroup
         td_ancestor = context.current_parent.find_ancestor("td")
@@ -2889,8 +2895,15 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
     def _handle_tbody(self, token: "HTMLToken", context: "ParseContext") -> bool:
         """Handle tbody element"""
         # Always create new tbody at table level
-        new_tbody = self._create_element(token)
-        self._append_to_table_level(new_tbody, context)
+        # Always append tbody (and thead/tfoot via shared logic) directly to the table element.
+        table_parent = self.parser.find_current_table(context)
+        new_tbody = self.parser.insert_element(
+            token,
+            context,
+            mode='normal',
+            enter=True,
+            parent=table_parent if table_parent else context.current_parent,
+        )
         return True
 
     def _handle_thead(self, token: "HTMLToken", context: "ParseContext") -> bool:
@@ -2904,15 +2917,11 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
     def _handle_tr(self, token: "HTMLToken", context: "ParseContext") -> bool:
         """Handle tr element"""
         if context.current_parent.tag_name in ("tbody", "thead", "tfoot"):
-            new_tr = self._create_element(token)
-            context.current_parent.append_child(new_tr)
-            context.enter_element(new_tr)
+            self.parser.insert_element(token, context, mode='normal', enter=True)
             return True
 
         tbody = self._find_or_create_tbody(context)
-        new_tr = self._create_element(token)
-        tbody.append_child(new_tr)
-        context.enter_element(new_tr)
+        self.parser.insert_element(token, context, mode='normal', enter=True, parent=tbody)
         return True
 
     def _handle_cell(self, token: "HTMLToken", context: "ParseContext") -> bool:
