@@ -169,11 +169,15 @@ class SimpleElementHandler(TagHandler):
         self.handled_tags = handled_tags
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
-        new_node = self._create_and_append_element(token, context)
-        if not self._is_void_element(token.tag_name):
-            context.enter_element(new_node)
-            # Ensure formatting elements are tracked in the open elements stack
-            context.open_elements.push(new_node)
+        # Use centralized insertion helper to ensure consistent open-elements and current_parent handling.
+        treat_as_void = self._is_void_element(token.tag_name)
+        self.parser._insert_element(
+            token,
+            context,
+            treat_as_void=treat_as_void,
+            enter=not treat_as_void,
+            push=not treat_as_void,
+        )
         return True
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
@@ -252,15 +256,18 @@ class TemplateTagHandler(TagHandler):
         ):
             insertion_parent = head_node
 
-        # Build template element + its content fragment container
-        template_node = Node("template", token.attributes)
-        insertion_parent.append_child(template_node)
+        # Build template element + its content fragment container using insertion helper
+        template_node = self.parser._insert_element(
+            token,
+            context,
+            parent=insertion_parent,
+            treat_as_void=False,
+            enter=True,
+            push=True,
+        )
+        # Create content fragment container (not pushed onto open elements stack)
         content_node = Node("content")
         template_node.append_child(content_node)
-
-        # Manage stacks: push template element; enter content node (content itself not on open elements stack)
-        context.enter_element(template_node)
-        context.open_elements.push(template_node)
         context.enter_element(content_node)
         return True
 
@@ -389,12 +396,15 @@ class TemplateContentFilterHandler(TagHandler):
                 or n.tag_name == "math"
             ):
                 return False
-            template_node = Node("template", token.attributes)
-            context.current_parent.append_child(template_node)
+            template_node = self.parser._insert_element(
+                token,
+                context,
+                treat_as_void=False,
+                enter=True,
+                push=True,
+            )
             content_node = Node("content")
             template_node.append_child(content_node)
-            context.enter_element(template_node)
-            context.open_elements.push(template_node)
             context.enter_element(content_node)
             return True
 
