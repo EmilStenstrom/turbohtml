@@ -68,13 +68,14 @@ class TagHandler:
     # Common helper methods to reduce duplication
     def _create_element(self, token: "HTMLToken") -> "Node":
         """Create a new element node from a token"""
+        # Legacy helper now delegates to unified insertion API in transient mode (not pushed / not entered).
+        # Callers that relied on pure construction should prefer parser.insert_element directly; this kept
+        # temporarily for backward compatibility in untouched paths.
         return Node(token.tag_name, token.attributes)
 
     def _create_and_append_element(self, token: "HTMLToken", context: "ParseContext") -> "Node":
         """Create a new element and append it to current parent"""
-        new_node = Node(token.tag_name, token.attributes)
-        context.current_parent.append_child(new_node)
-        return new_node
+        return self.parser.insert_element(token, context, mode='normal', enter=True)
 
     def _is_in_select(self, context: "ParseContext") -> bool:
         """Check if we're inside a select element"""
@@ -96,11 +97,15 @@ class TagHandler:
         """Foster parent an element before the current table"""
         table = self.parser.find_current_table(context)
         if table and table.parent:
-            new_node = self._create_element(token)
             table_index = table.parent.children.index(table)
-            table.parent.children.insert(table_index, new_node)
-            new_node.parent = table.parent
-            return new_node
+            return self.parser.insert_element(
+                token,
+                context,
+                mode='normal',
+                enter=True,
+                parent=table.parent,
+                before=table,
+            )
         return None
 
     def _is_in_table_context(self, context: "ParseContext") -> bool:
@@ -2676,13 +2681,19 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             current_table = self.parser.find_current_table(context)
             if current_table and current_table.parent:
                 self.debug("Encountered <table> inside existing table context (not in cell); creating sibling table")
-                new_table = self._create_element(token)
                 parent = current_table.parent
                 idx = parent.children.index(current_table)
-                parent.children.insert(idx + 1, new_table)
-                new_table.parent = parent
-                context.move_to_element(new_table)
-                context.open_elements.push(new_table)
+                # Insert using unified helper before the element after current_table (i.e., position idx+1)
+                # Determine insertion reference: element after current_table if exists
+                before = parent.children[idx + 1] if idx + 1 < len(parent.children) else None
+                new_table = self.parser.insert_element(
+                    token,
+                    context,
+                    mode='normal',
+                    enter=True,
+                    parent=parent,
+                    before=before,
+                )
                 # Push formatting marker for new table boundary
                 context.active_formatting_elements.push_marker()
                 self.debug("Pushed active formatting marker at <table> sibling boundary")
@@ -4160,14 +4171,11 @@ class RawtextTagHandler(SelectAwareHandler):
             self.debug("Closing paragraph before xmp")
             context.move_up_one_level()
 
-        # Create and append the new node
-        new_node = self._create_element(token)
-        context.current_parent.append_child(new_node)
-
+        # Create RAWTEXT element via unified insertion (push + enter)
+        new_node = self.parser.insert_element(token, context, mode='normal', enter=True)
         # Switch to RAWTEXT state and let tokenizer handle the content
         self.debug(f"Switching to RAWTEXT content state for {tag_name}")
         context.content_state = ContentState.RAWTEXT
-        context.enter_element(new_node)
         self.parser.tokenizer.start_rawtext(tag_name)
         return True
 
@@ -4290,12 +4298,19 @@ class VoidElementHandler(SelectAwareHandler):
                 if input_type == "hidden":
                     # Hidden input becomes a sibling immediately after the form inside the table
                     self.debug("Making hidden input a sibling to form in table")
-                    new_node = self._create_element(token)
                     form_parent = form_ancestor.parent
                     if form_parent:
+                        # Insert hidden input as sibling immediately after form (void insertion)
                         form_index = form_parent.children.index(form_ancestor)
-                        form_parent.children.insert(form_index + 1, new_node)
-                        new_node.parent = form_parent
+                        before = form_parent.children[form_index + 1] if form_index + 1 < len(form_parent.children) else None
+                        self.parser.insert_element(
+                            token,
+                            context,
+                            mode='void',
+                            enter=False,
+                            parent=form_parent,
+                            before=before,
+                        )
                         return True
                 else:
                     # Non-hidden input foster parented outside the table (before the table)
@@ -4331,8 +4346,9 @@ class VoidElementHandler(SelectAwareHandler):
         # Copy attributes if any
         if node.attributes:
             token.attributes.update(node.attributes)
-
-        return self._create_element(token)
+        # Use unified insertion (void if original node is void, else normal). We don't know context
+        # here, so default to creating a normal element under current_parent.
+        return self.parser.insert_element(token, self.parser.context, mode='normal', enter=True)
 
 
 class AutoClosingTagHandler(TemplateAwareHandler):
