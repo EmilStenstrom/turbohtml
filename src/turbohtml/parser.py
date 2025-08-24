@@ -344,6 +344,91 @@ class TurboHTML:
         n.text_content = text
         return n
 
+    # --- Centralized text insertion helper ---
+    def insert_text(
+        self,
+        text: str,
+        context: ParseContext,
+        *,
+        parent: Node | None = None,
+        before: Node | None = None,
+        merge: bool = True,
+        foster: bool = False,
+        strip_replacement: bool = True,
+    ) -> Node | None:
+        """Insert character data into the tree with standardized merging / sanitation.
+
+        This concentrates the low‑level mechanics that are repeated across handlers
+        while deliberately excluding higher‑level heuristics (body promotion, template
+        boundary routing, adoption‑driven reconstruction triggers, PRE first‑newline
+        suppression, malformed <code> duplication, etc.). Those remain in the handlers
+        so that this helper stays a predictable primitive and *never* drives parser
+        state transitions or stack mutations.
+
+        Responsibilities:
+          * Optional foster parenting hand‑off (delegates to TextHandler logic)
+          * Context‑sensitive U+FFFD stripping (mirrors TextHandler._append_text)
+          * frameset_ok invalidation when meaningful characters appear
+          * Merge with previous sibling text node (when merge=True and inserting
+            at end of parent)
+          * Insertion before an existing node when 'before' is supplied (attempting
+            merge with the immediate previous sibling only)
+
+        Returns the Node that now holds the text content, or None when the text
+        is fully suppressed (e.g. becomes empty after stripping replacement chars).
+        """
+        if text == "":  # Fast path noop
+            return None
+
+        # Determine insertion parent
+        target_parent = parent or context.current_parent
+        if target_parent is None:  # Defensive; should not happen in normal flow
+            return None
+
+        # Foster parenting path delegates early (kept separate to avoid duplicating logic)
+        if foster:
+            # Reuse existing TextHandler foster logic for consistency
+            # (It performs its own merging / frameset_ok handling.)
+            if hasattr(self, 'text_handler') and self.text_handler:  # type: ignore[attr-defined]
+                self.text_handler._foster_parent_text(text, context)  # type: ignore[attr-defined]
+            return None  # Foster logic handles insertion; no direct node reference guaranteed
+
+        # Replacement character policy: mirror TextHandler._append_text — strip outside
+        # plain SVG foreign subtrees when strip_replacement is True.
+        if strip_replacement and "\uFFFD" in text and not self.is_plain_svg_foreign(context):  # type: ignore[arg-type]
+            text = text.replace("\uFFFD", "")
+            if text == "":
+                return None
+
+        # frameset_ok toggling (meaningful = non‑whitespace, non‑replacement)
+        if context.frameset_ok and any((not c.isspace()) and c != '\uFFFD' for c in text):
+            context.frameset_ok = False
+
+        # Decide insertion strategy
+        if before is not None and before.parent is target_parent:
+            # Insert before specific child; attempt merge with preceding sibling if text node
+            idx = target_parent.children.index(before)
+            prev_idx = idx - 1
+            if merge and prev_idx >= 0 and target_parent.children[prev_idx].tag_name == "#text":
+                prev_node = target_parent.children[prev_idx]
+                prev_node.text_content += text
+                return prev_node
+            # No merge possible – create fresh node and insert
+            new_node = self.create_text_node(text)
+            target_parent.insert_before(new_node, before)
+            return new_node
+
+        # Append path (potential merge with last child)
+        if merge and target_parent.children and target_parent.children[-1].tag_name == "#text":
+            last = target_parent.children[-1]
+            last.text_content += text
+            return last
+
+        # Fresh append
+        new_node = self.create_text_node(text)
+        target_parent.append_child(new_node)
+        return new_node
+
     def _post_process_tree(self) -> None:
         """Replace tokenizer sentinel with U+FFFD and strip non-preserved U+FFFD occurrences.
 
