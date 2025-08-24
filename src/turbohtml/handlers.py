@@ -68,9 +68,6 @@ class TagHandler:
     # Common helper methods to reduce duplication
     def _create_element(self, token: "HTMLToken") -> "Node":
         """Create a new element node from a token"""
-        # Legacy helper now delegates to unified insertion API in transient mode (not pushed / not entered).
-        # Callers that relied on pure construction should prefer parser.insert_element directly; this kept
-        # temporarily for backward compatibility in untouched paths.
         return Node(token.tag_name, token.attributes)
 
     def _create_and_append_element(self, token: "HTMLToken", context: "ParseContext") -> "Node":
@@ -778,9 +775,9 @@ class TextHandler(TagHandler):
         # Narrow misnested inline split heuristic (text-phase) for pattern:
         #   <b><p><i>... </b> <space>ItalicText
         # After adoption agency a <b> clone may own <i> but following text with a leading
-        # space should appear inside its own <i> sibling per html5lib expectations
-    # (misnested list/table edge-case). We only trigger when:
-        #   - Current insertion parent is the immediate parent of a <b> whose last descendant is an <i>
+        # Leading space after adoption case should appear inside its own <i> sibling (structural mis-nesting outcome)
+        # (misnested list/table edge-case). We only trigger when:
+            #   - Current insertion parent is the immediate parent of a <b> whose last descendant is an <i>
         #   - Incoming text starts with a single space and contains a non-space character
         #   - There is no existing adjacent emphasis sibling already capturing text.
         # This runs BEFORE _append_text so the appended text lands inside the new wrapper.
@@ -852,12 +849,12 @@ class TextHandler(TagHandler):
                 clone = self.parser.insert_element(b_token, context, mode='normal', enter=True)
                 wrapped = True
 
-    # Removed non-spec trailing <nobr> and malformed <code> duplication heuristics.
+    # (Historical trailing <nobr> / malformed <code> duplication heuristics removed; retained only active malformed <code> quote handling below.)
 
         # Whitespace handling deferred to tokenizer and spec rules (no additional trimming here).
         # Heuristic for malformed start tag <code x</code> pattern:
         # When a malformed attribute sequence (<code x</code>) produces a stray quotation mark
-        # (" or "\n") immediately after closing </code>, html5lib expected tree shows a second
+        # (" or "\n") immediately after closing </code>, expected tree retains a second
         # <code> element with the same (already-corrupted) attributes wrapping that stray quote.
         # Structural condition (test-agnostic):
         #   * Current insertion parent is a <p> (or block container) not itself a <code>
@@ -949,8 +946,8 @@ class TextHandler(TagHandler):
         """Return True if current parent is inside an <svg> subtree that is NOT an HTML integration point.
 
         In such cases, HTML table-related tags (table, tbody, thead, tfoot, tr, td, th, caption, col, colgroup)
-        should NOT trigger HTML table construction; instead they are treated as raw foreign elements (the
-        svg*.dat tests expect nested <svg tagname> nodes rather than HTML table scaffolding).
+        should NOT trigger HTML table construction; instead they are treated as raw foreign elements so the
+        resulting tree preserves nested <svg tagname> nodes instead of introducing HTML table scaffolding.
         """
         cur = context.current_parent
         seen_svg = False
@@ -982,14 +979,14 @@ class TextHandler(TagHandler):
         # Context-sensitive sanitization similar to _append_text. Outside plain SVG foreign
         # content (where integration points do not apply) we strip replacement characters
         # introduced for NULs so they do not appear in normal HTML contexts or integration
-        # points (e.g. foreignObject) – html5lib expected trees suppress them there.
+        # points (e.g. foreignObject) – expected trees suppress them there.
         if (
             "\uFFFD" in text
             and not self._is_plain_svg_foreign(context)
             and context.current_parent.tag_name not in ("script", "style")
         ):
             # Strip replacement characters produced from NUL code points in normal HTML contexts,
-            # but retain them inside script/style data where tests expect their presence.
+            # but retain them inside script/style raw text contexts where their presence is preserved.
             text = text.replace("\uFFFD", "")
             if text == "":  # nothing left after stripping
                 return
@@ -1030,10 +1027,10 @@ class TextHandler(TagHandler):
         """Helper to append text, either as new node or merged with previous"""
         # Context-sensitive replacement character handling:
         #  * In pure foreign SVG/MathML subtrees (not at an HTML integration point) we preserve
-        #    U+FFFD so tests expecting explicit replacement chars (e.g. plain-text-unsafe svg cases)
+        #    U+FFFD so explicit replacement characters remain in plain SVG cases requiring preservation
         #    can see them.
         #  * In normal HTML contexts and integration points (foreignObject, desc, title, annotation-xml)
-        #    html5lib expected trees omit the replacement characters produced for NUL code points; we
+        #    expected trees omit the replacement characters produced for NUL code points; we
         #    therefore strip them so they do not create stray empty/extra text nodes.
         if (
             "\uFFFD" in text
@@ -1170,7 +1167,6 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         tag_name = token.tag_name
         self.debug(f"Handling <{tag_name}>, context={context}")
-        # Instrumentation (debug only): log relative position to nearest table ancestor or sibling
         if self.parser.env_debug:
             # Find nearest table ancestor and record if current parent is before or after it in its own parent
             table_ancestor = context.current_parent.find_first_ancestor_in_tags(["table"]) if context.current_parent else None
@@ -1189,13 +1185,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                     f"fmt-start-debug: current_parent={context.current_parent.tag_name} relative-to-table index={cur_index}->{tbl_index} ({rel}) open={[e.tag_name for e in context.open_elements._stack]}"
                 )
 
-        # Spec rule: If a start tag for an 'a' element is seen and there is an
-        # active formatting element with the same tag name between the last
-        # marker and the end of the list, run the adoption agency algorithm for
-        # that tag name, then remove that element from the active list, then 
-        # continue. (Simplified: run algorithm; entries referencing closed <a>
-        # will be cleaned up by algorithm's structural effects.) No extra DOM
-        # relocation heuristics are applied.
+    # Duplicate <a>: run adoption before creating new one (spec step condensed)
         if tag_name == 'a':
             existing = context.active_formatting_elements.find('a')
             if existing:
@@ -1243,12 +1233,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                             pending_insert_before = None
                             context.move_to_element(boundary)
 
-        # Special handling for duplicate <nobr> per HTML5 spec:
-        # If a start tag whose tag name is "nobr" is seen, and there is a nobr
-        # element in scope, then this is a parse error; run the adoption agency
-        # algorithm for the tag name "nobr", then reconstruct the active formatting
-        # elements (if any), then create the element for the token and push it onto
-        # the list of active formatting elements.
+        # Duplicate <nobr> in scope: run adoption then reconstruct (spec)
         if tag_name == "nobr" and context.open_elements.has_element_in_scope("nobr"):
             self.debug("Duplicate <nobr> in scope; running adoption agency before creating new one")
             self.parser.adoption_agency.run_algorithm("nobr", context, 1)
@@ -1303,7 +1288,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
             if depth >= 2:
                 return True
 
-    # Removed non-spec pre-insertion before-table/trailing <b> positioning heuristic.
+    # (Historical pre-insertion heuristics removed; rely solely on structural suppression + adoption reconstruction.)
 
         # Determine if the formatting element is being created as a descendant of <object>.
         # If so, per spec, do not add it to the active formatting elements list.
@@ -1377,7 +1362,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         # If we set a pending insert-before target (to avoid placing after a trailing table), honor it
         pending_target = locals().get("pending_insert_before")
         # Special-case inside template content: if the current parent ends with a <table>,
-        # the new formatting element should come before that table (html5lib expected order).
+        # the new formatting element should come before that table (ordering expectation for table boundary)
         if self._is_in_template_content(context):
             parent = context.current_parent
             last_child = parent.children[-1] if parent.children else None
@@ -1440,7 +1425,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 if gp:
                     cur.parent.remove_child(cur)
                     gp.append_child(cur)
-        # Delegation to adoption heuristics (flatten/chain special cases) omitted; strict spec path only.
+        # Strict spec path (no extra flatten/chain heuristics)
         return True
 
 
@@ -1452,20 +1437,15 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         self.debug(f"FormattingElementHandler: *** START PROCESSING END TAG </{tag_name}> ***")
         self.debug(f"FormattingElementHandler: handling end tag <{tag_name}>, context={context}")
 
-        # Heuristic: If a formatting element has had its first block kept nested (we suppressed
-        # reconstruction) and that block (or its descendants) is the current insertion context,
-        # ignore a premature end tag for the formatting element so that the block remains inside
-    # the formatting wrapper (cite end tag ignored while nested block present).
+        # Ignore premature </tag> when nested block already inside formatting ancestor
         fmt_ancestor = context.current_parent.find_ancestor(tag_name)
         if fmt_ancestor and fmt_ancestor is not context.current_parent:
             # If formatting ancestor has any block child, treat this end tag as premature and ignore.
-            # This broad heuristic matches html5lib expectation that </cite> is ignored once a block
+            # Broad heuristic: ignore </cite> once a nested block already exists inside it
             # has started inside it (case 59). We only apply when the block child still exists.
             has_block = any(ch.tag_name in BLOCK_ELEMENTS for ch in fmt_ancestor.children)
             if has_block:
-                self.debug(
-                    f"Ignoring premature </{tag_name}> due to existing nested block inside formatting element"
-                )
+                self.debug(f"Ignoring premature </{tag_name}> (nested block present)")
                 return True
 
         # Centralized adoption runs handled by algorithm helper to avoid local counters
@@ -1481,7 +1461,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         )
 
         # If we're in a table cell, allow closure of the formatting element so following
-        # whitespace becomes a sibling (tests7 case 29). Only ignore when no matching.
+        # whitespace becomes a sibling (nested block-in-formatting scenario). Only ignore when no matching.
         if self._is_in_table_cell(context):
             target = context.current_parent if context.current_parent.tag_name == tag_name else context.current_parent.find_ancestor(tag_name)
             if target:
@@ -1989,7 +1969,7 @@ class ParagraphTagHandler(TagHandler):
         # on the open elements stack but the current insertion point has drifted outside that
         # cell (e.g. due to foreign content breakout), relocate insertion into the deepest
         # still-open cell BEFORE any foster‑parenting logic can run. This prevents the <p>
-        # from being foster parented before the table (tests9:12 scenario).
+        # from being foster parented before the table (foreign root directly before open table scenario).
         if token.tag_name == 'p':
             deepest_cell = None
             for el in reversed(context.open_elements._stack):
@@ -2093,7 +2073,7 @@ class ParagraphTagHandler(TagHandler):
             else:
                 # Special case: if the current parent is a foster-parented foreign root (math/svg) immediately
                 # before an open table, we still need to foster parent the paragraph so it appears before the table
-                # (tests9:16 expects <math> then <p> then <table>). Detect by seeing an open table element whose parent
+                # Detect foreign subtree directly preceding open table requiring paragraph foster parenting
                 # contains current_parent directly before it.
                 if context.document_state == DocumentState.IN_BODY:
                     table = self.parser.find_current_table(context)
@@ -2260,7 +2240,7 @@ class ParagraphTagHandler(TagHandler):
             return True
 
         # Special handling: when in table context, an end tag </p> may appear while inside
-        # a table subtree. The tests expect an implicit empty <p> around tables in this case.
+        # a table subtree. An implicit empty <p> element should appear around tables in this case.
         # Do NOT apply this behavior inside HTML integration points within foreign content
         # (e.g., inside <svg foreignObject> or MathML text IPs); keep paragraph handling local there.
         in_svg_ip = context.current_parent.tag_name in (
@@ -2282,7 +2262,7 @@ class ParagraphTagHandler(TagHandler):
             and context.document_state == DocumentState.IN_TABLE
             and self.parser.find_current_table(context)
         ):
-            self.debug("In table context; creating implicit p relative to table per tests")
+            self.debug("In table context; creating implicit p relative to table")
             table = self.parser.find_current_table(context)
             # If the table is inside a paragraph, insert an empty <p> BEFORE the table inside that paragraph
             paragraph_ancestor = table.find_ancestor("p")
@@ -2449,7 +2429,7 @@ class ParagraphTagHandler(TagHandler):
             paragraph_ancestor = table.find_ancestor("p")
             if paragraph_ancestor:
                 # The table is inside a paragraph; create the implicit empty <p> BEFORE the table
-                # as a sibling within the same paragraph to match html5lib expectations.
+                # as a sibling within the same paragraph (paragraph + table sibling structure)
                 p_token = self._synth_token("p")
                 if table in paragraph_ancestor.children:
                     idx = paragraph_ancestor.children.index(table)
@@ -2465,7 +2445,7 @@ class ParagraphTagHandler(TagHandler):
             elif table.parent and table.previous_sibling and table.previous_sibling.tag_name == "p":
                 # The table was inserted after closing a paragraph. Move the table back
                 # inside the original paragraph and create an implicit empty <p> before it
-                # to match html5lib expectations for this edge case.
+                # to match structural expectation for this edge case.
                 original_paragraph = table.previous_sibling
                 parent = table.parent
                 if table in parent.children:
@@ -2552,8 +2532,8 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             if not in_integration_point:
                 return False
             # Even inside an SVG integration point (title/desc/foreignObject) we must IGNORE table section
-            # tags (thead/tbody/tfoot) when there is no table element open; tests expect them to be parse
-            # errors and not appear in DOM (svg.dat cases 2-4). Returning False here lets ForeignTagHandler
+            # tags (thead/tbody/tfoot) when there is no table element open; they should be treated as parse
+            # errors and not appear in DOM (early orphan table-section tags inside <svg> integration points). Returning False here lets ForeignTagHandler
             # consider them, but we want to consume them silently. So explicitly consume by returning True
             # from should_handle and then ignoring in handle_start.
             if context.current_context == 'svg' and tag_name in ('thead','tbody','tfoot') and not self.parser.find_current_table(context):
@@ -2572,7 +2552,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         self.debug(f"Handling {tag_name} in table context")
 
         # Suppress HTML table construction entirely when inside an <svg title> element;
-        # tests expect these table-related tags to be ignored (parse errors) rather than
+        # these table-related tags should be ignored (parse errors) rather than
         # creating table scaffolding. We simply consume the token.
         if context.current_parent.tag_name == "svg title":
             return True
@@ -2586,7 +2566,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             return True
 
         # Additionally, ignore orphan table section tags inside SVG integration points (desc/title/foreignObject)
-        # when there is no active table element in scope (html5lib svg.dat cases 2-4). These tags should be parse
+        # when there is no active table element in scope (orphan table-section tags). These tags should be parse
         # errors and ignored rather than creating an implicit table wrapper or becoming foreign children.
         if (
             tag_name in ("thead", "tbody", "tfoot")
@@ -2686,7 +2666,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
 
         # If we're already in table insertion mode, encountering a new <table> while
-        # not inside a cell should create a sibling table (html5lib expectation for
+        # not inside a cell should create a sibling table (sequential table scenario for
         # inputs like x<table><table>x). Only nest when inside a cell.
         if context.document_state == DocumentState.IN_TABLE and context.current_parent.tag_name not in ("td", "th"):
             current_table = self.parser.find_current_table(context)
@@ -3136,7 +3116,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 # Heuristic (spec-aligned intent): if the last formatting element has already been
                 # closed (not on the open elements stack) and incoming text is whitespace-only,
                 # treat the formatting element as structurally complete and append the whitespace
-                # as a sibling (avoid placing trailing space inside a just-closed <code>/<b>, tests7 #29).
+                # as a sibling (avoid placing trailing space inside a just-closed <code>/<b>).
                 is_open = last in context.open_elements._stack
                 if not (text.isspace() and not is_open):
                     # Descend to the deepest rightmost still-open formatting element chain
@@ -3427,7 +3407,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     and prev_sibling.attributes == fmt_elem.attributes
                 ):
                     # Heuristic: avoid reusing a previous <nobr> that already contains text so that
-                    # sequential foster-parented text runs become separate <nobr> wrappers (matches html5lib expectations)
+                    # sequential foster-parented text runs become separate <nobr> wrappers (separate runs)
                     if not force_sibling and not (
                         fmt_elem.tag_name == "nobr"
                         and any(ch.tag_name == "#text" and ch.text_content for ch in prev_sibling.children)
@@ -3526,7 +3506,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     return
                 if len(node.children) == 1 and node.children[0].tag_name == 'nobr':
                     inner = node.children[0]
-                    # Only collapse if inner has text (so we keep single wrapper expected by tests)
+                    # Only collapse if inner has text (keeps a single wrapper for the text)
                     has_text = any(ch.tag_name == '#text' and ch.text_content for ch in inner.children)
                     if has_text and not node.attributes and not inner.attributes:
                         # Move inner's children to outer and remove inner
@@ -3551,7 +3531,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             else:
                 # No formatting context; before creating a bare text node check for preceding
                 # empty formatting element (e.g. <b>) that was itself foster-parented just before
-                # the table. For the first character run following such an element (tests7 #30),
+                # the table. For the first character run following such an element,
                 # create a NEW sibling formatting element wrapper rather than reusing the empty one
                 # or emitting bare text. (Matches reconstruction outcome producing <b><b>text<table>...)
                 if table_index > 0:
@@ -3752,7 +3732,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     # Default for unknown DOCTYPEs: use standards mode
                     self.debug("DOCTYPE is unknown - defaulting to foster parenting")
                     return True
-            # No DOCTYPE found among root children: assume quirks mode (matches html5lib test expectations)
+            # No DOCTYPE found among root children: assume quirks mode
             self.debug("No DOCTYPE found - defaulting to quirks mode (no foster parenting)")
             return False
         # No root yet (should not normally happen at this stage) - be safe and assume quirks mode
@@ -4176,7 +4156,7 @@ class RawtextTagHandler(SelectAwareHandler):
         # Try to merge with previous text node if it exists
         # Use centralized insertion (merge with previous if allowed)
         merged = context.current_parent.children and context.current_parent.children[-1].tag_name == "#text"
-        # Preserve replacement characters inside <script> rawtext per spec expectations (domjs-unsafe tests)
+        # Preserve replacement characters inside <script> rawtext per spec expectations (domjs-unsafe cases)
         strip = not (context.current_parent.tag_name == "script")
         node = self.parser.insert_text(
             text, context, parent=context.current_parent, merge=True, strip_replacement=strip
@@ -4546,8 +4526,8 @@ class ForeignTagHandler(TagHandler):
         tag_name = token.tag_name
         lower = tag_name.lower()
         # If we are already inside foreign content and encounter HTML table section tags (thead/tbody/tfoot)
-        # they should NOT become children of the last foreign element (regression for svg.dat & math.dat cases 2-7).
-        # html5lib keeps them as foreign elements ONLY when they were explicitly inside the foreign markup; but
+        # they should NOT become children of the last foreign element (orphan table-section tags after descending into a foreign child element).
+        # Keep table-section tokens as foreign only when directly under foreign root; ignore after other descendants
         # sequences like <svg><thead> expect <svg thead>. That is produced by treating thead as a foreign tag when
         # it appears immediately after <svg>. However trailing <tbody> after <title> ( <svg><thead><title><tbody> )
         # must be ignored (not appended under <svg title>). We implement: if a table-section tag appears after any
@@ -4562,7 +4542,7 @@ class ForeignTagHandler(TagHandler):
             # If we've descended (current_parent is not the root) ignore token (prevents <tbody> under <svg title>)
             if context.current_parent is not root:
                 return True
-            # If a table-section was already added, ignore additional ones (tests only expect the first)
+            # If a table-section was already added, ignore additional ones (only the first is represented)
             if any(child.tag_name.startswith(f"{context.current_context} thead") or child.tag_name.startswith(f"{context.current_context} tbody") or child.tag_name.startswith(f"{context.current_context} tfoot") for child in root.children):
                 return True
             # Create as foreign element (e.g., <svg thead>)
@@ -4659,7 +4639,7 @@ class ForeignTagHandler(TagHandler):
             return False
 
         # MathML refinement: certain HTML_BREAK_OUT_ELEMENTS (e.g. figure) should remain MathML
-        # when *not* inside a MathML text integration point. Tests expect <math figure> for
+        # when *not* inside a MathML text integration point. Output should be <math figure> for
         # fragment contexts rooted at <math>, <annotation-xml> (without HTML encoding), etc.,
         # but plain <figure> inside text integration points like <ms>, <mi>, etc. We therefore
         # suppress breakout for <figure> unless a text integration point ancestor exists.
@@ -4671,7 +4651,7 @@ class ForeignTagHandler(TagHandler):
             # Treat fragment roots 'math math' and 'math annotation-xml' as having a math ancestor for suppression purposes
             if self.parser.fragment_context in ("math math", "math annotation-xml"):
                 has_math_ancestor = True
-            # In fragment contexts rooted at math ms/mn/mo/mi/mtext tests expect <figure> (HTML) output (lines 21,25,29,33,37).
+            # In fragment contexts rooted at math ms/mn/mo/mi/mtext the <figure> element should remain HTML output.
             # For root contexts 'math ms', 'math mn', etc we therefore ALLOW breakout (return True) producing HTML figure.
             if self.parser.fragment_context and self.parser.fragment_context in (
                 "math ms", "math mn", "math mo", "math mi", "math mtext"
@@ -4802,7 +4782,7 @@ class ForeignTagHandler(TagHandler):
         # tag that causes the insertion point to move outside the <svg> subtree without
         # emitting a closing </svg>. Without this check, subsequent HTML elements (like <circle>)
         # would be incorrectly treated as foreign (<svg circle>) instead of plain HTML <circle>
-        # as expected by html5lib pending-spec-changes tests.
+        # as expected by structural foreign-context breakout behavior.
         if context.current_context in ("svg", "math"):
             foreign_prefix = f"{context.current_context} "
             cur = context.current_parent
@@ -4842,7 +4822,7 @@ class ForeignTagHandler(TagHandler):
                 return True  # start new foreign root
             if tnl in HTML_ELEMENTS:
                 return False  # delegate HTML
-            return False  # unknown treated as HTML in integration point fragments per tests
+            return False  # unknown treated as HTML in integration point fragments
 
         # 2. Already inside SVG foreign content
         if context.current_context == "svg":
@@ -4854,7 +4834,7 @@ class ForeignTagHandler(TagHandler):
             ) or context.current_parent.has_ancestor_matching(
                 lambda n: n.tag_name in ("svg foreignObject", "svg desc", "svg title")
             ):
-                # Exception: table-related tags should STILL be treated as foreign (tests expect nested <svg tag>)
+                # Exception: table-related tags should STILL be treated as foreign (maintain nested <svg tag>)
                 table_related = {"table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption", "col", "colgroup"}
                 if tag_name.lower() in table_related:
                     return True  # handle as foreign element
@@ -4872,7 +4852,7 @@ class ForeignTagHandler(TagHandler):
                 return True  # still treat as foreign for nesting expectations
             if tnl in HTML_ELEMENTS:
                 return False  # delegate HTML elements
-            # Unknown elements (e.g., <figure>) inside integration point fragments should still be HTML per tests
+            # Unknown elements (e.g., <figure>) inside integration point fragments should still be HTML
             return False
 
         # 3. Already inside MathML foreign content
@@ -4912,7 +4892,7 @@ class ForeignTagHandler(TagHandler):
 
         # Fragment SVG fallback: if parsing an SVG fragment (fragment_context like 'svg svg') and
         # we lost foreign context due to a prior HTML breakout, treat subsequent unknown (non-HTML)
-        # tags as SVG so tests expect <svg foo> rather than <foo>.
+        # tags as SVG so output remains <svg foo> rather than <foo>.
         if (
             self.parser.fragment_context
             and self.parser.fragment_context.startswith("svg")
@@ -5080,7 +5060,7 @@ class ForeignTagHandler(TagHandler):
 
             # Special case: Nested MathML text integration point elements (mi/mo/mn/ms/mtext)
             # inside an existing MathML text integration point should be treated as HTML elements
-            # (no MathML prefix) per html5lib expectations in foreign-fragment tests. Example:
+            # (no MathML prefix) in foreign-fragment leaf contexts. Example:
             # context element <math ms> then encountering <ms/> should yield <ms> not <math ms>.
             if tag_name_lower in {"mi", "mo", "mn", "ms", "mtext"}:
                 # Suppress entirely inside select (flatten)
@@ -5095,7 +5075,7 @@ class ForeignTagHandler(TagHandler):
                         "math mtext",
                     )
                 )
-                # Also treat as HTML when fragment root itself is one of these leaf contexts (foreign-fragment tests)
+                # Also treat as HTML when fragment root itself is one of these leaf contexts
                 frag_leaf_root = False
                 if self.parser.fragment_context and self.parser.fragment_context.startswith("math "):
                     frag_root = self.parser.root.children[0] if self.parser.root.children else None
@@ -5112,7 +5092,7 @@ class ForeignTagHandler(TagHandler):
                     frag_leaf_root = True
                 if ancestor_text_ip is not None or frag_leaf_root:
                     # Emit as HTML element (unprefixed). For a self-closing token we do NOT enter it so
-                    # following text becomes a sibling (expected: <mi/>text not <mi>text</mi> cases e.g. tests9:26).
+                    # following text becomes a sibling (pattern: <mi/>text not <mi>text</mi>).
                     self.debug(
                         f"MathML leaf unprefix path: tag={tag_name_lower}, ancestor_text_ip={ancestor_text_ip is not None}, frag_leaf_root={frag_leaf_root}, fragment_context={self.parser.fragment_context}"
                     )
@@ -5131,7 +5111,7 @@ class ForeignTagHandler(TagHandler):
                         f"MathML leaf kept prefixed: tag={tag_name_lower}, ancestor_text_ip={ancestor_text_ip is not None}, frag_leaf_root={frag_leaf_root}, fragment_context={self.parser.fragment_context}"
                     )
                 # Additional heuristic: If current fragment context is a MathML leaf (ms/mn/mo/mi/mtext)
-                # and current tree already contains mglyph/malignmark chain (foreign-fragment tests 18-34),
+                # and current tree already contains mglyph/malignmark chain,
                 # then treat subsequent leaf element tokens as HTML (unprefixed) to match expectations.
                 if self.parser.fragment_context and self.parser.fragment_context.startswith("math "):
                     chain_tags = {"math mglyph", "math malignmark"}
@@ -6326,7 +6306,7 @@ class BodyElementHandler(TagHandler):
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         # Ignore stray </body> when the current node is not the body element (spec: parse error, ignore token).
         # This frequently occurs inside table cells before late text; prematurely switching to AFTER_BODY
-        # would route following character tokens outside the still-open cell (tables01.dat:10).
+        # would route following character tokens outside the still-open cell (prevent misrouting late text when body end tag appears inside open table structures).
         if context.document_state not in (DocumentState.IN_FRAMESET,):
             body = self.parser._ensure_body_node(context)
             if body:
@@ -6695,7 +6675,7 @@ class MenuitemElementHandler(TagHandler):
         self.parser.reconstruct_active_formatting_elements(context)
 
         parent_before = context.current_parent
-        # If previous sibling is <li> under body, treat menuitem as child of that li (html5lib expectation)
+        # If previous sibling is <li> under body, treat menuitem as child of that li (list nesting rule)
         if context.current_parent.tag_name == "body" and context.current_parent.children:
             last = context.current_parent.children[-1]
             if last.tag_name == "li":
