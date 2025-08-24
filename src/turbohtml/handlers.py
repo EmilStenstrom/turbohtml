@@ -264,10 +264,9 @@ class TemplateTagHandler(TagHandler):
 
         # Build template element + its content fragment container using insertion helper
         template_node = self.parser.insert_element(token, context, parent=insertion_parent, mode='normal', enter=True)
-        # Create content fragment container (not pushed onto open elements stack)
-        content_node = Node("content")
-        template_node.append_child(content_node)
-        context.enter_element(content_node)
+        # Create template content fragment using unified insertion (transient so it is not on open stack)
+        content_token = self._synth_token("content")
+        content_node = self.parser.insert_element(content_token, context, mode='transient', enter=True, parent=template_node)
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
@@ -396,9 +395,8 @@ class TemplateContentFilterHandler(TagHandler):
             ):
                 return False
             template_node = self.parser.insert_element(token, context, mode='normal', enter=True)
-            content_node = Node("content")
-            template_node.append_child(content_node)
-            context.enter_element(content_node)
+            content_token = self._synth_token("content")
+            content_node = self.parser.insert_element(content_token, context, mode='transient', enter=True, parent=template_node)
             return True
 
         # Establish insertion points
@@ -659,7 +657,7 @@ class TextHandler(TagHandler):
                 open_cells = [e for e in context.open_elements if e.tag_name in ('td','th')]
                 last_cell = open_cells[-1] if open_cells else None
                 if last_cell:
-                    tn = Node('#text'); tn.text_content = text; last_cell.append_child(tn)
+                    tn = Node('#text'); tn.text_content = text; last_cell.append_child(tn)  # text nodes kept lightweight
                     return True
 
         # Broader malformed recovery: if we're at body insertion point with an open table cell
@@ -812,10 +810,17 @@ class TextHandler(TagHandler):
                             for d in prev_fmt.children
                         )
                         if not has_text_desc:
-                            clone = Node(prev_fmt.tag_name)
-                            parent.insert_before(clone, elem_children[-1])
-                            context.move_to_element(clone)
-                            context.open_elements.push(clone)
+                            # Clone formatting element wrapper via unified insertion (normal push+enter)
+                            synth = self._synth_token(prev_fmt.tag_name) if hasattr(self, '_synth_token') else token.__class__('StartTag', tag_name=prev_fmt.tag_name, attributes={})
+                            clone = self.parser.insert_element(
+                                synth,
+                                context,
+                                mode='normal',
+                                enter=True,
+                                parent=parent,
+                                before=elem_children[-1],
+                            )
+                            # Already pushed by insert_element
                             wrapped = True
 
         # 3. After-table trailing inline wrapper duplication: when body ends with a table and
@@ -832,10 +837,8 @@ class TextHandler(TagHandler):
                 if self.parser.env_debug:
                     self.debug("After-table inline duplication: creating trailing <b> wrapper for new text segment")
                 # Create a fresh <b> wrapper for new text segment after trailing table when any prior <b> exists
-                clone = Node('b')
-                context.current_parent.append_child(clone)
-                context.move_to_element(clone)
-                context.open_elements.push(clone)
+                b_token = self._synth_token('b') if hasattr(self, '_synth_token') else token.__class__('StartTag', tag_name='b', attributes={})
+                clone = self.parser.insert_element(b_token, context, mode='normal', enter=True)
                 wrapped = True
 
     # Removed non-spec trailing <nobr> and malformed <code> duplication heuristics.
@@ -872,10 +875,9 @@ class TextHandler(TagHandler):
                     if self.parser.env_debug:
                         self.debug("Malformed <code> duplication heuristic: duplicating after stray quote text (copy all attributes)")
                     # Copy all attributes, including malformed ones
-                    dup = Node('code', {k: v for k, v in last.attributes.items()})
-                    context.current_parent.append_child(dup)
-                    context.enter_element(dup)
-                    context.open_elements.push(dup)
+                    from turbohtml.tokenizer import HTMLToken as _HTMLToken  # local import to avoid circular at top
+                    code_token = _HTMLToken('StartTag', tag_name='code', attributes={k: v for k, v in last.attributes.items()})
+                    dup = self.parser.insert_element(code_token, context, mode='normal', enter=True)
                     self._append_text(text, context)
                     if dup.parent:
                         context.move_to_element(dup.parent)
@@ -897,10 +899,9 @@ class TextHandler(TagHandler):
                         self.debug("Malformed <code> duplication heuristic (inside code): creating sibling before stray quote (copy all attributes)")
                     parent = cur.parent
                     context.move_to_element(parent)
-                    dup = Node('code', {k: v for k, v in cur.attributes.items()})
-                    parent.append_child(dup)
-                    context.enter_element(dup)
-                    context.open_elements.push(dup)
+                    from turbohtml.tokenizer import HTMLToken as _HTMLToken  # local import
+                    code_token = _HTMLToken('StartTag', tag_name='code', attributes={k: v for k, v in cur.attributes.items()})
+                    dup = self.parser.insert_element(code_token, context, mode='normal', enter=True, parent=parent)
                     self._append_text(text, context)
                     if dup.parent:
                         context.move_to_element(dup.parent)
@@ -2240,9 +2241,9 @@ class ParagraphTagHandler(TagHandler):
 
             # Always create implicit p inside button when </p> is encountered in button scope
             self.debug("Creating implicit p inside button due to </p> end tag")
-            p_node = Node("p")
-            button_ancestor.append_child(p_node)
-            self.debug(f"Created implicit p inside button: {p_node}")
+            p_token = self._synth_token("p")
+            self.parser.insert_element(p_token, context, mode='normal', enter=False, parent=button_ancestor, push_override=False)
+            self.debug("Created implicit p inside button")
             # Don't change current_parent - the implicit p is immediately closed
             return True
 
@@ -2274,20 +2275,16 @@ class ParagraphTagHandler(TagHandler):
             # If the table is inside a paragraph, insert an empty <p> BEFORE the table inside that paragraph
             paragraph_ancestor = table.find_ancestor("p")
             if paragraph_ancestor:
-                p_node = Node("p")
-                if table in paragraph_ancestor.children:
-                    idx = paragraph_ancestor.children.index(table)
-                else:
-                    idx = len(paragraph_ancestor.children)
-                paragraph_ancestor.children.insert(idx, p_node)
-                p_node.parent = paragraph_ancestor
+                p_token = self._synth_token("p")
+                before = table if table in paragraph_ancestor.children else None
+                self.parser.insert_element(p_token, context, mode='normal', enter=False, parent=paragraph_ancestor, before=before, push_override=False)
                 self.debug(f"Inserted implicit empty <p> before table inside paragraph {paragraph_ancestor}")
                 return True
             # If the table was foster-parented after a paragraph, create empty <p> in original paragraph
             elif table.parent and table.previous_sibling and table.previous_sibling.tag_name == "p":
                 original_paragraph = table.previous_sibling
-                p_node = Node("p")
-                original_paragraph.append_child(p_node)
+                p_token = self._synth_token("p")
+                self.parser.insert_element(p_token, context, mode='normal', enter=False, parent=original_paragraph, push_override=False)
                 self.debug(f"Created implicit p as child of original paragraph {original_paragraph}")
                 return True
 
@@ -2414,8 +2411,8 @@ class ParagraphTagHandler(TagHandler):
         button_ancestor = context.current_parent.find_ancestor("button")
         if button_ancestor:
             self.debug("No open p element found but inside button, creating implicit p inside button")
-            p_node = Node("p")
-            context.current_parent.append_child(p_node)
+            p_token = self._synth_token("p")
+            self.parser.insert_element(p_token, context, mode='normal', enter=False, push_override=False)
             # Don't change current_parent - the implicit p is immediately closed
             return True
 
@@ -2441,13 +2438,13 @@ class ParagraphTagHandler(TagHandler):
             if paragraph_ancestor:
                 # The table is inside a paragraph; create the implicit empty <p> BEFORE the table
                 # as a sibling within the same paragraph to match html5lib expectations.
-                p_node = Node("p")
+                p_token = self._synth_token("p")
                 if table in paragraph_ancestor.children:
                     idx = paragraph_ancestor.children.index(table)
                 else:
                     idx = len(paragraph_ancestor.children)
-                paragraph_ancestor.children.insert(idx, p_node)
-                p_node.parent = paragraph_ancestor
+                before = table if table in paragraph_ancestor.children else None
+                self.parser.insert_element(p_token, context, mode='normal', enter=False, parent=paragraph_ancestor, before=before, push_override=False)
                 self.debug(f"Inserted implicit empty <p> before table inside paragraph {paragraph_ancestor}")
                 # Don't change current_parent - the implicit p is immediately closed
                 return True
@@ -2463,8 +2460,8 @@ class ParagraphTagHandler(TagHandler):
                     idx = parent.children.index(table)
                     parent.children.pop(idx)
                 # Insert an empty <p> inside the original paragraph
-                p_node = Node("p")
-                original_paragraph.append_child(p_node)
+                p_token = self._synth_token("p")
+                self.parser.insert_element(p_token, context, mode='normal', enter=False, parent=original_paragraph, push_override=False)
                 # Append the table into the original paragraph
                 original_paragraph.append_child(table)
                 table.parent = original_paragraph
@@ -2475,8 +2472,8 @@ class ParagraphTagHandler(TagHandler):
 
         # In valid body context with valid parent - create implicit p (rare case)
         self.debug("No open p element found, creating implicit p element in valid context")
-        p_node = Node("p")
-        context.current_parent.append_child(p_node)
+        p_token = self._synth_token("p")
+        self.parser.insert_element(p_token, context, mode='normal', enter=False, push_override=False)
         # Don't change current_parent - the implicit p is immediately closed
 
         return True
@@ -2489,7 +2486,7 @@ class TableElementHandler(TagHandler):
         """Create a table element and ensure table context"""
         if not self.parser.find_current_table(context):
             # Create table element via unified insertion (push + enter)
-            new_table_token = self._synth_token("table") if hasattr(self, "_synth_token") else token
+            new_table_token = self._synth_token("table")
             new_table = self.parser.insert_element(new_table_token, context, mode='normal', enter=True)
             self.parser.transition_to_state(context, DocumentState.IN_TABLE)
 
