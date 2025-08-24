@@ -59,8 +59,6 @@ class TurboHTML:
         self.env_debug = debug
         self.html = html
         self.fragment_context = fragment_context
-        # Fragment body close tracking flag (pre-declare to avoid dynamic setattr/hasattr)
-        self._fragment_body_closed_once: bool = False
 
         # Reset all state for each new parser instance
         self._init_dom_structure()

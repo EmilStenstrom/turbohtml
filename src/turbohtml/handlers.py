@@ -6335,8 +6335,10 @@ class BodyElementHandler(TagHandler):
                     return True  # ignore stray </body>
 
                 if self.parser.fragment_context == 'html':
-                    if not self.parser._fragment_body_closed_once:
-                        self.parser._fragment_body_closed_once = True
+                    # Fragment 'html' context: treat first </body> as a no-op close (stay inside body),
+                    # ignore subsequent ones structurally by checking current state.
+                    # If we're already not in IN_BODY (e.g. AFTER_BODY via stray handling), just ignore.
+                    if context.document_state == DocumentState.IN_BODY:
                         context.move_to_element(body)
                     return True
                 # Normal body closure path
