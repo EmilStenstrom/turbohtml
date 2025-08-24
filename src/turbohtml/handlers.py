@@ -4540,7 +4540,7 @@ class ForeignTagHandler(TagHandler):
         push = not (token and token.is_self_closing)
         enter = push  # previous behavior: only entered when not self-closing
         return self.parser.insert_element(
-            token or HTMLToken(kind='StartTag', tag_name=tag_name, attributes=fixed_attrs),  # type: ignore
+            token or HTMLToken('StartTag', tag_name=tag_name, attributes=fixed_attrs),  # type: ignore
             context,
             mode='normal',
             enter=enter,
@@ -4768,11 +4768,17 @@ class ForeignTagHandler(TagHandler):
                 table_index = table.parent.children.index(table)
                 self.debug(f"Foster parenting HTML element <{tag_name_lower}> before table")
 
-                # Create the HTML element
-                new_node = Node(tag_name_lower, token.attributes)
-                table.parent.children.insert(table_index, new_node)
-                new_node.parent = table.parent
-                context.enter_element(new_node)
+                # Create the HTML element (not pushed; just entered) via unified insertion
+                self.parser.insert_element(
+                    token,
+                    context,
+                    mode='normal',
+                    enter=True,
+                    parent=table.parent,
+                    before=table,
+                    tag_name_override=tag_name_lower,
+                    push_override=False,
+                )
 
                 # Update document state - we're still in the table context logically
                 self.parser.transition_to_state(context, DocumentState.IN_TABLE)
@@ -5798,16 +5804,20 @@ class HeadElementHandler(TagHandler):
             table = self.parser.find_current_table(context)
             if table and table.parent:
                 # Foster parent before the table
-                new_node = Node(tag_name, token.attributes)
                 table_index = table.parent.children.index(table)
-                table.parent.children.insert(table_index, new_node)
-
-                # For elements that can have content, update current parent
-                if tag_name not in VOID_ELEMENTS:
-                    context.enter_element(new_node)
-                    if tag_name in RAWTEXT_ELEMENTS:
-                        context.content_state = ContentState.RAWTEXT
-                        self.debug(f"Switched to RAWTEXT state for {tag_name}")
+                self.parser.insert_element(
+                    token,
+                    context,
+                    mode='normal',
+                    enter=tag_name not in VOID_ELEMENTS,
+                    parent=table.parent,
+                    before=table,
+                    tag_name_override=tag_name,
+                    push_override=False,
+                )
+                if tag_name not in VOID_ELEMENTS and tag_name in RAWTEXT_ELEMENTS:
+                    context.content_state = ContentState.RAWTEXT
+                    self.debug(f"Switched to RAWTEXT state for {tag_name}")
                 return True
 
         # If we're in body after seeing real content
@@ -5818,29 +5828,34 @@ class HeadElementHandler(TagHandler):
                 # Head elements appearing before body content should go to head
                 head = self.parser._ensure_head_node()
                 if head:
-                    new_node = Node(tag_name, token.attributes)
-                    head.append_child(new_node)
+                    self.parser.insert_element(
+                        token,
+                        context,
+                        mode='normal',
+                        enter=tag_name not in VOID_ELEMENTS,
+                        parent=head,
+                        tag_name_override=tag_name,
+                        push_override=False,
+                    )
                     self.debug(f"Added {tag_name} to head (no body content yet)")
-
-                    # For elements that can have content, update current parent
-                    if tag_name not in VOID_ELEMENTS:
-                        context.enter_element(new_node)
-                        if tag_name in RAWTEXT_ELEMENTS:
-                            context.content_state = ContentState.RAWTEXT
-                            self.debug(f"Switched to RAWTEXT state for {tag_name}")
+                    if tag_name not in VOID_ELEMENTS and tag_name in RAWTEXT_ELEMENTS:
+                        context.content_state = ContentState.RAWTEXT
+                        self.debug(f"Switched to RAWTEXT state for {tag_name}")
                     return True
 
             # Head elements appearing after body content should stay in body
-            new_node = Node(tag_name, token.attributes)
-            context.current_parent.append_child(new_node)
+            self.parser.insert_element(
+                token,
+                context,
+                mode='normal',
+                enter=tag_name not in VOID_ELEMENTS,
+                tag_name_override=tag_name,
+                push_override=False,
+            )
             self.debug(f"Added {tag_name} to body")
-
-            # For elements that can have content, update current parent
-            if tag_name not in VOID_ELEMENTS:
-                context.enter_element(new_node)
-                if tag_name in RAWTEXT_ELEMENTS:
-                    context.content_state = ContentState.RAWTEXT
-                    self.debug(f"Switched to RAWTEXT state for {tag_name}")
+            if tag_name not in VOID_ELEMENTS and tag_name in RAWTEXT_ELEMENTS:
+                context.content_state = ContentState.RAWTEXT
+                self.debug(f"Switched to RAWTEXT state for {tag_name}")
             return True
 
         # Handle head elements in head normally
@@ -5859,19 +5874,21 @@ class HeadElementHandler(TagHandler):
                     context.move_to_element(head)
 
             # Create and append the new element
-            new_node = Node(tag_name, token.attributes)
             if context.current_parent is not None:
-                context.current_parent.append_child(new_node)
+                self.parser.insert_element(
+                    token,
+                    context,
+                    mode='normal',
+                    enter=tag_name not in VOID_ELEMENTS,
+                    tag_name_override=tag_name,
+                    push_override=False,
+                )
                 self.debug(f"Added {tag_name} to {context.current_parent.tag_name}")
-            else:
-                self.debug(f"No current parent for {tag_name} in fragment context, skipping")
-
-            # For elements that can have content, update current parent
-            if tag_name not in VOID_ELEMENTS:
-                context.enter_element(new_node)
-                if tag_name in RAWTEXT_ELEMENTS:
+                if tag_name not in VOID_ELEMENTS and tag_name in RAWTEXT_ELEMENTS:
                     context.content_state = ContentState.RAWTEXT
                     self.debug(f"Switched to RAWTEXT state for {tag_name}")
+            else:
+                self.debug(f"No current parent for {tag_name} in fragment context, skipping")
 
         return True
 
@@ -5880,11 +5897,26 @@ class HeadElementHandler(TagHandler):
         self.debug("handling template start tag")
 
         # Create the template element
-        template_node = Node("template", {k.lower(): v for k,v in token.attributes.items()})
-
-        # Create the special "content" document fragment
-        content_node = Node("content", {})
-        template_node.append_child(content_node)
+        template_node = self.parser.insert_element(
+            token,
+            context,
+            mode='normal',
+            enter=False,
+            tag_name_override='template',
+            attributes_override={k.lower(): v for k,v in token.attributes.items()},
+            push_override=False,
+        )
+        # Create the special "content" fragment (transient; not on open elements stack)
+        fake_token = HTMLToken('StartTag', tag_name='content', attributes={})  # type: ignore
+        content_node = self.parser.insert_element(
+            fake_token,
+            context,
+            mode='transient',
+            enter=False,
+            parent=template_node,
+            tag_name_override='content',
+            attributes_override={},
+        )
 
         # Add template to the appropriate parent
         if context.document_state == DocumentState.IN_BODY:
@@ -5893,7 +5925,7 @@ class HeadElementHandler(TagHandler):
                 # Template appearing before body content should go to head
                 head = self.parser._ensure_head_node()
                 if head:
-                    head.append_child(template_node)
+                    head.append_child(template_node)  # already created
                     self.debug("Added template to head (no body content yet)")
                 else:
                     context.current_parent.append_child(template_node)
@@ -6366,28 +6398,56 @@ class BoundaryElementHandler(TagHandler):
             self.debug(f"Found formatting element ancestor: {formatting_element}")
             self.debug(f"Current parent before: {context.current_parent}")
 
-            # Create the boundary element
-            new_node = Node(token.tag_name, {k.lower(): v for k,v in token.attributes.items()})
-            formatting_element.append_child(new_node)
-            context.enter_element(new_node)
-            self.debug(f"Created boundary element {new_node.tag_name} under {formatting_element.tag_name}")
+            # Create the boundary element (normal mode, not pushed to open elements stack)
+            boundary = self.parser.insert_element(
+                token,
+                context,
+                mode='normal',
+                enter=True,
+                parent=formatting_element,
+                tag_name_override=token.tag_name,
+                push_override=False,
+                attributes_override={k.lower(): v for k,v in token.attributes.items()},
+            )
+            self.debug(f"Created boundary element {boundary.tag_name} under {formatting_element.tag_name}")
 
-            # Create an implicit paragraph inside the boundary element
-            new_p = Node("p")
-            new_node.append_child(new_p)
-            context.enter_element(new_p)
-            self.debug(f"Created implicit paragraph under {new_node.tag_name}")
+            # Create an implicit paragraph inside the boundary element (transient so not on stack)
+            fake_p_token = HTMLToken('StartTag', tag_name='p', attributes={})  # type: ignore
+            self.parser.insert_element(
+                fake_p_token,
+                context,
+                mode='normal',
+                enter=True,
+                parent=boundary,
+                tag_name_override='p',
+                attributes_override={},
+                push_override=False,
+            )
+            self.debug(f"Created implicit paragraph under {boundary.tag_name}")
             return True
 
-        # Create the boundary element normally
-        new_node = Node(token.tag_name, {k.lower(): v for k,v in token.attributes.items()})
-        context.current_parent.append_child(new_node)
-        context.enter_element(new_node)
-
-        # Create an implicit paragraph inside the boundary element
-        new_p = Node("p")
-        new_node.append_child(new_p)
-        context.enter_element(new_p)
+        # Create the boundary element normally (no push)
+        boundary = self.parser.insert_element(
+            token,
+            context,
+            mode='normal',
+            enter=True,
+            tag_name_override=token.tag_name,
+            push_override=False,
+            attributes_override={k.lower(): v for k,v in token.attributes.items()},
+        )
+        # Create implicit paragraph (transient)
+        fake_p_token = HTMLToken('StartTag', tag_name='p', attributes={})  # type: ignore
+        self.parser.insert_element(
+            fake_p_token,
+            context,
+            mode='normal',
+            enter=True,
+            parent=boundary,
+            tag_name_override='p',
+            attributes_override={},
+            push_override=False,
+        )
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
@@ -6774,10 +6834,15 @@ class RubyElementHandler(TagHandler):
             # rtc auto-closes rb, rt, rp
             self._auto_close_ruby_elements(tag_name, context)
 
-        # Create the new element
-        new_node = Node(tag_name, token.attributes)
-        context.current_parent.append_child(new_node)
-        context.enter_element(new_node)
+        # Create the new element (push onto open elements stack for proper scoping)
+        self.parser.insert_element(
+            token,
+            context,
+            mode='normal',
+            enter=True,
+            tag_name_override=tag_name,
+            push_override=True,
+        )
         return True
 
     def _auto_close_ruby_elements(self, tag_name: str, context: "ParseContext") -> None:
