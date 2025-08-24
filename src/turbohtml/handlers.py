@@ -4532,23 +4532,23 @@ class ForeignTagHandler(TagHandler):
             The created node
         """
         fixed_attrs = self._fix_foreign_attribute_case(attributes, context_type)
-        new_node = Node(f"{context_type} {tag_name}", fixed_attrs, preserve_attr_case=True)
-
-        # Set foreign context BEFORE appending so downstream handlers in same token sequence
-        # (e.g., immediate table-related elements) can detect we're inside foreign content.
+        # Set context before insertion for downstream logic
         if context_type == "svg" and tag_name.lower() == "svg":
             context.current_context = "svg"
         elif context_type == "math" and tag_name.lower() == "math":
             context.current_context = "math"
-
-        context.current_parent.append_child(new_node)
-
-        # Only set as current parent if not self-closing
-        if not token or not token.is_self_closing:
-            context.enter_element(new_node)
-            # Track in open elements stack for correct ancestor logic
-            context.open_elements.push(new_node)
-        return new_node
+        push = not (token and token.is_self_closing)
+        enter = push  # previous behavior: only entered when not self-closing
+        return self.parser.insert_element(
+            token or HTMLToken(kind='StartTag', tag_name=tag_name, attributes=fixed_attrs),  # type: ignore
+            context,
+            mode='normal',
+            enter=enter,
+            tag_name_override=f"{context_type} {tag_name}",
+            attributes_override=fixed_attrs,
+            preserve_attr_case=True,
+            push_override=push,
+        )
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
         # We only handle starts when inside an existing foreign context OR when starting a root foreign element
@@ -4995,10 +4995,16 @@ class ForeignTagHandler(TagHandler):
                 and tnl not in MATHML_ELEMENTS
                 and not open_html_ancestor
             ):
-                new_node = Node(f"svg {tnl}", self._fix_foreign_attribute_case(token.attributes, "svg"), preserve_attr_case=True)
-                context.current_parent.append_child(new_node)
-                if not token.is_self_closing:
-                    context.enter_element(new_node)
+                self.parser.insert_element(
+                    token,
+                    context,
+                    mode='normal',
+                    enter=not token.is_self_closing,
+                    tag_name_override=f"svg {tnl}",
+                    attributes_override=self._fix_foreign_attribute_case(token.attributes, "svg"),
+                    preserve_attr_case=True,
+                    push_override=False,  # previously not pushed
+                )
                 return True
 
         if context.current_context == "math":
@@ -5051,9 +5057,14 @@ class ForeignTagHandler(TagHandler):
             # In foreign contexts, RAWTEXT elements behave as normal elements
             if tag_name_lower in RAWTEXT_ELEMENTS:
                 self.debug(f"Treating {tag_name_lower} as normal element in foreign context")
-                new_node = Node(f"math {tag_name}", token.attributes)
-                context.current_parent.append_child(new_node)
-                context.enter_element(new_node)
+                self.parser.insert_element(
+                    token,
+                    context,
+                    mode='normal',
+                    enter=True,
+                    tag_name_override=f"math {tag_name}",
+                    push_override=False,
+                )
                 # Reset tokenizer if it entered RAWTEXT mode
                 if self.parser.tokenizer.state == "RAWTEXT":
                     self.parser.tokenizer.state = "DATA"
@@ -5062,10 +5073,15 @@ class ForeignTagHandler(TagHandler):
 
             # Handle MathML elements
             if tag_name_lower == "annotation-xml":
-                new_node = Node("math annotation-xml", self._fix_foreign_attribute_case(token.attributes, "math"))
-                context.current_parent.append_child(new_node)
-                if not token.is_self_closing:
-                    context.enter_element(new_node)
+                self.parser.insert_element(
+                    token,
+                    context,
+                    mode='normal',
+                    enter=not token.is_self_closing,
+                    tag_name_override="math annotation-xml",
+                    attributes_override=self._fix_foreign_attribute_case(token.attributes, "math"),
+                    push_override=False,
+                )
                 return True
 
             # Inside a <select>, suppress creation of MathML subtree including leaf elements (flatten to text)
@@ -5110,11 +5126,15 @@ class ForeignTagHandler(TagHandler):
                     self.debug(
                         f"MathML leaf unprefix path: tag={tag_name_lower}, ancestor_text_ip={ancestor_text_ip is not None}, frag_leaf_root={frag_leaf_root}, fragment_context={self.parser.fragment_context}"
                     )
-                    new_node = Node(tag_name_lower, self._fix_foreign_attribute_case(token.attributes, "math"))
-                    context.current_parent.append_child(new_node)
-                    if not token.is_self_closing:
-                        context.enter_element(new_node)
-                        context.open_elements.push(new_node)
+                    self.parser.insert_element(
+                        token,
+                        context,
+                        mode='normal',
+                        enter=not token.is_self_closing,
+                        tag_name_override=tag_name_lower,
+                        attributes_override=self._fix_foreign_attribute_case(token.attributes, "math"),
+                        push_override=not token.is_self_closing,
+                    )
                     return True
                 else:
                     self.debug(
@@ -5142,11 +5162,15 @@ class ForeignTagHandler(TagHandler):
                                 stack.extend(reversed(node.children))
                     has_chain = mglyph_found and malignmark_found
                     if has_chain:
-                        new_node = Node(tag_name_lower, self._fix_foreign_attribute_case(token.attributes, "math"))
-                        context.current_parent.append_child(new_node)
-                        if not token.is_self_closing:
-                            context.enter_element(new_node)
-                            context.open_elements.push(new_node)
+                        self.parser.insert_element(
+                            token,
+                            context,
+                            mode='normal',
+                            enter=not token.is_self_closing,
+                            tag_name_override=tag_name_lower,
+                            attributes_override=self._fix_foreign_attribute_case(token.attributes, "math"),
+                            push_override=not token.is_self_closing,
+                        )
                         return True
 
             # Handle HTML elements inside annotation-xml
@@ -5154,24 +5178,40 @@ class ForeignTagHandler(TagHandler):
                 encoding = context.current_parent.attributes.get("encoding", "").lower()
                 if encoding in ("application/xhtml+xml", "text/html"):
                     # Keep HTML elements nested for these encodings
-                    new_node = Node(tag_name_lower, self._fix_foreign_attribute_case(token.attributes, "math"))
-                    context.current_parent.append_child(new_node)
-                    if not token.is_self_closing:
-                        context.enter_element(new_node)
+                    self.parser.insert_element(
+                        token,
+                        context,
+                        mode='normal',
+                        enter=not token.is_self_closing,
+                        tag_name_override=tag_name_lower,
+                        attributes_override=self._fix_foreign_attribute_case(token.attributes, "math"),
+                        push_override=False,
+                    )
                     return True
                 # Handle SVG inside annotation-xml (switch to SVG context)
                 if tag_name_lower == "svg":
                     fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
-                    new_node = Node("svg svg", fixed_attrs)
-                    context.current_parent.append_child(new_node)
-                    context.enter_element(new_node)
+                    self.parser.insert_element(
+                        token,
+                        context,
+                        mode='normal',
+                        enter=True,
+                        tag_name_override='svg svg',
+                        attributes_override=fixed_attrs,
+                        push_override=False,
+                    )
                     context.current_context = "svg"
                     return True
                 if tag_name_lower in HTML_ELEMENTS:
-                    new_node = Node(tag_name_lower, self._fix_foreign_attribute_case(token.attributes, "math"))
-                    context.current_parent.append_child(new_node)
-                    if not token.is_self_closing:
-                        context.enter_element(new_node)
+                    self.parser.insert_element(
+                        token,
+                        context,
+                        mode='normal',
+                        enter=not token.is_self_closing,
+                        tag_name_override=tag_name_lower,
+                        attributes_override=self._fix_foreign_attribute_case(token.attributes, "math"),
+                        push_override=False,
+                    )
                     return True
 
             # Handle HTML elements inside MathML integration points (mtext, mi, mo, mn, ms)
@@ -5180,18 +5220,26 @@ class ForeignTagHandler(TagHandler):
             )
             if mtext_ancestor and tag_name_lower in HTML_ELEMENTS:
                 # HTML elements inside MathML integration points remain as HTML
-                new_node = Node(tag_name_lower, self._fix_foreign_attribute_case(token.attributes, "math"))
-                context.current_parent.append_child(new_node)
-                if not token.is_self_closing:
-                    context.enter_element(new_node)
+                self.parser.insert_element(
+                    token,
+                    context,
+                    mode='normal',
+                    enter=not token.is_self_closing,
+                    tag_name_override=tag_name_lower,
+                    attributes_override=self._fix_foreign_attribute_case(token.attributes, "math"),
+                    push_override=False,
+                )
                 return True
 
-            new_node = Node(f"math {tag_name}", self._fix_foreign_attribute_case(token.attributes, "math"))
-            context.current_parent.append_child(new_node)
-            # Only enter non-self-closing MathML elements; self-closing leaf tags stay empty so
-            # subsequent text is a sibling (matching html5lib expectations for <mi/>text sequences).
-            if not token.is_self_closing:
-                context.enter_element(new_node)
+            self.parser.insert_element(
+                token,
+                context,
+                mode='normal',
+                enter=not token.is_self_closing,
+                tag_name_override=f"math {tag_name}",
+                attributes_override=self._fix_foreign_attribute_case(token.attributes, "math"),
+                push_override=False,
+            )
             return True
 
         elif context.current_context == "svg":
@@ -5231,9 +5279,16 @@ class ForeignTagHandler(TagHandler):
             if tag_name_lower in RAWTEXT_ELEMENTS:
                 self.debug(f"Treating {tag_name_lower} as normal element in foreign context")
                 fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
-                new_node = Node(f"svg {tag_name}", fixed_attrs, preserve_attr_case=True)
-                context.current_parent.append_child(new_node)
-                context.enter_element(new_node)
+                self.parser.insert_element(
+                    token,
+                    context,
+                    mode='normal',
+                    enter=True,
+                    tag_name_override=f"svg {tag_name}",
+                    attributes_override=fixed_attrs,
+                    preserve_attr_case=True,
+                    push_override=False,
+                )
                 # Reset tokenizer if it entered RAWTEXT mode
                 if self.parser.tokenizer.state == "RAWTEXT":
                     self.parser.tokenizer.state = "DATA"
@@ -5243,21 +5298,29 @@ class ForeignTagHandler(TagHandler):
                 # Handle case-sensitive SVG elements
             if tag_name_lower == "foreignobject":
                 # Create integration point element with svg prefix for proper detection
-                new_node = Node("svg foreignObject", self._fix_foreign_attribute_case(token.attributes, "svg"))
-                context.current_parent.append_child(new_node)
-                if not token.is_self_closing:
-                    context.enter_element(new_node)
-                # Track in open elements if available
-                context.open_elements.push(new_node)
+                self.parser.insert_element(
+                    token,
+                    context,
+                    mode='normal',
+                    enter=not token.is_self_closing,
+                    tag_name_override='svg foreignObject',
+                    attributes_override=self._fix_foreign_attribute_case(token.attributes, 'svg'),
+                    push_override=not token.is_self_closing,
+                )
                 return True
             if tag_name_lower in SVG_CASE_SENSITIVE_ELEMENTS:
                 correct_case = SVG_CASE_SENSITIVE_ELEMENTS[tag_name_lower]
                 fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
-                new_node = Node(f"svg {correct_case}", fixed_attrs, preserve_attr_case=True)
-                context.current_parent.append_child(new_node)
-                # Only set as current parent if not self-closing
-                if not token.is_self_closing:
-                    context.enter_element(new_node)
+                self.parser.insert_element(
+                    token,
+                    context,
+                    mode='normal',
+                    enter=not token.is_self_closing,
+                    tag_name_override=f"svg {correct_case}",
+                    attributes_override=fixed_attrs,
+                    preserve_attr_case=True,
+                    push_override=False,
+                )
                 # Enter HTML parsing rules inside SVG integration points
                 # Do not change global foreign context for integration points; delegation is handled elsewhere
                 return True  # Handle HTML elements inside foreignObject, desc, or title (integration points)
@@ -5274,46 +5337,69 @@ class ForeignTagHandler(TagHandler):
                     self.debug(f"HTML element {tag_name_lower} in SVG integration point, delegating to HTML handlers")
                     return False  # Let other handlers (TableTagHandler, ParagraphTagHandler, etc.) handle it
 
-            new_node = Node(f"svg {tag_name_lower}", self._fix_foreign_attribute_case(token.attributes, "svg"), preserve_attr_case=True)
-            context.current_parent.append_child(new_node)
-            # Only set as current parent if not self-closing
-            if not token.is_self_closing:
-                context.enter_element(new_node)
+            self.parser.insert_element(
+                token,
+                context,
+                mode='normal',
+                enter=not token.is_self_closing,
+                tag_name_override=f"svg {tag_name_lower}",
+                attributes_override=self._fix_foreign_attribute_case(token.attributes, 'svg'),
+                preserve_attr_case=True,
+                push_override=False,
+            )
             return True
 
         # Enter new context for svg/math tags
         if tag_name_lower == "math":
-            new_node = Node(f"math {tag_name}", self._fix_foreign_attribute_case(token.attributes, "math"))
-            context.current_parent.append_child(new_node)
+            self.parser.insert_element(
+                token,
+                context,
+                mode='normal',
+                enter=not token.is_self_closing,
+                tag_name_override=f"math {tag_name}",
+                attributes_override=self._fix_foreign_attribute_case(token.attributes, 'math'),
+                push_override=False,
+            )
             if not token.is_self_closing:
-                context.enter_element(new_node)
                 context.current_context = "math"
             return True
 
         if tag_name_lower == "svg":
-            fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
-            new_node = Node(f"svg {tag_name}", fixed_attrs, preserve_attr_case=True)
-            context.current_parent.append_child(new_node)
+            fixed_attrs = self._fix_foreign_attribute_case(token.attributes, 'svg')
+            self.parser.insert_element(
+                token,
+                context,
+                mode='normal',
+                enter=not token.is_self_closing,
+                tag_name_override=f"svg {tag_name}",
+                attributes_override=fixed_attrs,
+                preserve_attr_case=True,
+                push_override=False,
+            )
             if not token.is_self_closing:
-                context.enter_element(new_node)
                 context.current_context = "svg"
             return True
 
         # Handle MathML elements outside of MathML context (re-enter MathML)
         if tag_name_lower in MATHML_ELEMENTS:
-            new_node = Node(f"math {tag_name}", self._fix_foreign_attribute_case(token.attributes, "math"))
-            context.current_parent.append_child(new_node)
+            self.parser.insert_element(
+                token,
+                context,
+                mode='normal',
+                enter=not token.is_self_closing,
+                tag_name_override=f"math {tag_name}",
+                attributes_override=self._fix_foreign_attribute_case(token.attributes, 'math'),
+                push_override=False,
+            )
             if not token.is_self_closing:
-                context.enter_element(new_node)
-                context.current_context = "math"
+                context.current_context = 'math'
             else:
-                # In fragment contexts rooted in MathML (e.g. 'math ms'), keep math context even for self-closing MathML leaf tokens
                 if (
-                    context.current_context != "math"
+                    context.current_context != 'math'
                     and self.parser.fragment_context
-                    and self.parser.fragment_context.startswith("math ")
+                    and self.parser.fragment_context.startswith('math ')
                 ):
-                    context.current_context = "math"
+                    context.current_context = 'math'
                     self.debug(
                         f"Restoring math context after self-closing <{tag_name_lower}/> in fragment {self.parser.fragment_context}"
                     )
