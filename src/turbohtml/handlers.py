@@ -1257,13 +1257,15 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         # If we're in a table cell, handle normally
         if self._is_in_table_cell(context):
             self.debug("Inside table cell, creating formatting element normally")
+            # Use centralized insertion for DOM append + entering; still need to manage
+            # open elements (already pushed earlier unless nobr) and active formatting list manually.
+            # We already created new_element and pushed (except potentially nobr) before, so only append+enter.
+            # insert_element will create a new Node, so we cannot call it directly here without duplicating logic;
+            # For now we leave this branch manual until a safe path for passing pre-created nodes exists.
             context.current_parent.append_child(new_element)
             context.enter_element(new_element)
-
-            # Add to active formatting elements
             if not inside_object:
                 context.active_formatting_elements.push(new_element, token)
-            # Now that it's inserted, push nobr (delayed) if needed
             if tag_name == "nobr" and not context.open_elements.contains(new_element):
                 context.open_elements.push(new_element)
             return True
@@ -1973,10 +1975,8 @@ class ParagraphTagHandler(TagHandler):
                 # Clear any active formatting elements inherited from outside the integration point
                 if context.active_formatting_elements:
                     context.active_formatting_elements._stack.clear()
-                new_node = self._create_element(token)
-                context.current_parent.append_child(new_node)
-                context.enter_element(new_node)
-                context.open_elements.push(new_node)
+                new_node = self.parser.insert_element(token, context, mode='normal', enter=True)
+                # insert_element already pushed onto open elements; nothing extra needed
                 return True
 
         # If inside an integration point (SVG or MathML), clear active formatting elements
@@ -2005,10 +2005,7 @@ class ParagraphTagHandler(TagHandler):
 
         # Nested paragraph inside special element (applet/object/marquee) should be created, not close outer
         if token.tag_name == 'p' and context.current_parent.tag_name in ('applet','object','marquee'):
-            new_node = self._create_element(token)
-            context.current_parent.append_child(new_node)
-            context.enter_element(new_node)
-            context.open_elements.push(new_node)
+            new_node = self.parser.insert_element(token, context, mode='normal', enter=True)
             return True
 
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
@@ -2136,9 +2133,7 @@ class ParagraphTagHandler(TagHandler):
             if button_ancestor:
                 self.debug(f"Inside button {button_ancestor}, creating p inside button instead of closing outer p")
                 # Create new p node inside the button
-                new_node = self._create_element(token)
-                context.current_parent.append_child(new_node)
-                context.enter_element(new_node)
+                new_node = self.parser.insert_element(token, context, mode='normal', enter=True)
                 return True
             # Close the existing paragraph ancestor (implicit paragraph closure)
             self.debug(f"Found <p> ancestor: {p_ancestor}, closing it")
@@ -2168,20 +2163,11 @@ class ParagraphTagHandler(TagHandler):
         )
         if container_ancestor and container_ancestor == context.current_parent:
             self.debug(f"Inside container element {container_ancestor.tag_name}, keeping p nested")
-            new_node = Node("p", token.attributes)
-            context.current_parent.append_child(new_node)
-            context.enter_element(new_node)
-            # Ensure paragraph participates in open elements stack (spec: <p> is a special element)
-            context.open_elements.push(new_node)
+            new_node = self.parser.insert_element(token, context, mode='normal', enter=True)
             return True
 
         # Create new p node under current parent (keeping formatting context)
-        new_node = self._create_element(token)
-        context.current_parent.append_child(new_node)
-        context.enter_element(new_node)
-
-        # Add to stack of open elements
-        context.open_elements.push(new_node)
+        new_node = self.parser.insert_element(token, context, mode='normal', enter=True)
 
         # If we just closed a previous paragraph and popped formatting descendants, reconstruct them now
         if token.tag_name == 'p' and p_ancestor and formatting_descendants:
@@ -3880,11 +3866,8 @@ class ListTagHandler(TagHandler):
         else:
             formatting_descendants = []
 
-        # Create new dt/dd
-        new_node = self._create_element(token)
-        context.current_parent.append_child(new_node)
-        context.enter_element(new_node)
-        context.open_elements.push(new_node)
+        # Create new dt/dd using centralized insertion helper (normal mode) to create and push the dt/dd element.
+        new_node = self.parser.insert_element(token, context, mode='normal', enter=True)
         # Manually duplicate formatting chain inside the new dt/dd without mutating active formatting entries.
     # This allows later text (after </dl>) to still reconstruct original formatting.
         if formatting_descendants:
@@ -3912,10 +3895,15 @@ class ListTagHandler(TagHandler):
             self.debug("Foster parenting li out of table")
             table = self.parser.find_current_table(context)
             if table and table.parent:
-                new_node = self._create_element(token)
-                table_index = table.parent.children.index(table)
-                table.parent.children.insert(table_index, new_node)
-                context.enter_element(new_node)
+                # Foster parent li before table using helper (normal mode enters and pushes); specify parent/before.
+                new_node = self.parser.insert_element(
+                    token,
+                    context,
+                    mode='normal',
+                    enter=True,
+                    parent=table.parent,
+                    before=table,
+                )
                 self.debug(f"Foster parented li before table: {new_node}")
                 return True
 
@@ -3942,9 +3930,7 @@ class ListTagHandler(TagHandler):
             else:
                 self.debug("No list ancestor found - creating li in current context")
 
-        new_node = self._create_element(token)
-        context.current_parent.append_child(new_node)
-        context.enter_element(new_node)
+        new_node = self.parser.insert_element(token, context, mode='normal', enter=True)
         self.debug(f"Created new li: {new_node}")
         return True
 
@@ -3952,9 +3938,7 @@ class ListTagHandler(TagHandler):
         """Handle ul/ol/dl elements"""
         tag_name = token.tag_name
         self.debug(f"Handling {tag_name} tag")
-        new_node = self._create_element(token)
-        context.current_parent.append_child(new_node)
-        context.enter_element(new_node)
+        new_node = self.parser.insert_element(token, context, mode='normal', enter=True)
         self.debug(f"Created new {tag_name}: {new_node}")
         return True
 
