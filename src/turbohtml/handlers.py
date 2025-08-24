@@ -37,6 +37,12 @@ class TagHandler:
     def __init__(self, parser: ParserInterface):
         self.parser = parser
 
+    def _synth_token(self, tag_name: str) -> HTMLToken:
+        """Create a synthetic StartTag token with empty attributes.
+        HTMLToken signature: (type_, data='', tag_name='', attributes=None, is_self_closing=False, is_last_token=False)
+        We pass type_='StartTag' and tag_name; data unused for start tags."""
+        return HTMLToken("StartTag", tag_name, tag_name, {}, False, False)
+
     def debug(self, message: str, indent: int = 4) -> None:
         """Delegate debug to parser with class name prefix"""
         class_name = self.__class__.__name__
@@ -2865,7 +2871,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         else:
             self.debug(f"Reusing existing colgroup: {last_colgroup}")
 
-        # Rule 4: Add col to colgroup
+        # Rule 4: Add col to colgroup (manual creation – col elements aren't part of open elements stack)
         new_col = self._create_element(token)
         last_colgroup.append_child(new_col)
         self.debug(f"Added col to colgroup: {new_col}")
@@ -2952,9 +2958,16 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         if existing_tbody:
             return existing_tbody
 
-        # Create new tbody
-        tbody = Node("tbody")
-        self.parser.find_current_table(context).append_child(tbody)
+        # Create new tbody using synthetic token; do not push onto open elements stack here (handled when explicitly inserted)
+        tbody_token = self._synth_token("tbody")
+        tbody = self.parser.insert_element(
+            token=tbody_token,
+            context=context,
+            mode='normal',
+            enter=False,
+            parent=self.parser.find_current_table(context),
+            push_override=True,  # tbody participates in table section scope; original code effectively had it appended without enter
+        )
         return tbody
 
     def _find_or_create_tr(self, context: "ParseContext") -> "Node":
@@ -2970,9 +2983,16 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         if last_tr:
             return last_tr
 
-        # Create new tr
-        tr = Node("tr")
-        tbody.append_child(tr)
+        # Create new tr via synthetic token without entering (caller decides on enter)
+        tr_token = self._synth_token("tr")
+        tr = self.parser.insert_element(
+            token=tr_token,
+            context=context,
+            mode='normal',
+            enter=False,
+            parent=tbody,
+            push_override=True,
+        )
         return tr
 
     def should_handle_text(self, text: str, context: "ParseContext") -> bool:

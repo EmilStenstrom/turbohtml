@@ -262,6 +262,7 @@ class TurboHTML:
         tag_name_override: str = None,
         attributes_override: dict = None,
         preserve_attr_case: bool = False,
+        push_override: bool | None = None,  # None => default semantics, True/False force push behavior for normal mode
     ) -> Node:
         """Create and insert an element for a start tag token and (optionally) update stacks.
 
@@ -319,7 +320,9 @@ class TurboHTML:
             is_void = treat_as_void or token.tag_name in VOID_ELEMENTS
 
         if mode == 'normal' and not is_void:
-            context.open_elements.push(new_node)
+            do_push = True if push_override is None else push_override
+            if do_push:
+                context.open_elements.push(new_node)
 
         if enter and not is_void and mode in ('normal','transient'):
             context.enter_element(new_node)
