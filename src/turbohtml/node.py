@@ -16,6 +16,10 @@ class Node:
     __slots__ = ("tag_name", "attributes", "children", "parent", "text_content", "next_sibling", "previous_sibling")
 
     def __init__(self, tag_name: str, attributes: Optional[Dict[str, str]] = None, preserve_attr_case: bool = False):
+        # Instrumentation / safety: empty tag names should never be constructed.
+        # If this triggers we want a loud failure with context so we can trace upstream logic.
+        if tag_name is None or tag_name == "":
+            raise ValueError("Empty tag_name passed to Node constructor (bug: tokenization or handler produced blank tag)")
         self.tag_name = tag_name
         if attributes:
             if preserve_attr_case:

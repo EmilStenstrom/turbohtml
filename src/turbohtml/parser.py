@@ -31,7 +31,7 @@ from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
 from turbohtml.adoption import AdoptionAgencyAlgorithm
 
-from .constants import HEAD_ELEMENTS, FORMATTING_ELEMENTS, TABLE_ELEMENTS, RAWTEXT_ELEMENTS
+from .constants import HEAD_ELEMENTS, FORMATTING_ELEMENTS, TABLE_ELEMENTS, RAWTEXT_ELEMENTS, VOID_ELEMENTS
 from typing import Optional
 
 
@@ -248,6 +248,65 @@ class TurboHTML:
             body = self._ensure_body_node(context)
             context.transition_to_state(DocumentState.IN_BODY, body)
 
+    # --- Standardized element insertion helpers ---
+    def _insert_element(
+        self,
+        token: HTMLToken,
+        context: ParseContext,
+        *,
+        treat_as_void: bool = False,
+        enter: bool = True,
+        push: bool = True,
+        parent: Node = None,
+        before: Node | None = None,
+        tag_name_override: str = None,
+        attributes_override: dict = None,
+        preserve_attr_case: bool = False,
+    ) -> Node:
+        """Create and insert an element for a start tag token and update open elements stack.
+
+        This centralizes the very common pattern scattered across handlers:
+          new_node = Node(tag, attrs); parent.append_child(new_node); open_elements.push(new_node); context.enter_element(new_node)
+
+        Invariants enforced:
+          * For non-void HTML elements we both push onto the open elements stack and (optionally) move the insertion point.
+          * Void elements (per HTML spec) are inserted but NEVER pushed onto the open elements stack.
+          * Callers may override detection with treat_as_void for spec constructs that behave void-like in current context.
+          * A custom parent can be provided (defaults to context.current_parent) without mutating current_parent unless enter=True.
+
+        Args:
+            token: The start tag token being consumed.
+            context: Current parse context.
+            treat_as_void: Force element to be treated as void (never pushed / not entered) even if not in VOID_ELEMENTS.
+            enter: Whether to make the new element the current parent (ignored if treated as void or push is False).
+            push: Whether to push element on open elements stack (automatically False for void elements).
+            parent: Optional explicit parent to append under (default: context.current_parent).
+
+        Returns:
+            The newly created Node.
+        """
+        target_parent = parent or context.current_parent
+        tag_name = tag_name_override or token.tag_name
+        if not tag_name and self.env_debug:  # Unexpected – surface loudly during migration
+            self.debug(
+                f"_insert_element: EMPTY tag name for token={token} parent={target_parent.tag_name} open={[e.tag_name for e in context.open_elements._stack]}",
+                indent=2,
+            )
+        attrs = attributes_override if attributes_override is not None else token.attributes
+        new_node = Node(tag_name, attrs, preserve_attr_case=preserve_attr_case)
+        if before and before.parent is target_parent:
+            target_parent.insert_before(new_node, before)
+        else:
+            target_parent.append_child(new_node)
+
+        # Determine void status (spec: do not push void elements) unless caller overrides
+        is_void = treat_as_void or token.tag_name in VOID_ELEMENTS
+        if push and not is_void:
+            context.open_elements.push(new_node)
+            if enter:
+                context.enter_element(new_node)
+        return new_node
+
     def _post_process_tree(self) -> None:
         """Replace tokenizer sentinel with U+FFFD and strip non-preserved U+FFFD occurrences.
 
@@ -287,7 +346,7 @@ class TurboHTML:
         from .constants import MATHML_CASE_SENSITIVE_ATTRIBUTES, MATHML_ELEMENTS, FORMATTING_ELEMENTS
         def normalize_mathml(node: Node):
             parts = node.tag_name.split()
-            local = parts[-1]
+            local = parts[-1] if parts else node.tag_name
             is_mathml = local in MATHML_ELEMENTS or node.tag_name.startswith('math ')
             if is_mathml and getattr(node, 'attributes', None):
                 new_attrs = {}

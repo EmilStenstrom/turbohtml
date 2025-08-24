@@ -170,7 +170,6 @@ class SimpleElementHandler(TagHandler):
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         new_node = self._create_and_append_element(token, context)
-
         if not self._is_void_element(token.tag_name):
             context.enter_element(new_node)
             # Ensure formatting elements are tracked in the open elements stack
@@ -520,17 +519,17 @@ class TemplateContentFilterHandler(TagHandler):
             if boundary2:
                 context.move_to_element(boundary2)
                 boundary = boundary2
-        new_node = Node(token.tag_name, token.attributes)
-        boundary.append_child(new_node)
         do_not_enter = {"thead", "tbody", "tfoot", "caption", "colgroup", "col", "meta", "link"}
-        # In template content, treat <table> as a container we enter so nested content (like nested <template>)
-        # is placed as its child; but still avoid triggering outer table algorithms
-        if new_node.tag_name == "table":
-            context.enter_element(new_node)
-            # Track table on open elements to influence adoption agency and scoping in template content
-            context.open_elements.push(new_node)
-        elif new_node.tag_name not in do_not_enter:
-            context.enter_element(new_node)
+        treat_as_void = token.tag_name in do_not_enter
+        # For <table> we want to enter and push so reconstruction/scope work; for others decide via do_not_enter
+        new_node = self.parser._insert_element(
+            token,
+            context,
+            treat_as_void=treat_as_void,
+            enter=not treat_as_void,
+            push=token.tag_name == "table" or not treat_as_void,
+            parent=boundary,
+        )
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
@@ -1590,10 +1589,9 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                     self.debug("Ignoring nested select tag")
                     return True
 
-            # Create new select/datalist
-            new_node = self._create_and_append_element(token, context)
-            context.enter_element(new_node)
-            self.debug(f"Created new {tag_name}: {new_node}, parent now: {context.current_parent}")
+            # Create new select/datalist using standardized insertion
+            self.parser._insert_element(token, context)
+            self.debug(f"Created new {tag_name}: parent now: {context.current_parent}")
             return True
 
         # Disallowed start tags inside select that force select to close then reprocess (per spec)
@@ -1611,11 +1609,9 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                     context.move_to_element(select_ancestor.parent)
             # Now create the disallowed element outside the select
             if tag_name != "textarea":  # We don't implement textarea rawtext specifics here yet
-                new_node = Node(tag_name, token.attributes)
-                context.current_parent.append_child(new_node)
-                # Only enter for elements that can contain following text (input/keygen are void)
-                if tag_name == "textarea":
-                    context.enter_element(new_node)
+                self.parser._insert_element(token, context, treat_as_void=True, enter=False)
+            else:
+                self.parser._insert_element(token, context, treat_as_void=False, enter=True)
             return True
 
         # If we're in a select, ignore any formatting elements
@@ -1640,13 +1636,20 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                         attach = attach.parent
                     if attach is None:
                         attach = self.parser._ensure_body_node(context) or self.parser.root
-                new_node = Node(tag_name)
+                from .tokenizer import HTMLToken
+                # Instrumentation: ensure non-empty tag name for formatting element emitted outside select
+                if not tag_name:
+                    # Defensive: This should never happen; capture stacks indirectly via raising after logging.
+                    self.debug("BUG: empty tag_name when creating fake_token for formatting element outside select")
+                    # Fallback to 'span' to avoid crashing downstream while we investigate
+                    tag_name = 'span'
+                # Correct token construction: we need a StartTag token with tag_name set.
+                fake_token = HTMLToken('StartTag', tag_name=tag_name, attributes={}, is_self_closing=False)
+                new_node = self.parser._insert_element(fake_token, context, parent=attach)
                 # If there's a pending table inserted due to earlier select-table, insert before it
                 pending = self._pending_table_outside
                 if pending and pending.parent is attach:
                     attach.insert_before(new_node, pending)
-                else:
-                    attach.append_child(new_node)
                 # Do not change select context; consume token
                 return True
             self.debug(f"Ignoring formatting element {tag_name} inside select")
@@ -4330,10 +4333,7 @@ class AutoClosingTagHandler(TemplateAwareHandler):
                 else:
                     self.debug("Skipping reconstruction: all active formatting elements already open")
             # Create block element normally
-            new_block = self._create_element(token)
-            context.current_parent.append_child(new_block)
-            context.enter_element(new_block)
-            context.open_elements.push(new_block)
+            new_block = self.parser._insert_element(token, context)
             self.debug(f"Created new block {new_block.tag_name}")
             return True
 
