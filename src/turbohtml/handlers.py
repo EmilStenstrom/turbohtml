@@ -4201,16 +4201,22 @@ class VoidElementHandler(SelectAwareHandler):
                 if table and table.parent:
                     foster_parent = table.parent
                     table_index = foster_parent.children.index(table)
-                    new_node = self._create_element(token)
-                    foster_parent.children.insert(table_index, new_node)
-                    new_node.parent = foster_parent
+                    # Insert before the table using centralized helper (void mode avoids stack/enter side-effects)
+                    self.parser.insert_element(
+                        token,
+                        context,
+                        mode='void',
+                        enter=False,
+                        parent=foster_parent,
+                        before=table,
+                    )
                     self.debug("Foster parented input before table (non-clean hidden)")
                     return True
             else:
                 # Clean hidden: ensure it becomes child of table (not foster parented) even if current_parent not table
                 table = self.parser.find_current_table(context)  # type: ignore[attr-defined]
                 if table:
-                    table.append_child(Node(tag_name, token.attributes))
+                    self.parser.insert_element(token, context, mode='void', enter=False, parent=table)
                     self.debug("Inserted clean hidden input inside table")
                     return True
 
@@ -4234,10 +4240,15 @@ class VoidElementHandler(SelectAwareHandler):
                     # Non-hidden input foster parented outside the table (before the table)
                     self.debug("Foster parenting non-hidden input outside table")
                     if table_ancestor.parent:
-                        new_node = self._create_element(token)
                         table_index = table_ancestor.parent.children.index(table_ancestor)
-                        table_ancestor.parent.children.insert(table_index, new_node)
-                        new_node.parent = table_ancestor.parent
+                        self.parser.insert_element(
+                            token,
+                            context,
+                            mode='void',
+                            enter=False,
+                            parent=table_ancestor.parent,
+                            before=table_ancestor,
+                        )
                         return True
 
         # Create the void element at the current level
