@@ -139,6 +139,13 @@ class TagHandler:
     def handle_text(self, text: str, context: "ParseContext") -> bool:
         return False
 
+    # Comment handling stubs (allow parser to call uniformly without hasattr checks)
+    def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:  # pragma: no cover - default
+        return False
+
+    def handle_comment(self, comment: str, context: "ParseContext") -> bool:  # pragma: no cover - default
+        return False
+
 
 class TemplateAwareHandler(TagHandler):
     """Mixin for handlers that need to skip template content"""
@@ -699,7 +706,7 @@ class TextHandler(TagHandler):
                 # Before short‑circuiting append, ensure any active formatting elements that were
                 # popped by the paragraph end (e.g. <p>1<s><b>2</p>3...) are reconstructed so that
                 # following text is wrapped (spec: reconstruct active formatting elements algorithm).
-                afe = getattr(context, 'active_formatting_elements', None)
+                afe = context.active_formatting_elements
                 need_reconstruct = False
                 if afe and not afe.is_empty():
                     for entry in afe:  # pragma: no branch (small list)
@@ -815,7 +822,7 @@ class TextHandler(TagHandler):
                         )
                         if not has_text_desc:
                             # Clone formatting element wrapper via unified insertion (normal push+enter)
-                            synth = self._synth_token(prev_fmt.tag_name) if hasattr(self, '_synth_token') else token.__class__('StartTag', tag_name=prev_fmt.tag_name, attributes={})
+                            synth = self._synth_token(prev_fmt.tag_name)
                             clone = self.parser.insert_element(
                                 synth,
                                 context,
@@ -841,7 +848,7 @@ class TextHandler(TagHandler):
                 if self.parser.env_debug:
                     self.debug("After-table inline duplication: creating trailing <b> wrapper for new text segment")
                 # Create a fresh <b> wrapper for new text segment after trailing table when any prior <b> exists
-                b_token = self._synth_token('b') if hasattr(self, '_synth_token') else token.__class__('StartTag', tag_name='b', attributes={})
+                b_token = self._synth_token('b')
                 clone = self.parser.insert_element(b_token, context, mode='normal', enter=True)
                 wrapped = True
 
@@ -5715,9 +5722,8 @@ class ForeignTagHandler(TagHandler):
         # (it only wrapped it in a Comment token), so we apply it here for consistency with
         # normal character token emission.
         if inner:
-            replace_invalid = getattr(self.parser.tokenizer, "_replace_invalid_characters", None)
-            if replace_invalid:
-                inner = replace_invalid(inner)
+            # Tokenizer always provides _replace_invalid_characters
+            inner = self.parser.tokenizer._replace_invalid_characters(inner)
 
         # Do not emit empty text for empty (or fully sanitized) CDATA blocks
         if inner == "":
@@ -6291,7 +6297,7 @@ class BodyElementHandler(TagHandler):
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         # For fragment context 'html', delegate to parser helper to ensure deterministic head->body order.
-        if getattr(self.parser, 'fragment_context', None) == 'html':
+        if self.parser.fragment_context == 'html':
             body = self.parser._ensure_body_node(context)  # type: ignore[attr-defined]
             context.move_to_element(body)
             self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
@@ -6328,9 +6334,9 @@ class BodyElementHandler(TagHandler):
                 if context.current_parent is not body:
                     return True  # ignore stray </body>
 
-                if getattr(self.parser, 'fragment_context', None) == 'html':
-                    if not hasattr(self.parser, '_fragment_body_closed_once'):
-                        setattr(self.parser, '_fragment_body_closed_once', True)
+                if self.parser.fragment_context == 'html':
+                    if not self.parser._fragment_body_closed_once:
+                        self.parser._fragment_body_closed_once = True
                         context.move_to_element(body)
                     return True
                 # Normal body closure path

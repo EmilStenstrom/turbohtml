@@ -59,6 +59,8 @@ class TurboHTML:
         self.env_debug = debug
         self.html = html
         self.fragment_context = fragment_context
+        # Fragment body close tracking flag (pre-declare to avoid dynamic setattr/hasattr)
+        self._fragment_body_closed_once: bool = False
 
         # Reset all state for each new parser instance
         self._init_dom_structure()
@@ -387,10 +389,8 @@ class TurboHTML:
 
         # Foster parenting path delegates early (kept separate to avoid duplicating logic)
         if foster:
-            # Reuse existing TextHandler foster logic for consistency
-            # (It performs its own merging / frameset_ok handling.)
-            if hasattr(self, 'text_handler') and self.text_handler:  # type: ignore[attr-defined]
-                self.text_handler._foster_parent_text(text, context)  # type: ignore[attr-defined]
+            # Reuse existing TextHandler foster logic (always present) for consistency.
+            self.text_handler._foster_parent_text(text, context)
             return None  # Foster logic handles insertion; no direct node reference guaranteed
 
         # Replacement character policy: mirror TextHandler._append_text — strip outside
@@ -470,7 +470,7 @@ class TurboHTML:
             parts = node.tag_name.split()
             local = parts[-1] if parts else node.tag_name
             is_mathml = local in MATHML_ELEMENTS or node.tag_name.startswith('math ')
-            if is_mathml and getattr(node, 'attributes', None):
+            if is_mathml and node.attributes:
                 new_attrs = {}
                 for k, v in node.attributes.items():
                     kl = k.lower()
@@ -826,7 +826,8 @@ class TurboHTML:
         if tag_name == 'body':
             # Walk fragment root children to detect existing body
             existing_body = None
-            root = context.root if hasattr(context, 'root') else self.root
+            # Contexts always operate relative to parser root
+            root = self.root
             # Direct children scan (fragment root holds parsed subtree)
             for ch in root.children:
                 if ch.tag_name == 'body':
@@ -1151,8 +1152,8 @@ class TurboHTML:
                 self.debug(f"Ignoring standalone table prelude <{tag_name}> before table context")
                 return
         if tag_name == 'tr':
-            # Stray <tr> outside any <table>: emit a bare <tr> (no implicit tbody) per html5lib expectation
-            # when a sequence of prelude/table section tags precedes a row without an actual <table>.
+            # Stray <tr> outside any <table>: emit bare <tr> when no open table exists and preceding
+            # siblings do not include a <table>. Formerly keyed off a transient flag set by stray </table>.
             if (
                 not self.find_current_table(context)
                 and context.current_parent.tag_name not in ("table", "caption")
@@ -1160,18 +1161,24 @@ class TurboHTML:
                 and not self._is_in_template_content(context)
                 and not context.current_parent.find_ancestor('select')
             ):
-                tr = Node('tr', token.attributes)
-                context.current_parent.append_child(tr)
-                # Clear transient marker
-                if hasattr(context, '_last_closed_table_without_open'):
-                    delattr(context, '_last_closed_table_without_open')
-                context.enter_element(tr)
-                context.open_elements.push(tr)
-                return
-        else:
-            # Any other start tag clears the closed table marker
-            if hasattr(context, '_last_closed_table_without_open'):
-                delattr(context, '_last_closed_table_without_open')
+                # Structural guard: ensure we haven't already created a synthetic tr at this position.
+                # (If last element child is a tr with no table ancestor, treat this as normal flow.)
+                last_elem = None
+                for ch in reversed(context.current_parent.children):
+                    if ch.tag_name != '#text':
+                        last_elem = ch
+                        break
+                already_has_isolated_tr = (
+                    last_elem is not None
+                    and last_elem.tag_name == 'tr'
+                    and not last_elem.find_ancestor('table')
+                )
+                if not already_has_isolated_tr:
+                    tr = Node('tr', token.attributes)
+                    context.current_parent.append_child(tr)
+                    context.enter_element(tr)
+                    context.open_elements.push(tr)
+                    return
 
         # Per HTML5 spec, before processing most start tags, reconstruct the active
         # formatting elements. However, in table insertion modes (IN_TABLE, IN_TABLE_BODY,
@@ -1340,10 +1347,9 @@ class TurboHTML:
     # Detect stray </table> in contexts expecting tbody wrapper later
         # Stray </table> with no open table: ignore (structural recovery; previously flagged)
         if tag_name == 'table' and not self.find_current_table(context):
-            # Record a transient closed-table marker so that an immediately following stray <tr>
-            # treats the missing table context as having had an implied tbody wrapper (tests6 case 43 expectation).
-            context._last_closed_table_without_open = True  # ephemeral attribute; caller may clear on next start tag
-            self.debug("Ignoring stray </table> with no open table (marking for possible following <tr>)")
+            # Stray </table> with no open table: ignore. A following <tr> will be handled by
+            # structural stray <tr> logic above without needing a persistent flag.
+            self.debug("Ignoring stray </table> with no open table (structural inference)")
             return
 
         # Ignore premature </form> when the form element is not on the open elements stack (already implicitly closed)
@@ -1383,11 +1389,7 @@ class TurboHTML:
         if adoption_run_count > 0:
             self.debug(f"Adoption agency completed after {adoption_run_count} run(s) for </{tag_name}>")
             # Post-adoption normalization for deep </a> ladder cases (nest flattened div/a sequences)
-            if tag_name == 'a' and hasattr(self.adoption_agency, '_normalize_a_div_ladder'):
-                try:
-                    self.adoption_agency._normalize_a_div_ladder(context)
-                except Exception:
-                    pass  # Non-fatal; normalization is a structural cleanup only
+            # Post-adoption ladder normalization removed; adoption algorithm now yields stable structure
             return
 
         # End tag </body> handling nuances:
@@ -1545,11 +1547,9 @@ class TurboHTML:
         """
         # First check if any handler wants to process this comment (e.g., CDATA in foreign elements)
         for handler in self.tag_handlers:
-            # Handlers that support comments implement both predicates; rely on attribute existence (no getattr).
-            if hasattr(handler, "should_handle_comment") and hasattr(handler, "handle_comment"):
-                if handler.should_handle_comment(text, context) and handler.handle_comment(text, context):  # type: ignore[attr-defined]
-                    self.debug(f"Comment '{text}' handled by {handler.__class__.__name__}")
-                    return
+            if handler.should_handle_comment(text, context) and handler.handle_comment(text, context):
+                self.debug(f"Comment '{text}' handled by {handler.__class__.__name__}")
+                return
 
         # Default comment handling
         comment_node = Node("#comment")

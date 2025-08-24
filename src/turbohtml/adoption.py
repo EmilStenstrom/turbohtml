@@ -264,12 +264,9 @@ class AdoptionAgencyAlgorithm:
         entry = context.active_formatting_elements.find(tag_name)
         if not entry:
             return False
-        # Skip retained outer formatting elements reinserted to emulate html5lib (marked with _retained_outer flag)
+        # Skip retained outer formatting elements tracked internally (no dynamic node attributes)
         el = entry.element
-        if getattr(el, '_retained_outer', False):
-            if self.debug_enabled:
-                print(f"    should_run_adoption: skipping retained outer <{tag_name}> element")
-            return False
+        # (Currently no retained outer mechanism implemented post-refactor; always proceed)
         # If the formatting element is the current node and there are no special category
         # (block/special) elements after it in the open elements stack, treat as simple.
         formatting_element = entry.element
@@ -1092,7 +1089,7 @@ class AdoptionAgencyAlgorithm:
         a direct child of <body>. The spec-consistent tree keeps that <b> inside the outer
         <div>. This helper allows relocation logic to work regardless of depth.
         """
-        ladder_set = getattr(self, '_ladder_bs', set())
+        ladder_set = self._ladder_bs
         if not ladder_set:
             return None
         stack: List[Node] = [root]
@@ -1486,7 +1483,7 @@ class AdoptionAgencyAlgorithm:
         # repeated Adoption Agency invocations without making progress. Always clone
         # to ensure Steps 17-19 can update stacks and active formatting elements.
         formatting_clone = Node(tag_name=formatting_element.tag_name, attributes=formatting_element.attributes.copy())
-    # No propagation of non-spec flags
+        # No propagation of non-spec flags
         if self.debug_enabled:
             print(f"\n--- STEP 14: Create formatting element clone ---")
             print(f"    Created clone of {formatting_element.tag_name}")
@@ -2101,7 +2098,7 @@ class AdoptionAgencyAlgorithm:
 
     def _find_safe_parent(self, node: Node, context) -> Optional[Node]:
         # Find a safe ancestor under which to reparent a node during foster parenting (spec helper)
-        candidate = getattr(context, 'current_parent', None)
+        candidate = context.current_parent
         visited: set[int] = set()
         while candidate is not None and id(candidate) not in visited:
             if candidate is not node and not node._would_create_circular_reference(candidate):
@@ -2114,7 +2111,7 @@ class AdoptionAgencyAlgorithm:
         return None
 
     def _relocate_digit_sibling_between_nobr_and_i(self, context) -> None:
-                # Digit relocation pattern (post-extraction) - see earlier revision notes
+        # Digit relocation pattern (post-extraction) - see earlier revision notes
 
         body = self._get_body_or_root(context)
         if not body:
