@@ -1687,28 +1687,35 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                             current_table, tag_name
                         )
                         if foster_parent:
-                            # Create the new table element
-                            new_node = Node(tag_name, token.attributes)
-                            # Special case: if inserting a <table>, insert as sibling after current table
+                            # Use standardized insertion logic. For sibling-after-current-table we compute 'before'.
                             if tag_name == "table" and foster_parent is current_table.parent:
-                                # Avoid exception-based control flow: compute insertion index directly
+                                # Insert after current_table by identifying following sibling (or None to append)
                                 if current_table in foster_parent.children:
                                     idx = foster_parent.children.index(current_table)
+                                    before = foster_parent.children[idx + 1] if idx + 1 < len(foster_parent.children) else None
                                 else:
-                                    idx = len(foster_parent.children)
-                                foster_parent.children.insert(idx + 1, new_node)
-                                new_node.parent = foster_parent
-                                context.move_to_element(new_node)
-                                # Track on open elements and remain in IN_TABLE
-                                context.open_elements.push(new_node)
+                                    before = None
+                                new_node = self.parser.insert_element(
+                                    token,
+                                    context,
+                                    parent=foster_parent,
+                                    before=before,
+                                    mode='normal',
+                                    enter=True,
+                                )
+                                # Ensure document state matches table context
                                 self.parser.transition_to_state(context, DocumentState.IN_TABLE)
                             else:
-                                foster_parent.append_child(new_node)
-                                context.enter_element(new_node)
+                                new_node = self.parser.insert_element(
+                                    token,
+                                    context,
+                                    parent=foster_parent,
+                                    mode='normal',
+                                    enter=True,
+                                )
                                 if tag_name == "caption":
                                     self.parser.transition_to_state(context, DocumentState.IN_CAPTION)
-
-                            self.debug(f"Foster parented {tag_name} to {foster_parent.tag_name}: {new_node}")
+                            self.debug(f"Foster parented {tag_name} to {foster_parent.tag_name} via insert_element: {new_node}")
                             return True
                         else:
                             # No appropriate foster parent found - delegate to TableTagHandler for complex table structure creation
@@ -1738,16 +1745,27 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                                 attach = attach.parent
                             if attach is None:
                                 attach = self.parser._ensure_body_node(context) or self.parser.root
-                        # Build the new table node
-                        new_table = Node("table")
-                        # Infer insertion point: after the most recent breakout candidate (table element)
-                        insert_index = len(attach.children)
+                        # Build the new table node using standardized helper
+                        # Find insertion point after most recent existing table under attach
+                        before = None
                         for i in range(len(attach.children) - 1, -1, -1):
-                            if attach.children[i].tag_name == "table":
-                                insert_index = i + 1
+                            if attach.children[i].tag_name == "table" and i + 1 < len(attach.children):
+                                before = attach.children[i + 1]
                                 break
-                        attach.children.insert(insert_index, new_table)
-                        new_table.parent = attach
+                            if attach.children[i].tag_name == "table":
+                                before = None  # append at end
+                                break
+                        new_table = self.parser.insert_element(
+                            token,
+                            context,
+                            parent=attach,
+                            before=before,
+                            mode='normal',
+                            enter=False,  # do not change insertion point (remain inside select foreign context)
+                        )
+                        # Remove from open elements stack to mirror original semantics (not participating in scope)
+                        if not context.open_elements.is_empty() and context.open_elements._stack[-1] is new_table:
+                            context.open_elements.pop()
                         # Track pending table for subsequent formatting placement only (local attribute)
                         self._pending_table_outside = new_table
                         return True
@@ -1772,11 +1790,9 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                 if target_parent != context.current_parent:
                     self.debug(f"Moved up from {context.current_parent.tag_name} to {target_parent.tag_name}")
                     context.move_to_element(target_parent)
-
-                new_node = self._create_element(token)
-                context.current_parent.append_child(new_node)
-                context.enter_element(new_node)
-                self.debug(f"Created {tag_name}: {new_node}, parent now: {context.current_parent}")
+                # Standardized creation (normal mode => push + enter)
+                new_node = self.parser.insert_element(token, context, mode='normal', enter=True)
+                self.debug(f"Created {tag_name} via insert_element: {new_node}, parent now: {context.current_parent}")
                 return True
 
             # Inside select/datalist, handle normally
@@ -1788,11 +1804,8 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                     parent = context.current_parent.find_ancestor(lambda n: n.tag_name in ("select", "datalist"))
                     if parent:
                         context.move_to_element(parent)
-
-                new_optgroup = self._create_element(token)
-                context.current_parent.append_child(new_optgroup)
-                context.enter_element(new_optgroup)
-                self.debug(f"Created optgroup: {new_optgroup}, parent now: {context.current_parent}")
+                new_optgroup = self.parser.insert_element(token, context, mode='normal', enter=True)
+                self.debug(f"Created optgroup via insert_element: {new_optgroup}, parent now: {context.current_parent}")
                 return True
             else:  # option
                 self.debug("Creating option inside select/datalist")
@@ -1811,11 +1824,8 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                     )
                     if parent:
                         context.move_to_element(parent)
-
-                new_option = self._create_element(token)
-                context.current_parent.append_child(new_option)
-                context.enter_element(new_option)
-                self.debug(f"Created option: {new_option}, parent now: {context.current_parent}")
+                new_option = self.parser.insert_element(token, context, mode='normal', enter=True)
+                self.debug(f"Created option via insert_element: {new_option}, parent now: {context.current_parent}")
                 return True
 
         # If we're in a select and this is any other tag, ignore it
