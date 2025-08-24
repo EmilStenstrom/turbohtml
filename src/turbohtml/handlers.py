@@ -4672,19 +4672,37 @@ class ForeignTagHandler(TagHandler):
                     self.debug(f"Foster parenting foreign element <{tag_name}> before table")
                     table_index = table.parent.children.index(table)
 
-                    # Create the new node
+                    # Create the new node via unified insertion (no push onto open elements stack)
                     if tag_name_lower == "math":
+                        context.current_context = "math"  # set context before insertion for downstream handlers
                         fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "math")
-                        new_node = Node(f"math {tag_name}", fixed_attrs, preserve_attr_case=True)
-                        context.current_context = "math"
-                    elif tag_name_lower == "svg":
-                        fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
-                        new_node = Node(f"svg {tag_name}", fixed_attrs, preserve_attr_case=True)
+                        new_node = self.parser.insert_element(
+                            token,
+                            context,
+                            mode='normal',
+                            enter=True,
+                            parent=table.parent,
+                            before=table,
+                            tag_name_override=f"math {tag_name}",
+                            attributes_override=fixed_attrs,
+                            preserve_attr_case=True,
+                            push_override=False,  # match previous behavior (not on open elements stack)
+                        )
+                    else:  # svg
                         context.current_context = "svg"
-
-                    table.parent.children.insert(table_index, new_node)
-                    new_node.parent = table.parent
-                    context.enter_element(new_node)
+                        fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
+                        new_node = self.parser.insert_element(
+                            token,
+                            context,
+                            mode='normal',
+                            enter=True,
+                            parent=table.parent,
+                            before=table,
+                            tag_name_override=f"svg {tag_name}",
+                            attributes_override=fixed_attrs,
+                            preserve_attr_case=True,
+                            push_override=False,
+                        )
                     # After fostering a foreign root before a table, we leave table insertion modes
                     # (transition to IN_BODY) per earlier implementation so that descendant text of the
                     # foreign element is not mis-foster-parented as table text. Paragraph handler will
@@ -6108,33 +6126,54 @@ class FramesetTagHandler(TagHandler):
                         self.debug("Ignoring <frameset> after body obtained meaningful content (frameset-ok false)")
                         return True
                 self.debug("Creating root frameset")
-                new_node = Node(tag_name, token.attributes)
                 body = self.parser._get_body_node()
-                if body:
+                if body and body.parent:
                     body.parent.remove_child(body)
-                self.parser.html_node.append_child(new_node)
-                self.parser.transition_to_state(context, DocumentState.IN_FRAMESET, new_node)
+                frameset_node = self.parser.insert_element(
+                    token,
+                    context,
+                    mode='normal',
+                    enter=True,
+                    parent=self.parser.html_node,
+                    tag_name_override='frameset',
+                    push_override=True,
+                )
+                self.parser.transition_to_state(context, DocumentState.IN_FRAMESET, frameset_node)
             else:
                 # Nested frameset
                 self.debug("Creating nested frameset")
-                new_node = Node(tag_name, token.attributes)
-                context.current_parent.append_child(new_node)
-                context.enter_element(new_node)
+                self.parser.insert_element(
+                    token,
+                    context,
+                    mode='normal',
+                    enter=True,
+                    tag_name_override='frameset',
+                    push_override=True,
+                )
             return True
 
         elif tag_name == "frame":
             # Frame must be inside frameset; for fragment_context='frameset' allow at root
             if context.current_parent.tag_name == "frameset" or self.parser.fragment_context == 'frameset':
                 self.debug("Creating frame in frameset/fragment context")
-                new_node = Node(tag_name, token.attributes)
-                context.current_parent.append_child(new_node)
+                self.parser.insert_element(
+                    token,
+                    context,
+                    mode='void',
+                    tag_name_override='frame',
+                )
             return True
 
         elif tag_name == "noframes":
             self.debug("Creating noframes element")
-            new_node = Node(tag_name, token.attributes)
-            context.current_parent.append_child(new_node)
-            context.enter_element(new_node)
+            self.parser.insert_element(
+                token,
+                context,
+                mode='normal',
+                enter=True,
+                tag_name_override='noframes',
+                push_override=True,
+            )
             context.content_state = ContentState.RAWTEXT
             return True
 
@@ -6188,9 +6227,13 @@ class ImageTagHandler(TagHandler):
             body = self.parser._ensure_body_node(context)
             self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
 
-        # Always create as "img" regardless of input tag
-        new_node = Node("img", token.attributes)
-        context.current_parent.append_child(new_node)
+        # Always create as "img" regardless of input tag using unified insertion (void semantics)
+        self.parser.insert_element(
+            token,
+            context,
+            mode='void',
+            tag_name_override='img',
+        )
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
@@ -6459,24 +6502,42 @@ class PlaintextHandler(SelectAwareHandler):
             self.debug("Closing paragraph before plaintext")
             context.move_up_one_level()
 
-        new_node = Node("plaintext", token.attributes)
-
-        # Foster parenting if we're immediately inside a table context but not inside a cell/caption
-        if context.document_state == DocumentState.IN_TABLE and context.current_parent.tag_name not in ("td", "th", "caption"):
+        # Insert plaintext element; needs presence on open elements stack
+        if (
+            context.document_state == DocumentState.IN_TABLE
+            and context.current_parent.tag_name not in ("td", "th", "caption")
+        ):
             table = self.parser.find_current_table(context)
             if table and table.parent:
-                table_index = table.parent.children.index(table)
-                table.parent.children.insert(table_index, new_node)
-                new_node.parent = table.parent
+                self.parser.insert_element(
+                    token,
+                    context,
+                    mode='normal',
+                    enter=True,
+                    parent=table.parent,
+                    before=table,
+                    tag_name_override='plaintext',
+                    push_override=True,
+                )
             else:
-                context.current_parent.append_child(new_node)
+                self.parser.insert_element(
+                    token,
+                    context,
+                    mode='normal',
+                    enter=True,
+                    tag_name_override='plaintext',
+                    push_override=True,
+                )
         else:
-            context.current_parent.append_child(new_node)
-
-        # Enter PLAINTEXT mode – subsequent character tokens are direct text children
-        context.enter_element(new_node)
+            self.parser.insert_element(
+                token,
+                context,
+                mode='normal',
+                enter=True,
+                tag_name_override='plaintext',
+                push_override=True,
+            )
         context.content_state = ContentState.PLAINTEXT
-        context.open_elements.push(new_node)
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
@@ -6515,10 +6576,14 @@ class ButtonTagHandler(TagHandler):
                 if btn_anc.parent:
                     context.move_to_element(btn_anc.parent)
 
-        new_button = Node("button", token.attributes)
-        context.current_parent.append_child(new_button)
-        context.enter_element(new_button)
-        context.open_elements.push(new_button)
+        self.parser.insert_element(
+            token,
+            context,
+            mode='normal',
+            enter=True,
+            tag_name_override='button',
+            push_override=True,
+        )
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
