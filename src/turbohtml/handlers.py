@@ -2615,20 +2615,22 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             if direct_emit_allowed:
                 # Stray tr in full document (not fragment) should produce <tbody><tr>
                 if tag_name == 'tr' and not self.parser.fragment_context:
-                    tbody = Node('tbody')
-                    context.current_parent.append_child(tbody)
-                    tr = Node('tr', token.attributes)
-                    tbody.append_child(tr)
-                    context.enter_element(tr)
+                    # Create implicit tbody + tr using unified insertion (transient wrappers)
+                    fake_tbody = self._synth_token('tbody')
+                    tbody_node = self.parser.insert_element(fake_tbody, context, mode='normal', enter=True)
+                    fake_tr = self._synth_token('tr')
+                    tr_node = self.parser.insert_element(fake_tr, context, mode='normal', enter=True, parent=tbody_node)
+                    # Copy original tr attributes onto created tr if any
+                    if token.attributes:
+                        tr_node.attributes.update(token.attributes)
                     return True
-                minimal = Node(tag_name, token.attributes)
-                context.current_parent.append_child(minimal)
-                context.enter_element(minimal)
+                # Direct emit minimal stray cell/row without synthesizing table
+                fake_token = HTMLToken('StartTag', tag_name=tag_name, attributes=token.attributes)
+                self.parser.insert_element(fake_token, context, mode='normal', enter=True)
                 return True
-            # Otherwise synthesize a table as before
-            new_table = Node("table")
-            context.current_parent.append_child(new_table)
-            context.enter_element(new_table)
+            # Otherwise synthesize a table via unified insertion
+            table_token = self._synth_token('table')
+            self.parser.insert_element(table_token, context, mode='normal', enter=True)
             self.parser.transition_to_state(context, DocumentState.IN_TABLE)
 
         # Handle each element type
@@ -2907,8 +2909,15 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         # Rule 3: Create or reuse colgroup
         if need_new_colgroup:
             self.debug("Creating new colgroup")
-            last_colgroup = Node("colgroup")
-            self.parser.find_current_table(context).append_child(last_colgroup)
+            colgroup_token = self._synth_token("colgroup")
+            last_colgroup = self.parser.insert_element(
+                colgroup_token,
+                context,
+                mode='normal',
+                enter=False,
+                parent=self.parser.find_current_table(context),
+                push_override=False,
+            )
         else:
             self.debug(f"Reusing existing colgroup: {last_colgroup}")
 
@@ -2935,9 +2944,15 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         if tbody_ancestor:
             self.debug("Found tbody/tr ancestor, creating new tbody")
             # Create new empty tbody after the colgroup
-            new_tbody = Node("tbody")
-            self.parser.find_current_table(context).append_child(new_tbody)
-            context.enter_element(new_tbody)
+            tbody_token = self._synth_token("tbody")
+            new_tbody = self.parser.insert_element(
+                tbody_token,
+                context,
+                mode='normal',
+                enter=True,
+                parent=self.parser.find_current_table(context),
+                push_override=True,
+            )
             return True
 
         # Rule 6: Otherwise stay at table level
@@ -2956,6 +2971,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             mode='normal',
             enter=True,
             parent=table_parent if table_parent else context.current_parent,
+            push_override=True,
         )
         return True
 
@@ -3210,10 +3226,8 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     a_entry = context.active_formatting_elements.find("a")
                 if a_entry and not any(ch.tag_name == "a" for ch in context.current_parent.children):
                     self.debug("Manual anchor clone in foster-parented paragraph for pending <a> formatting element")
-                    clone = Node("a", a_entry.element.attributes.copy())
-                    context.current_parent.append_child(clone)
-                    context.enter_element(clone)
-                    context.open_elements.push(clone)
+                    a_clone_token = HTMLToken("StartTag", tag_name="a", attributes=a_entry.element.attributes.copy())
+                    clone = self.parser.insert_element(a_clone_token, context, mode='normal', enter=True)
                     a_entry.element = clone
                     target = clone
                     # Restore insertion point to paragraph (text insertion we'll handle via target)
@@ -3307,8 +3321,8 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     for ch in prev_sibling.children
                 )
                 if has_text:
-                    new_nobr = Node('nobr')
-                    foster_parent.children.insert(table_index, new_nobr)
+                    nobr_token = self._synth_token('nobr')
+                    new_nobr = self.parser.insert_element(nobr_token, context, mode='normal', enter=False, parent=foster_parent, before=foster_parent.children[table_index], push_override=False)
                     text_node = Node('#text')
                     text_node.text_content = text
                     new_nobr.append_child(text_node)
@@ -3341,11 +3355,11 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             else:
                 # We're not in the same context anymore, so create a new <a> tag
                 self.debug("No longer in same <a> context, creating new <a> tag")
-                new_a = Node("a", prev_a.attributes.copy())
+                a_token = HTMLToken("StartTag", tag_name="a", attributes=prev_a.attributes.copy())
+                new_a = self.parser.insert_element(a_token, context, mode='normal', enter=False, parent=foster_parent, before=foster_parent.children[table_index], push_override=False)
                 text_node = Node("#text")
                 text_node.text_content = text
                 new_a.append_child(text_node)
-                foster_parent.children.insert(table_index, new_a)
                 self.debug(f"Inserted new <a> tag before table: {new_a}")
                 return True
 
@@ -3465,11 +3479,11 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     current_parent_for_chain = current_parent_for_chain.children[-1]
                     continue
                 # Otherwise create a new wrapper
-                new_fmt = Node(fmt_elem.tag_name, fmt_elem.attributes.copy())
+                fmt_token = HTMLToken("StartTag", tag_name=fmt_elem.tag_name, attributes=fmt_elem.attributes.copy())
                 if current_parent_for_chain is foster_parent:
-                    foster_parent.children.insert(table_index, new_fmt)
+                    new_fmt = self.parser.insert_element(fmt_token, context, mode='normal', enter=False, parent=foster_parent, before=foster_parent.children[table_index], push_override=False)
                 else:
-                    current_parent_for_chain.append_child(new_fmt)
+                    new_fmt = self.parser.insert_element(fmt_token, context, mode='normal', enter=False, parent=current_parent_for_chain, push_override=False)
                 current_parent_for_chain = new_fmt
                 last_created = new_fmt
                 self.debug(f"Created formatting element in chain: {new_fmt}")
@@ -3488,8 +3502,8 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     and any(ch.tag_name == '#text' and ch.text_content for ch in reused_wrapper.children)
                     and reused_wrapper.parent is foster_parent
                 ):
-                    sibling = Node('nobr')
-                    foster_parent.children.insert(table_index, sibling)
+                    sibling_token = self._synth_token('nobr')
+                    sibling = self.parser.insert_element(sibling_token, context, mode='normal', enter=False, parent=foster_parent, before=foster_parent.children[table_index], push_override=False)
                     current_parent_for_chain = sibling
                 else:
                     current_parent_for_chain = reused_wrapper
@@ -3500,8 +3514,8 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     and any(ch.tag_name == '#text' for ch in current_parent_for_chain.children)
                     and current_parent_for_chain.parent is foster_parent
                 ):
-                    sibling = Node('nobr')
-                    foster_parent.children.insert(table_index, sibling)
+                    sibling_token = self._synth_token('nobr')
+                    sibling = self.parser.insert_element(sibling_token, context, mode='normal', enter=False, parent=foster_parent, before=foster_parent.children[table_index], push_override=False)
                     current_parent_for_chain = sibling
             text_holder = current_parent_for_chain
             text_node = Node("#text")
@@ -3561,8 +3575,8 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                             for ch in prev.children
                         )
                     ):
-                        new_wrapper = Node(prev.tag_name, prev.attributes.copy())
-                        foster_parent.children.insert(table_index, new_wrapper)
+                        wrapper_token = HTMLToken("StartTag", tag_name=prev.tag_name, attributes=prev.attributes.copy())
+                        new_wrapper = self.parser.insert_element(wrapper_token, context, mode='normal', enter=False, parent=foster_parent, before=foster_parent.children[table_index], push_override=False)
                         text_node = Node('#text'); text_node.text_content = text
                         new_wrapper.append_child(text_node)
                         self.debug(
@@ -3827,16 +3841,10 @@ class FormTagHandler(TagHandler):
             if self.parser.has_form_ancestor(context):
                 return True
 
-        # Create and append the new node
-        new_node = Node(tag_name, token.attributes)
-        context.current_parent.append_child(new_node)
-
-        # Update current parent for non-void elements
-        if tag_name not in ("input",):
-            context.enter_element(new_node)
-            # Track form in open elements so dynamic detection works
-            if tag_name == "form":
-                context.open_elements.push(new_node)
+        # Create and append the new node via unified insertion
+        mode = 'void' if tag_name == 'input' else 'normal'
+        enter = tag_name != 'input'
+        new_node = self.parser.insert_element(token, context, mode=mode, enter=enter, push_override=(tag_name == 'form'))
 
         # No persistent pointer; dynamic detection is used instead
         return True
@@ -3954,7 +3962,7 @@ class ListTagHandler(TagHandler):
         # Create new dt/dd using centralized insertion helper (normal mode) to create and push the dt/dd element.
         new_node = self.parser.insert_element(token, context, mode='normal', enter=True)
         # Manually duplicate formatting chain inside the new dt/dd without mutating active formatting entries.
-    # This allows later text (after </dl>) to still reconstruct original formatting.
+        # This allows later text (after </dl>) to still reconstruct original formatting.
         if formatting_descendants:
             for fmt in formatting_descendants:
                 clone = Node(fmt.tag_name, fmt.attributes.copy())
