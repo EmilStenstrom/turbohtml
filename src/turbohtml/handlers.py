@@ -4242,9 +4242,10 @@ class VoidElementHandler(SelectAwareHandler):
 
         # Create the void element at the current level
         self.debug(f"Creating void element {tag_name} at current level")
-    # No font-splitting heuristic: rely on standard reconstruction timing.
-        new_node = self._create_element(token)
-        context.current_parent.append_child(new_node)
+        # No font-splitting heuristic: rely on standard reconstruction timing.
+        # Use centralized insertion helper for consistency. Mode 'void' ensures the element
+        # is not pushed onto the open elements stack and we do not enter it.
+        self.parser.insert_element(token, context, mode='void', enter=False)
 
         return True
 
