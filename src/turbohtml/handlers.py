@@ -586,7 +586,7 @@ class TextHandler(TagHandler):
         if context.document_state == DocumentState.AFTER_HEAD and not self._is_in_template_content(context):
             if text.isspace():
                 if self.parser.html_node:
-                    tn = Node("#text"); tn.text_content = text; self.parser.html_node.append_child(tn)
+                    tn = self.parser.create_text_node(text); self.parser.html_node.append_child(tn)
                 return True
             body = self.parser._ensure_body_node(context)
             self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
@@ -1001,8 +1001,7 @@ class TextHandler(TagHandler):
             if prev_node.text_content == "":
                 table_parent.remove_child(prev_node)
         else:
-            text_node = Node("#text")
-            text_node.text_content = text
+            text_node = self.parser.create_text_node(text)
             table_parent.insert_before(text_node, table)
             self.debug(f"Foster parented text '{text}' before table")
 
@@ -1059,8 +1058,7 @@ class TextHandler(TagHandler):
         else:
             # Create new text node
             self.debug("creating new text node")
-            text_node = Node("#text")
-            text_node.text_content = text
+            text_node = self.parser.create_text_node(text)
             # Preserve U+FFFD replacement characters
             if text_node.text_content != "":
                 context.current_parent.append_child(text_node)
@@ -1076,8 +1074,7 @@ class TextHandler(TagHandler):
             return True
 
         # Create new text node
-        text_node = Node("#text")
-        text_node.text_content = text
+        text_node = self.parser.create_text_node(text)
         context.current_parent.append_child(text_node)
         return True
 
@@ -1094,8 +1091,7 @@ class TextHandler(TagHandler):
         if not parent.children and decoded_text.startswith("\n"):
             decoded_text = decoded_text[1:]
         if decoded_text:
-            text_node = Node("#text")
-            text_node.text_content = decoded_text
+            text_node = self.parser.create_text_node(decoded_text)
             parent.append_child(text_node)
 
         return True
@@ -1494,6 +1490,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         boundary = context.current_parent.find_ancestor(
             lambda n: n.tag_name in BOUNDARY_ELEMENTS and n.tag_name not in ("td", "th")
         )
+
         if boundary:
             self.debug(f"Inside boundary element {boundary.tag_name}")
             # First try to find formatting element within the boundary
@@ -3106,8 +3103,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
         # If we're inside a caption, handle text directly
         if context.document_state == DocumentState.IN_CAPTION:
-            text_node = Node("#text")
-            text_node.text_content = text
+            text_node = self.parser.create_text_node(text)
             context.current_parent.append_child(text_node)
             return True
 
@@ -3143,8 +3139,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             if target.children and target.children and target.children[-1].tag_name == "#text":
                 target.children[-1].text_content += text
             else:
-                text_node = Node("#text")
-                text_node.text_content = text
+                text_node = self.parser.create_text_node(text)
                 target.append_child(text_node)
             return True
 
@@ -3163,8 +3158,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 if part.isspace():
                     # Whitespace stays in colgroup
                     self.debug(f"Adding whitespace '{part}' to colgroup")
-                    text_node = Node("#text")
-                    text_node.text_content = part
+                    text_node = self.parser.create_text_node(part)
                     context.current_parent.append_child(text_node)
                 else:
                     # Non-whitespace gets foster-parented - temporarily move to table context
@@ -3183,8 +3177,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         # If it's whitespace-only text, allow it in table
         if text.isspace():
             self.debug("Whitespace text in table, keeping in table")
-            text_node = Node("#text")
-            text_node.text_content = text
+            text_node = self.parser.create_text_node(text)
             context.current_parent.append_child(text_node)
             return True
 
@@ -3236,8 +3229,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             if target.children and target.children[-1].tag_name == "#text":
                 target.children[-1].text_content += text
             else:
-                text_node = Node("#text")
-                text_node.text_content = text
+                text_node = self.parser.create_text_node(text)
                 target.append_child(text_node)
             return True
 
@@ -3272,8 +3264,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     self.debug(
                         "Directly appending first text run inside existing formatting element prior to table to avoid premature duplication"
                     )
-                    text_node = Node("#text")
-                    text_node.text_content = text
+                    text_node = self.parser.create_text_node(text)
                     context.current_parent.append_child(text_node)
                     return True
 
@@ -3302,16 +3293,14 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     if target.children and target.children[-1].tag_name == "#text":
                         target.children[-1].text_content += text
                     else:
-                        text_node = Node("#text")
-                        text_node.text_content = text
+                        text_node = self.parser.create_text_node(text)
                         target.append_child(text_node)
                 else:
                     # Merge with its last text child if present
                     if prev_sibling.children and prev_sibling.children[-1].tag_name == "#text":
                         prev_sibling.children[-1].text_content += text
                     else:
-                        text_node = Node("#text")
-                        text_node.text_content = text
+                        text_node = self.parser.create_text_node(text)
                         prev_sibling.append_child(text_node)
                 return True
             elif prev_sibling.tag_name == "nobr":
@@ -3323,8 +3312,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 if has_text:
                     nobr_token = self._synth_token('nobr')
                     new_nobr = self.parser.insert_element(nobr_token, context, mode='normal', enter=False, parent=foster_parent, before=foster_parent.children[table_index], push_override=False)
-                    text_node = Node('#text')
-                    text_node.text_content = text
+                    text_node = self.parser.create_text_node(text)
                     new_nobr.append_child(text_node)
                     self.debug(f"Created new <nobr> for foster-parented text after filled <nobr>: {text_node}")
                     return True
@@ -3347,8 +3335,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             # the same foster parenting run), we can add to it
             if context.current_parent.find_ancestor("a") == prev_a:
                 self.debug("Still in same <a> context, adding text to existing <a> tag")
-                text_node = Node("#text")
-                text_node.text_content = text
+                text_node = self.parser.create_text_node(text)
                 prev_a.append_child(text_node)
                 self.debug(f"Added text to existing <a> tag: {prev_a}")
                 return True
@@ -3357,8 +3344,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 self.debug("No longer in same <a> context, creating new <a> tag")
                 a_token = HTMLToken("StartTag", tag_name="a", attributes=prev_a.attributes.copy())
                 new_a = self.parser.insert_element(a_token, context, mode='normal', enter=False, parent=foster_parent, before=foster_parent.children[table_index], push_override=False)
-                text_node = Node("#text")
-                text_node.text_content = text
+                text_node = self.parser.create_text_node(text)
                 new_a.append_child(text_node)
                 self.debug(f"Inserted new <a> tag before table: {new_a}")
                 return True
@@ -3518,8 +3504,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     sibling = self.parser.insert_element(sibling_token, context, mode='normal', enter=False, parent=foster_parent, before=foster_parent.children[table_index], push_override=False)
                     current_parent_for_chain = sibling
             text_holder = current_parent_for_chain
-            text_node = Node("#text")
-            text_node.text_content = text
+            text_node = self.parser.create_text_node(text)
             text_holder.append_child(text_node)
             self.debug(f"Inserted foster-parented text into {text_holder.tag_name}: {text_node}")
             # Remove any newly created trailing empty <nobr> wrapper immediately before the table
@@ -3577,15 +3562,14 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     ):
                         wrapper_token = HTMLToken("StartTag", tag_name=prev.tag_name, attributes=prev.attributes.copy())
                         new_wrapper = self.parser.insert_element(wrapper_token, context, mode='normal', enter=False, parent=foster_parent, before=foster_parent.children[table_index], push_override=False)
-                        text_node = Node('#text'); text_node.text_content = text
+                        text_node = self.parser.create_text_node(text)
                         new_wrapper.append_child(text_node)
                         self.debug(
                             f"Created new formatting wrapper <{prev.tag_name}> for foster-parented text run: {text_node}"
                         )
                         return True
                 # Fallback: create bare text node before table
-                text_node = Node("#text")
-                text_node.text_content = text
+                text_node = self.parser.create_text_node(text)
                 foster_parent.children.insert(table_index, text_node)
                 self.debug(f"Created new text node directly: {text_node}")
 
@@ -4197,8 +4181,7 @@ class RawtextTagHandler(SelectAwareHandler):
         else:
             # Create new text node
             self.debug("creating new text node")
-            text_node = Node("#text")
-            text_node.text_content = text
+            text_node = self.parser.create_text_node(text)
             context.current_parent.append_child(text_node)
             self.debug(f"created node with content '{text}'")
         return True
@@ -5640,8 +5623,7 @@ class ForeignTagHandler(TagHandler):
         if context.current_parent.children and context.current_parent.children[-1].tag_name == "#text":
             context.current_parent.children[-1].text_content += text
         else:
-            text_node = Node("#text")
-            text_node.text_content = text
+            text_node = self.parser.create_text_node(text)
             context.current_parent.append_child(text_node)
         return True
 
@@ -5675,8 +5657,7 @@ class ForeignTagHandler(TagHandler):
         table = self.parser.find_current_table(context)
         if not table:
             # No table found, just append normally
-            text_node = Node("#text")
-            text_node.text_content = text
+            text_node = self.parser.create_text_node(text)
             context.current_parent.append_child(text_node)
             return
 
@@ -5684,8 +5665,7 @@ class ForeignTagHandler(TagHandler):
         table_parent = table.parent
         if not table_parent:
             # Table has no parent, just append normally
-            text_node = Node("#text")
-            text_node.text_content = text
+            text_node = self.parser.create_text_node(text)
             context.current_parent.append_child(text_node)
             return
 
@@ -5697,8 +5677,7 @@ class ForeignTagHandler(TagHandler):
             and not self._is_plain_svg_foreign(context)
         ):
             text = text.replace('\uFFFD', '')
-        text_node = Node("#text")
-        text_node.text_content = text
+        text_node = self.parser.create_text_node(text)
         table_parent.insert_before(text_node, table)
         self.debug(f"Foster parented text '{text}' before table")
 
@@ -5759,8 +5738,7 @@ class ForeignTagHandler(TagHandler):
         if context.current_parent.children and context.current_parent.children[-1].tag_name == "#text":
             context.current_parent.children[-1].text_content += inner
         else:
-            text_node = Node("#text")
-            text_node.text_content = inner
+            text_node = self.parser.create_text_node(inner)
             context.current_parent.append_child(text_node)
         return True
 
@@ -6055,8 +6033,7 @@ class HeadElementHandler(TagHandler):
             context.current_parent.children[-1].text_content += text
             self.debug(f"Combined text: '{context.current_parent.children[-1].text_content}'")
         else:
-            text_node = Node("#text")
-            text_node.text_content = text
+            text_node = self.parser.create_text_node(text)
             context.current_parent.append_child(text_node)
 
         self.debug(f"Text node content: {text}")

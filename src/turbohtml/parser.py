@@ -328,6 +328,22 @@ class TurboHTML:
             context.enter_element(new_node)
         return new_node
 
+    # --- Text node helper ---
+    def create_text_node(self, text: str) -> Node:
+        """Create a new text node with the given text content.
+
+        Centralizes the common pattern:
+            node = Node("#text"); node.text_content = text
+
+        No insertion or merging logic is performed here – callers remain
+        responsible for appending/merging according to context (e.g. RAWTEXT
+        vs normal content, foster parenting, etc.). Keeping this lean avoids
+        hidden side effects and preserves deterministic control in handlers.
+        """
+        n = Node("#text")
+        n.text_content = text
+        return n
+
     def _post_process_tree(self) -> None:
         """Replace tokenizer sentinel with U+FFFD and strip non-preserved U+FFFD occurrences.
 
@@ -465,8 +481,7 @@ class TurboHTML:
 
         # Special handling for RAWTEXT contexts - treat everything as text
         if self.fragment_context in RAWTEXT_ELEMENTS:
-            text_node = Node("#text")
-            text_node.text_content = self.html
+            text_node = self.create_text_node(self.html)
             context.current_parent.append_child(text_node)
             self.debug(
                 f"Fragment: Treated all content as raw text in {self.fragment_context} context"
@@ -592,8 +607,7 @@ class TurboHTML:
                 # Fast path: in PLAINTEXT mode all characters go verbatim inside the plaintext element
                 if context.content_state == ContentState.PLAINTEXT:
                     if data:
-                        text_node = Node("#text")
-                        text_node.text_content = data
+                        text_node = self.create_text_node(data)
                         context.current_parent.append_child(text_node)
                 else:
                     if data:
@@ -846,8 +860,7 @@ class TurboHTML:
                 # Fast path: in PLAINTEXT mode all characters (including '<' and '&') are literal children
                 if context.content_state == ContentState.PLAINTEXT:
                     if data:
-                        text_node = Node("#text")
-                        text_node.text_content = data
+                        text_node = self.create_text_node(data)
                         context.current_parent.append_child(text_node)
                 else:
                     if data:
