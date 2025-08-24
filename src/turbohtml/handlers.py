@@ -171,13 +171,8 @@ class SimpleElementHandler(TagHandler):
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         # Use centralized insertion helper to ensure consistent open-elements and current_parent handling.
         treat_as_void = self._is_void_element(token.tag_name)
-        self.parser._insert_element(
-            token,
-            context,
-            treat_as_void=treat_as_void,
-            enter=not treat_as_void,
-            push=not treat_as_void,
-        )
+        mode = 'void' if treat_as_void else 'normal'
+        self.parser.insert_element(token, context, mode=mode, enter=not treat_as_void, treat_as_void=treat_as_void)
         return True
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
@@ -257,14 +252,7 @@ class TemplateTagHandler(TagHandler):
             insertion_parent = head_node
 
         # Build template element + its content fragment container using insertion helper
-        template_node = self.parser._insert_element(
-            token,
-            context,
-            parent=insertion_parent,
-            treat_as_void=False,
-            enter=True,
-            push=True,
-        )
+        template_node = self.parser.insert_element(token, context, parent=insertion_parent, mode='normal', enter=True)
         # Create content fragment container (not pushed onto open elements stack)
         content_node = Node("content")
         template_node.append_child(content_node)
@@ -396,13 +384,7 @@ class TemplateContentFilterHandler(TagHandler):
                 or n.tag_name == "math"
             ):
                 return False
-            template_node = self.parser._insert_element(
-                token,
-                context,
-                treat_as_void=False,
-                enter=True,
-                push=True,
-            )
+            template_node = self.parser.insert_element(token, context, mode='normal', enter=True)
             content_node = Node("content")
             template_node.append_child(content_node)
             context.enter_element(content_node)
@@ -424,16 +406,14 @@ class TemplateContentFilterHandler(TagHandler):
         if token.tag_name in {"tbody", "caption", "colgroup"}:
             has_rows_or_cells = any(ch.tag_name in {"tr", "td", "th"} for ch in (boundary.children or []))
             if (not has_rows_or_cells) and context.current_parent.tag_name not in {"tr", "td", "th"}:
-                ctrl = Node(token.tag_name, token.attributes)
-                boundary.append_child(ctrl)
+                # Insert control element without entering (structure wrapper)
+                self.parser.insert_element(token, context, parent=boundary, mode='transient', enter=False)
             return True
 
         # Minimal handling for cells
         if token.tag_name in ("td", "th"):
             if context.current_parent.tag_name == "tr":
-                cell = Node(token.tag_name, token.attributes)
-                context.current_parent.append_child(cell)
-                context.enter_element(cell)
+                self.parser.insert_element(token, context, mode='transient', enter=True)
                 return True
             if context.current_parent is boundary:
                 prev = None
@@ -443,16 +423,12 @@ class TemplateContentFilterHandler(TagHandler):
                     prev = child
                     break
                 if prev and prev.tag_name == "tr":
-                    new_tr = Node("tr")
-                    boundary.append_child(new_tr)
-                    context.enter_element(new_tr)
-                    cell = Node(token.tag_name, token.attributes)
-                    new_tr.append_child(cell)
-                    context.enter_element(cell)
+                    # Create implicit tr then cell
+                    fake_tr_token = HTMLToken("StartTag", tag_name="tr", attributes={})
+                    tr_node = self.parser.insert_element(fake_tr_token, context, parent=boundary, mode='transient', enter=True)
+                    self.parser.insert_element(token, context, mode='transient', enter=True)
                 else:
-                    cell = Node(token.tag_name, token.attributes)
-                    boundary.append_child(cell)
-                    context.enter_element(cell)
+                    self.parser.insert_element(token, context, parent=boundary, mode='transient', enter=True)
                 return True
 
         # Minimal handling for rows: only allow directly under content boundary
@@ -483,22 +459,21 @@ class TemplateContentFilterHandler(TagHandler):
                         last_section = ch
                         break
                 if not last_section or last_section.tag_name != "tbody":
-                    last_section = Node("tbody")
-                    tr_boundary.append_child(last_section)
-                new_tr = Node("tr", token.attributes)
-                last_section.append_child(new_tr)
-                context.enter_element(new_tr)
+                    # Implicit tbody wrapper
+                    fake_tbody = HTMLToken("StartTag", tag_name="tbody", attributes={})
+                    last_section = self.parser.insert_element(fake_tbody, context, parent=tr_boundary, mode='transient', enter=False)
+                fake_tr_token = HTMLToken("StartTag", tag_name="tr", attributes=token.attributes)
+                self.parser.insert_element(fake_tr_token, context, parent=last_section, mode='transient', enter=True)
                 return True
-            new_tr = Node("tr", token.attributes)
-            tr_boundary.append_child(new_tr)
-            context.enter_element(new_tr)
+            # Direct tr at boundary
+            fake_tr_token = HTMLToken("StartTag", tag_name="tr", attributes=token.attributes)
+            self.parser.insert_element(fake_tr_token, context, parent=tr_boundary, mode='transient', enter=True)
             return True
 
         # Ensure thead/tfoot are placed at the content boundary, not inside tbody
         if token.tag_name in {"thead", "tfoot"}:
             target = content_boundary or insertion_parent
-            new_sec = Node(token.tag_name, token.attributes)
-            target.append_child(new_sec)
+            self.parser.insert_element(token, context, parent=target, mode='transient', enter=False)
             return True
 
         # If we're currently inside any tableish element, move out to the content boundary first
@@ -532,14 +507,8 @@ class TemplateContentFilterHandler(TagHandler):
         do_not_enter = {"thead", "tbody", "tfoot", "caption", "colgroup", "col", "meta", "link"}
         treat_as_void = token.tag_name in do_not_enter
         # For <table> we want to enter and push so reconstruction/scope work; for others decide via do_not_enter
-        new_node = self.parser._insert_element(
-            token,
-            context,
-            treat_as_void=treat_as_void,
-            enter=not treat_as_void,
-            push=token.tag_name == "table" or not treat_as_void,
-            parent=boundary,
-        )
+        mode = 'normal' if (token.tag_name == 'table' or not treat_as_void) else 'void'
+        self.parser.insert_element(token, context, mode=mode, enter=not treat_as_void, treat_as_void=treat_as_void, parent=context.current_parent)
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
@@ -1600,7 +1569,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                     return True
 
             # Create new select/datalist using standardized insertion
-            self.parser._insert_element(token, context)
+            self.parser.insert_element(token, context, mode='normal')
             self.debug(f"Created new {tag_name}: parent now: {context.current_parent}")
             return True
 
@@ -1619,9 +1588,9 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                     context.move_to_element(select_ancestor.parent)
             # Now create the disallowed element outside the select
             if tag_name != "textarea":  # We don't implement textarea rawtext specifics here yet
-                self.parser._insert_element(token, context, treat_as_void=True, enter=False)
+                self.parser.insert_element(token, context, mode='void', enter=False, treat_as_void=True)
             else:
-                self.parser._insert_element(token, context, treat_as_void=False, enter=True)
+                self.parser.insert_element(token, context, mode='normal', enter=True)
             return True
 
         # If we're in a select, ignore any formatting elements
@@ -1655,7 +1624,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                     tag_name = 'span'
                 # Correct token construction: we need a StartTag token with tag_name set.
                 fake_token = HTMLToken('StartTag', tag_name=tag_name, attributes={}, is_self_closing=False)
-                new_node = self.parser._insert_element(fake_token, context, parent=attach)
+                new_node = self.parser.insert_element(fake_token, context, parent=attach, mode='normal')
                 # If there's a pending table inserted due to earlier select-table, insert before it
                 pending = self._pending_table_outside
                 if pending and pending.parent is attach:
@@ -4343,7 +4312,7 @@ class AutoClosingTagHandler(TemplateAwareHandler):
                 else:
                     self.debug("Skipping reconstruction: all active formatting elements already open")
             # Create block element normally
-            new_block = self.parser._insert_element(token, context)
+            new_block = self.parser.insert_element(token, context, mode='normal')
             self.debug(f"Created new block {new_block.tag_name}")
             return True
 

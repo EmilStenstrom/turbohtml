@@ -249,62 +249,80 @@ class TurboHTML:
             context.transition_to_state(DocumentState.IN_BODY, body)
 
     # --- Standardized element insertion helpers ---
-    def _insert_element(
+    def insert_element(
         self,
         token: HTMLToken,
         context: ParseContext,
         *,
-        treat_as_void: bool = False,
+        mode: str = 'normal',  # 'normal' | 'transient' | 'void'
         enter: bool = True,
-        push: bool = True,
+        treat_as_void: bool = False,  # force void semantics (ignored if mode == 'void')
         parent: Node = None,
         before: Node | None = None,
         tag_name_override: str = None,
         attributes_override: dict = None,
         preserve_attr_case: bool = False,
     ) -> Node:
-        """Create and insert an element for a start tag token and update open elements stack.
+        """Create and insert an element for a start tag token and (optionally) update stacks.
 
-        This centralizes the very common pattern scattered across handlers:
-          new_node = Node(tag, attrs); parent.append_child(new_node); open_elements.push(new_node); context.enter_element(new_node)
+        Modes:
+          * normal    – Standard spec behavior: push non-void elements onto the open elements stack. 'enter' controls
+                        whether the insertion point (current_parent) is moved to the new element (ignored for voids).
+          * transient – Insert element, optionally enter it, but NEVER push it on the open elements stack. Used for
+                        simplified / synthetic wrappers (e.g. table-ish constructs inside template content) that
+                        should act as current insertion point without participating in scope/adoption algorithms.
+          * void      – Force void semantics: element is inserted and never pushed nor entered regardless of tag.
 
-        Invariants enforced:
-          * For non-void HTML elements we both push onto the open elements stack and (optionally) move the insertion point.
-          * Void elements (per HTML spec) are inserted but NEVER pushed onto the open elements stack.
-          * Callers may override detection with treat_as_void for spec constructs that behave void-like in current context.
-          * A custom parent can be provided (defaults to context.current_parent) without mutating current_parent unless enter=True.
+        treat_as_void forces void classification within 'normal' or 'transient' modes (e.g. for caption/thead like
+        wrappers we don't want on the stack). If mode=='void' this flag is ignored.
 
-        Args:
-            token: The start tag token being consumed.
-            context: Current parse context.
-            treat_as_void: Force element to be treated as void (never pushed / not entered) even if not in VOID_ELEMENTS.
-            enter: Whether to make the new element the current parent (ignored if treated as void or push is False).
-            push: Whether to push element on open elements stack (automatically False for void elements).
-            parent: Optional explicit parent to append under (default: context.current_parent).
+        Invariants preserved:
+          * current_parent is only set to the new element if (mode in {normal, transient}) AND enter True AND element
+            is not (actually or forced) void.
+          * Elements on the open elements stack are always non-void and created in normal mode.
 
-        Returns:
-            The newly created Node.
+        Returns the newly created Node.
         """
+        if mode not in ('normal','transient','void'):
+            raise ValueError(f"insert_element: unknown mode '{mode}'")
         target_parent = parent or context.current_parent
         tag_name = tag_name_override or token.tag_name
         if not tag_name and self.env_debug:  # Unexpected – surface loudly during migration
             self.debug(
-                f"_insert_element: EMPTY tag name for token={token} parent={target_parent.tag_name} open={[e.tag_name for e in context.open_elements._stack]}",
+                f"insert_element: EMPTY tag name for token={token} parent={target_parent.tag_name} open={[e.tag_name for e in context.open_elements._stack]}",
                 indent=2,
             )
+        # Guard: transient mode only allowed inside template content subtrees (content under a template)
+        if mode == 'transient':
+            cur = context.current_parent
+            in_template_content = False
+            while cur:
+                if cur.tag_name == 'content' and cur.parent and cur.parent.tag_name == 'template':
+                    in_template_content = True
+                    break
+                cur = cur.parent
+            if not in_template_content and tag_name != 'content':
+                raise ValueError(
+                    f"insert_element: transient mode outside template content (tag={tag_name}) not permitted; current_parent={context.current_parent.tag_name}"
+                )
         attrs = attributes_override if attributes_override is not None else token.attributes
         new_node = Node(tag_name, attrs, preserve_attr_case=preserve_attr_case)
         if before and before.parent is target_parent:
             target_parent.insert_before(new_node, before)
         else:
             target_parent.append_child(new_node)
+        # Determine effective voidness
+        is_void = False
+        if mode == 'void':
+            is_void = True
+        else:
+            is_void = treat_as_void or token.tag_name in VOID_ELEMENTS
 
-        # Determine void status (spec: do not push void elements) unless caller overrides
-        is_void = treat_as_void or token.tag_name in VOID_ELEMENTS
-        if push and not is_void:
+        if mode == 'normal' and not is_void:
             context.open_elements.push(new_node)
-            if enter:
-                context.enter_element(new_node)
+
+        if enter and not is_void and mode in ('normal','transient'):
+            context.enter_element(new_node)
         return new_node
 
     def _post_process_tree(self) -> None:
