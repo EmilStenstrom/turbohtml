@@ -1,8 +1,6 @@
-"""
-Adoption Agency Algorithm Implementation (rolled back to clean baseline 3891ea1 for stabilization)
+"""Adoption Agency Algorithm (HTML5 tree construction: formatting element adoption).
 
-This baseline version restores pre-heuristic logic so we can re-apply a minimal, spec-adjacent
-fix for the remaining deep </a> ladder test without cascading cleanup passes.
+Implementation focuses on spec steps; comments describe intent (why) rather than history.
 """
 
 from typing import List, Optional, Dict
@@ -20,8 +18,7 @@ class FormattingElementEntry:
     element: Node
     token: HTMLToken
 
-    # Marker entries will have element set to None. We keep token optional then.
-    # Using a dataclass keeps uniform list handling.
+    # Marker entries have element None (scope boundaries for tables/templates).
 
     def matches(self, tag_name: str, attributes: Dict[str, str] = None) -> bool:
         """Check if this entry matches the given tag and attributes"""
@@ -36,14 +33,7 @@ class FormattingElementEntry:
 
 
 class ActiveFormattingElements:
-    """
-    Stack for tracking active formatting elements per HTML5 spec.
-
-    Implements the active formatting elements list with:
-    - Maximum size limit (no explicit limit in spec, but practical limit)
-    - Noah's Ark clause (max 3 identical elements)
-    - Markers for scope boundaries
-    """
+    """Active formatting elements list (spec stack with markers + Noah's Ark clause)."""
 
     def __init__(self, max_size: int = 12):
         self._stack: List[FormattingElementEntry] = []
@@ -52,8 +42,7 @@ class ActiveFormattingElements:
     def push(self, element: Node, token: HTMLToken) -> None:
         """Add a formatting element to the active list"""
         entry = FormattingElementEntry(element, token)
-
-        # Apply Noah's Ark clause before adding
+        # Enforce Noah's Ark clause before adding more duplicates
         self._apply_noahs_ark(entry)
 
         self._stack.append(entry)
@@ -88,7 +77,6 @@ class ActiveFormattingElements:
                 continue
             if entry.element is element:
                 return entry
-            last_node_already_nested = False
         return None
 
     def remove(self, element: Node) -> bool:
@@ -239,16 +227,12 @@ class OpenElementsStack:
 
 
 class AdoptionAgencyAlgorithm:
-    # Baseline Adoption Agency Algorithm (pre-ladder heuristics)
 
     def __init__(self, parser):
         self.parser = parser
         # Direct attribute access (env_debug always defined in parser)
         self.debug_enabled = parser.env_debug
-        # Internal tracking for hoisted ladder <b> elements created during multi-iteration </a> adoption
-        # (replaces earlier DOM attribute marker 'data-ladder-top' to avoid leaking attributes to output)
         self._ladder_bs = set()
-        # Track whether we actually ran adoption for </a> during parse (used by post-process gating)
         self._ran_a = False
 
 
@@ -303,7 +287,7 @@ class AdoptionAgencyAlgorithm:
         return True
 
     def run_algorithm(self, tag_name: str, context, iteration_count: int = 0) -> bool:
-        # Run the HTML5 Adoption Agency Algorithm per WHATWG spec (baseline implementation)
+        # Run adoption algorithm (WHATWG HTML spec)
         if tag_name == 'a':
             self._ran_a = True
         if self.debug_enabled:
@@ -313,7 +297,7 @@ class AdoptionAgencyAlgorithm:
             print(
                 f"    Active formatting elements: {[e.element.tag_name for e in context.active_formatting_elements]}"
             )
-        # Start of a new multi-iteration </a> adoption series: clear ladder tracking
+        # Clear ladder tracking at start of a multi-iteration </a> series
         if tag_name == 'a' and iteration_count == 1:
             self._ladder_bs.clear()
         # Spec step 1: Choose the last (most recent) element in the list of active formatting elements
@@ -335,7 +319,7 @@ class AdoptionAgencyAlgorithm:
                 f"    Selected formatting element (most recent spec): {formatting_element} at stack index {context.open_elements.index_of(formatting_element)}"
             )
 
-    # Intervening <b> entries are retained; no pruning of active formatting entries during multi-iteration adoption.
+        # Intervening <b> entries retained; no active formatting pruning mid-run
 
         # Step 1: If the current node is an HTML element whose tag name is subject,
         # and the current node is not in the list of active formatting elements,
@@ -382,11 +366,7 @@ class AdoptionAgencyAlgorithm:
                 print(
                     f"    STEP 4 RESULT: Formatting element not in scope - spec: parse error, ignore token, abort"
                 )
-            # Enhancement: When we ignore the end tag (simple parse error), the expected
-            # Handle misnested formatting adjacent to tables in a spec-consistent way
-            # still route subsequent inline formatting start tags into the open table cell
-            # rather than before the table. Relocate insertion point into the deepest
-            # open td/th so that following formatting elements are created inside the cell.
+            # Maintain insertion point inside deepest open cell if present
             deepest_cell = None
             for elem in context.open_elements._stack:
                 if elem.tag_name in ("td", "th"):
@@ -398,7 +378,7 @@ class AdoptionAgencyAlgorithm:
                         f"    STEP 4 ADJUST: moved insertion point into deepest cell <{deepest_cell.tag_name}> for subsequent inline formatting (open stack)"
                     )
             elif deepest_cell is None:
-                # Fallback: locate most recent active formatting element whose DOM ancestor chain includes a td/th
+                # Otherwise attempt to relocate into a formatting element inside a cell
                 cell_fmt = None
                 for entry in reversed(list(context.active_formatting_elements)):
                     el = entry.element
@@ -418,9 +398,7 @@ class AdoptionAgencyAlgorithm:
                         print(
                             f"    STEP 4 ADJUST: moved insertion point into formatting element inside cell <{cell_fmt.tag_name}>"
                         )
-            # Spec step 4: parse error; ignore the token and abort the adoption algorithm WITHOUT
-            # altering either the open elements stack or the active formatting list. Return False
-            # so caller (run_until_stable) stops further adoption iterations for this end tag.
+            # Parse error: ignore token; abort this adoption run
             return False
 
         # Step 5: If formatting element is not the current node, it's a parse error
@@ -466,11 +444,7 @@ class AdoptionAgencyAlgorithm:
                 and formatting_element.tag_name in ("nobr", "i", "b", "em")
             ):
                 context.move_to_element(cp.parent)
-            # Simple-case enhancement: if we're closing an <i> and
-            # Simple-case enhancement (structure-preserving): if we're closing an <i> and
-            # there is already an <i> descendant with text inside the current insertion parent,
-            # suppress reconstruction of a duplicate wrapper by removing any lingering active
-            # formatting entry for this tag now that the element is closed.
+            # Avoid duplicate reconstruction: if another <i> with text already exists under parent
             if formatting_element.tag_name == 'i':
                 existing_entry = context.active_formatting_elements.find('i')
                 if existing_entry and existing_entry.element is not formatting_element:
@@ -492,12 +466,7 @@ class AdoptionAgencyAlgorithm:
                             print("    SimpleCaseGuard: removed stale <i> AFE entry to prevent duplicate reconstruction")
             return result
 
-        # Step 8-19: Complex case with furthest block
-        # Narrow guard: When closing </cite> where the furthest block is the
-        # Narrow guard (cite end tag following formatting chain): When closing </cite> where the furthest block is the
-        # sole element child directly under the formatting element, html5lib expected tree retains
-        # the original <cite> as ancestor (i.e. end tag ignored). We emulate this by aborting the
-        # complex adoption and treating the end tag as ignored.
+        # Step 8-19: Complex case — cite guard: retain cite when sole child block
         if (
             formatting_element.tag_name == 'cite'
             and furthest_block.parent is formatting_element
@@ -524,12 +493,10 @@ class AdoptionAgencyAlgorithm:
                 break
             runs += 1
             if tag_name == 'a':
-                # Limit </a> adoption to a single iteration (baseline spec run) to avoid runaway nested <a> cloning
+                # Limit </a> adoption to a single iteration
                 break
             if tag_name == 'a':
-                # After first complex iteration, if the formatting <a> (or its clone) no longer has any
-                # special/block elements after it in the open elements stack, further iterations for this
-                # end tag would only produce redundant nested <a> wrappers. Stop early.
+                # Early stop if no trailing special/block elements; further iterations redundant
                 entry = context.active_formatting_elements.find('a')
                 if entry:
                     a_el = entry.element
@@ -541,10 +508,10 @@ class AdoptionAgencyAlgorithm:
                         )
                         if not trailing_special:
                             break
-        # No post-loop ladder heuristics in baseline
+        # No post-loop ladder heuristics
         return runs
 
-    # --- Baseline spec helpers (missing after rollback patch) ---
+    # --- Spec helpers ---
     def _find_furthest_block_spec_compliant(self, formatting_element: Node, context) -> Optional[Node]:
         """Locate the furthest block for Step 6 of the adoption agency algorithm.
 
@@ -554,9 +521,7 @@ class AdoptionAgencyAlgorithm:
         block element as a boundary). If no such element appears before the top of
         the stack, return None (simple case).
 
-        This is intentionally conservative: earlier heuristic variants attempted
-        deeper scanning and DOM reshaping which introduced regressions. We only
-        classify using the imported FORMATTING/BLOCK/SPECIAL lists for current tests.
+        Conservative: classify using SPECIAL/BLOCK sets only.
         """
         try:
             idx = context.open_elements.index_of(formatting_element)
