@@ -3696,50 +3696,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         # In fragment contexts, fall back to the fragment root
                         context.move_to_element(self.parser.root)
 
-                # # Find the original <a> tag that contained the table
-                # original_a = self.parser.find_current_table(context).parent
-                # if original_a and original_a.tag_name == "a":
-                #     # Check if there was an <a> tag with different attributes inside the table
-                #     different_a = None
-                #     for child in original_a.children:
-                #         if child.tag_name == "a" and child.attributes != original_a.attributes:
-                #             different_a = child
-                #             break
-
-                #     if different_a:
-                #         # Case like test #76 - create new <a> with the inner attributes
-                #         self.debug(f"Creating new <a> with inner attributes: {different_a.attributes}")
-                #         new_a = Node("a", different_a.attributes.copy())
-                #         body = self.parser._get_body_node()
-                #         if body:
-                #             body.append_child(new_a)
-                #             context.enter_element(new_a)
-                #     else:
-                #         # Case like test #77 - keep using original <a>
-                #         self.debug(f"Keeping original <a> tag: {original_a}")
-                #         context.current_parent = original_a
-                # else:
-                #     # Find the first <a> tag in the document
-                #     body = self.parser._get_body_node()
-                #     first_a = None
-                #     if body:
-                #         for child in body.children:
-                #             if child.tag_name == "a":
-                #                 first_a = child
-                #                 break
-
-                #     if first_a:
-                #         # Create new <a> with same attributes as first one
-                #         self.debug(f"Creating new <a> with first <a> attributes: {first_a.attributes}")
-                #         new_a = Node("a", first_a.attributes.copy())
-                #         body = self.parser._get_body_node()
-                #         if body:
-                #             body.append_child(new_a)
-                #             context.enter_element(new_a)
-                #     else:
-                #         body = self.parser._get_body_node()
-                #         context.move_to_element_with_fallback(body, self.parser.html_node)
-
                 self.parser.transition_to_state(context, DocumentState.IN_BODY)
                 return True
 
