@@ -64,6 +64,7 @@ HTML_ELEMENTS = [
     "menu",
     "meta",
     "nobr",
+    "object",
     "ol",
     "p",
     "pre",
