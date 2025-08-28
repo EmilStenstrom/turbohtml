@@ -18,7 +18,7 @@ from turbohtml.constants import (
     VOID_ELEMENTS,
     BOUNDARY_ELEMENTS,
 )
-from turbohtml.context import ParseContext, DocumentState, ContentState  # Add import at top
+from turbohtml.context import ParseContext, DocumentState, ContentState
 from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken
 
@@ -51,7 +51,6 @@ class TagHandler:
 
     def _is_in_template_content(self, context: "ParseContext") -> bool:
         """Check if we're inside actual template content (not just a user <content> tag)"""
-        # Check if current parent is content node
         if (
             context.current_parent
             and context.current_parent.tag_name == "content"
@@ -60,12 +59,10 @@ class TagHandler:
         ):
             return True
 
-        # Check if any ancestor is template content
         return context.current_parent and context.current_parent.has_ancestor_matching(
             lambda n: (n.tag_name == "content" and n.parent and n.parent.tag_name == "template")
         )
 
-    # Common helper methods to reduce duplication
     def _create_element(self, token: "HTMLToken") -> "Node":
         """Create a new element node from a token"""
         return Node(token.tag_name, token.attributes)
@@ -184,7 +181,6 @@ class SimpleElementHandler(TagHandler):
         self.handled_tags = handled_tags
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
-        # Use centralized insertion helper to ensure consistent open-elements and current_parent handling.
         treat_as_void = self._is_void_element(token.tag_name)
         mode = 'void' if treat_as_void else 'normal'
         self.parser.insert_element(token, context, mode=mode, enter=not treat_as_void, treat_as_void=treat_as_void)
@@ -380,7 +376,6 @@ class TemplateContentFilterHandler(TagHandler):
         return tag_name in (self.IGNORED_START | self.GENERIC_AS_PLAIN | {"template"})
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
-        # Ignore top-level/document-structure tags inside template content
         if token.tag_name in self.IGNORED_START:
             tableish = {"table", "thead", "tfoot", "tbody", "tr", "td", "th", "col", "colgroup"}
             if context.current_parent and context.current_parent.tag_name in tableish:
@@ -389,7 +384,6 @@ class TemplateContentFilterHandler(TagHandler):
                     context.move_to_element(boundary)
             return True
 
-        # Nested <template> should create its own content fragment inside the current template content
         if token.tag_name == "template":
             if context.current_context in ("math", "svg") or context.current_parent.has_ancestor_matching(
                 lambda n: n.tag_name.startswith("svg ")
@@ -403,19 +397,16 @@ class TemplateContentFilterHandler(TagHandler):
             content_node = self.parser.insert_element(content_token, context, mode='transient', enter=True, parent=template_node)
             return True
 
-        # Establish insertion points
         insertion_parent = context.current_parent
         content_boundary = self._current_content_boundary(context)
         boundary = insertion_parent
 
-        # Drop unexpected content directly after <col>/<colgroup>
         last_child = boundary.children[-1] if boundary and boundary.children else None
         if last_child and last_child.tag_name in {"col", "colgroup"}:
             allowed_after_col = {"col", "#text"}
             if token.tag_name not in allowed_after_col:
                 return True
 
-        # Represent or drop table controls based on whether rows/cells have started
         if token.tag_name in {"tbody", "caption", "colgroup"}:
             has_rows_or_cells = any(ch.tag_name in {"tr", "td", "th"} for ch in (boundary.children or []))
             if (not has_rows_or_cells) and context.current_parent.tag_name not in {"tr", "td", "th"}:
@@ -423,7 +414,6 @@ class TemplateContentFilterHandler(TagHandler):
                 self.parser.insert_element(token, context, parent=boundary, mode='transient', enter=False)
             return True
 
-        # Minimal handling for cells
         if token.tag_name in ("td", "th"):
             if context.current_parent.tag_name == "tr":
                 self.parser.insert_element(token, context, mode='transient', enter=True)
@@ -436,7 +426,6 @@ class TemplateContentFilterHandler(TagHandler):
                     prev = child
                     break
                 if prev and prev.tag_name == "tr":
-                    # Create implicit tr then cell
                     fake_tr_token = HTMLToken("StartTag", tag_name="tr", attributes={})
                     tr_node = self.parser.insert_element(fake_tr_token, context, parent=boundary, mode='transient', enter=True)
                     self.parser.insert_element(token, context, mode='transient', enter=True)
@@ -444,10 +433,8 @@ class TemplateContentFilterHandler(TagHandler):
                     self.parser.insert_element(token, context, parent=boundary, mode='transient', enter=True)
                 return True
 
-        # Minimal handling for rows: only allow directly under content boundary
         if token.tag_name == "tr":
             tr_boundary = content_boundary or insertion_parent
-            # Only allow <tr> directly at the content boundary
             if context.current_parent is not tr_boundary:
                 return True
             # If the last significant child is a template, treat as stray only when
@@ -472,13 +459,11 @@ class TemplateContentFilterHandler(TagHandler):
                         last_section = ch
                         break
                 if not last_section or last_section.tag_name != "tbody":
-                    # Implicit tbody wrapper
                     fake_tbody = HTMLToken("StartTag", tag_name="tbody", attributes={})
                     last_section = self.parser.insert_element(fake_tbody, context, parent=tr_boundary, mode='transient', enter=False)
                 fake_tr_token = HTMLToken("StartTag", tag_name="tr", attributes=token.attributes)
                 self.parser.insert_element(fake_tr_token, context, parent=last_section, mode='transient', enter=True)
                 return True
-            # Direct tr at boundary
             fake_tr_token = HTMLToken("StartTag", tag_name="tr", attributes=token.attributes)
             self.parser.insert_element(fake_tr_token, context, parent=tr_boundary, mode='transient', enter=True)
             return True
@@ -511,7 +496,6 @@ class TemplateContentFilterHandler(TagHandler):
                 context.move_to_element(boundary2)
                 boundary = boundary2
 
-        # Generic element insertion
         if context.current_parent.tag_name == "tr":
             boundary2 = self._current_content_boundary(context)
             if boundary2:
@@ -4212,21 +4196,16 @@ class ForeignTagHandler(TagHandler):
             name_lower = name.lower()
 
             if element_context == "svg":
-                # SVG: Use case mapping if available, otherwise preserve case
                 if name_lower in SVG_CASE_SENSITIVE_ATTRIBUTES:
                     fixed_attrs[SVG_CASE_SENSITIVE_ATTRIBUTES[name_lower]] = value
                 else:
-                    # For SVG, attributes not in the mapping are lowercased per spec
                     fixed_attrs[name_lower] = value
             elif element_context == "math":
-                # MathML: Lowercase all attributes unless in case mapping
                 if name_lower in MATHML_CASE_SENSITIVE_ATTRIBUTES:
                     fixed_attrs[MATHML_CASE_SENSITIVE_ATTRIBUTES[name_lower]] = value
                 else:
-                    # For MathML, all other attributes are lowercased
                     fixed_attrs[name_lower] = value
             else:
-                # Default: lowercase
                 fixed_attrs[name_lower] = value
 
         return fixed_attrs
@@ -4247,13 +4226,12 @@ class ForeignTagHandler(TagHandler):
             The created node
         """
         fixed_attrs = self._fix_foreign_attribute_case(attributes, context_type)
-        # Set context before insertion for downstream logic
         if context_type == "svg" and tag_name.lower() == "svg":
             context.current_context = "svg"
         elif context_type == "math" and tag_name.lower() == "math":
             context.current_context = "math"
         push = not (token and token.is_self_closing)
-        enter = push  # previous behavior: only entered when not self-closing
+        enter = push
         return self.parser.insert_element(
             token or HTMLToken('StartTag', tag_name=tag_name, attributes=fixed_attrs),  # type: ignore
             context,
@@ -4266,11 +4244,9 @@ class ForeignTagHandler(TagHandler):
         )
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
-        # We only handle starts when inside an existing foreign context OR when starting a root foreign element
         lower = tag_name.lower()
         if context.current_context in ("svg", "math"):
             return True
-        # Starting a new foreign root element
         return lower in ("svg", "math")
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", end_tag_idx: int) -> bool:
@@ -4300,7 +4276,6 @@ class ForeignTagHandler(TagHandler):
             self._create_foreign_element(tag_name, token.attributes, context.current_context, context, token)
             return True
 
-        # Normal root creation / nested foreign creation path
         if lower == "svg":
             self._create_foreign_element(tag_name, token.attributes, "svg", context, token)
             return True
@@ -4314,7 +4289,6 @@ class ForeignTagHandler(TagHandler):
             self._create_foreign_element(tag_name, token.attributes, "math", context, token)
             return True
 
-        # Inside foreign content, treat unknown tags as foreign children (case-preserving attribute logic already applied)
         if context.current_context in ("svg", "math"):
             self._create_foreign_element(tag_name, token.attributes, context.current_context, context, token)
             return True
@@ -4357,7 +4331,7 @@ class ForeignTagHandler(TagHandler):
                             tag_name_override=f"math {tag_name}",
                             attributes_override=fixed_attrs,
                             preserve_attr_case=True,
-                            push_override=False,  # match previous behavior (not on open elements stack)
+                            push_override=False,
                         )
                     else:  # svg
                         context.current_context = "svg"
@@ -4466,10 +4440,7 @@ class ForeignTagHandler(TagHandler):
             # we immediately clear foreign context so following siblings (like <circle>) are HTML.
             context.current_context = None
 
-            # Look for the nearest table in the document tree that's still open
             table = context.current_parent.find_ancestor("table")
-
-            # Also check self.parser.find_current_table(context)
             if not table and self.parser.find_current_table(context):
                 table = self.parser.find_current_table(context)
 
@@ -4505,7 +4476,6 @@ class ForeignTagHandler(TagHandler):
                 context.move_to_element(in_caption_or_cell)
                 return False  # Let other handlers process this element
 
-            # Move insertion point to a safe HTML context; prefer <body> in documents
             if context.current_parent:
                 if self.parser.fragment_context:
                     # In fragment parsing, go to the fragment root
@@ -4544,17 +4514,13 @@ class ForeignTagHandler(TagHandler):
                     break
                 cur = cur.parent
             if not inside:
-                # Fragment safeguard: if we're parsing a fragment whose declared fragment_context
-                # establishes a foreign context (e.g. fragment_context starts with 'svg' or 'math')
-                # and no actual foreign root element has been materialized yet, keep the context.
                 frag_ctx = self.parser.fragment_context
                 if frag_ctx and frag_ctx.startswith(context.current_context):
-                    # Check if any foreign-prefixed node already exists directly under fragment root; if not, retain.
                     frag_root = self.parser.root if self.parser.root.tag_name == 'document-fragment' else None
                     if frag_root:
                         has_foreign_child = any(ch.tag_name.startswith(foreign_prefix) for ch in frag_root.children)
                         if not has_foreign_child:
-                            inside = True  # treat as inside to suppress clearing
+                            inside = True
                 if not inside:
                     context.current_context = None
 
@@ -4608,7 +4574,6 @@ class ForeignTagHandler(TagHandler):
 
         # 3. Already inside MathML foreign content
         if context.current_context == "math":
-            # MathML text integration points (mtext, mi, mo, mn, ms) treat contained HTML tags as HTML
             in_text_ip = (
                 context.current_parent.find_ancestor(
                     lambda n: n.tag_name in ("math mtext", "math mi", "math mo", "math mn", "math ms")
@@ -4619,7 +4584,6 @@ class ForeignTagHandler(TagHandler):
                 tnl = tag_name.lower()
                 if tnl in HTML_ELEMENTS and tnl not in TABLE_ELEMENTS and tnl != "table":
                     return False
-            # annotation-xml with HTML/XHTML encoding delegates HTML elements
             if context.current_parent.tag_name == "math annotation-xml":
                 encoding = context.current_parent.attributes.get("encoding", "").lower()
                 if encoding in ("application/xhtml+xml", "text/html"):
@@ -4680,23 +4644,41 @@ class ForeignTagHandler(TagHandler):
         ):
             return True
 
-        # Otherwise let HTML handlers process it
         return False
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         tag_name = token.tag_name
         tag_name_lower = tag_name.lower()
 
-        # Check for foster parenting in table context
         if self._handle_foreign_foster_parenting(token, context):
             return True
 
-        # Check for HTML elements breaking out of foreign content
         breakout_result = self._handle_html_breakout(token, context)
         if breakout_result is not False:
             return breakout_result
 
-        # SVG fragment unknown-tag fallback: after breakout we may have lost svg context
+        # Structural rule: standalone MathML elements (excluding the root <math>) that appear when
+        # no math context is active are emitted as prefixed nodes (math tagname) without switching
+        # current_context. Only the root <math> start tag escalates context; this prevents
+        # incorrectly treating following sibling HTML as MathML while still preserving expected
+        # MathML leaf element representation in mixed fragments.
+        from .constants import MATHML_ELEMENTS  # local import to avoid top‑level cycle risk
+        if (
+            context.current_context is None
+            and tag_name_lower in MATHML_ELEMENTS
+            and tag_name_lower != "math"
+        ):
+            self.parser.insert_element(
+                token,
+                context,
+                mode='normal',
+                enter=not token.is_self_closing,
+                tag_name_override=f"math {tag_name_lower}",
+                attributes_override=self._fix_foreign_attribute_case(token.attributes, "math"),
+                push_override=False,
+            )
+            return True
+
         if (
             context.current_context is None
             and self.parser.fragment_context
@@ -4724,12 +4706,11 @@ class ForeignTagHandler(TagHandler):
                     tag_name_override=f"svg {tnl}",
                     attributes_override=self._fix_foreign_attribute_case(token.attributes, "svg"),
                     preserve_attr_case=True,
-                    push_override=False,  # previously not pushed
+                    push_override=False,
                 )
                 return True
 
         if context.current_context == "math":
-            # Check for invalid table element nesting in MathML
             if tag_name_lower in ("tr", "td", "th", "tbody", "thead", "tfoot"):
                 # Invalid table nesting in MathML: drop the element completely
                 current_ancestors = []
@@ -4766,7 +4747,6 @@ class ForeignTagHandler(TagHandler):
                     )
                     return True  # Ignore this element completely
 
-            # Auto-close certain MathML elements when encountering table elements
             if tag_name_lower in ("tr", "td", "th") and context.current_parent.tag_name.startswith("math "):
                 # Find if we're inside a MathML operator/leaf element that should auto-close
                 auto_close_elements = ["math mo", "math mi", "math mn", "math mtext", "math ms"]
@@ -4775,7 +4755,6 @@ class ForeignTagHandler(TagHandler):
                     if context.current_parent.parent:
                         context.move_up_one_level()
 
-            # In foreign contexts, RAWTEXT elements behave as normal elements
             if tag_name_lower in RAWTEXT_ELEMENTS:
                 self.debug(f"Treating {tag_name_lower} as normal element in foreign context")
                 self.parser.insert_element(
@@ -4786,7 +4765,6 @@ class ForeignTagHandler(TagHandler):
                     tag_name_override=f"math {tag_name}",
                     push_override=False,
                 )
-                # Reset tokenizer if it entered RAWTEXT mode
                 if self.parser.tokenizer.state == "RAWTEXT":
                     self.parser.tokenizer.state = "DATA"
                     self.parser.tokenizer.rawtext_tag = None
@@ -4814,7 +4792,6 @@ class ForeignTagHandler(TagHandler):
             # (no MathML prefix) in foreign-fragment leaf contexts. Example:
             # context element <math ms> then encountering <ms/> should yield <ms> not <math ms>.
             if tag_name_lower in {"mi", "mo", "mn", "ms", "mtext"}:
-                # Suppress entirely inside select (flatten)
                 if context.current_parent.is_inside_tag("select"):
                     return True
                 ancestor_text_ip = context.current_parent.find_ancestor(
@@ -4861,9 +4838,6 @@ class ForeignTagHandler(TagHandler):
                     self.debug(
                         f"MathML leaf kept prefixed: tag={tag_name_lower}, ancestor_text_ip={ancestor_text_ip is not None}, frag_leaf_root={frag_leaf_root}, fragment_context={self.parser.fragment_context}"
                     )
-                # Additional heuristic: If current fragment context is a MathML leaf (ms/mn/mo/mi/mtext)
-                # and current tree already contains mglyph/malignmark chain,
-                # then treat subsequent leaf element tokens as HTML (unprefixed) to match expectations.
                 if self.parser.fragment_context and self.parser.fragment_context.startswith("math "):
                     chain_tags = {"math mglyph", "math malignmark"}
                     # Consider presence of BOTH mglyph and malignmark anywhere so far in fragment
@@ -5100,31 +5074,7 @@ class ForeignTagHandler(TagHandler):
             if not token.is_self_closing:
                 context.current_context = "svg"
             return True
-
-        # Handle MathML elements outside of MathML context (re-enter MathML)
-        if tag_name_lower in MATHML_ELEMENTS:
-            self.parser.insert_element(
-                token,
-                context,
-                mode='normal',
-                enter=not token.is_self_closing,
-                tag_name_override=f"math {tag_name}",
-                attributes_override=self._fix_foreign_attribute_case(token.attributes, 'math'),
-                push_override=False,
-            )
-            if not token.is_self_closing:
-                context.current_context = 'math'
-            else:
-                if (
-                    context.current_context != 'math'
-                    and self.parser.fragment_context
-                    and self.parser.fragment_context.startswith('math ')
-                ):
-                    context.current_context = 'math'
-                    self.debug(
-                        f"Restoring math context after self-closing <{tag_name_lower}/> in fragment {self.parser.fragment_context}"
-                    )
-            return True
+        # No additional foreign handling
 
         return False
 
@@ -6071,19 +6021,16 @@ class BoundaryElementHandler(TagHandler):
         return tag_name == "marquee"
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
-        # Close open <p> first
         p_ancestor = context.current_parent.find_ancestor("p")
         if p_ancestor and p_ancestor.parent:
             self.debug(f"Found p ancestor, closing it first: {p_ancestor}")
             context.move_to_element(p_ancestor.parent)
 
-        # Inside formatting element?
         formatting_element = context.current_parent.find_ancestor(lambda n: n.tag_name in FORMATTING_ELEMENTS)
         if formatting_element:
             self.debug(f"Found formatting element ancestor: {formatting_element}")
             self.debug(f"Current parent before: {context.current_parent}")
 
-            # Create boundary (not pushed to stack)
             boundary = self.parser.insert_element(
                 token,
                 context,
@@ -6096,7 +6043,6 @@ class BoundaryElementHandler(TagHandler):
             )
             self.debug(f"Created boundary element {boundary.tag_name} under {formatting_element.tag_name}")
 
-            # Implicit paragraph (transient)
             fake_p_token = HTMLToken('StartTag', tag_name='p', attributes={})  # type: ignore
             self.parser.insert_element(
                 fake_p_token,
@@ -6111,7 +6057,6 @@ class BoundaryElementHandler(TagHandler):
             self.debug(f"Created implicit paragraph under {boundary.tag_name}")
             return True
 
-        # Create boundary normally (no push)
         boundary = self.parser.insert_element(
             token,
             context,
@@ -6121,7 +6066,6 @@ class BoundaryElementHandler(TagHandler):
             push_override=False,
             attributes_override={k.lower(): v for k,v in token.attributes.items()},
         )
-        # Implicit paragraph (transient)
         fake_p_token = HTMLToken('StartTag', tag_name='p', attributes={})  # type: ignore
         self.parser.insert_element(
             fake_p_token,
@@ -6142,7 +6086,6 @@ class BoundaryElementHandler(TagHandler):
         tag_name = token.tag_name
         self.debug(f"handling end tag {tag_name}")
 
-        # Find boundary to close
         target = context.current_parent.find_ancestor(tag_name, stop_at_boundary=True)
         if not target:
             self.debug("no matching boundary element found")
@@ -6150,14 +6093,12 @@ class BoundaryElementHandler(TagHandler):
 
         self.debug(f"found matching boundary element: {target}")
 
-        # Formatting elements between current position and target
         formatting_elements = context.current_parent.collect_ancestors_until(
             stop_at=target, predicate=lambda n: n.tag_name in FORMATTING_ELEMENTS
         )
         for fmt_elem in formatting_elements:
             self.debug(f"found formatting element to close: {fmt_elem.tag_name}")
 
-        # Close formatting elements inside boundary
         if formatting_elements:
             self.debug(f"closing formatting elements: {[f.tag_name for f in formatting_elements]}")
             # Move back to the boundary element's parent
@@ -6188,13 +6129,10 @@ class DoctypeHandler(TagHandler):
         return True
 
     def handle_doctype(self, doctype: str, context: "ParseContext") -> bool:
-        # If we've already seen a doctype, ignore additional ones
         if context.doctype_seen:
             self.debug("Ignoring duplicate DOCTYPE")
             return True
 
-        # If the document has already started (any elements have been processed),
-        # ignore unexpected DOCTYPEs per HTML5 spec
         if context.document_state != DocumentState.INITIAL or len(self.parser.root.children) > 0:
             self.debug("Ignoring unexpected DOCTYPE after document started")
             return True
@@ -6202,12 +6140,9 @@ class DoctypeHandler(TagHandler):
         self.debug(f"handling {doctype}")
         doctype_node = Node("!doctype")
 
-        # Parse and normalize the DOCTYPE according to HTML5 spec
         if not doctype.strip():
-            # Empty DOCTYPE should result in space after DOCTYPE
             doctype_node.text_content = ""
         else:
-            # Parse the full DOCTYPE declaration according to HTML5 spec
             parsed_doctype = self._parse_doctype_declaration(doctype)
             doctype_node.text_content = parsed_doctype
 
@@ -6219,15 +6154,10 @@ class DoctypeHandler(TagHandler):
         """Parse DOCTYPE declaration and normalize it according to HTML5 spec"""
         import re
 
-        # Basic parsing to extract name, public, and system identifiers
-        # This is a simplified version of the full HTML5 DOCTYPE parsing
-
-        # First, normalize the basic name but preserve content
         doctype_stripped = doctype.strip()
         if not doctype_stripped:
             return ""
 
-        # Extract just the name (first word)
         match = re.match(r"(\S+)", doctype_stripped)
         if not match:
             return ""
@@ -6235,7 +6165,6 @@ class DoctypeHandler(TagHandler):
         name = match.group(1).lower()
         rest = doctype_stripped[len(match.group(1)) :].lstrip()
 
-        # If nothing after name, return just the name
         if not rest:
             return name
 
@@ -6257,7 +6186,6 @@ class DoctypeHandler(TagHandler):
             content = system_match.group(2)
             return f'{name} "" "{content}"'
 
-        # If no PUBLIC/SYSTEM found, just return the name
         return name
 
 
@@ -6270,7 +6198,6 @@ class PlaintextHandler(SelectAwareHandler):
         return tag_name == "plaintext" or context.content_state == ContentState.PLAINTEXT
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
-        # If we're already in PLAINTEXT mode, treat any start tag literally
         if context.content_state == ContentState.PLAINTEXT:
             self.debug(f"treating tag as text: <{token.tag_name}>")
             text_node = Node("#text")
@@ -6280,7 +6207,6 @@ class PlaintextHandler(SelectAwareHandler):
 
         self.debug("handling plaintext")
 
-        # Ensure a body element exists if we're still in pre-body states
         if context.document_state in (DocumentState.INITIAL, DocumentState.AFTER_HEAD, DocumentState.AFTER_BODY):
             body = self.parser._ensure_body_node(context)
             self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
@@ -6290,7 +6216,6 @@ class PlaintextHandler(SelectAwareHandler):
             self.debug("Closing paragraph before plaintext")
             context.move_up_one_level()
 
-        # Insert plaintext element; needs presence on open elements stack
         if (
             context.document_state == DocumentState.IN_TABLE
             and context.current_parent.tag_name not in ("td", "th", "caption")
@@ -6482,14 +6407,12 @@ class UnknownElementHandler(TagHandler):
         tag_name = token.tag_name
 
         if context.current_parent.tag_name == tag_name:
-            # Close the matching element
             if context.current_parent.parent:
                 context.move_up_one_level()
                 self.debug(
                     f"UnknownElementHandler: closed {tag_name}, current_parent now: {context.current_parent.tag_name}"
                 )
             else:
-                # At root level, don't change current_parent to avoid issues
                 self.debug(f"UnknownElementHandler: {tag_name} at root level, leaving current_parent unchanged")
             return True
 
@@ -6571,7 +6494,6 @@ class RubyElementHandler(TagHandler):
         tag_name = token.tag_name
         self.debug(f"handling end tag {tag_name}")
 
-        # Find the nearest matching element
         matching_element = context.current_parent.find_ancestor_until(
             lambda n: n.tag_name == tag_name,
             context.current_parent.find_ancestor("ruby") if tag_name != "ruby" else None,
@@ -6583,6 +6505,5 @@ class RubyElementHandler(TagHandler):
             self.debug(f"Closed {tag_name}, current_parent now: {context.current_parent.tag_name}")
             return True
 
-        # If no matching element found, ignore the end tag
         self.debug(f"No matching {tag_name} found, ignoring end tag")
         return True
