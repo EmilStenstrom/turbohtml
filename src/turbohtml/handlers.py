@@ -5203,33 +5203,6 @@ class ForeignTagHandler(TagHandler):
 
         return False
 
-    def _foster_parent_text(self, text: str, context: "ParseContext") -> None:
-        """Foster parent text content before the current table"""
-        # Find the table element
-        table = self.parser.find_current_table(context)
-        if not table:
-            # No table found, just append normally
-            self.parser.insert_text(text, context, parent=context.current_parent, merge=True)
-            return
-
-        # Find the table's parent
-        table_parent = table.parent
-        if not table_parent:
-            # Table has no parent, just append normally
-            self.parser.insert_text(text, context, parent=context.current_parent, merge=True)
-            return
-
-        # Create text node and insert it before the table
-        # Apply same sanitization rules as normal appends
-        if (
-            context.content_state == ContentState.NONE
-            and '\uFFFD' in text
-            and not self._is_plain_svg_foreign(context)
-        ):
-            text = text.replace('\uFFFD', '')
-        self.parser.insert_text(text, context, parent=table_parent, before=table, merge=True)
-        self.debug(f"Foster parented text '{text}' before table")
-
     def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:
         """Handle <![CDATA[...]]> sequences seen as comments by the tokenizer in foreign content.
 
