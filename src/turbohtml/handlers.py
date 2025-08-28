@@ -4178,7 +4178,6 @@ class AutoClosingTagHandler(TemplateAwareHandler):
 
 class ForeignTagHandler(TagHandler):
     """Handles SVG and other foreign element contexts"""
-
     def _fix_foreign_attribute_case(self, attributes, element_context):
         """Fix case for SVG/MathML attributes according to HTML5 spec
 
@@ -4210,129 +4209,6 @@ class ForeignTagHandler(TagHandler):
 
         return fixed_attrs
 
-    def _create_foreign_element(
-        self, tag_name: str, attributes: dict, context_type: str, context: "ParseContext", token=None
-    ):
-        """Create a foreign element (SVG/MathML) and append to current parent
-
-        Args:
-            tag_name: The tag name to create
-            attributes: The attributes dict
-            context_type: "svg" or "math"
-            context: Parse context
-            token: Optional token for self-closing check
-
-        Returns:
-            The created node
-        """
-        fixed_attrs = self._fix_foreign_attribute_case(attributes, context_type)
-        if context_type == "svg" and tag_name.lower() == "svg":
-            context.current_context = "svg"
-        elif context_type == "math" and tag_name.lower() == "math":
-            context.current_context = "math"
-        push = not (token and token.is_self_closing)
-        enter = push
-        return self.parser.insert_element(
-            token or HTMLToken('StartTag', tag_name=tag_name, attributes=fixed_attrs),  # type: ignore
-            context,
-            mode='normal',
-            enter=enter,
-            tag_name_override=f"{context_type} {tag_name}",
-            attributes_override=fixed_attrs,
-            preserve_attr_case=True,
-            push_override=push,
-        )
-
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
-        lower = tag_name.lower()
-        if context.current_context in ("svg", "math"):
-            return True
-        return lower in ("svg", "math")
-
-    def should_handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
-        """Foreign text handling predicate.
-
-        We only intercept text when currently inside a foreign (svg/math) subtree *and* still
-        in a table insertion mode where the generic TextHandler (or Table handler) would be
-        tempted to foster‑parent it out before the enclosing table. The html5lib expectation for
-        inputs like <table><td><svg><g>foo</g></svg> is that the character data becomes a child of
-        the <svg g> element, yielding <svg g>"foo" not body‑level fostered text. Earlier logic in
-        ForeignTagHandler foster‑parented such text because we remained in a table insertion mode
-        (IN_TABLE / IN_TABLE_BODY / IN_ROW) and reused the generic table character handling path.
-
-        Condition: inside foreign context + in table related insertion mode + current parent is a
-        foreign element (tag_name startswith 'svg ' or 'math ').
-        """
-        if not text:
-            return False
-        if context.current_context not in ("svg", "math"):
-            return False
-        if context.document_state not in (
-            DocumentState.IN_TABLE,
-            DocumentState.IN_TABLE_BODY,
-            DocumentState.IN_ROW,
-            DocumentState.IN_CELL,
-        ):
-            return False
-        tn = context.current_parent.tag_name
-        return tn.startswith("svg ") or tn.startswith("math ")
-
-    def handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
-        """Append foreign text inside its current foreign ancestor instead of foster parenting.
-
-        We deliberately avoid any foster parenting here; the insertion point is already the
-        correct foreign element (<svg g>, <math mi>, etc.). This restores expected output for
-        tests where previously text like 'foo' and 'bar' under <g> elements was moved before
-        the table producing a single merged body text node ("foobar").
-        """
-        # Direct append using parser helper (merge with prior text child of same parent)
-        self.parser.insert_text(text, context, parent=context.current_parent, merge=True, strip_replacement=False)
-        return True
-
-    def handle_start(self, token: "HTMLToken", context: "ParseContext", end_tag_idx: int) -> bool:
-        tag_name = token.tag_name
-        lower = tag_name.lower()
-        # If we are already inside foreign content and encounter HTML table section tags (thead/tbody/tfoot)
-        # they should NOT become children of the last foreign element (orphan table-section tags after descending into a foreign child element).
-        # Keep table-section tokens as foreign only when directly under foreign root; ignore after other descendants
-        # sequences like <svg><thead> expect <svg thead>. That is produced by treating thead as a foreign tag when
-        # it appears immediately after <svg>. However trailing <tbody> after <title> ( <svg><thead><title><tbody> )
-        # must be ignored (not appended under <svg title>). We implement: if a table-section tag appears after any
-        # non-foreign descendant has been entered (<svg title>), ignore it.
-        if context.current_context in ("svg", "math") and lower in ("thead", "tbody", "tfoot"):
-            # Only keep the first table-section tag directly under the foreign root; ignore any subsequent
-            # table-section tags or any appearing after descending into another foreign child (e.g., <title>).
-            root_tag = f"{context.current_context} {context.current_context}"
-            root = context.current_parent.find_ancestor(lambda n: n.tag_name == root_tag)
-            if not root:
-                return True  # Defensive: ignore if no identifiable root
-            # If we've descended (current_parent is not the root) ignore token (prevents <tbody> under <svg title>)
-            if context.current_parent is not root:
-                return True
-            # If a table-section was already added, ignore additional ones (only the first is represented)
-            if any(child.tag_name.startswith(f"{context.current_context} thead") or child.tag_name.startswith(f"{context.current_context} tbody") or child.tag_name.startswith(f"{context.current_context} tfoot") for child in root.children):
-                return True
-            # Create as foreign element (e.g., <svg thead>)
-            self._create_foreign_element(tag_name, token.attributes, context.current_context, context, token)
-            return True
-
-        if lower == "svg":
-            self._create_foreign_element(tag_name, token.attributes, "svg", context, token)
-            return True
-        if lower == "math":
-            # If parser is in AFTER_BODY state, redirect insertion to body and resume IN_BODY parsing
-            if context.document_state == DocumentState.AFTER_BODY:
-                body = self.parser._get_body_node() or self.parser._ensure_body_node(context)
-                if body:
-                    context.move_to_element(body)
-                    self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
-            self._create_foreign_element(tag_name, token.attributes, "math", context, token)
-            return True
-
-        if context.current_context in ("svg", "math"):
-            self._create_foreign_element(tag_name, token.attributes, context.current_context, context, token)
-            return True
-        return False
 
     def _handle_foreign_foster_parenting(self, token: "HTMLToken", context: "ParseContext") -> bool:
         """Handle foster parenting for foreign elements (SVG/MathML) in table context"""
@@ -4593,9 +4469,14 @@ class ForeignTagHandler(TagHandler):
             ):
                 # Exception: table-related tags should STILL be treated as foreign (maintain nested <svg tag>)
                 table_related = {"table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption", "col", "colgroup"}
-                if tag_name.lower() in table_related:
+                tnl = tag_name.lower()
+                # New foreign roots: allow nested <svg> or <math> to start a new foreign subtree even inside integration point
+                if tnl in ("svg", "math"):
+                    return True
+                if tnl in table_related:
                     return True  # handle as foreign element
-                return False  # delegate other HTML tags to HTML handlers
+                # All other tags (HTML / unknown) delegate to HTML handlers (prevent unwanted prefixing)
+                return False
             return True  # keep handling inside generic SVG subtree
 
         # 2b. Fragment contexts that ARE an SVG integration point (no actual element node exists yet)
@@ -4622,8 +4503,9 @@ class ForeignTagHandler(TagHandler):
             )
             if in_text_ip:
                 tnl = tag_name.lower()
+                # HTML elements (including object) inside MathML text integration points must remain HTML (no prefix)
                 if tnl in HTML_ELEMENTS and tnl not in TABLE_ELEMENTS and tnl != "table":
-                    return False
+                    return False  # delegate to HTML
             if context.current_parent.tag_name == "math annotation-xml":
                 encoding = context.current_parent.attributes.get("encoding", "").lower()
                 if encoding in ("application/xhtml+xml", "text/html"):
