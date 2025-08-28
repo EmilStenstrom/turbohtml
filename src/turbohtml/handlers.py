@@ -5179,15 +5179,6 @@ class ForeignTagHandler(TagHandler):
 
         return True  # Ignore if nothing matched and not a breakout case
 
-    def should_handle_text(self, text: str, context: "ParseContext") -> bool:
-        # Replaced by earlier ForeignTagHandler.should_handle_text implementation (keeping text
-        # inside foreign subtree even in table modes). This legacy block removed.
-        return False
-
-    def handle_text(self, text: str, context: "ParseContext") -> bool:
-        # Legacy implementation removed; actual logic lives in earlier override.
-        return False
-
     def _is_in_integration_point(self, context: "ParseContext") -> bool:
         """Check if we're inside an SVG or MathML integration point where HTML rules apply"""
         # Check current parent and ancestors for integration points
