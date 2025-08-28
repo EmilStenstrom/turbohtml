@@ -204,9 +204,12 @@ class HTMLTokenizer:
         # If we're here, either no end tag or it should be ignored
         # Find the next potential end tag or EOF
         start = self.pos
-        self.pos += 1
-        while self.pos < self.length and not self.html.startswith("</", self.pos):
-            self.pos += 1
+        # Fast forward to next potential end tag boundary or EOF (equivalent to prior char-by-char loop)
+        next_close = self.html.find("</", start + 1)
+        if next_close == -1:
+            self.pos = self.length
+        else:
+            self.pos = next_close
 
         # Return the text we found
         text = self.html[start:self.pos]
@@ -316,9 +319,12 @@ class HTMLTokenizer:
         # If we're here, either no end tag or not our tag
         # Find the next potential end tag or EOF
         start = self.pos
-        self.pos += 1
-        while self.pos < self.length and not self.html.startswith("</", self.pos):
-            self.pos += 1
+        # Optimized scan for next '</' (end tag start) or EOF (same semantics as previous loop)
+        next_close = self.html.find("</", start + 1)
+        if next_close == -1:
+            self.pos = self.length
+        else:
+            self.pos = next_close
 
         # Return the text we found
         text = self.html[start:self.pos]
@@ -346,11 +352,11 @@ class HTMLTokenizer:
         # inputs like '<#' from being treated as a start tag with name '#'. (bogus tag guard)
         if self.pos + 1 < self.length:
             nxt = self.html[self.pos + 1]
-            if not (nxt.isalpha() or nxt in "!/ ?"):  # space included? remove space; we only allow ! / ?
-                # Correct set is letters, '!', '/', '?'. Treat everything else as literal '<'.
-                if nxt != '!' and nxt != '/' and nxt != '?' and not nxt.isalpha():
-                    self.pos += 1
-                    return HTMLToken("Character", data="<")
+            # HTML Standard (Data state): after '<' only letter / '!' / '/' / '?' may begin markup.
+            # A space must NOT trigger tag parsing ("< text" => literal '<'). Previous logic allowed space.
+            if not (nxt.isalpha() or nxt in "!/?"):
+                self.pos += 1
+                return HTMLToken("Character", data="<")
 
         # If this is the last character, treat it as text
         if self.pos + 1 >= self.length:
