@@ -903,27 +903,7 @@ class TextHandler(TagHandler):
         return True
 
     def _is_in_integration_point(self, context: "ParseContext") -> bool:
-        """Check if we're inside an SVG or MathML integration point where HTML rules apply"""
-        # Check current parent and ancestors for integration points
-        current = context.current_parent
-        while current:
-            # SVG integration points: foreignObject, desc, title
-            if current.tag_name in ("svg foreignObject", "svg desc", "svg title"):
-                return True
-
-            # MathML integration points: annotation-xml with specific encoding
-            if (
-                current.tag_name == "math annotation-xml"
-                and current.attributes
-                and any(
-                    attr.name.lower() == "encoding" and attr.value.lower() in ("text/html", "application/xhtml+xml")
-                    for attr in current.attributes
-                )
-            ):
-                return True
-
-            current = current.parent
-
+        # Deprecated duplicate helper (logic exists in parser); retained for backward compatibility but simplified.
         return False
 
     def _is_plain_svg_foreign(self, context: "ParseContext") -> bool:
