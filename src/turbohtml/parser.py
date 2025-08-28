@@ -62,8 +62,6 @@ class TurboHTML:
 
         # Reset all state for each new parser instance
         self._init_dom_structure()
-        # Track last text appended after </body> to suppress duplicates (derived state, per-parse)
-        self._after_body_last_text = None
         # Initialize adoption agency algorithm
         self.adoption_agency = AdoptionAgencyAlgorithm(self)
 
