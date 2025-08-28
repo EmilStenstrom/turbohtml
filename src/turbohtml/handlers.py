@@ -4249,6 +4249,46 @@ class ForeignTagHandler(TagHandler):
             return True
         return lower in ("svg", "math")
 
+    def should_handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        """Foreign text handling predicate.
+
+        We only intercept text when currently inside a foreign (svg/math) subtree *and* still
+        in a table insertion mode where the generic TextHandler (or Table handler) would be
+        tempted to foster‑parent it out before the enclosing table. The html5lib expectation for
+        inputs like <table><td><svg><g>foo</g></svg> is that the character data becomes a child of
+        the <svg g> element, yielding <svg g>"foo" not body‑level fostered text. Earlier logic in
+        ForeignTagHandler foster‑parented such text because we remained in a table insertion mode
+        (IN_TABLE / IN_TABLE_BODY / IN_ROW) and reused the generic table character handling path.
+
+        Condition: inside foreign context + in table related insertion mode + current parent is a
+        foreign element (tag_name startswith 'svg ' or 'math ').
+        """
+        if not text:
+            return False
+        if context.current_context not in ("svg", "math"):
+            return False
+        if context.document_state not in (
+            DocumentState.IN_TABLE,
+            DocumentState.IN_TABLE_BODY,
+            DocumentState.IN_ROW,
+            DocumentState.IN_CELL,
+        ):
+            return False
+        tn = context.current_parent.tag_name
+        return tn.startswith("svg ") or tn.startswith("math ")
+
+    def handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        """Append foreign text inside its current foreign ancestor instead of foster parenting.
+
+        We deliberately avoid any foster parenting here; the insertion point is already the
+        correct foreign element (<svg g>, <math mi>, etc.). This restores expected output for
+        tests where previously text like 'foo' and 'bar' under <g> elements was moved before
+        the table producing a single merged body text node ("foobar").
+        """
+        # Direct append using parser helper (merge with prior text child of same parent)
+        self.parser.insert_text(text, context, parent=context.current_parent, merge=True, strip_replacement=False)
+        return True
+
     def handle_start(self, token: "HTMLToken", context: "ParseContext", end_tag_idx: int) -> bool:
         tag_name = token.tag_name
         lower = tag_name.lower()
@@ -5258,55 +5298,13 @@ class ForeignTagHandler(TagHandler):
         return True  # Ignore if nothing matched and not a breakout case
 
     def should_handle_text(self, text: str, context: "ParseContext") -> bool:
-        # Delegate text to HTML handlers inside integration points
-        if context.current_context == "svg":
-            if context.current_parent.tag_name in (
-                "svg foreignObject",
-                "svg desc",
-                "svg title",
-            ) or context.current_parent.has_ancestor_matching(
-                lambda n: n.tag_name in ("svg foreignObject", "svg desc", "svg title")
-            ):
-                return False
-        elif context.current_context == "math":
-            # MathML text integration points (mtext, mi, mo, mn, ms)
-            in_text_ip = (
-                context.current_parent.find_ancestor(
-                    lambda n: n.tag_name in ("math mtext", "math mi", "math mo", "math mn", "math ms")
-                )
-                is not None
-            )
-            if in_text_ip:
-                return False
-            # annotation-xml with HTML/XHTML encoding
-            if context.current_parent.tag_name == "math annotation-xml":
-                encoding = context.current_parent.attributes.get("encoding", "").lower()
-                if encoding in ("application/xhtml+xml", "text/html"):
-                    return False
-        return context.current_context in ("svg", "math")
+        # Replaced by earlier ForeignTagHandler.should_handle_text implementation (keeping text
+        # inside foreign subtree even in table modes). This legacy block removed.
+        return False
 
     def handle_text(self, text: str, context: "ParseContext") -> bool:
-        if not self.should_handle_text(text, context):
-            return False
-
-        # Check for table foster parenting before other text handling
-        if (
-            context.document_state == DocumentState.IN_TABLE
-            and not self._is_in_integration_point(context)
-            and not text.isspace()
-            and context.content_state != ContentState.PLAINTEXT  # In PLAINTEXT mode all characters stay within <plaintext>
-        ):  # Only foster parent non-whitespace text (except in PLAINTEXT mode)
-            self.debug(f"Foster parenting text '{text}' out of table context")
-            self._foster_parent_text(text, context)
-            return True
-
-        # In foreign content, text is just appended.
-        # Try to merge with previous text node.
-        if context.current_parent.children and context.current_parent.children[-1].tag_name == "#text":
-            context.current_parent.children[-1].text_content += text
-        else:
-            self.parser.insert_text(text, context, parent=context.current_parent, merge=True)
-        return True
+        # Legacy implementation removed; actual logic lives in earlier override.
+        return False
 
     def _is_in_integration_point(self, context: "ParseContext") -> bool:
         """Check if we're inside an SVG or MathML integration point where HTML rules apply"""

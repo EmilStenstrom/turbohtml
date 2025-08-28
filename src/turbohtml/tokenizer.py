@@ -294,6 +294,9 @@ class HTMLTokenizer:
                 # Found valid end tag
                 text_before = self.html[self.pos:tag_start - 2]  # Get text before </
                 self.pos = i + 1  # Move past >
+                # Preserve current rawtext tag so that RCDATA elements (title/textarea) still
+                # perform entity decoding on their final text chunk before we clear the state.
+                current_rawtext = self.rawtext_tag
                 self.state = "DATA"
                 self.rawtext_tag = None
 
@@ -301,11 +304,13 @@ class HTMLTokenizer:
                 if text_before:
                     # Replace invalid characters
                     text_before = self._replace_invalid_characters(text_before)
-                    # Decode entities for RCDATA elements (title/textarea)
-                    if self.rawtext_tag in ("title", "textarea"):
+                    # Decode entities for RCDATA elements (title/textarea) using preserved tag
+                    if current_rawtext in ("title", "textarea"):
                         text_before = self._decode_entities(text_before)
+                    # Queue the end tag so both tokens are emitted
+                    self._pending_tokens.append(HTMLToken("EndTag", tag_name=potential_tag))
                     return HTMLToken("Character", data=text_before)
-                # Then return the end tag
+                # No preceding text: emit end tag directly
                 return HTMLToken("EndTag", tag_name=potential_tag)
 
         # If we're here, either no end tag or not our tag
