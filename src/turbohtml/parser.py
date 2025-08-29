@@ -1148,14 +1148,29 @@ class TurboHTML:
             benign_dynamic = _foreign_root_wrapper_benign()
             if tag_name == 'input':
                 inp_type = (token.attributes.get('type','') or '').lower()
-                if inp_type == 'hidden':
-                    pass
-                else:
+                # Hidden inputs are benign for frameset_ok; others invalidate.
+                if inp_type != 'hidden':
                     context.frameset_ok = False
-            elif tag_name in benign or benign_dynamic:
-                pass
-            else:
+            elif tag_name not in benign and not benign_dynamic:
                 context.frameset_ok = False
+
+        # Fragment table context: implicit tbody for leading <tr> when no table element open.
+        if (
+            self.fragment_context == 'table'
+            and tag_name == 'tr'
+            and context.current_parent.tag_name == 'document-fragment'
+            and not self.find_current_table(context)
+        ):
+            tbody = Node('tbody')
+            context.current_parent.append_child(tbody)
+            context.open_elements.push(tbody)
+            context.transition_to_state(DocumentState.IN_TABLE_BODY, context.current_parent)
+            tr = Node('tr', token.attributes)
+            tbody.append_child(tr)
+            context.open_elements.push(tr)
+            context.move_to_element(tr)
+            context.transition_to_state(DocumentState.IN_ROW, tr)
+            return
 
         # In frameset insertion modes, only a subset of start tags are honored. Allow frameset, frame, noframes.
         if context.document_state in (DocumentState.IN_FRAMESET, DocumentState.AFTER_FRAMESET):
