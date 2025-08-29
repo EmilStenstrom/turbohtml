@@ -2452,7 +2452,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 "tr",
             )
             if direct_emit_allowed:
-                if tag_name == 'tr' and not self.parser.fragment_context:
+                if tag_name == 'tr' and (not self.parser.fragment_context or self.parser.fragment_context == 'table'):
                     fake_tbody = self._synth_token('tbody')
                     tbody_node = self.parser.insert_element(fake_tbody, context, mode='normal', enter=True)
                     fake_tr = self._synth_token('tr')
@@ -5525,7 +5525,11 @@ class HeadElementHandler(TagHandler):
             if table:
                 # Only style/script should be treated as early rawtext inside table. Title/textarea should be fostered.
                 if tag_name in ("style", "script"):
-                    container = table
+                    # Use current section (tbody/thead/tfoot) when already open so script/style stay inside it
+                    if context.current_parent.tag_name in ("tbody","thead","tfoot"):
+                        container = context.current_parent
+                    else:
+                        container = table
                     before = None
                     for ch in container.children:
                         if ch.tag_name in ("thead", "tbody", "tfoot", "tr"):
