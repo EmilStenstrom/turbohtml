@@ -5516,26 +5516,58 @@ class HeadElementHandler(TagHandler):
         if tag_name == "template":
             return self._handle_template_start(token, context)
 
-        # If we're in table context, foster parent head elements to body
-        if context.document_state == DocumentState.IN_TABLE:
-            self.debug(f"Head element {tag_name} in table context, foster parenting to body")
+        # If we're in any table-related context, place style/script (and other head elements) inside the
+        # current table or its section rather than fostering before the table. html5lib expected trees
+        # show <style>/<script> as descendants of <table>/<tbody> when they appear after the <table>
+        # start tag but before any rows.
+        if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
             table = self.parser.find_current_table(context)
-            if table and table.parent:
-                # Foster parent before the table
-                table_index = table.parent.children.index(table)
-                self.parser.insert_element(
+            if table:
+                # Only style/script should be treated as early rawtext inside table. Title/textarea should be fostered.
+                if tag_name in ("style", "script"):
+                    container = table
+                    before = None
+                    for ch in container.children:
+                        if ch.tag_name in ("thead", "tbody", "tfoot", "tr"):
+                            before = ch; break
+                    self.parser.insert_element(
+                        token,
+                        context,
+                        mode='normal',
+                        enter=tag_name not in VOID_ELEMENTS,
+                        parent=container,
+                        before=before,
+                        tag_name_override=tag_name,
+                        push_override=False,
+                    )
+                    if tag_name not in VOID_ELEMENTS and tag_name in RAWTEXT_ELEMENTS:
+                        context.content_state = ContentState.RAWTEXT
+                        self.debug(f"Switched to RAWTEXT state for {tag_name}")
+                    return True
+                # Other head elements (meta, title, link, base, etc.) are foster parented before the table at body level
+                self.debug(f"Head element {tag_name} in table context (non-rawtext), foster parenting before table")
+                parent_for_foster = table.parent or context.current_parent
+                before = table if table in parent_for_foster.children else None
+                new_node = self.parser.insert_element(
                     token,
                     context,
                     mode='normal',
                     enter=tag_name not in VOID_ELEMENTS,
-                    parent=table.parent,
-                    before=table,
+                    parent=parent_for_foster,
+                    before=before,
                     tag_name_override=tag_name,
                     push_override=False,
                 )
+                # Defensive: if insertion ended up inside <table> (implementation drift), relocate before table.
+                if new_node.parent and new_node.parent.tag_name == 'table':
+                    tbl = new_node.parent
+                    if tbl.parent:
+                        tbl.parent.remove_child(new_node)
+                        idx = tbl.parent.children.index(tbl)
+                        tbl.parent.insert_child_at(idx, new_node)
+                        new_node.parent = tbl.parent
                 if tag_name not in VOID_ELEMENTS and tag_name in RAWTEXT_ELEMENTS:
                     context.content_state = ContentState.RAWTEXT
-                    self.debug(f"Switched to RAWTEXT state for {tag_name}")
                 return True
 
         # If we're in body after seeing real content
@@ -5680,45 +5712,20 @@ class HeadElementHandler(TagHandler):
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         self.debug(f"handling end tag {token.tag_name}")
         self.debug(f"current state: {context.document_state}, current parent: {context.current_parent}")
-
-        # Handle head end tag
-        if token.tag_name == "head":
-            self.debug("handling head end tag")
-            if context.document_state == DocumentState.IN_HEAD:
-                # Transition to AFTER_HEAD state and move to html parent
-                self.parser.transition_to_state(context, DocumentState.AFTER_HEAD)
-                if context.current_parent and context.current_parent.tag_name == "head":
-                    if context.current_parent.parent:
-                        context.move_up_one_level()
-                    else:
-                        # If head has no parent, set to html node
-                        context.move_to_element(self.parser.html_node)
-                self.debug(f"transitioned to AFTER_HEAD, current parent: {context.current_parent}")
-            elif context.document_state == DocumentState.INITIAL:
-                # If we see </head> in INITIAL state, transition to AFTER_HEAD
-                # This handles cases like <!doctype html></head> where no <head> was opened
-                self.parser.transition_to_state(context, DocumentState.AFTER_HEAD)
-                # Ensure html structure exists and move to html parent
-                self.parser._ensure_html_node()
-                context.move_to_element(self.parser.html_node)
-                self.debug(f"transitioned from INITIAL to AFTER_HEAD, current parent: {context.current_parent}")
-            return True
-
-        # For template, only close up to the nearest template boundary
-        if token.tag_name == "template":
-            self.debug("handling template end tag")
-            self.debug(f"starting search at: {context.current_parent}")
-
-            # Find nearest template ancestor, stopping at boundaries
-            template_ancestor = context.current_parent.find_ancestor("template", stop_at_boundary=True)
-
-            if template_ancestor:
-                self.debug(f"found matching template, moving to parent: {template_ancestor.parent}")
-                context.move_to_element(template_ancestor.parent)
-                return True
-
-            self.debug("no matching template found within boundaries")
+        # Only handle </head>; template end tags are processed elsewhere via TemplateTagHandler.
+        if token.tag_name != 'head':
             return False
+        # Transition from IN_HEAD to AFTER_HEAD if we were in head.
+        if context.document_state == DocumentState.IN_HEAD:
+            context.transition_to_state(DocumentState.AFTER_HEAD, self.parser.html_node)
+        elif context.document_state == DocumentState.INITIAL:
+            # Stray </head> in INITIAL: treat as an early head closure so subsequent whitespace is preserved
+            # under the html element (html5lib expected tree for malformed sequence '</head> <head>').
+            context.transition_to_state(DocumentState.AFTER_HEAD, self.parser.html_node)
+        # Move insertion point to html node so following body content is correctly placed.
+        if self.parser.html_node:
+            context.move_to_element(self.parser.html_node)
+        return True
 
         if context.content_state == ContentState.RAWTEXT:
             self.debug(f"handling RAWTEXT end tag {token.tag_name}")
@@ -5923,6 +5930,17 @@ class FramesetTagHandler(TagHandler):
                                             return False
                                         if has_meaningful(only_child) is False:
                                             continue  # treat as ignorable
+                            elif ch.tag_name in ("p","div","marquee"):
+                                # Treat empty/whitespace-only p/div/marquee as ignorable
+                                has_meaning = False
+                                for gc in ch.children:
+                                    if gc.tag_name == '#text' and gc.text_content and gc.text_content.strip():
+                                        has_meaning = True; break
+                                    if gc.tag_name != '#text':
+                                        has_meaning = True; break
+                                if has_meaning:
+                                    meaningful = True; break
+                                # whitespace-only block; ignore
                             elif ch.tag_name not in allowed_tags:
                                 meaningful = True
                                 break

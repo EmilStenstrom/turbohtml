@@ -1086,6 +1086,8 @@ class TurboHTML:
         ):
             # Extended benign set for delaying body creation while frameset still possible.
             benign_no_body = {
+                # Structural/metadata/benign flow elements that should not yet force body creation while
+                # a root <frameset> remains possible (matches earlier passing behavior).
                 "frameset","frame","param","source","track","base","basefont","bgsound","link","meta",
                 "script","style","title","img","br","wbr","svg","math","input"
             }
@@ -1118,6 +1120,7 @@ class TurboHTML:
         # If we see any non-whitespace text or a non-frameset-ok element while frameset_ok is True, flip it off
         if context.frameset_ok:
             benign = {
+                # Elements that do NOT invalidate frameset_ok when encountered before body content.
                 "frameset", "frame", "noframes", "param", "source", "track",
                 "base", "basefont", "bgsound", "link", "meta", "script", "style", "title",
                 "img", "br", "wbr", "svg", "math"
