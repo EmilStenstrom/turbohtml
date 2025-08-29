@@ -662,7 +662,7 @@ class TextHandler(TagHandler):
         if context.content_state == ContentState.RAWTEXT:
             # Suppress stray unterminated end tag fragments at EOF inside RAWTEXT (e.g. </SCRIPT )
             # Structural condition: token text begins with </current_rawtext_element (case-insensitive),
-            # contains no '>' (unterminated), and rest is optional whitespace. html5lib expects the
+            # contains no '>' (unterminated), and rest is optional whitespace. The expected tree omits the
             # rawtext element to end (implicit EOF or later recovery) without a literal text node.
             cur = context.current_parent
             if cur and cur.tag_name in ("script","style"):
@@ -1648,7 +1648,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             self.debug(f"Ignoring rawtext element {tag_name} inside select")
             return True
 
-        # Spec-adjacent recovery: treat void <hr> start tag inside <select> as present (html5lib expected tree
+        # Spec-adjacent recovery: treat void <hr> start tag inside <select> as present (expected tree
         # retains it). We insert it rather than ignoring so the tree matches reference output. This reduces earlier
         # broad 'ignore all other tags in select' heuristic without adding persistent state.
         if self._is_in_select(context) and tag_name == 'hr':
@@ -5485,7 +5485,7 @@ class HeadElementHandler(TagHandler):
             return self._handle_template_start(token, context)
 
         # If we're in any table-related context, place style/script (and other head elements) inside the
-        # current table or its section rather than fostering before the table. html5lib expected trees
+        # current table or its section rather than fostering before the table. Expected trees
         # show <style>/<script> as descendants of <table>/<tbody> when they appear after the <table>
         # start tag but before any rows.
         if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
@@ -5692,7 +5692,7 @@ class HeadElementHandler(TagHandler):
             context.transition_to_state(DocumentState.AFTER_HEAD, self.parser.html_node)
         elif context.document_state == DocumentState.INITIAL:
             # Stray </head> in INITIAL: treat as an early head closure so subsequent whitespace is preserved
-            # under the html element (html5lib expected tree for malformed sequence '</head> <head>').
+            # under the html element (expected tree for malformed sequence '</head> <head>').
             context.transition_to_state(DocumentState.AFTER_HEAD, self.parser.html_node)
         # Move insertion point to html node so following body content is correctly placed.
         if self.parser.html_node:

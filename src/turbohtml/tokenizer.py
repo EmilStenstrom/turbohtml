@@ -250,19 +250,19 @@ class HTMLTokenizer:
             return True
 
         # If we have an open comment (no closing --> yet) that introduces a nested <script ...> like pattern,
-        # treat the first subsequent </script> as data. html5lib tests use patterns like:
+    # treat the first subsequent </script> as data. Conformance tests use patterns like:
         #   '<!-- <sCrIpt>'  (note space before <script> and mixed case) and various trailing hyphen permutations.
         # We approximate escaped state by detecting: <!-- followed by optional whitespace then <script
         # with no closing --> yet.
         # Only suppress when the comment opener is IMMEDIATELY followed by <script>
-        # (no whitespace) and there's no closing --> yet. This mirrors html5lib expectations
+    # (no whitespace) and there's no closing --> yet. This mirrors expected parsing behavior
         # where patterns like '<!-- <script' (with a space) still allow honoring the end tag.
         if "<!--<script" in lower and "-->" not in lower:
             # For executable scripts we suppress every candidate end tag while still in this escaped pattern.
             if not self.script_non_executable:
                 self.debug("  executable script: suppressing end tag inside <!-- <script pattern (no --> yet)")
                 return False
-            # For non-executable scripts (e.g. type=data, text/plain) html5lib expects only the FIRST </script>
+            # For non-executable scripts (e.g. type=data, text/plain) the tree builder expects only the FIRST </script>
             # to be treated as data; the outer real end tag must still terminate the element.
             if not self.script_suppressed_end_once:
                 self.script_suppressed_end_once = True
@@ -442,7 +442,7 @@ class HTMLTokenizer:
                 # Get rest of the input as attributes
                 # Heuristic: if there is no closing '>' after the tag name, treat the rest of the
                 # document as a malformed attribute chunk (even if it contains '<'). This matches
-                # html5lib behavior for cases like <div foo<bar=''> where the would-be attributes
+                # Behavior for cases like <div foo<bar=''> where the would-be attributes
                 # are re-serialized as text inside the created element rather than applied.
                 after_tag_start = self.pos + len(tag_match.group(0))
                 remainder = self.html[after_tag_start:]
@@ -684,7 +684,7 @@ class HTMLTokenizer:
         # only attributes before '<' and ignore the rest so that subsequent parsing emits 'foo<' as text
         # rather than incorrectly producing an attribute named 'bar'.
         # Do NOT truncate at '<' here; malformed attribute names like foo<bar become a single attribute name
-        # html5lib expectation for <div foo<bar=''> is no attribute and text foo<bar="" instead though.
+    # Expected output for <div foo<bar=''> is no attribute and text foo<bar="" instead.
         # We'll allow attribute parsing logic below to detect invalid characters and choose not to emit.
 
         # Special case for malformed <code x</code> pattern - check before regex

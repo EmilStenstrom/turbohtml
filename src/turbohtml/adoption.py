@@ -441,14 +441,14 @@ class AdoptionAgencyAlgorithm:
     def _find_furthest_block_spec_compliant(self, formatting_element: Node, context) -> Optional[Node]:
         """Locate the furthest block for Step 6 of the adoption agency algorithm.
 
-        Spec intent: starting immediately after the formatting element on the open
-        elements stack, find the first element that is a special / block formatting
-        separator (html5lib treats any element in the "special" category or a known
-        block element as a boundary). If no such element appears before the top of
-        the stack, return None (simple case).
-
-        Conservative: classify using SPECIAL/BLOCK sets only.
-        """
+        Spec wording (“furthest block”) can be interpreted as the highest (closest to root)
+        qualifying element encountered while walking upwards from the formatting element.
+        Empirical conformance output for misnested inline formatting cases aligns with choosing
+        the *first* qualifying special/block element after the formatting element rather than the
+        last. Selecting the last introduced structural differences in complex adoption scenarios;
+        therefore we retain the first qualifying element strategy (simple forward scan returning
+        immediately).
+            """
         try:
             idx = context.open_elements.index_of(formatting_element)
         except Exception:  # defensive; should not happen
@@ -456,9 +456,7 @@ class AdoptionAgencyAlgorithm:
         if idx == -1:
             return None
         stack = context.open_elements._stack
-        # Scan successive elements after formatting_element
-        for node in stack[idx + 1 :]:
-            # A candidate furthest block must be a special category OR a block element
+        for node in stack[idx + 1:]:
             if node.tag_name in SPECIAL_CATEGORY_ELEMENTS or node.tag_name in BLOCK_ELEMENTS:
                 return node
         return None
@@ -639,7 +637,7 @@ class AdoptionAgencyAlgorithm:
         """Run the complex adoption agency algorithm (steps 8-19) per HTML5 spec.
 
         This implements the full algorithm with proper element reconstruction
-        following the html5lib approach.
+        implementing the algorithmic steps defined by the HTML Standard.
 
         Args:
             iteration_count: Which iteration of the algorithm this is (1-8)
@@ -835,7 +833,7 @@ class AdoptionAgencyAlgorithm:
 
         # Step 13: Insert last_node into common_ancestor (always execute; prints optional)
         # Adjustment: For iterative </a> complex adoptions beyond the first,
-        # html5lib expected trees show the newly formed block (last_node, typically a <div>) nesting
+        # Conformance outputs show the newly formed block (last_node, typically a <div>) nesting
         # inside the nearest ancestor <div> that already contains earlier <a> wrappers, rather than
         # being appended directly under <body>. When the common_ancestor resolved to the root/body,
         # we rewrite it to the deepest <div> ancestor of the formatting element (if any) so each
@@ -921,7 +919,7 @@ class AdoptionAgencyAlgorithm:
         # Step 15/16 (spec): Take all children of furthest_block and append them to formatting_clone; then
         # append formatting_clone to furthest_block. The spec does NOT special‑case table containers here; the
         # furthest_block by definition is a special element after the formatting element (may be table descendent);
-        # html5lib behavior keeps clone inside furthest_block when furthest_block is a td/th, but if furthest_block
+        # Behavior keeps clone inside furthest_block when furthest_block is a td/th; if furthest_block
         # is a table container itself, its children are moved into clone then clone is appended (mirroring spec).
         table_containers = {"table", "tbody", "thead", "tfoot", "tr"}
         is_table_container = furthest_block.tag_name in table_containers

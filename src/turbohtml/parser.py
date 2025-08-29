@@ -429,7 +429,7 @@ class TurboHTML:
         """Replace tokenizer sentinel with U+FFFD and strip non-preserved U+FFFD occurrences.
 
         Preserve U+FFFD under: plaintext, script, style, svg subtrees. Strip elsewhere to
-        match pending-spec-changes expectations in html5lib tests.
+    match current HTML parsing conformance expectations.
         """
         from turbohtml.tokenizer import NUMERIC_ENTITY_INVALID_SENTINEL as _NE_SENTINEL  # type: ignore
 
@@ -1230,7 +1230,7 @@ class TurboHTML:
                 and context.current_parent.tag_name not in ("table", "caption")
             ):
                 # Instead of blanket ignore for <caption> when inside a phrasing container (<a>, <span>)
-                # emit the caption element directly so its character content is retained (html5lib
+                # emit the caption element directly so its character content is retained (conformance
                 # innerHTML expectations for <a><caption>... case).
                 if tag_name == 'caption' and context.current_parent.tag_name in ('a','span'):
                     new_node = Node('caption', token.attributes)
@@ -1692,7 +1692,7 @@ class TurboHTML:
         # Comments after </body> should go in html node
         if context.document_state == DocumentState.AFTER_BODY:
             # If </body> seen but </html> not yet processed, comment should remain inside html AFTER body
-            # html5lib: comments after body but before html close are still root siblings? Actually spec places them inside html.
+            # Comments after body but before html close: spec places them inside <html>.
             has_html_closed = any(ch.tag_name == '#comment' for ch in self.root.children if ch is not comment_node)
             if self.html_node not in self.root.children:
                 self.root.append_child(self.html_node)
@@ -1743,7 +1743,7 @@ class TurboHTML:
     def _merge_adjacent_text_nodes(self, node: Node) -> None:
         """Recursively merge adjacent text node children for cleaner DOM output.
 
-        This is a post-processing normalization to align with html5lib expectations
+    This is a post-processing normalization to align with HTML parsing conformance outputs
         where successive character insertions that are contiguous end up in a single
         text node. It is intentionally conservative: only merges direct siblings
         that are both '#text'.
@@ -1862,7 +1862,7 @@ class TurboHTML:
         table_index = foster_parent.children.index(table)
         # If current_parent is an existing foster-parented block immediately before the table,
         # and that block is allowed to contain this element, nest inside it instead of creating
-        # a new sibling. This matches html5lib behavior where successive foster-parented
+    # a new sibling. This matches expected behavior where successive foster-parented
         # start tags become children (e.g., <table><div><div> becomes nested divs).
         if table_index > 0:
             prev_sibling = foster_parent.children[table_index - 1]
