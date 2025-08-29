@@ -232,7 +232,6 @@ class AdoptionAgencyAlgorithm:
         self.parser = parser
         # Direct attribute access (env_debug always defined in parser)
         self.debug_enabled = parser.env_debug
-        self._ladder_bs = set()
         self._ran_a = False
 
 
@@ -297,9 +296,6 @@ class AdoptionAgencyAlgorithm:
             print(
                 f"    Active formatting elements: {[e.element.tag_name for e in context.active_formatting_elements]}"
             )
-        # Clear ladder tracking at start of a multi-iteration </a> series
-        if tag_name == 'a' and iteration_count == 1:
-            self._ladder_bs.clear()
         # Spec step 1: Choose the last (most recent) element in the list of active formatting elements
         # whose tag name matches the target tag name.
         formatting_entry = None
@@ -482,19 +478,9 @@ class AdoptionAgencyAlgorithm:
             context.move_to_element(parent)
         return True
 
-    # --- Strict spec pruning helpers (non-heuristic cleanup of over-cloned wrappers) ---
-    def _prune_redundant_ladder_b_wrappers(self, context) -> None:
-        """In strict spec mode, unwrap non-root <b> wrappers under <a> that contain no text and a single <div>.
-
-        Conditions for unwrapping a <b> node B:
-          * parent is <a>
-          * B has no attributes
-          * All children are elements (no #text with non-whitespace) and there is exactly one element child
-          * That sole child is a <div>
-          * There exists an ancestor <a> (i.e. this is not the first/top-level <a><b>)
-        This approximates the spec structure where only the earliest formatting element remains
-        and over-cloned formatting wrappers would not appear.
-        """
+    
+        
+        
         # Collect candidates first (avoid mutating while traversing)
         root = context.current_parent
         # Walk from document root to be safe
@@ -511,161 +497,7 @@ class AdoptionAgencyAlgorithm:
                 if text_children:
                     continue
                 elem_children = [c for c in node.children if c.tag_name != '#text']
-        second_b = b_children[1]
-        # Helper to find deepest div in chain under second_b
-        def deepest_div(node: Node) -> Node:
-            cur = node
-            guard = 0
-            while guard < 100:
-                guard += 1
-                elem_children = [c for c in cur.children if c.tag_name != '#text']
-                if not elem_children:
-                    break
-                last = elem_children[-1]
-                if last.tag_name == 'div':
-                    cur = last
-                    continue
-                break
-            return cur
-        # Ensure second_b has at least one div child chain root; create if missing
-        chain_root = next((c for c in second_b.children if c.tag_name == 'div'), None)
-        if chain_root is None:
-            chain_root = Node('div')
-            second_b.append_child(chain_root)
-        changed = False
-        for extra_b in b_children[2:]:
-            # Remove from active formatting & open elements stacks first to avoid stale references
-            entry = context.active_formatting_elements.find_element(extra_b)
-            if entry:
-                context.active_formatting_elements.remove_entry(entry)
-            if context.open_elements.contains(extra_b):
-                context.open_elements.remove_element(extra_b)
-            # Move its div child (if any) into deepest div
-            div_child = next((c for c in extra_b.children if c.tag_name == 'div'), None)
-            if div_child:
-                extra_b.remove_child(div_child)
-                target = deepest_div(chain_root)
-                target.append_child(div_child)
-            # Detach the now-empty extra_b from DOM
-            if extra_b.parent is root_div:
-                root_div.remove_child(extra_b)
-            changed = True
-        if changed and self.debug_enabled:
-            print('    CleanupA: unwrapped extra top-level <b> siblings for </a> ladder')
-        # After unwrapping extras, if second_b now has multiple div children, nest them into a div->div chain
-        if chain_root and second_b:
-            div_children = [c for c in second_b.children if c.tag_name == 'div']
-            if len(div_children) > 1:
-                base = div_children[0]
-                for follower in div_children[1:]:
-                    if follower.parent is second_b:
-                        second_b.remove_child(follower)
-                        base.append_child(follower)
-                        base = follower
-                if self.debug_enabled:
-                    print('    CleanupA: nested multiple ladder <div> siblings into chain')
-            # Distribute nested <a> chain from deepest div so each div gets one immediate <a> child
-            # Build div chain (follow single div child path)
-            chain = []
-            cursor = next((c for c in second_b.children if c.tag_name == 'div'), None)
-            guard = 0
-            while cursor and guard < 100 and cursor.tag_name == 'div':
-                chain.append(cursor)
-                guard += 1
-                elem_kids = [c for c in cursor.children if c.tag_name != '#text']
-                # Continue only if exactly one element child which is div
-                if len(elem_kids) == 1 and elem_kids[0].tag_name == 'div':
-                    cursor = elem_kids[0]
-                else:
-                    break
-            if len(chain) >= 2:
-                deepest = chain[-1]
-                # Collect anchor chain inside deepest by following first element-child anchors
-                a_chain = []
-                first_elem = next((c for c in deepest.children if c.tag_name != '#text'), None)
-                if first_elem and first_elem.tag_name == 'a':
-                    a_node = first_elem
-                    depth_guard = 0
-                    while a_node and depth_guard < 100 and a_node.tag_name == 'a':
-                        a_chain.append(a_node)
-                        elem_k = [c for c in a_node.children if c.tag_name != '#text']
-                        if len(elem_k) == 1 and elem_k[0].tag_name == 'a':
-                            a_node = elem_k[0]
-                        else:
-                            break
-                        depth_guard += 1
-                if len(a_chain) >= len(chain):
-                    distributed = 0
-                    for dv, anchor in zip(chain, a_chain):
-                        if anchor.parent is dv and dv.children and dv.children[0] is anchor:
-                            continue  # already positioned
-                        # Detach anchor
-                        if anchor.parent:
-                            anchor.parent.remove_child(anchor)
-                        # Insert as first child of dv
-                        dv.children.insert(0, anchor)
-                        anchor.parent = dv
-                        distributed += 1
-                    if distributed and self.debug_enabled:
-                        print(f"    CleanupA: distributed {distributed} <a> nodes across ladder div chain")
-
-    def _finalize_deep_a_div_ladder(self, context) -> None:
-        """Simplify deep ladder: collapse extra top-level <b> wrappers and build nested div/a chain under second <b>.
-
-        This narrower pass avoids broad DOM reshuffling. It:
-          1. Finds body > div container.
-          2. Retains at most two top-level <b> wrappers (first inside initial <a>, and first top-level).
-          3. Moves each extra top-level <b>'s sole div child (if present) into the deepest div chain under the second <b>.
-        """
-
-        for popped in popped_above:
-            if popped.tag_name in FORMATTING_ELEMENTS:
-                # Verify popped still lives under formatting_element in DOM (it should) and that
-                # formatting_element itself still exists in the tree (parent present).
-                if formatting_element.parent is formatting_parent and popped.parent is formatting_element:
-                    # Avoid duplicate consecutive wrappers (do not clone if the element right after <a> already matches)
-                    a_index = None
-                    try:
-                        a_index = formatting_parent.children.index(formatting_element)
-                    except ValueError:
-                        a_index = None
-                    if a_index is not None:
-                        insert_index = a_index + 1
-                        already = None
-                        if insert_index < len(formatting_parent.children):
-                            already = formatting_parent.children[insert_index]
-                        if not (already and already.tag_name == popped.tag_name):
-                            clone = Node(popped.tag_name, popped.attributes.copy())
-                            formatting_parent.children.insert(insert_index, clone)
-                            clone.parent = formatting_parent
-                            # Push clone onto open elements & active formatting so later end tag works
-                            context.open_elements.push(clone)
-                            entry = context.active_formatting_elements.find_element(popped)
-                            if entry:
-                                context.active_formatting_elements.push(clone, entry.token)
-                            else:
-                                # Create minimal token if original entry missing (unlikely)
-                                from turbohtml.tokenizer import HTMLToken
-                                dummy = HTMLToken('StartTag', clone.tag_name, clone.attributes)
-                                context.active_formatting_elements.push(clone, dummy)
-                            context.move_to_element(clone)
-                            if self.debug_enabled:
-                                print(f"    Simple-case adoption </a>: inserted sibling clone <{clone.tag_name}> after <a> for trailing content")
-                        else:
-                            # Move insertion into existing sibling formatting wrapper
-                            context.move_to_element(already)
-                    break  # Only clone first qualifying formatting element
-
-        if cell_parent is not None:
-            context.move_to_element(cell_parent)
-            if self.debug_enabled:
-                print(f"    Simple-case adoption adjust: moved insertion point into cell <{cell_parent.tag_name}>")
-        # For <nobr> perform localized child chain collapse (no reconstruction here)
-
-        # Insertion point remains at formatting element parent (simple case)
-        return True
-
-
+    
     def _get_body_or_root(self, context):
         """Get the body element or fallback to root"""
         body_node = None
