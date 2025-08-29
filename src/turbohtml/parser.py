@@ -1688,8 +1688,16 @@ class TurboHTML:
 
         # Comments after </body> should go in html node
         if context.document_state == DocumentState.AFTER_BODY:
-            self.debug("Adding comment to html in after body state")
-            self.html_node.append_child(comment_node)
+            # If </body> seen but </html> not yet processed, comment should remain inside html AFTER body
+            # html5lib: comments after body but before html close are still root siblings? Actually spec places them inside html.
+            has_html_closed = any(ch.tag_name == '#comment' for ch in self.root.children if ch is not comment_node)
+            if self.html_node not in self.root.children:
+                self.root.append_child(self.html_node)
+            body = self._get_body_node()
+            if body and body.parent is self.html_node:
+                self.html_node.append_child(comment_node)
+            else:
+                self.root.append_child(comment_node)
             return
 
         # Comments in IN_BODY state should go as children of html, positioned before head

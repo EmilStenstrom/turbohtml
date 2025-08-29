@@ -466,13 +466,15 @@ class HTMLTokenizer:
                 if is_end_tag:
                     return HTMLToken("EndTag", tag_name=tag_name)
                 else:
+                    # Suppress element emission for unterminated start tag at EOF with no attribute content (e.g. <di EOF)
+                    if unclosed_to_eof and not attributes.strip():
+                        self.debug("Discarding unterminated start tag at EOF (no element, no text)")
+                        return HTMLToken("Character", data="")
                     if unclosed_to_eof and attributes.strip():
-                        # Serialize malformed would-be attributes into a single text node
                         text_repr = self._serialize_malformed_attribute_chunk(attributes)
                         if text_repr:
                             self._pending_tokens.append(HTMLToken("Character", data=text_repr))
                         return HTMLToken("StartTag", tag_name=tag_name, attributes={}, is_self_closing=False)
-                    # Parse attributes and check for self-closing syntax (legacy path)
                     is_self_closing, attrs = self._parse_attributes_and_check_self_closing(attributes)
                     return HTMLToken("StartTag", tag_name=tag_name, attributes=attrs, is_self_closing=is_self_closing)
 
