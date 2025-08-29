@@ -392,15 +392,7 @@ class AdoptionAgencyAlgorithm:
                 print(f"    STEP 7: No furthest block - running simple case")
             return self._handle_no_furthest_block_spec(formatting_element, formatting_entry, context)
 
-        # Step 8-19: Complex case — cite guard: retain cite when sole child block
-        if (
-            formatting_element.tag_name == 'cite'
-            and furthest_block.parent is formatting_element
-            and [c for c in formatting_element.children if c.tag_name != '#text'] == [furthest_block]
-        ):
-            if self.debug_enabled:
-                print("    GUARD: cite direct child block only; ignoring end tag (abort complex adoption)")
-            return False  # No adoption progress; caller will stop further runs; cite remains open
+        # Step 8-19: Complex case
         if self.debug_enabled:
             print(f"    STEP 8-19: Complex case with furthest block")
         return self._run_complex_adoption_spec(formatting_entry, furthest_block, context, iteration_count)
@@ -946,23 +938,6 @@ class AdoptionAgencyAlgorithm:
                         entry.element = ancestor_b
                         context.move_to_element(ancestor_b)
                         continue
-            # Cite reconstruction suppression: prevent creating a new <cite> wrapper
-            # inside a second top-level <i> chain when an earlier sibling <cite> already contains the
-            # nested cite/<i> ladder. Expected tree has consecutive <i><i><div>... without an extra cite.
-            if entry.element.tag_name == 'cite':
-                cp = context.current_parent
-                if cp and cp.tag_name == 'i':
-                    # Look for any preceding body-level cite ancestor chain already present.
-                    body = self._get_body_or_root(context)
-                    if body:
-                        # Determine if a top-level <cite> sibling exists before the current insertion point.
-                        has_prior_cite = any(ch.tag_name == 'cite' for ch in body.children if ch is not cp)
-                        if has_prior_cite:
-                            # Suppress by removing from active formatting elements so it's not reconstructed later.
-                            context.active_formatting_elements.remove_entry(entry)
-                            if self.debug_enabled:
-                                print("    reconstruct: suppressed duplicate <cite> reconstruction after prior cite ladder")
-                            continue
             if self.debug_enabled:
                 print(f"    reconstruct: cloning missing formatting element <{entry.element.tag_name}>")
             clone = Node(entry.element.tag_name, entry.element.attributes.copy())
