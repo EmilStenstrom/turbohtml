@@ -511,67 +511,6 @@ class AdoptionAgencyAlgorithm:
                 if text_children:
                     continue
                 elem_children = [c for c in node.children if c.tag_name != '#text']
-                if len(elem_children) != 1:
-                    continue
-                if elem_children[0].tag_name != 'div':
-                    continue
-                # Detect ancestor <a> above parent <a> (grand or more)
-                anc = node.parent.parent
-                has_outer_a = False
-                while anc:
-                    if anc.tag_name == 'a':
-                        has_outer_a = True
-                        break
-                    anc = anc.parent
-                if not has_outer_a:
-                    continue
-                candidates.append(node)
-        # Unwrap candidates
-        for bnode in candidates:
-            parent = bnode.parent
-            if not parent:
-                continue
-            try:
-                insert_idx = parent.children.index(bnode)
-            except ValueError:
-                continue
-            # Move children into parent preserving order
-            for ch in list(bnode.children):
-                bnode.remove_child(ch)
-                parent.children.insert(insert_idx, ch)
-                ch.parent = parent
-                insert_idx += 1
-            parent.remove_child(bnode)
-            if self.debug_enabled:
-                print("StrictSpec: unwrapped redundant <b> inside nested <a> ladder")
-
-    def _unwrap_extra_top_level_b_for_a(self, context) -> None:
-        """Remove extra top-level <b> siblings produced by successive </a> adoption iterations.
-
-        Expected ladder shape keeps exactly two top-level <b> occurrences inside the first container <div>:
-          1. The original <b> inside the initial <a>
-          2. A second <b> that hosts the nested <div>/<a> ladder chain
-
-        Any additional top-level <b> siblings each wrapping a single <div><a> segment are flattened by moving
-        their <div> child into the deepest div of the second <b>'s chain, then removing the redundant <b>.
-        This runs only after all adoption iterations for </a> are complete, minimizing interaction with
-        subsequent tree construction.
-        """
-        # Locate body via helper (parser.html_node may not yet expose find_descendant)
-        body = self._get_body_or_root(context)
-        if not body:
-            return
-        # Find first container div under body
-        root_div = next((c for c in body.children if c.tag_name == 'div'), None)
-        if not root_div:
-            return
-        b_children = [c for c in root_div.children if c.tag_name == 'b']
-        if self.debug_enabled:
-            print(f"    CleanupA: _unwrap_extra_top_level_b_for_a: found {len(b_children)} top-level <b> children")
-        if len(b_children) <= 2:
-            if self.debug_enabled:
-                print("    CleanupA: no extra <b> wrappers to unwrap (<=2)")
-            return  # nothing extra to unwrap
         second_b = b_children[1]
         # Helper to find deepest div in chain under second_b
         def deepest_div(node: Node) -> Node:
