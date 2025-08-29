@@ -1903,6 +1903,17 @@ class ParagraphTagHandler(TagHandler):
                 # Clear any active formatting elements inherited from outside the integration point
                 if context.active_formatting_elements:
                     context.active_formatting_elements._stack.clear()
+                # Spec-consistent behaviour: a start tag <p> while a <p> is open must close the previous paragraph
+                # even inside integration points (tests expect sibling <p> elements, not nesting).
+                if context.current_parent.tag_name == 'p':
+                    closing_p = context.current_parent
+                    if closing_p.parent:
+                        context.move_up_one_level()
+                    else:
+                        body = self.parser._ensure_body_node(context)
+                        context.move_to_element(body)
+                    if context.open_elements.contains(closing_p):
+                        context.open_elements.remove_element(closing_p)
                 new_node = self.parser.insert_element(token, context, mode='normal', enter=True)
                 # insert_element already pushed onto open elements; nothing extra needed
                 return True
@@ -4085,6 +4096,22 @@ class AutoClosingTagHandler(TemplateAwareHandler):
             if not current:
                 self.debug(f"No matching block element found for end tag: {token.tag_name}")
                 return False
+
+            # Ignore end tag if matching ancestor lies outside an integration point boundary
+            def _crosses_integration_point(target: "Node") -> bool:
+                cur = context.current_parent
+                while cur and cur is not target:
+                    if cur.tag_name in ("svg foreignObject","svg desc","svg title"):
+                        return True
+                    if cur.tag_name == "math annotation-xml" and cur.attributes.get("encoding","" ).lower() in ("text/html","application/xhtml+xml"):
+                        return True
+                    cur = cur.parent
+                return False
+            if _crosses_integration_point(current):
+                self.debug(
+                    f"Ignoring </{token.tag_name}> crossing integration point boundary (ancestor outside integration point)"
+                )
+                return True
 
             self.debug(f"Found matching block element: {current}")
 
