@@ -823,10 +823,10 @@ class TextHandler(TagHandler):
                     # After reconstruction current_parent points at last reconstructed formatting element;
                     # append text there so it becomes a descendant (matches expected adoption trees).
                     self._append_text(text, context)
-                    # Move back to body for subsequent siblings (spec leaves insertion point at last element
-                    # but our general model expects body as baseline when wrappers done).
-                    body_node = self.parser._ensure_body_node(context) or context.current_parent
-                    context.move_to_element(body_node)
+                    # Do NOT reset insertion point to body here; leaving it at the deepest reconstructed
+                    # formatting element ensures a following <p> start tag is inserted inside the chain
+                    # (expected behavior for sequences like <p><b><i><u></p> <p>X) producing nested formatting
+                    # wrappers around the whitespace and second paragraph.
                     return True
                 if not (after_table_case or trailing_nobr_case):
                     self._append_text(text, context)
