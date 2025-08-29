@@ -875,7 +875,6 @@ class TextHandler(TagHandler):
                 clone = self.parser.insert_element(b_token, context, mode='normal', enter=True)
                 wrapped = True
 
-    # (Historical trailing <nobr> / malformed <code> duplication heuristics removed; retained only active malformed <code> quote handling below.)
 
         # Whitespace handling deferred to tokenizer and spec rules (no additional trimming here).
         # Heuristic for malformed start tag <code x</code> pattern:
@@ -1085,7 +1084,6 @@ class TextHandler(TagHandler):
             node = self.parser.insert_text(text, context, parent=context.current_parent, merge=False)
             if node is not None:
                 self.debug(f"created node with content '{node.text_content}'")
-        # Removed _after_body_last_text tracking (no persistent parser field)
 
     def _handle_normal_text(self, text: str, context: "ParseContext") -> bool:
         """Handle normal text content"""
@@ -1879,19 +1877,7 @@ class ParagraphTagHandler(TagHandler):
         self.debug(f"handling {token}, context={context}")
         self.debug(f"Current parent: {context.current_parent}")
 
-        if token.tag_name == 'p':
-            deepest_cell = None
-            for el in reversed(context.open_elements._stack):
-                if el.tag_name in ('td','th'):
-                    deepest_cell = el
-                    break
-            if (
-                deepest_cell is not None
-                and context.current_parent is not deepest_cell
-                and not (context.current_parent and context.current_parent.find_ancestor(lambda n: n.tag_name in ('td','th')))
-            ):
-                context.move_to_element(deepest_cell)
-                self.debug("Relocated insertion point to deepest open cell before creating <p>")
+        
 
         if token.tag_name == "p":
             svg_ip_ancestor = context.current_parent.find_ancestor(
@@ -2010,34 +1996,9 @@ class ParagraphTagHandler(TagHandler):
                     self.debug("In integration point inside table; not foster-parenting <p>")
                 else:
                     self.debug(f"Foster parenting paragraph out of table")
-                    pre_reconstruct_anchor = None
-                    if context.active_formatting_elements:
-                        # Record if an <a> formatting element is active so we can ensure duplication after second foster
-                        pre_reconstruct_anchor = context.active_formatting_elements.find('a')
                     self.parser._foster_parent_element(token.tag_name, token.attributes, context)
-                    if context.active_formatting_elements:
-                        self.parser.reconstruct_active_formatting_elements(context)
-                    if pre_reconstruct_anchor and context.current_parent.tag_name == 'p':
-                        if not context.current_parent.children:
-                            # If the formatting element's DOM position is earlier paragraph, force adoption-like clone here
-                            self.parser.reconstruct_active_formatting_elements(context)
-                            # If still no anchor child, manually create one referencing active formatting entry
-                            if not any(ch.tag_name == 'a' for ch in context.current_parent.children):
-                                entry = context.active_formatting_elements.find('a')
-                                if entry:
-                                    clone = Node('a', entry.element.attributes.copy())
-                                    context.current_parent.append_child(clone)
-                                    context.enter_element(clone)
-                                context.open_elements.push(clone)
-                                # Point active formatting entry to new clone so later text stays inside it
-                                entry.element = clone
                 return True
 
-        needs_foster_parenting = False
-
-        if needs_foster_parenting:
-            # This is now handled above with proper foster parenting
-            pass
         p_ancestor = context.current_parent.find_ancestor("p")
         if p_ancestor:
             boundary_between = context.current_parent.find_ancestor(
@@ -2082,7 +2043,7 @@ class ParagraphTagHandler(TagHandler):
         # Create new p node under current parent (keeping formatting context)
         new_node = self.parser.insert_element(token, context, mode='normal', enter=True)
 
-        # If we just closed a previous paragraph and popped formatting descendants, reconstruct them now
+        # If we closed a previous paragraph and popped formatting descendants, reconstruct them now (spec: reconstruction step)
         if token.tag_name == 'p' and p_ancestor and formatting_descendants:
             self.parser.reconstruct_active_formatting_elements(context)
 

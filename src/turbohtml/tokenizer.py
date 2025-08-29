@@ -1010,4 +1010,3 @@ class HTMLTokenizer:
             except ValueError:
                 return '\uFFFD'
     
-    # _serialize_malformed_attribute_chunk removed (no longer needed)

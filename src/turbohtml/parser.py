@@ -1074,7 +1074,6 @@ class TurboHTML:
                 context.move_to_element(body_node)
                 context.transition_to_state(DocumentState.IN_BODY, body_node)
                 self.debug(f"Resumed IN_BODY for <{tag_name}> after post-body state")
-        # (Removed stray table end flag logic: handled structurally now.)
 
         # Skip implicit body creation for fragments
         if (
@@ -1182,76 +1181,6 @@ class TurboHTML:
             self.debug("In rawtext mode, ignoring start tag")
             return
 
-        # In table contexts it is possible (via prior adoption or foreign content breakout) that
-        # current_parent has drifted out of an open table cell even though a td/th remains on the
-        # open elements stack. Before any foster‑parenting decisions, restore insertion point to the
-        # deepest still-open cell so flow content (p, text) ends up inside the cell instead of being
-        # foster‑parented before the table (regression visible in tests9 / tests10 mixed foreign+table cases).
-        if not self._is_in_template_content(context):
-            deepest_cell = None
-            for el in reversed(context.open_elements._stack):
-                if el.tag_name in ("td", "th"):
-                    deepest_cell = el
-                    break
-            if (
-                deepest_cell is not None
-                and context.current_parent is not deepest_cell
-                and not (context.current_parent and context.current_parent.find_ancestor(lambda n: n.tag_name in ("td","th")))
-            ):
-                context.move_to_element(deepest_cell)
-                self.debug(f"Restored insertion point to open cell <{deepest_cell.tag_name}> before <{tag_name}>")
-
-        # Salvage heuristic: If a <p> is starting at body level immediately after a foreign subtree
-        # inside a table cell, but that cell is no longer on the open elements stack (prematurely
-        # popped), attempt to re-enter the last cell of the last open table so the paragraph becomes
-        # a child of the cell (tests9 case 12). Only fires when:
-        #   * tag_name == 'p'
-        #   * current_parent == body
-        #   * the last non-text child of body is a <table> that is still open
-        #   * no td/th present on open elements stack (cell already popped)
-        #   * we can locate a last row and cell with no existing <p> child
-        if (
-            tag_name == 'p'
-            and context.current_parent
-            and context.current_parent.tag_name == 'body'
-        ):
-            body = context.current_parent
-            # Find last element child that is a table and is open
-            table_candidate = None
-            for child in reversed(body.children):
-                if child.tag_name == 'table':
-                    if context.open_elements.contains(child):
-                        table_candidate = child
-                    break
-            if (
-                table_candidate is not None
-                and context.document_state in (
-                    DocumentState.IN_TABLE,
-                    DocumentState.IN_TABLE_BODY,
-                    DocumentState.IN_ROW,
-                    DocumentState.IN_CELL,
-                )
-            ):
-                # Confirm no td/th currently open (otherwise earlier relocation would have run)
-                has_open_cell = any(e.tag_name in ('td','th') for e in context.open_elements._stack)
-                if not has_open_cell:
-                    # Find last row: search tbody/thead/tfoot then direct tr
-                    last_row = None
-                    sections = [c for c in table_candidate.children if c.tag_name in ('tbody','thead','tfoot')]
-                    search_space = sections[-1].children if sections else table_candidate.children
-                    for c in reversed(search_space):
-                        if c.tag_name == 'tr':
-                            last_row = c
-                            break
-                    if last_row:
-                        last_cell = None
-                        for c in reversed(last_row.children):
-                            if c.tag_name in ('td','th'):
-                                last_cell = c
-                                break
-                        if last_cell and not any(ch.tag_name == 'p' for ch in last_cell.children):
-                            context.move_to_element(last_cell)
-                            self.debug("Salvaged insertion into last table cell for <p> after foreign content")
 
         # Rawtext elements (style/script) encountered while in table insertion mode should
         # become children of the current table element (before any row groups) rather than
@@ -1549,7 +1478,6 @@ class TurboHTML:
         if adoption_run_count > 0:
             self.debug(f"Adoption agency completed after {adoption_run_count} run(s) for </{tag_name}>")
             # Post-adoption normalization for deep </a> ladder cases (nest flattened div/a sequences)
-            # Post-adoption ladder normalization removed; adoption algorithm now yields stable structure
             return
 
         # End tag </body> handling nuances:
@@ -2054,7 +1982,6 @@ class TurboHTML:
                 continue
             if context.open_elements.contains(entry.element):
                 continue
-            # Removed strict_spec duplicate suppression heuristic; always reconstruct per spec when missing.
             # NOTE: Intentionally do NOT suppress duplicate <b> cloning here; per spec each missing
             # formatting element entry must be reconstructed, producing nested <b> wrappers when
             # multiple <b> elements were active at the time a block element interrupted them.

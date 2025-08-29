@@ -366,38 +366,6 @@ class AdoptionAgencyAlgorithm:
                 print(
                     f"    STEP 4 RESULT: Formatting element not in scope - spec: parse error, ignore token, abort"
                 )
-            # Maintain insertion point inside deepest open cell if present
-            deepest_cell = None
-            for elem in context.open_elements._stack:
-                if elem.tag_name in ("td", "th"):
-                    deepest_cell = elem
-            if deepest_cell is not None and context.current_parent is not deepest_cell:
-                context.move_to_element(deepest_cell)
-                if self.debug_enabled:
-                    print(
-                        f"    STEP 4 ADJUST: moved insertion point into deepest cell <{deepest_cell.tag_name}> for subsequent inline formatting (open stack)"
-                    )
-            elif deepest_cell is None:
-                # Otherwise attempt to relocate into a formatting element inside a cell
-                cell_fmt = None
-                for entry in reversed(list(context.active_formatting_elements)):
-                    el = entry.element
-                    anc = el
-                    found_cell = False
-                    while anc:
-                        if anc.tag_name in ("td", "th"):
-                            found_cell = True
-                            break
-                        anc = anc.parent
-                    if found_cell:
-                        cell_fmt = el
-                        break
-                if cell_fmt is not None and context.current_parent is not cell_fmt:
-                    context.move_to_element(cell_fmt)
-                    if self.debug_enabled:
-                        print(
-                            f"    STEP 4 ADJUST: moved insertion point into formatting element inside cell <{cell_fmt.tag_name}>"
-                        )
             # Parse error: ignore token; abort this adoption run
             return False
 
@@ -422,9 +390,9 @@ class AdoptionAgencyAlgorithm:
         if furthest_block is None:
             if self.debug_enabled:
                 print(f"    STEP 7: No furthest block - running simple case")
+            # Simple case: run handler then perform limited relocation previously used to preserve
+            # inline formatting placement inside open cells and avoid duplicate <i> reconstruction.
             result = self._handle_no_furthest_block_spec(formatting_element, formatting_entry, context)
-            # If a table cell (td/th) remains open anywhere on the stack, prefer it as insertion point
-            # to preserve inline formatting placement inside the cell.
             deepest_cell = None
             for elem in context.open_elements._stack:
                 if elem.tag_name in ("td", "th"):
@@ -433,22 +401,19 @@ class AdoptionAgencyAlgorithm:
             if deepest_cell is not None and context.current_parent is not deepest_cell:
                 context.move_to_element(deepest_cell)
                 moved_into_cell = True
-            # Guarded outward move: only apply when we did NOT just relocate into a cell.
             cp = context.current_parent
             if (
                 not moved_into_cell
                 and cp
                 and cp.tag_name in {"table", "tbody", "thead", "tfoot", "tr"}
                 and cp.parent is not None
-                and cp.parent.tag_name != "body"  # don't jump above body
+                and cp.parent.tag_name != "body"
                 and formatting_element.tag_name in ("nobr", "i", "b", "em")
             ):
                 context.move_to_element(cp.parent)
-            # Avoid duplicate reconstruction: if another <i> with text already exists under parent
             if formatting_element.tag_name == 'i':
                 existing_entry = context.active_formatting_elements.find('i')
                 if existing_entry and existing_entry.element is not formatting_element:
-                    # Verify descendant with text exists to justify suppression.
                     parent = context.current_parent
                     has_existing = False
                     if parent:
@@ -462,8 +427,6 @@ class AdoptionAgencyAlgorithm:
                                     break
                     if has_existing:
                         context.active_formatting_elements.remove_entry(existing_entry)
-                        if self.debug_enabled:
-                            print("    SimpleCaseGuard: removed stale <i> AFE entry to prevent duplicate reconstruction")
             return result
 
         # Step 8-19: Complex case — cite guard: retain cite when sole child block
@@ -1268,7 +1231,6 @@ class AdoptionAgencyAlgorithm:
                 continue
 
             # Step 12.5: Create a clone of node
-            # Removed cite/ladder suppression heuristics
             node_clone = Node(tag_name=node.tag_name, attributes=node.attributes.copy())
             if self.debug_enabled:
                 print(
@@ -1607,14 +1569,12 @@ class AdoptionAgencyAlgorithm:
             fb_index = context.open_elements.index_of(furthest_block)
             context.open_elements._stack.insert(fb_index + 1, formatting_clone)
 
-        # (Temporarily disabled) Post-Step-19 stack ordering normalization removed to avoid
         # prior heuristic reinstatement attempts. The previous implementation
         # performed a full depth-based stable sort of the open elements stack which, while
         # ensuring ancestor-before-descendant order, can reorder sibling groups in ways the
         # spec's push/pop sequence would not, altering later tree construction decisions.
         # If specific misordering cases reappear (descendant before ancestor), implement a
         # minimal local swap instead of full-stack sorting.
-    # (Removed legacy full stack reordering pass; relying on localized swap logic only)
         self._normalize_local_misordered_pair(context, formatting_clone, furthest_block)
 
         # Cleanup: remove empty formatting clone before text when not immediately re-nested
