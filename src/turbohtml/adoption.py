@@ -390,44 +390,7 @@ class AdoptionAgencyAlgorithm:
         if furthest_block is None:
             if self.debug_enabled:
                 print(f"    STEP 7: No furthest block - running simple case")
-            # Simple case: run handler then perform limited relocation previously used to preserve
-            # inline formatting placement inside open cells and avoid duplicate <i> reconstruction.
-            result = self._handle_no_furthest_block_spec(formatting_element, formatting_entry, context)
-            deepest_cell = None
-            for elem in context.open_elements._stack:
-                if elem.tag_name in ("td", "th"):
-                    deepest_cell = elem
-            moved_into_cell = False
-            if deepest_cell is not None and context.current_parent is not deepest_cell:
-                context.move_to_element(deepest_cell)
-                moved_into_cell = True
-            cp = context.current_parent
-            if (
-                not moved_into_cell
-                and cp
-                and cp.tag_name in {"table", "tbody", "thead", "tfoot", "tr"}
-                and cp.parent is not None
-                and cp.parent.tag_name != "body"
-                and formatting_element.tag_name in ("nobr", "i", "b", "em")
-            ):
-                context.move_to_element(cp.parent)
-            if formatting_element.tag_name == 'i':
-                existing_entry = context.active_formatting_elements.find('i')
-                if existing_entry and existing_entry.element is not formatting_element:
-                    parent = context.current_parent
-                    has_existing = False
-                    if parent:
-                        for d in self._iter_descendants(parent):
-                            if d.tag_name == 'i':
-                                if any(
-                                    (td.tag_name == '#text' and td.text_content and td.text_content.strip())
-                                    for td in self._iter_descendants(d)
-                                ):
-                                    has_existing = True
-                                    break
-                    if has_existing:
-                        context.active_formatting_elements.remove_entry(existing_entry)
-            return result
+            return self._handle_no_furthest_block_spec(formatting_element, formatting_entry, context)
 
         # Step 8-19: Complex case — cite guard: retain cite when sole child block
         if (
