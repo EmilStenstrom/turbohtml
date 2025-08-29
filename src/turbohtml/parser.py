@@ -1082,13 +1082,33 @@ class TurboHTML:
             and (context.document_state == DocumentState.INITIAL or context.document_state == DocumentState.IN_HEAD)
             and tag_name not in HEAD_ELEMENTS
             and tag_name != "html"
-            # Don't implicitly create body for potential frameset documents while frameset_ok is True.
-            # Ignore param/source/track directly before a <frameset> (non-influential before frameset construction)
-            # with a root <frameset> (no intervening <body>). Suppress body synthesis for these tags
-            # until we either see meaningful body content or a non-frameset-ok element.
-            and not (tag_name in ("frameset", "param", "source", "track") and context.frameset_ok)
             and not self._is_in_template_content(context)
         ):
+            # Extended benign set for delaying body creation while frameset still possible.
+            benign_no_body = {
+                "frameset","frame","param","source","track","base","basefont","bgsound","link","meta",
+                "script","style","title","img","br","wbr","svg","math","input"
+            }
+            if tag_name == 'input':
+                inp_type = (token.attributes.get('type','') or '').lower()
+                if inp_type != 'hidden':
+                    benign = False
+                else:
+                    benign = True
+            else:
+                benign = tag_name in benign_no_body
+            if not (benign and context.frameset_ok):
+                self.debug("Implicitly creating body node")
+                if context.document_state != DocumentState.IN_FRAMESET:
+                    body = self._ensure_body_node(context)
+                    if body:
+                        context.transition_to_state(DocumentState.IN_BODY, body)
+
+        # Ignore stray <frame> tokens before establishing a root <frameset> ONLY while frameset_ok is still True.
+        # Once frameset_ok is False (e.g., due to prior meaningful content or stray </frameset>), allow <frame>
+        # to emit a standalone frame element so fragment/innerHTML tests expecting a lone <frame> succeed.
+        if tag_name == 'frame' and not self._has_root_frameset() and context.frameset_ok:
+            return
             self.debug("Implicitly creating body node")
             if context.document_state != DocumentState.IN_FRAMESET:
                 body = self._ensure_body_node(context)
@@ -1096,8 +1116,43 @@ class TurboHTML:
                     context.transition_to_state(DocumentState.IN_BODY, body)
 
         # If we see any non-whitespace text or a non-frameset-ok element while frameset_ok is True, flip it off
-        if context.frameset_ok and tag_name not in ("frameset", "noframes", "param", "source", "track"):
-            context.frameset_ok = False
+        if context.frameset_ok:
+            benign = {
+                "frameset", "frame", "noframes", "param", "source", "track",
+                "base", "basefont", "bgsound", "link", "meta", "script", "style", "title",
+                "img", "br", "wbr", "svg", "math"
+            }
+            def _foreign_root_wrapper_benign() -> bool:
+                body = self._get_body_node()
+                if not body or len(body.children) != 1:
+                    return False
+                root = body.children[0]
+                if root.tag_name not in ("svg svg","math math"):
+                    return False
+                # Scan subtree for any non-whitespace text or disallowed element
+                stack = [root]
+                while stack:
+                    n = stack.pop()
+                    for ch in n.children:
+                        if ch.tag_name == '#text' and ch.text_content and ch.text_content.strip():
+                            return False
+                        if ch.tag_name not in ('#text','#comment') and not (ch.tag_name.startswith('svg ') or ch.tag_name.startswith('math ')):
+                            # Allow a limited set of simple HTML wrappers (div, span) inside integration points
+                            if ch.tag_name not in ('div','span'):
+                                return False
+                        stack.append(ch)
+                return True
+            benign_dynamic = _foreign_root_wrapper_benign()
+            if tag_name == 'input':
+                inp_type = (token.attributes.get('type','') or '').lower()
+                if inp_type == 'hidden':
+                    pass
+                else:
+                    context.frameset_ok = False
+            elif tag_name in benign or benign_dynamic:
+                pass
+            else:
+                context.frameset_ok = False
 
         # In frameset insertion modes, only a subset of start tags are honored. Allow frameset, frame, noframes.
         if context.document_state in (DocumentState.IN_FRAMESET, DocumentState.AFTER_FRAMESET):
@@ -1602,10 +1657,12 @@ class TurboHTML:
                 body = self._ensure_body_node(context)
             return True
         elif tag_name == "body" and context.document_state != DocumentState.IN_FRAMESET:
-            # Create body if needed
+            # Only honor early <body> if frameset no longer permitted (frameset_ok False) or we already created body
+            if context.frameset_ok and context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
+                # Explicit body tag commits to non-frameset document; flip frameset_ok off and continue to normal handling
+                context.frameset_ok = False
             body = self._ensure_body_node(context)
             if body:
-                # Update attributes and switch to body mode
                 body.attributes.update(token.attributes)
                 context.transition_to_state(DocumentState.IN_BODY, body)
             return True

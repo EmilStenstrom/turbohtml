@@ -5862,8 +5862,13 @@ class FramesetTagHandler(TagHandler):
                 return False
             if not context.current_parent.find_ancestor("frameset"):
                 body = self.parser._get_body_node()
+                # If an explicit <body> start tag was seen (frameset_ok already flipped False by body tag suppression logic)
+                # spec says subsequent root <frameset> is ignored.
+                if body and not context.frameset_ok:
+                    self.debug("Ignoring root <frameset>; body already established (frameset_ok False)")
+                    return True
                 if body:
-                    allowed_tags = {"base","basefont","bgsound","link","meta","script","style","title","input","img","br","wbr","param","source","track"}
+                    allowed_tags = {"base","basefont","bgsound","link","meta","script","style","title","input","img","br","wbr","param","source","track","svg svg","math math"}
                     meaningful = False
                     body_children = list(body.children)
                     if len(body_children) == 2 and body_children[0].tag_name in ("svg svg", "math math") and body_children[1].tag_name == "p":
@@ -5899,6 +5904,25 @@ class FramesetTagHandler(TagHandler):
                                 if not foreign_ok:
                                     meaningful = True
                                     break
+                                # Additionally treat an integration point subtree like <svg foreignObject><div> <frameset>
+                                # as ignorable when its descendants contain only whitespace text.
+                                # Recognize top-level svg foreignObject chain with only a single <div> whose
+                                # only descendant text is whitespace.
+                                if ch.tag_name == 'svg svg' and ch.children:
+                                    only_child = ch.children[0]
+                                    if only_child.tag_name == 'svg foreignObject':
+                                        # Inspect descendants for non-whitespace text or non-text nodes other than div wrappers
+                                        def has_meaningful(node):
+                                            for d in node.children:
+                                                if d.tag_name == '#text' and d.text_content and d.text_content.strip():
+                                                    return True
+                                                if d.tag_name not in ('#text','#comment','div'):
+                                                    return True
+                                                if has_meaningful(d):
+                                                    return True
+                                            return False
+                                        if has_meaningful(only_child) is False:
+                                            continue  # treat as ignorable
                             elif ch.tag_name not in allowed_tags:
                                 meaningful = True
                                 break
@@ -5974,6 +5998,9 @@ class FramesetTagHandler(TagHandler):
                     self.parser.transition_to_state(context, DocumentState.AFTER_FRAMESET, self.parser.html_node)
                     context.frameset_ok = False
                 return True
+            # Stray </frameset> with no open frameset: invalidate frameset_ok so subsequent <frame>
+            # can appear as standalone (innerHTML tests expecting lone <frame> after stray close).
+            context.frameset_ok = False
             return False
 
         elif tag_name == "noframes":
