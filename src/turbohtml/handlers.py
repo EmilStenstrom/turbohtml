@@ -1640,6 +1640,20 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             self.debug(f"Ignoring rawtext element {tag_name} inside select")
             return True
 
+        # Spec-adjacent recovery: treat void <hr> start tag inside <select> as present (html5lib expected tree
+        # retains it). We insert it rather than ignoring so the tree matches reference output. This reduces earlier
+        # broad 'ignore all other tags in select' heuristic without adding persistent state.
+        if self._is_in_select(context) and tag_name == 'hr':
+            self.debug("Emitting <hr> inside select (void element)")
+            # If currently inside option/optgroup, close them implicitly by moving insertion point to ancestor select
+            if context.current_parent.tag_name in ('option','optgroup'):
+                sel = context.current_parent.find_ancestor('select') or context.current_parent.find_ancestor('datalist')
+                if sel:
+                    context.move_to_element(sel)
+            self.parser.insert_element(token, context, mode='void', enter=False, treat_as_void=True)
+            return True
+
+
         if self._is_in_select(context) and tag_name in TABLE_ELEMENTS:
             select_element = context.current_parent.find_ancestor("select")
             if select_element:
@@ -2758,6 +2772,10 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             )
             return True
 
+        # If current parent is a section (thead/tbody/tfoot) and not inside a tr yet, synthesize a tr (spec step).
+        if context.current_parent.tag_name in ("thead","tbody","tfoot") and not context.current_parent.find_child_by_tag("tr"):
+            fake_tr = self._synth_token("tr")
+            self.parser.insert_element(fake_tr, context, mode='normal', enter=True, parent=context.current_parent)
         tr = self._find_or_create_tr(context)
         # Use unified insertion (suppress open elements push to preserve prior semantics)
         self.parser.insert_element(
