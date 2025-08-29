@@ -1878,7 +1878,24 @@ class ParagraphTagHandler(TagHandler):
         self.debug(f"Current parent: {context.current_parent}")
 
         # (Reverted broader paragraph scope closure: previous attempt reduced overall pass count.)
-        
+        # Spec: A start tag <p> when a <p> element is currently open in *button scope*
+        # implies an end tag </p>. Implement minimal button-scope check (added to
+        # OpenElementsStack) so we do not rely on broader heuristics. Only trigger when
+        # the incoming token is <p> and there is a <p> in button scope (may or may not
+        # be the current_parent). This mirrors the tree-construction algorithm's
+        # paragraph insertion rule.
+        if token.tag_name == 'p' and context.open_elements.has_element_in_button_scope('p') and context.current_parent.tag_name == 'p':
+            closing_p = context.current_parent
+            while not context.open_elements.is_empty():
+                popped = context.open_elements.pop()
+                if popped == closing_p:
+                    break
+            if closing_p.parent:
+                context.move_to_element(closing_p.parent)
+            else:
+                body = self.parser._ensure_body_node(context)
+                context.move_to_element(body)
+            # Continue to handle the new <p> normally below
 
         if token.tag_name == "p":
             svg_ip_ancestor = context.current_parent.find_ancestor(

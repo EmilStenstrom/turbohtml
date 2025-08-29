@@ -214,6 +214,21 @@ class OpenElementsStack:
                 return False
         return False
 
+    def has_element_in_button_scope(self, tag_name: str) -> bool:
+        """Return True if an element with tag_name is in button scope (HTML spec).
+
+        Button scope is the same as the normal *scope* definition but with the additional
+        boundary element 'button'. Used primarily to decide whether an open <p> should be
+        implicitly closed before inserting a new block / paragraph start tag.
+        """
+        scope_boundaries = {"applet", "caption", "html", "table", "td", "th", "marquee", "object", "template", "button"}
+        for element in reversed(self._stack):
+            if element.tag_name == tag_name:
+                return True
+            if element.tag_name in scope_boundaries:
+                return False
+        return False
+
     # --- category helpers ---
     def _is_special_category(self, element: Node) -> bool:
         return element.tag_name in SPECIAL_CATEGORY_ELEMENTS
