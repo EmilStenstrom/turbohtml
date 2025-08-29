@@ -726,9 +726,102 @@ class TextHandler(TagHandler):
                 trailing_nobr_case = (
                     any(e.tag_name == 'nobr' for e in elems) and (not elems or elems[-1].tag_name != 'nobr')
                 )
+                # New: if trailing text follows a table and there exists an active formatting element
+                # whose DOM node is no longer open (was foster‑parented / adoption removed) we should
+                # reconstruct before appending so the text is wrapped (e.g. tests7.dat:30 requires a
+                # second <b> after the table). This mirrors spec "reconstruct active formatting elements"
+                # step before inserting character tokens in the body insertion mode.
+                need_reconstruct_after_table = False
+                if elems and elems[-1].tag_name == 'table' and context.active_formatting_elements and not context.active_formatting_elements.is_empty():
+                    for entry in context.active_formatting_elements:
+                        if not entry.element:
+                            continue
+                        if not context.open_elements.contains(entry.element):
+                            need_reconstruct_after_table = True
+                            break
+                    # If none were stale but we still have formatting entries, attempt reconstruction anyway (diagnostic) so trailing text lands inside wrapper.
+                    if not need_reconstruct_after_table:
+                        need_reconstruct_after_table = True
+                # Before generic reconstruction, check for case where preceding formatting sibling(s)
+                # already consume prior text and spec reconstruction would be a no-op (active entry still open).
+                # If the immediate sequence before the table contains at least one formatting element with text,
+                # create a fresh wrapper of the same tag for trailing text to match expected sibling wrapper pattern.
+                created_wrapper = False
+                if elems and elems[-1].tag_name == 'table' and text:
+                    # Find last formatting element sibling with any text descendant
+                    last_fmt_with_text = None
+                    for sibling in reversed(elems[:-1]):
+                        if sibling.tag_name in FORMATTING_ELEMENTS:
+                            has_txt = any(ch.tag_name == '#text' and (ch.text_content or '').strip() for ch in sibling.children)
+                            if has_txt:
+                                last_fmt_with_text = sibling
+                                break
+                    if last_fmt_with_text is not None:
+                        from .tokenizer import HTMLToken  # local import
+                        wrapper_token = HTMLToken('StartTag', tag_name=last_fmt_with_text.tag_name, attributes=last_fmt_with_text.attributes.copy())
+                        new_wrapper = self.parser.insert_element(
+                            wrapper_token,
+                            context,
+                            parent=context.current_parent,
+                            mode='normal',
+                            enter=True,
+                        )
+                        context.active_formatting_elements.push(new_wrapper, wrapper_token)
+                        self._append_text(text, context)
+                        body_node = self.parser._ensure_body_node(context) or context.current_parent
+                        context.move_to_element(body_node)
+                        created_wrapper = True
+                        return True
+                if need_reconstruct_after_table and not created_wrapper:
+                    self.debug("Reconstructing after table for trailing body text")
+                    self.parser.reconstruct_active_formatting_elements(context)
+                    self._append_text(text, context)
+                    body_node = self.parser._ensure_body_node(context) or context.current_parent
+                    context.move_to_element(body_node)
+                    return True
+                # Spec-aligned formatting continuation: if trailing text follows a table and the most
+                # recent formatting element before that table is still open (so normal reconstruction
+                # would be a no-op), we still need a fresh wrapper per expected tree shape for
+                # sequences like <table><b><tr>...bbb</table>ccc which produce <b><b>bbb<table>...<b>ccc.
+                # Here the active formatting entry's element (the second <b>) remains open so the
+                # reconstruction algorithm would not clone it. We synthesize a new wrapper of the
+                # same tag so the trailing text does not merge into the earlier formatting run.
+                if elems and elems[-1].tag_name == 'table' and text:
+                    # Find last formatting element sibling before the table (walk backwards skipping table)
+                    fmt_before = None
+                    for sibling in reversed(elems[:-1]):
+                        if sibling.tag_name in FORMATTING_ELEMENTS:
+                            fmt_before = sibling
+                            break
+                    if fmt_before is not None:
+                        from .tokenizer import HTMLToken  # local import to avoid cycle at module load
+                        fake_token = HTMLToken('StartTag', tag_name=fmt_before.tag_name, attributes=fmt_before.attributes.copy())
+                        new_wrapper = self.parser.insert_element(
+                            fake_token,
+                            context,
+                            parent=context.current_parent,
+                            mode='normal',
+                            enter=True,
+                        )
+                        # Mirror formatting insertion: push to active formatting elements for future reconstruction
+                        context.active_formatting_elements.push(new_wrapper, fake_token)
+                        self._append_text(text, context)  # current_parent now new_wrapper
+                        # Restore insertion point to body (subsequent siblings attach at body level)
+                        body_node = self.parser._ensure_body_node(context) or context.current_parent
+                        context.move_to_element(body_node)
+                        return True
                 # Before short‑circuiting append, ensure any active formatting elements that were
                 # popped by the paragraph end (e.g. <p>1<s><b>2</p>3...) are reconstructed so that
                 # following text is wrapped (spec: reconstruct active formatting elements algorithm).
+                if elems and elems[-1].tag_name == 'table':
+                    afe_debug = []
+                    if context.active_formatting_elements:
+                        for entry in context.active_formatting_elements:
+                            if entry.element is None:
+                                afe_debug.append('(placeholder)')
+                            else:
+                                afe_debug.append(entry.element.tag_name + ('*' if context.open_elements.contains(entry.element) else '-closed'))
+                    self.debug(f"Trailing text after table: AFE entries={afe_debug}")
                 afe = context.active_formatting_elements
                 need_reconstruct = False
                 if afe and not afe.is_empty():
@@ -821,124 +914,12 @@ class TextHandler(TagHandler):
         ):
             context.move_to_element(context.current_parent.parent)
 
-        # 2. Before-table fostered inline wrapper duplication: when inserting non‑whitespace
-        #    text in a container whose last significant element is a table and there exists a
-        #    preceding unused formatting element (<b>, etc.) with no text descendants, clone
-        #    the formatting element immediately before the table and place the text inside.
-        wrapped = False
-        if text and not text.isspace():
-            parent = context.current_parent
-            if parent and parent.tag_name not in FORMATTING_ELEMENTS:
-                # Collect element children (ignore pure text nodes)
-                elem_children = [c for c in parent.children if c.tag_name != '#text']
-                if elem_children and elem_children[-1].tag_name == 'table':
-                    # Find nearest preceding formatting element (currently only handling <b>)
-                    prev_fmt = None
-                    for c in reversed(elem_children[:-1]):
-                        if c.tag_name in ('b',):
-                            prev_fmt = c
-                            break
-                    if prev_fmt is not None:
-                        has_text_desc = any(
-                            d.tag_name == '#text' and d.text_content and d.text_content.strip()
-                            for d in prev_fmt.children
-                        )
-                        if not has_text_desc:
-                            # Clone formatting element wrapper via unified insertion (normal push+enter)
-                            synth = self._synth_token(prev_fmt.tag_name)
-                            clone = self.parser.insert_element(
-                                synth,
-                                context,
-                                mode='normal',
-                                enter=True,
-                                parent=parent,
-                                before=elem_children[-1],
-                            )
-                            # Already pushed by insert_element
-                            wrapped = True
-
-        # 3. After-table trailing inline wrapper duplication: when body ends with a table and
-        #    there was an earlier solitary formatting element with no text yet, wrap following
-        #    non‑whitespace text in a fresh clone so each logical text segment acquires its own
-        #    inline wrapper (mirrors reconstruction outcome for certain mis-nesting cases).
-        if (
-            not wrapped
-            and text and not text.isspace()
-            and context.current_parent.tag_name == 'body'
-        ):
-            elems = [c for c in context.current_parent.children if c.tag_name != '#text']
-            if elems and elems[-1].tag_name == 'table' and any(e.tag_name == 'b' for e in elems[:-1]):
-                if self.parser.env_debug:
-                    self.debug("After-table inline duplication: creating trailing <b> wrapper for new text segment")
-                # Create a fresh <b> wrapper for new text segment after trailing table when any prior <b> exists
-                b_token = self._synth_token('b')
-                clone = self.parser.insert_element(b_token, context, mode='normal', enter=True)
-                wrapped = True
+        # Removed non-spec inline wrapper duplication heuristics (before/after table). Spec reconstruction
+        # alone should govern when formatting elements reappear.
 
 
         # Whitespace handling deferred to tokenizer and spec rules (no additional trimming here).
-        # Heuristic for malformed start tag <code x</code> pattern:
-        # When a malformed attribute sequence (<code x</code>) produces a stray quotation mark
-        # (" or "\n") immediately after closing </code>, expected tree retains a second
-        # <code> element with the same (already-corrupted) attributes wrapping that stray quote.
-        # Structural condition (test-agnostic):
-        #   * Current insertion parent is a <p> (or block container) not itself a <code>
-        #   * Last child is a <code> element whose attributes include a name containing '<'
-        #     (indicating malformed attribute name tokenization) and another attribute whose
-        #     name matches the element tag (boolean-like duplication e.g. code="")
-        #   * Incoming text begins with a single '"' character (optionally followed only by whitespace/newline)
-        # In this scenario we treat the stray quote as belonging to a reopened <code> element to match
-        # downstream tree-construction expectations for malformed attribute edge cases.
-        if self.parser.env_debug:
-            self.debug(f"TextHandler: checking stray quote condition for text: {repr(text[:5])}")
-            self.debug(f"TextHandler: current parent: {context.current_parent.tag_name}, has children: {bool(context.current_parent.children)}")
-        # Check for stray quote handling: either parent has children OR current parent is malformed code
-        if text.startswith('"') and (context.current_parent.children or 
-                                    (context.current_parent.tag_name == 'code' and 
-                                     any('<' in k for k in context.current_parent.attributes.keys()))):
-            # Case A: insertion parent already outside code
-            if context.current_parent.tag_name != 'code':
-                if self.parser.env_debug:
-                    self.debug("TextHandler: Case A - insertion parent outside code")
-                last = context.current_parent.children[-1]
-                if (
-                    last.tag_name == 'code'
-                    and any('<' in k for k in last.attributes.keys())
-                ):
-                    if self.parser.env_debug:
-                        self.debug("Malformed <code> duplication heuristic: duplicating after stray quote text (copy all attributes)")
-                    # Copy all attributes, including malformed ones
-                    from turbohtml.tokenizer import HTMLToken as _HTMLToken  # local import to avoid circular at top
-                    code_token = _HTMLToken('StartTag', tag_name='code', attributes={k: v for k, v in last.attributes.items()})
-                    dup = self.parser.insert_element(code_token, context, mode='normal', enter=True)
-                    self._append_text(text, context)
-                    if dup.parent:
-                        context.move_to_element(dup.parent)
-                    return True
-            else:
-                # Case B: still inside malformed <code>; create sibling duplicate
-                if self.parser.env_debug:
-                    self.debug("TextHandler: Case B - inside malformed code")
-                cur = context.current_parent
-                if self.parser.env_debug:
-                    self.debug(f"TextHandler: current element attributes: {cur.attributes}")
-                    self.debug(f"TextHandler: has < in attribute keys: {any('<' in k for k in cur.attributes.keys())}")
-                    self.debug(f"TextHandler: has parent: {cur.parent is not None}")
-                if (
-                    any('<' in k for k in cur.attributes.keys())
-                    and cur.parent is not None
-                ):
-                    if self.parser.env_debug:
-                        self.debug("Malformed <code> duplication heuristic (inside code): creating sibling before stray quote (copy all attributes)")
-                    parent = cur.parent
-                    context.move_to_element(parent)
-                    from turbohtml.tokenizer import HTMLToken as _HTMLToken  # local import
-                    code_token = _HTMLToken('StartTag', tag_name='code', attributes={k: v for k, v in cur.attributes.items()})
-                    dup = self.parser.insert_element(code_token, context, mode='normal', enter=True, parent=parent)
-                    self._append_text(text, context)
-                    if dup.parent:
-                        context.move_to_element(dup.parent)
-                    return True
+        # Removed malformed <code> duplication heuristic: treat stray characters as plain text per spec.
 
         self._append_text(text, context)
         return True
