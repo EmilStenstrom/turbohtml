@@ -761,58 +761,9 @@ class AdoptionAgencyAlgorithm:
                         f"        STEP 12.3: Node {node.tag_name} not in active formatting - removing from stack (stack_idx={context.open_elements.index_of(node)})"
                     )
                 context.open_elements.remove_element(node)
-                # For <a> adoption runs, intervening non-formatting elements (like <div>) between
-                # the formatting element and furthest block should become siblings of the formatting
-                # element's common ancestor (html5lib expected ordering). Move such a node out of the
-                # formatting element subtree now so it appears before the inserted furthest block.
-                if (
-                    formatting_element.tag_name == 'a'
-                    and node.parent is not None
-                    and node.parent is formatting_element
-                    and 'common_ancestor' in locals()
-                    and common_ancestor is not None
-                ):
-                    parent_before = node.parent
-                    parent_before.remove_child(node)
-                    if formatting_element.tag_name == 'a':
-                        # Always nest under deepest ladder div for every iteration
-                        body_node = self._get_body_or_root(context)
-                        top_div = None
-                        if body_node:
-                            for ch in body_node.children:
-                                if ch.tag_name == 'div':
-                                    top_div = ch
-                                    break
-                        if top_div and top_div is not node:
-                            cursor = top_div
-                            progress = True
-                            while progress:
-                                progress = False
-                                elem_children = [c for c in cursor.children if c.tag_name != '#text']
-                                if elem_children:
-                                    last_child = elem_children[-1]
-                                    if last_child.tag_name == 'a' and last_child.children:
-                                        elem_grand = [c for c in last_child.children if c.tag_name != '#text']
-                                        if elem_grand and elem_grand[-1].tag_name == 'div':
-                                            cursor = elem_grand[-1]
-                                            progress = True
-                            cursor.append_child(node)
-                            if self.debug_enabled:
-                                print(f"        STEP 12.3: Deep-nested intervening <{node.tag_name}> under ladder <div> for <a> iteration {iteration_count}")
-                        else:
-                            last_node.append_child(node)
-                            if self.debug_enabled:
-                                print(f"        STEP 12.3: Nested intervening <{node.tag_name}> under <{last_node.tag_name}> for <a> (fallback)")
-                    else:
-                        # Original flatten behavior for non-<a>
-                        if formatting_element in common_ancestor.children:
-                            idx = common_ancestor.children.index(formatting_element) + 1
-                            common_ancestor.children.insert(idx, node)
-                            node.parent = common_ancestor
-                        else:
-                            common_ancestor.append_child(node)
-                        if self.debug_enabled:
-                            print(f"        STEP 12.3: Reparented intervening <{node.tag_name}> under <{common_ancestor.tag_name}> for adoption (non-<a>)")
+                # Spec: simply remove non-formatting node from stack; DOM reparenting of such
+                # intervening nodes is not performed here (they remain in place). Custom <a>
+                # ladder relocation logic removed for spec purity.
                 # Reset node to last_node (the subtree we are restructuring) so the next
                 # iteration's Step 12.1 finds the element immediately above the removed
                 # node relative to the still-current furthest block chain. This prevents
@@ -1052,7 +1003,6 @@ class AdoptionAgencyAlgorithm:
             fb_index != -1
             and clone_index != -1
             and clone_index < fb_index
-            and formatting_element.tag_name != 'a'
         ):
             if self.debug_enabled:
                 print(
