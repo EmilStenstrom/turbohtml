@@ -2131,61 +2131,7 @@ class ParagraphTagHandler(TagHandler):
             if context.open_elements.contains(closing_p):
                 if context.open_elements.contains(closing_p):
                     context.open_elements.remove_element(closing_p)
-            # Heuristic: Remove any active formatting elements that were reconstructed entirely inside
-            # the paragraph and have no remaining descendants in current insertion point lineage. This
-            # prevents a trailing stray <b>/<i>/<font> from capturing following
-            # text after </p>. We scan active formatting list and drop entries whose element's nearest
-            # block ancestor was the just‑closed paragraph.
-            pruned = []
-            for entry in list(context.active_formatting_elements._stack):
-                el = entry.element
-                if not el:
-                    continue
-                par_anc = el.find_ancestor("p")
-                if par_anc is closing_p:
-                    # If element still in open elements stack, remove it there too – it's implicitly closed.
-                    if context.open_elements.contains(el):
-                        context.open_elements.remove_element(el)
-                    context.active_formatting_elements.remove_entry(entry)
-                    pruned.append(el.tag_name)
-            if pruned:
-                self.debug(f"Paragraph close heuristic removed formatting elements: {pruned}")
-            # Pop any formatting elements that were descendants of the closed paragraph
-            if context.active_formatting_elements._stack:
-                # Build set of descendant formatting nodes under closing paragraph
-                descendant_fmt = set()
-
-                def collect_fmt(node: Node):
-                    for ch in node.children:
-                        if ch.tag_name in FORMATTING_ELEMENTS:
-                            descendant_fmt.add(ch)
-                        collect_fmt(ch)
-
-                collect_fmt(closing_p)
-                if descendant_fmt:
-                    new_stack = []
-                    for elem in context.open_elements._stack:
-                        if elem in descendant_fmt:
-                            self.debug(
-                                f"Popping formatting element <{elem.tag_name}> at paragraph boundary for reconstruction later"
-                            )
-                            continue
-                        new_stack.append(elem)
-                    context.open_elements._stack = new_stack
-                    # ALSO remove these formatting elements from the active formatting list so they
-                    # are not reconstructed outside the paragraph (ensures inline wrappers stay scoped)
-                    # trailing text after </p> is not wrapped again).
-                    to_remove_entries = []
-                    for entry in list(context.active_formatting_elements._stack):
-                        if entry.element in descendant_fmt:
-                            to_remove_entries.append(entry)
-                    for entry in to_remove_entries:
-                        context.active_formatting_elements.remove_entry(entry)
-                    if to_remove_entries:
-                        self.debug(
-                            "Removed paragraph-descendant formatting elements from active list: "
-                            + ",".join(e.element.tag_name for e in to_remove_entries if e.element)
-                        )
+            
             # In integration points, reconstruct immediately so following text is wrapped
             if in_svg_ip or in_math_ip:
                 self.parser.reconstruct_active_formatting_elements(context)
