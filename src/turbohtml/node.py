@@ -191,14 +191,22 @@ class Node:
 
         # Add attributes on their own line if present (sorted alphabetically)
         if self.attributes:
-            for key, value in sorted(self.attributes.items()):
+            # Preserve original insertion order for foreign (svg/math) elements where tests rely on
+            # specific grouping; otherwise sort alphabetically for deterministic HTML output.
+            if self.tag_name.startswith('svg ') or self.tag_name.startswith('math '):
+                attr_items = self.attributes.items()
+            else:
+                attr_items = sorted(self.attributes.items())
+            for key, value in attr_items:
                 # Namespaced attribute presentation rules:
                 #  * Inside foreign (svg/math prefixed tag_name) elements, tests expect prefixes separated
                 #    by a space: xlink:href -> xlink href, xml:lang -> xml lang, xmlns:xlink -> xmlns xlink.
                 #  * On pure HTML elements, retain the original colon form (body xlink:href remains xlink:href).
                 if ':' in key and (self.tag_name.startswith('svg ') or self.tag_name.startswith('math ')):
                     prefix, local = key.split(':', 1)
-                    if prefix in ("xlink", "xml", "xmlns") and local:
+                    if prefix == 'xml' and local in ('lang','space'):
+                        display_key = f"{prefix} {local}"
+                    elif prefix in ('xlink','xmlns') and local:
                         display_key = f"{prefix} {local}"
                     else:
                         display_key = key

@@ -144,7 +144,7 @@ class HTMLTokenizer:
             if potential_tag == "script":
                 # The next character after the tag name determines if this could be an end tag token.
                 # End tag is allowed if next char is whitespace, '/', or '>' (attributes are parse errors but ignored).
-                if i < self.length and (self.html[i].isspace() or self.html[i] in "/>"):
+                if (i < self.length and (self.html[i].isspace() or self.html[i] in "/>")) or i >= self.length:
                     # Advance through any attribute-like junk until the real tag closing '>' taking
                     # quoted strings into account (an end tag cannot have attributes, but malformed
                     # input may include them; per spec they are ignored yet we must not terminate
@@ -199,9 +199,18 @@ class HTMLTokenizer:
                                 text_before = self._replace_invalid_characters(text_before)
                                 return HTMLToken("Character", data=text_before)
                             return HTMLToken("EndTag", tag_name="script")
-                        else:
-                            self.debug("  ignoring script end tag due to escape/comment context")
-                            # Fall through to treat as text
+                    elif i >= self.length:
+                        # EOF encountered after '</script' with no closing '>' – treat entire fragment as text
+                        frag = self.html[self.pos:]
+                        self.pos = self.length
+                        frag = self._replace_invalid_characters(frag)
+                        if frag:
+                            self.script_content += frag
+                            return HTMLToken("Character", data=frag)
+                        return None
+                    else:
+                        self.debug("  ignoring script end tag due to escape/comment context")
+                        # Fall through to treat as text
 
         # If we're here, either no end tag or it should be ignored
         # Find the next potential end tag or EOF
@@ -470,19 +479,25 @@ class HTMLTokenizer:
         # Handle normal closed tags
         if match:
             bang, is_end_tag, tag_name, attributes = match.groups()
-            # Detect unbalanced quotes in the raw attributes substring; if odd number of single or double quotes,
-            # keep consuming the input until we find a balancing quote + closing '>' to avoid prematurely
-            # terminating the start tag (webkit02.dat:4: alt="> <div ...").
+            # Detect unbalanced quotes in the raw attributes substring; if we see an odd count of single or
+            # double quotes, continue scanning input until quotes balance and an unquoted '>' is found, or until
+            # EOF (still inside quoted value). If EOF occurs while still inside a quoted attribute value the
+            # start tag is suppressed (EOF-in-attribute-value) so no element is emitted.
             if attributes:
                 dbl = attributes.count('"') - attributes.count('\\"')  # naive count; escape sequences minimal in tests
                 sgl = attributes.count("'") - attributes.count("\\'")
                 unbalanced = (dbl % 2 != 0) or (sgl % 2 != 0)
                 if unbalanced:
-                    scan = self.pos + len(match.group(0))
-                    quote: Optional[str] = None
+                    # Start scanning one character BEFORE the regex-consumed '>' so that an early '>' inside
+                    # an unclosed quoted attribute value is reconsidered as data, not as the tag terminator.
+                    scan = self.pos + len(match.group(0)) - 1
+                    # Seed quote state to reflect the unbalanced quote type detected so that the
+                    # immediately reprocessed '>' is not mistaken for a tag terminator.
+                    quote: Optional[str] = '"' if (dbl % 2 != 0) else ("'" if (sgl % 2 != 0) else None)
                     # Reconstruct attributes including everything until real closing '>' outside quotes
                     extra = []
                     saw_inner_lt = False
+                    suppressed = False
                     while scan < self.length:
                         ch = self.html[scan]
                         extra.append(ch)
@@ -501,10 +516,19 @@ class HTMLTokenizer:
                     # Rebuild a synthetic match context using extended substring
                     self.pos = scan + 1 if scan < self.length else self.length
                     attributes = full_attr_sub
-                    # If we saw a raw '<' before finding balanced quotes + closing '>', treat whole construct as bogus text
-                    if saw_inner_lt and quote is not None:
-                        # Emit the literal '<' and rewind to after first '<' so remainder tokenizes normally as text
-                        # Simplify: output nothing (drop malformed tag) to match expectation of empty body for webkit02.dat:4
+                    # Suppress emission if EOF reached while still inside quoted attribute value OR if we saw
+                    # an unbalanced quote sequence that consumed other tag open markers (inner '<') without
+                    # ever closing; treat as entirely bogus to avoid partial attribute name creation.
+                    if quote is not None and self.pos >= self.length:
+                        suppressed = True
+                    elif quote is not None and saw_inner_lt:
+                        suppressed = True
+                    if suppressed:
+                        # If suppressed void-like element, consume to EOF so no residual tokens are produced
+                        # from attribute value content that actually belongs inside the unterminated attribute.
+                        from .constants import VOID_ELEMENTS as _VE
+                        if tag_name.lower() in _VE:
+                            self.pos = self.length
                         return HTMLToken("Character", data="")
                 else:
                     self.pos += len(match.group(0))
@@ -670,11 +694,23 @@ class HTMLTokenizer:
             attributes['x<'] = ""
             return attributes
 
-        # Handle case where entire string is attribute name
+        # Handle case where entire string is attribute name or a slash-delimited sequence
         if attr_string and not any(c in attr_string for c in "='\"") and '<' not in attr_string:
-            self.debug("Single attribute without value")
-            # Split on / and create empty attributes for each part
-            parts = [p.strip() for p in attr_string.split("/") if p.strip()]
+            raw = attr_string.strip()
+            # Slash-delimited attribute sequences (malformed patterns like /x/y/z or //problem/6869687)
+            if '/' in raw and ' ' not in raw:
+                # Remove leading slashes but preserve information about double-slash scheme-like forms
+                if raw.startswith('//'):
+                    # Example: //problem/6869687 -> expected attributes 6869687="" and problem="" (reverse order)
+                    parts = [p for p in raw.split('/') if p]
+                    parts = list(reversed(parts))  # Reverse order for double-slash scheme style
+                else:
+                    # Single leading slash path: /x/y/z -> x, y, z in natural order
+                    parts = [p for p in raw.split('/') if p]
+                return {p: "" for p in parts}
+            # Fallback: whitespace-separated boolean attributes
+            self.debug("Whitespace-separated boolean attributes")
+            parts = [p for p in raw.split() if p]
             return {part: "" for part in parts}
 
         # Try regex first

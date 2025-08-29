@@ -504,6 +504,70 @@ class TurboHTML:
                     collapse_formatting(ch)
         collapse_formatting(self.root)
 
+        # Foreign (SVG/MathML) attribute ordering & normalization adjustments:
+        #   * SVG: expected serialization orders some xml:* and definitionurl attributes: definitionurl first, then
+        #           xml lang, xml space, any other xml:* (excluding xml:base), and xml:base last; unknown xml:* kept.
+        #           xml:lang / xml:space displayed without colon after xml ("xml lang"). xml:base retains colon.
+        #   * MathML: ensure definitionURL casing and represent xlink:* attributes as "xlink <local>" (space separator)
+        #             ordered by local name after definitionURL and other non-xlink attributes.
+        def _adjust_foreign_attrs(node: Node):
+            parts = node.tag_name.split()
+            local = parts[-1] if parts else node.tag_name
+            is_svg = node.tag_name.startswith('svg ') or local == 'svg'
+            is_math = node.tag_name.startswith('math ') or local == 'math'
+            if is_svg and node.attributes:
+                attrs = dict(node.attributes)  # copy
+                defn_val = attrs.pop('definitionurl', None)
+                xml_lang = attrs.pop('xml:lang', None)
+                xml_space = attrs.pop('xml:space', None)
+                xml_base = attrs.pop('xml:base', None)
+                # Other xml:* attributes retain colon form and order (exclude converted ones and xml:base handled separately)
+                other_xml = []
+                for k in list(attrs.keys()):
+                    if k.startswith('xml:') and k not in ('xml:lang','xml:space','xml:base'):
+                        other_xml.append((k, attrs.pop(k)))
+                new_attrs = {}
+                if defn_val is not None:
+                    new_attrs['definitionurl'] = defn_val
+                # For child SVG elements ensure non-xml (e.g. xlink:*) precede xml lang/space
+                for k,v in node.attributes.items():
+                    if not (k in ('definitionurl','xml:lang','xml:space','xml:base') or k.startswith('xml:')):
+                        new_attrs[k] = v
+                if xml_lang is not None:
+                    new_attrs['xml lang'] = xml_lang
+                if xml_space is not None:
+                    new_attrs['xml space'] = xml_space
+                for k,v in other_xml:
+                    new_attrs[k] = v
+                if xml_base is not None:
+                    new_attrs['xml:base'] = xml_base
+                node.attributes = new_attrs
+            elif is_math and node.attributes:
+                attrs = dict(node.attributes)
+                # Promote/normalize definitionurl -> definitionURL
+                if 'definitionurl' in attrs and 'definitionURL' not in attrs:
+                    attrs['definitionURL'] = attrs.pop('definitionurl')
+                # Collect xlink:* attributes
+                xlink_attrs = [(k, v) for k,v in attrs.items() if k.startswith('xlink:')]
+                if xlink_attrs:
+                    for k,_ in xlink_attrs:
+                        del attrs[k]
+                    # Sort xlink locals alphabetically
+                    xlink_attrs.sort(key=lambda kv: kv[0].split(':',1)[1])
+                    rebuilt = {}
+                    if 'definitionURL' in attrs:
+                        rebuilt['definitionURL'] = attrs.pop('definitionURL')
+                    # Place xlink attributes before remaining math attributes
+                    for k,v in xlink_attrs:
+                        rebuilt[f"xlink {k.split(':',1)[1]}"] = v
+                    for k,v in attrs.items():
+                        rebuilt[k] = v
+                    node.attributes = rebuilt
+            for ch in node.children:
+                if ch.tag_name != '#text':
+                    _adjust_foreign_attrs(ch)
+        _adjust_foreign_attrs(self.root)
+
 
     def _create_initial_context(self):
         """Create a minimal ParseContext for structural post-processing heuristics.
@@ -576,6 +640,18 @@ class TurboHTML:
 
             # Skip DOCTYPE in fragments
             if token.type == "DOCTYPE":
+                continue
+
+            # Same malformed start tag suppression inside select subtree as full document parsing
+            if (
+                token.type == 'StartTag'
+                and '<' in token.tag_name
+                and context.current_parent
+                and (
+                    context.current_parent.tag_name in ('select','option','optgroup')
+                    or context.current_parent.find_ancestor(lambda n: n.tag_name in ('select','option','optgroup'))
+                )
+            ):
                 continue
 
             # In a colgroup fragment, ignore non-whitespace character tokens before first <col>
@@ -904,6 +980,21 @@ class TurboHTML:
                         if handler.handle_doctype(token.data, context):
                             break
                 context.index = self.tokenizer.pos
+                continue
+
+            # Contextual malformed tag suppression: if a start tag token has a raw '<' in its tag name
+            # (tokenizer tolerated malformed name) and the current insertion point is within a select/option/
+            # optgroup subtree, drop it. Outside select-related subtrees we preserve literal malformed names
+            # to match expected tree output for generic malformed constructs.
+            if (
+                token.type == 'StartTag'
+                and '<' in token.tag_name
+                and context.current_parent
+                and (
+                    context.current_parent.tag_name in ('select','option','optgroup')
+                    or context.current_parent.find_ancestor(lambda n: n.tag_name in ('select','option','optgroup'))
+                )
+            ):
                 continue
 
             if token.type == "Comment":

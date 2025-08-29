@@ -660,6 +660,16 @@ class TextHandler(TagHandler):
 
         # RAWTEXT
         if context.content_state == ContentState.RAWTEXT:
+            # Suppress stray unterminated end tag fragments at EOF inside RAWTEXT (e.g. </SCRIPT )
+            # Structural condition: token text begins with </current_rawtext_element (case-insensitive),
+            # contains no '>' (unterminated), and rest is optional whitespace. html5lib expects the
+            # rawtext element to end (implicit EOF or later recovery) without a literal text node.
+            cur = context.current_parent
+            if cur and cur.tag_name in ("script","style"):
+                lower = text.lower()
+                marker = f"</{cur.tag_name}"
+                if lower.startswith(marker) and ">" not in text and lower[len(marker):].strip() == "":
+                    return True  # Drop fragment
             self._append_text(text, context)
             return True
 
@@ -3916,6 +3926,8 @@ class RawtextTagHandler(SelectAwareHandler):
         self.debug(f"handling text in content_state {context.content_state}")
         if not self.should_handle_text(text, context):
             return False
+
+        # Unterminated rawtext end tag fragments now handled in tokenizer (contextual honoring); no suppression here.
 
         # Try to merge with previous text node if it exists
         # Use centralized insertion (merge with previous if allowed)
