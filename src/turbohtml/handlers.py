@@ -1877,6 +1877,7 @@ class ParagraphTagHandler(TagHandler):
         self.debug(f"handling {token}, context={context}")
         self.debug(f"Current parent: {context.current_parent}")
 
+        # (Reverted broader paragraph scope closure: previous attempt reduced overall pass count.)
         
 
         if token.tag_name == "p":
@@ -1906,14 +1907,25 @@ class ParagraphTagHandler(TagHandler):
                 # Spec-consistent behaviour: a start tag <p> while a <p> is open must close the previous paragraph
                 # even inside integration points (tests expect sibling <p> elements, not nesting).
                 if context.current_parent.tag_name == 'p':
+                    # Spec: For a new <p> when one is already open, we must process an
+                    # implied </p>. This means popping elements until we remove the
+                    # earlier <p>, also popping any formatting elements above it so they
+                    # do not leak into the new paragraph.
                     closing_p = context.current_parent
+                    # Pop open elements until the paragraph is removed
+                    while not context.open_elements.is_empty():
+                        popped = context.open_elements.pop()
+                        if popped == closing_p:
+                            break
+                    # Move insertion point to parent of the closed paragraph
                     if closing_p.parent:
-                        context.move_up_one_level()
+                        context.move_to_element(closing_p.parent)
                     else:
                         body = self.parser._ensure_body_node(context)
                         context.move_to_element(body)
-                    if context.open_elements.contains(closing_p):
-                        context.open_elements.remove_element(closing_p)
+                    # Remove paragraph element from DOM (it should remain; we do not remove it)
+                    # Ensure active formatting elements referencing popped nodes above p are unaffected
+                    # (they were removed from stack only; active formatting entries may persist per spec)
                 new_node = self.parser.insert_element(token, context, mode='normal', enter=True)
                 # insert_element already pushed onto open elements; nothing extra needed
                 return True
@@ -1931,10 +1943,15 @@ class ParagraphTagHandler(TagHandler):
                 context.active_formatting_elements._stack.clear()
         if token.tag_name != "p" and context.current_parent.tag_name == "p":
             self.debug(f"Auto-closing p due to {token.tag_name}")
-            if context.current_parent.parent:
-                context.move_up_one_level()
+            # Pop stack up to and including the open paragraph (spec end tag 'p' logic)
+            closing_p = context.current_parent
+            while not context.open_elements.is_empty():
+                popped = context.open_elements.pop()
+                if popped == closing_p:
+                    break
+            if closing_p.parent:
+                context.move_to_element(closing_p.parent)
             else:
-                # Fallback to body if p has no parent
                 body = self.parser._ensure_body_node(context)
                 context.move_to_element(body)
             return False  # Let the original handler handle the new tag
