@@ -742,37 +742,24 @@ class TextHandler(TagHandler):
                     # If none were stale but we still have formatting entries, attempt reconstruction anyway (diagnostic) so trailing text lands inside wrapper.
                     if not need_reconstruct_after_table:
                         need_reconstruct_after_table = True
-                # Before generic reconstruction, check for case where preceding formatting sibling(s)
-                # already consume prior text and spec reconstruction would be a no-op (active entry still open).
-                # If the immediate sequence before the table contains at least one formatting element with text,
-                # create a fresh wrapper of the same tag for trailing text to match expected sibling wrapper pattern.
-                created_wrapper = False
+                # Attempt spec-like reconstruction without heuristic wrapper creation: if the last child
+                # is a table and there exists a preceding formatting element sibling that already has text,
+                # but its element is still on the open elements stack (blocking reconstruction), temporarily
+                # remove it from the open stack (keep active formatting entry) so standard reconstruction
+                # will clone a fresh wrapper for trailing text. This avoids bespoke wrapper synthesis.
                 if elems and elems[-1].tag_name == 'table' and text:
-                    # Find last formatting element sibling with any text descendant
-                    last_fmt_with_text = None
+                    fmt_with_text = None
                     for sibling in reversed(elems[:-1]):
                         if sibling.tag_name in FORMATTING_ELEMENTS:
-                            has_txt = any(ch.tag_name == '#text' and (ch.text_content or '').strip() for ch in sibling.children)
-                            if has_txt:
-                                last_fmt_with_text = sibling
+                            if any(ch.tag_name == '#text' and (ch.text_content or '').strip() for ch in sibling.children):
+                                fmt_with_text = sibling
                                 break
-                    if last_fmt_with_text is not None:
-                        from .tokenizer import HTMLToken  # local import
-                        wrapper_token = HTMLToken('StartTag', tag_name=last_fmt_with_text.tag_name, attributes=last_fmt_with_text.attributes.copy())
-                        new_wrapper = self.parser.insert_element(
-                            wrapper_token,
-                            context,
-                            parent=context.current_parent,
-                            mode='normal',
-                            enter=True,
-                        )
-                        context.active_formatting_elements.push(new_wrapper, wrapper_token)
-                        self._append_text(text, context)
-                        body_node = self.parser._ensure_body_node(context) or context.current_parent
-                        context.move_to_element(body_node)
-                        created_wrapper = True
-                        return True
-                if need_reconstruct_after_table and not created_wrapper:
+                    if fmt_with_text is not None and context.open_elements.contains(fmt_with_text):
+                        self.debug(f"Post-table trailing text: temporarily removing open formatting element <{fmt_with_text.tag_name}> to force reconstruction")
+                        context.open_elements.remove_element(fmt_with_text)
+                        # Do not remove from active formatting elements; let reconstruction detect it as stale
+                        need_reconstruct_after_table = True
+                if need_reconstruct_after_table:
                     self.debug("Reconstructing after table for trailing body text")
                     self.parser.reconstruct_active_formatting_elements(context)
                     self._append_text(text, context)
@@ -3252,6 +3239,9 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     ):
                         wrapper_token = HTMLToken("StartTag", tag_name=prev.tag_name, attributes=prev.attributes.copy())
                         new_wrapper = self.parser.insert_element(wrapper_token, context, mode='normal', enter=False, parent=foster_parent, before=foster_parent.children[table_index], push_override=False)
+                        # Add to active formatting list (spec reconstruction would have done this). We intentionally
+                        # do NOT push onto open elements stack so later reconstruction after </table> sees it as stale.
+                        context.active_formatting_elements.push(new_wrapper, wrapper_token)
                         self.parser.insert_text(text, context, parent=new_wrapper, merge=True)
                         self.debug(
                             f"Created new formatting wrapper <{prev.tag_name}> for foster-parented text run"

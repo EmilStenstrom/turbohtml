@@ -128,6 +128,24 @@ class ActiveFormattingElements:
     def __len__(self) -> int:
         return len(self._stack)
 
+    # --- spec utility: clear the list of active formatting elements up to the last marker ---
+    def clear_up_to_last_marker(self) -> None:
+        """Remove entries from the active formatting elements up to and including the last marker.
+
+        Spec: invoked when leaving certain element boundaries (e.g. at </table>). All entries *after*
+        the last marker are discarded and the marker itself is removed; entries before the marker remain.
+        If there is no marker, this is a no-op (defensive – malformed sequences may omit marker pushes).
+        """
+        # Walk backwards to find the last marker
+        for i in range(len(self._stack) - 1, -1, -1):
+            entry = self._stack[i]
+            if self.is_marker(entry):
+                # Remove everything from i (marker) to end
+                del self._stack[i:]
+                return
+        # No marker found: leave list intact (spec does not define clearing in this case)
+        return
+
     def insert_at_index(self, index: int, element: Node, token: HTMLToken) -> None:
         # Clamp index to valid range
         if index < 0:
