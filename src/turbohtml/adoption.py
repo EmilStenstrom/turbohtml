@@ -1010,50 +1010,6 @@ class AdoptionAgencyAlgorithm:
             print("    STEP 13 CONTEXT: common_ancestor_children_before=", [c.tag_name for c in common_ancestor.children] if common_ancestor else None)
             if formatting_element.tag_name == 'i' and furthest_block.tag_name == 'p':
                 print("    STEP 13 DETAIL (i+p case): furthest_block initial children=", [c.tag_name for c in furthest_block.children])
-        ladder_mode = (
-            formatting_element.tag_name == 'a'
-            and iteration_count > 1
-            and common_ancestor.tag_name in ('body','html','div')
-        )
-        if ladder_mode:
-            # Find the first container div under body/html to host the ladder
-            body_or_root = self._get_body_or_root(context)
-            container_div = None
-            if body_or_root:
-                for ch in body_or_root.children:
-                    if ch.tag_name == 'div':
-                        container_div = ch
-                        break
-            if container_div is not None:
-                # Find existing second <b> (the ladder host)
-                b_children = [c for c in container_div.children if c.tag_name == 'b']
-                if len(b_children) >= 2:
-                    ladder_b = b_children[1]
-                    # Ensure ladder_b has a div chain root
-                    chain_root = next((c for c in ladder_b.children if c.tag_name == 'div'), None)
-                    if chain_root is None:
-                        chain_root = Node('div')
-                        ladder_b.append_child(chain_root)
-                    # Descend to deepest div chain (single div child path)
-                    target = chain_root
-                    guard = 0
-                    while guard < 200:
-                        guard += 1
-                        elem_children = [c for c in target.children if c.tag_name != '#text']
-                        if len(elem_children) == 1 and elem_children[0].tag_name == 'div':
-                            target = elem_children[0]
-                            continue
-                        break
-                    # Move last_node (a cloned formatting ancestor) into target div chain unless that creates cycle
-                    if last_node is not target and not target._would_create_circular_reference(last_node):
-                        if last_node.parent:
-                            last_node.parent.remove_child(last_node)
-                        target.append_child(last_node)
-                        if self.debug_enabled:
-                            print("    Step 13 (</a> ladder): nested last_node inside existing ladder chain")
-                        # Override common_ancestor usage below by marking handled
-                        common_ancestor = ladder_b  # for debugging context print only
-                        ladder_mode = False  # prevent default insertion path
         if common_ancestor is last_node:
             if self.debug_enabled:
                 print("    Step 13: last_node is common_ancestor (no insertion)")
@@ -1083,9 +1039,6 @@ class AdoptionAgencyAlgorithm:
                         print("    Step 13: foster parenting last_node")
                     self._foster_parent_node(last_node, context, common_ancestor)
                 else:
-                    if formatting_element.tag_name == 'a' and iteration_count > 1 and ladder_mode:
-                        # Already nested in ladder above, skip append
-                        pass
                     if common_ancestor.tag_name == 'template':
                         content_child = None
                         for ch in common_ancestor.children:
@@ -1146,86 +1099,24 @@ class AdoptionAgencyAlgorithm:
                 if self.debug_enabled:
                     print(f"    Foster-parented clone before <{furthest_block.tag_name}>")
         else:
-            # Special ladder placement for </a> iterations beyond first: integrate clone inside existing ladder chain
-            if formatting_element.tag_name == 'a' and iteration_count > 1:
-                body_or_root = self._get_body_or_root(context)
-                container_div = None
-                if body_or_root:
-                    for ch in body_or_root.children:
-                        if ch.tag_name == 'div':
-                            container_div = ch; break
-                ladder_b = None
-                if container_div:
-                    b_children = [c for c in container_div.children if c.tag_name == 'b']
-                    if len(b_children) >= 2:
-                        ladder_b = b_children[1]
-                placed = False
-                if ladder_b:
-                    # Find deepest div chain under ladder_b
-                    chain_root = next((c for c in ladder_b.children if c.tag_name == 'div'), None)
-                    if chain_root is None:
-                        chain_root = Node('div'); ladder_b.append_child(chain_root)
-                    target = chain_root
-                    guard = 0
-                    while guard < 100:
-                        guard += 1
-                        elem_children = [c for c in target.children if c.tag_name != '#text']
-                        if len(elem_children) == 1 and elem_children[0].tag_name == 'div':
-                            target = elem_children[0]
-                            continue
-                        break
-                    # Move furthest_block children into clone as normal
+            if self.debug_enabled:
+                print(f"--- STEP 15: Move children of furthest_block into clone ---")
+            for child in furthest_block.children[:]:
+                furthest_block.remove_child(child)
+                formatting_clone.append_child(child)
+            # Append clone under furthest_block (cycle guard just in case)
+            if furthest_block._would_create_circular_reference(formatting_clone):
+                parent = furthest_block.parent or self._get_body_or_root(context)
+                if parent:
+                    idx = parent.children.index(furthest_block) if furthest_block in parent.children else len(parent.children)
+                    parent.children.insert(idx, formatting_clone)
+                    formatting_clone.parent = parent
                     if self.debug_enabled:
-                        print(f"--- STEP 15 (</a> ladder): consolidate children into clone for nested placement ---")
-                    for child in furthest_block.children[:]:
-                        furthest_block.remove_child(child)
-                        formatting_clone.append_child(child)
-                    # Cycle guard: ensure target is not descendant of formatting_clone (shouldn't be yet)
-                    anc = target
-                    cyclic = False
-                    while anc is not None:
-                        if anc is formatting_clone:
-                            cyclic = True
-                            break
-                        anc = anc.parent
-                    if not cyclic:
-                        target.append_child(formatting_clone)
-                    else:
-                        # Fallback to appending under furthest_block
-                        furthest_block.append_child(formatting_clone)
-                        if self.debug_enabled:
-                            print('    CycleGuard: fell back to furthest_block append for formatting clone')
-                    placed = True
-                    if self.debug_enabled:
-                        print("--- STEP 16 (</a> ladder): appended formatting clone inside existing ladder chain")
-                if not placed:
-                    if self.debug_enabled:
-                        print(f"--- STEP 15: Move children of furthest_block into clone ---")
-                    for child in furthest_block.children[:]:
-                        furthest_block.remove_child(child)
-                        formatting_clone.append_child(child)
-                    furthest_block.append_child(formatting_clone)
-                    if self.debug_enabled:
-                        print(f"--- STEP 16: Appended clone under furthest_block <{furthest_block.tag_name}>")
+                        print(f"    Cycle guard: inserted clone before furthest_block")
             else:
+                furthest_block.append_child(formatting_clone)
                 if self.debug_enabled:
-                    print(f"--- STEP 15: Move children of furthest_block into clone ---")
-                for child in furthest_block.children[:]:
-                    furthest_block.remove_child(child)
-                    formatting_clone.append_child(child)
-                # Append clone under furthest_block (cycle guard just in case)
-                if furthest_block._would_create_circular_reference(formatting_clone):
-                    parent = furthest_block.parent or self._get_body_or_root(context)
-                    if parent:
-                        idx = parent.children.index(furthest_block) if furthest_block in parent.children else len(parent.children)
-                        parent.children.insert(idx, formatting_clone)
-                        formatting_clone.parent = parent
-                        if self.debug_enabled:
-                            print(f"    Cycle guard: inserted clone before furthest_block")
-                else:
-                    furthest_block.append_child(formatting_clone)
-                    if self.debug_enabled:
-                        print(f"--- STEP 16: Appended clone under furthest_block <{furthest_block.tag_name}>")
+                    print(f"--- STEP 16: Appended clone under furthest_block <{furthest_block.tag_name}>")
 
         # Safety check: Ensure no circular references were created
         self._validate_no_circular_references(formatting_clone, furthest_block)
