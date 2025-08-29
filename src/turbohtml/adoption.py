@@ -247,7 +247,6 @@ class AdoptionAgencyAlgorithm:
         self.parser = parser
         # Direct attribute access (env_debug always defined in parser)
         self.debug_enabled = parser.env_debug
-        self._ran_a = False
 
 
     def should_run_adoption(self, tag_name: str, context) -> bool:
@@ -302,8 +301,6 @@ class AdoptionAgencyAlgorithm:
 
     def run_algorithm(self, tag_name: str, context, iteration_count: int = 0) -> bool:
         # Run adoption algorithm (WHATWG HTML spec)
-        if tag_name == 'a':
-            self._ran_a = True
         if self.debug_enabled:
             print(f"\n=== ADOPTION AGENCY ALGORITHM START ===")
             print(f"    Target tag: {tag_name}")
