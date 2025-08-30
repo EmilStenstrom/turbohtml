@@ -1878,14 +1878,13 @@ class TurboHTML:
         #      preceding any later <noframes>); when a <noframes> appears we will relocate these comments after it.
         #   3. After first post-</html> <noframes>: subsequent comments remain root siblings after existing nodes.
         if context.document_state == DocumentState.AFTER_FRAMESET:
-            if not context.frameset_html_end_before_noframes:  # type: ignore[attr-defined]
-                # Still logically inside html subtree
+            # Before explicit </html>: comments still inside html; after: root-level.
+            if not context.html_end_explicit:  # type: ignore[attr-defined]
                 if self.html_node and self.html_node in self.root.children:
                     self.html_node.append_child(comment_node)
                 else:
                     self.root.append_child(comment_node)
             else:
-                # Phase 2 or 3: append as root sibling; potential reordering handled at <noframes> insertion.
                 self.root.append_child(comment_node)
             return
 

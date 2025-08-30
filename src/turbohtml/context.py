@@ -60,6 +60,8 @@ class ParseContext:
         # Historical bit (single minimal flag): in a frameset document, did an explicit </html>
         # occur before the first <noframes>? Used only for trailing comment placement.
         self.frameset_html_end_before_noframes = False
+        # Explicit </html> end tag encountered (distinguishes pre/post html end in frameset AFTER_FRAMESET mode)
+        self.html_end_explicit = False
 
 
     # --- Properties / helpers ---

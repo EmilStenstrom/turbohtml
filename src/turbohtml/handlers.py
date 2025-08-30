@@ -6238,6 +6238,7 @@ class HtmlTagHandler(TagHandler):
             html = self.parser.html_node  # type: ignore[attr-defined]
             if not any(ch.tag_name == 'noframes' for ch in html.children):
                 context.frameset_html_end_before_noframes = True  # type: ignore[attr-defined]
+            context.html_end_explicit = True  # type: ignore[attr-defined]
             if context.document_state != DocumentState.AFTER_FRAMESET:
                 self.parser.transition_to_state(context, DocumentState.AFTER_FRAMESET, html)
             return True
@@ -6245,6 +6246,7 @@ class HtmlTagHandler(TagHandler):
         if body:
             context.move_to_element(body)
         self.parser.transition_to_state(context, DocumentState.AFTER_HTML, body or context.current_parent)
+        context.html_end_explicit = True  # type: ignore[attr-defined]
         # Explicit </html> presence inferred from token history (no persistent flag set).
 
         return True
@@ -6428,33 +6430,8 @@ class FramesetTagHandler(TagHandler):
                 push_override=True,
             )
             context.content_state = ContentState.RAWTEXT
-            # Structural reordering: move any root-level comment siblings that appear after the <html>
-            # element (i.e., appended post-</html>) so they follow this newly inserted <noframes>.
-            if context.frameset_html_end_before_noframes:  # type: ignore[attr-defined]
-                root = self.parser.root
-                html = self.parser.html_node
-                # Identify newly inserted noframes node (top of stack or last inserted under chosen parent)
-                inserted = None
-                if parent.children:
-                    inserted = parent.children[-1]
-                if inserted and inserted.tag_name == 'noframes':
-                    # Collect root-level comments after html (if both are root siblings)
-                    if html in root.children and inserted in root.children:
-                        html_index = root.children.index(html)
-                        nf_index = root.children.index(inserted)
-                        # Only relocate comments strictly between html and noframes (source-order post-html)
-                        between = [ch for ch in root.children[html_index+1:nf_index] if ch.tag_name == '#comment']
-                        # Move them to immediately after inserted noframes preserving relative order
-                        if between:
-                            # Remove first to avoid index shifts
-                            for n in between:
-                                root.remove_child(n)
-                            # New insertion index after inserted (which may have moved if parent != root)
-                            # Recompute nf_index after removals
-                            nf_index = root.children.index(inserted)
-                            for offset, n in enumerate(between):
-                                root.children.insert(nf_index + 1 + offset, n)
-                                n.parent = root
+            # Late post-html <noframes>: kept inside <html>; existing root-level comments after </html> remain
+            # after the html subtree which now includes this element, matching expected ordering.
             return True
 
         return False
