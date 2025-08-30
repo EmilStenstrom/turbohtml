@@ -1268,18 +1268,144 @@ class TurboHTML:
                 context.frameset_ok = False
 
         # Fragment table context: implicit tbody for leading <tr> when no table element open.
-        if (
-            self.fragment_context == 'table'
-            and tag_name == 'tr'
-            and context.current_parent.tag_name == 'document-fragment'
-            and not self.find_current_table(context)
-        ):
-            tbody = Node('tbody')
-            context.current_parent.append_child(tbody)
-            context.open_elements.push(tbody)
-            context.transition_to_state(DocumentState.IN_TABLE_BODY, context.current_parent)
+        # Additionally, in a table fragment context, table structure elements must be inserted as
+        # siblings at the fragment root even if inline/formatting elements (e.g. <a>) are currently
+        # open. This mirrors the table insertion mode where such elements are not foster-parented
+        # inside phrasing content. We relocate the insertion point to the fragment root before
+        # handling them so they become siblings instead of children of an open <a>.
+        if self.fragment_context == 'table' and tag_name in ('caption','colgroup','col','tbody','tfoot','thead','tr','td','th'):
+            # Always insert these as direct children of the fragment root per table fragment parsing rules.
+            top = context.current_parent
+            while top.parent:
+                top = top.parent
+            context.move_to_element(top)
+            # Mini table insertion subset for fragment context 'table'
+            root = context.current_parent
+            # Helper to find last child of types
+            def _find_last(name):
+                for ch in reversed(root.children):
+                    if ch.tag_name == name:
+                        return ch
+                return None
+            from turbohtml.context import DocumentState as _DS  # local to avoid cycle
+            if tag_name == 'caption':
+                caption = Node('caption', token.attributes)
+                root.append_child(caption)
+                context.open_elements.push(caption)
+                context.move_to_element(caption)
+                context.transition_to_state(_DS.IN_CAPTION, caption)
+                return
+            if tag_name == 'colgroup':
+                cg = Node('colgroup', token.attributes)
+                root.append_child(cg)
+                context.open_elements.push(cg)
+                # Remain IN_TABLE
+                return
+            if tag_name == 'col':
+                # Append to last colgroup if present else create one per spec-like recovery
+                cg = _find_last('colgroup')
+                if not cg:
+                    cg = Node('colgroup')
+                    root.append_child(cg)
+                col = Node('col', token.attributes)
+                cg.append_child(col)
+                return
+            if tag_name in ('tbody','thead','tfoot'):
+                section = Node(tag_name, token.attributes)
+                root.append_child(section)
+                context.open_elements.push(section)
+                context.transition_to_state(_DS.IN_TABLE_BODY, section)
+                return
+            if tag_name == 'tr':
+                # Ensure a tbody (or adopt last existing tbody/thead/tfoot)
+                container = None
+                for ch in reversed(root.children):
+                    if ch.tag_name in ('tbody','thead','tfoot'):
+                        container = ch; break
+                if not container:
+                    container = Node('tbody')
+                    root.append_child(container)
+                tr = Node('tr', token.attributes)
+                container.append_child(tr)
+                context.open_elements.push(tr)
+                context.move_to_element(tr)
+                context.transition_to_state(_DS.IN_ROW, tr)
+                return
+            if tag_name in ('td','th'):
+                # Ensure tbody and tr
+                container = None
+                for ch in reversed(root.children):
+                    if ch.tag_name in ('tbody','thead','tfoot'):
+                        container = ch; break
+                if not container:
+                    container = Node('tbody')
+                    root.append_child(container)
+                # Find last tr inside container
+                last_tr = None
+                for ch in reversed(container.children):
+                    if ch.tag_name == 'tr':
+                        last_tr = ch; break
+                if not last_tr:
+                    last_tr = Node('tr')
+                    container.append_child(last_tr)
+                cell = Node(tag_name, token.attributes)
+                last_tr.append_child(cell)
+                context.open_elements.push(cell)
+                context.move_to_element(cell)
+                context.transition_to_state(_DS.IN_CELL, cell)
+                return
+
+        # Fragment context: <colgroup> only admits <col>; drop others (e.g., <a>)
+        if self.fragment_context == 'colgroup':
+            if tag_name not in ('col',):
+                return
+            # Insert col into fragment root (no implicit colgroup wrapper; context element supplies it)
+            col = Node('col', token.attributes)
+            context.current_parent.append_child(col)
+            return
+
+        # Fragment context: table section wrappers (tbody, thead, tfoot)
+        if self.fragment_context in ('tbody','thead','tfoot') and tag_name in ('tr','td','th'):
+            # Ensure insertion at fragment root for row/cell creation
+            top = context.current_parent
+            while top.parent:
+                top = top.parent
+            root = top
+            # For <tr>: direct child of section fragment root
+            if tag_name == 'tr':
+                tr = Node('tr', token.attributes)
+                root.append_child(tr)
+                context.open_elements.push(tr)
+                context.move_to_element(tr)
+                from turbohtml.context import DocumentState as _DS
+                context.transition_to_state(_DS.IN_ROW, tr)
+                return
+            else:
+                # td/th: require a tr (last or new)
+                last_tr = None
+                for ch in reversed(root.children):
+                    if ch.tag_name == 'tr':
+                        last_tr = ch; break
+                if not last_tr:
+                    last_tr = Node('tr')
+                    root.append_child(last_tr)
+                cell = Node(tag_name, token.attributes)
+                last_tr.append_child(cell)
+                context.open_elements.push(cell)
+                context.move_to_element(cell)
+                from turbohtml.context import DocumentState as _DS
+                context.transition_to_state(_DS.IN_CELL, cell)
+                return
+
+        # Fragment context: select – ignore disallowed interactive/form elements that should not appear
+        # and must not generate text (we only care about <option>/<optgroup> content for these tests).
+        if self.fragment_context == 'select' and tag_name in ('input','keygen','textarea','select'):
+            return
+
+        if self.fragment_context == 'table' and tag_name == 'tr' and context.current_parent.tag_name == 'document-fragment':
+            # In fragment parsing for table context, a lone <tr> should be a direct child (html5lib expectation).
             tr = Node('tr', token.attributes)
-            tbody.append_child(tr)
+            context.current_parent.append_child(tr)
             context.open_elements.push(tr)
             context.move_to_element(tr)
             context.transition_to_state(DocumentState.IN_ROW, tr)
