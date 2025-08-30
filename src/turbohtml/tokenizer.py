@@ -493,29 +493,24 @@ class HTMLTokenizer:
                 return self._handle_comment()
             # Handle all bogus comment cases according to spec:
 
-            # Check for end tag with attributes or invalid char after </
+            # Check for end tag start and invalid immediate char after '</'
             is_end_tag_start = self.html.startswith("</", self.pos)
             has_invalid_char = self.pos + 2 < self.length and not (
                 self.html[self.pos + 2].isascii() and self.html[self.pos + 2].isalpha()
             )
-            match = TAG_OPEN_RE.match(self.html[self.pos:]) if is_end_tag_start else None
-            has_attributes = match and match.group(4).strip() if is_end_tag_start else False
-
+            # End tags with attributes are parse errors but still emit an EndTag token (attributes ignored).
+            # A potential end tag is treated as a bogus comment only when the character after '</' cannot
+            # begin a tag name (non-ASCII-letter). Attribute presence alone does not trigger bogus comment handling.
             self.debug("Checking bogus comment conditions:")
             self.debug(f"  is_end_tag_start: {is_end_tag_start}")
             self.debug(f"  has_invalid_char: {has_invalid_char}")
-            self.debug(f"  tag match: {match and match.groups()}")
-            if 'attributes' in locals():
-                self.debug(f"  attributes: {attributes}")
-
             if (
-                (is_end_tag_start and (has_invalid_char or has_attributes))
+                (is_end_tag_start and has_invalid_char)
                 or self.html.startswith("<!", self.pos)
                 or self.html.startswith("<?", self.pos)
             ):
                 self.debug("Found bogus comment case")
-                # Pass from_end_tag=True for end tags with attributes
-                return self._handle_bogus_comment(from_end_tag=is_end_tag_start and has_attributes)
+                return self._handle_bogus_comment(from_end_tag=False)
 
         # Special case: </ at EOF should be treated as text
         if self.html.startswith("</", self.pos) and self.pos + 2 >= self.length:
@@ -660,6 +655,14 @@ class HTMLTokenizer:
 
             # Return the appropriate token
             if is_end_tag:
+                # Parse error: attributes in end tag. For legacy quirk handling ONLY the </br> case
+                # (with or without attributes) is treated as a start tag per browsers / html5lib tests.
+                # All other end tags with attributes are emitted as EndTag tokens with attributes ignored.
+                if tag_name.lower() == 'br' and attributes and attributes.strip():
+                    self.debug(
+                        f"Legacy quirk: treating </br ...> as <br>: </{tag_name} {attributes.strip()}>"
+                    )
+                    return HTMLToken("StartTag", tag_name=tag_name, attributes={}, is_self_closing=True)
                 return HTMLToken("EndTag", tag_name=tag_name)
             else:
                 is_self_closing, attrs = self._parse_attributes_and_check_self_closing(attributes)
