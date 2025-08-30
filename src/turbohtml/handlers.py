@@ -2047,6 +2047,10 @@ class ParagraphTagHandler(TagHandler):
             return False
         if tag_name == "p":
             return True
+        # Also handle start tags that implicitly close an open <p> even when insertion point is
+        # inside a descendant inline formatting element (current_parent not the <p> itself).
+        if tag_name in AUTO_CLOSING_TAGS["p"] and context.open_elements.has_element_in_button_scope("p"):
+            return True
         if context.current_parent.tag_name == "p":
             return tag_name in AUTO_CLOSING_TAGS["p"]
 
@@ -2055,6 +2059,32 @@ class ParagraphTagHandler(TagHandler):
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         self.debug(f"handling {token}, context={context}")
         self.debug(f"Current parent: {context.current_parent}")
+
+        # Implicit paragraph end when a start tag that closes <p> appears while inside formatting descendants.
+        if (
+            token.tag_name != 'p'
+            and token.tag_name in AUTO_CLOSING_TAGS['p']
+            and context.open_elements.has_element_in_button_scope('p')
+            and context.current_parent.tag_name != 'p'
+        ):
+            # Pop elements until the innermost open <p> is removed (standard </p> processing)
+            target_p = None
+            for el in reversed(context.open_elements._stack):  # type: ignore[attr-defined]
+                if el.tag_name == 'p':
+                    target_p = el; break
+            if target_p:
+                while not context.open_elements.is_empty():
+                    popped = context.open_elements.pop()
+                    if popped is target_p:
+                        break
+                # Move insertion point to parent of closed <p>
+                if target_p.parent:
+                    context.move_to_element(target_p.parent)
+                else:
+                    body = self.parser._ensure_body_node(context)
+                    context.move_to_element(body)
+            # Continue with normal handling of the triggering start tag (return False so other handler runs)
+            return False
 
         # (Reverted broader paragraph scope closure: previous attempt reduced overall pass count.)
         # Spec: A start tag <p> when a <p> element is currently open in *button scope*
@@ -6722,20 +6752,8 @@ class BoundaryElementHandler(TagHandler):
             push_override=False,
             attributes_override={k.lower(): v for k,v in token.attributes.items()},
         )
-        # Spec: subsequent phrasing/text inside marquee should be wrapped in an implicit <p> *only*
-        # if the next content would otherwise be phrasing inserted directly under marquee (not tested
-        # here via token lookahead; we always create it to match failing cases expecting <p> child).
-        fake_p_token = HTMLToken('StartTag', tag_name='p', attributes={})  # type: ignore
-        self.parser.insert_element(
-            fake_p_token,
-            context,
-            mode='normal',
-            enter=True,
-            parent=boundary,
-            tag_name_override='p',
-            attributes_override={},
-            push_override=False,
-        )
+        # Defer implicit paragraph creation: a <p> will be synthesized by normal paragraph rules
+        # upon first phrasing/text insertion if required. This avoids creating nested <p><p>.
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
