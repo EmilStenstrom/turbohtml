@@ -6004,11 +6004,24 @@ class FramesetTagHandler(TagHandler):
 
         elif tag_name == "noframes":
             self.debug("Creating noframes element")
+            # Place <noframes> inside <head> when we are still before or in head (non‑frameset doc) just like
+            # other head rawtext containers in these tests; once a frameset root is established the element
+            # becomes a descendant of frameset (handled above). This matches html5lib expectations where
+            # early <noframes> appears under head and its closing switches back to body/frameset modes.
+            parent = context.current_parent
+            if (context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD, DocumentState.AFTER_HEAD)
+                    and not context.current_parent.find_ancestor("frameset")
+                    and not self.parser._has_root_frameset()):  # type: ignore[attr-defined]
+                head = self.parser._ensure_head_node()  # type: ignore[attr-defined]
+                parent = head if head else parent
+                if context.document_state == DocumentState.INITIAL:
+                    self.parser.transition_to_state(context, DocumentState.IN_HEAD, parent)
             self.parser.insert_element(
                 token,
                 context,
                 mode='normal',
                 enter=True,
+                parent=parent,
                 tag_name_override='noframes',
                 push_override=True,
             )
