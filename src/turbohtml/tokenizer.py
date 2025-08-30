@@ -488,6 +488,22 @@ class HTMLTokenizer:
             if self.pos < self.length:  # Skip closing >
                 self.pos += 1
             return HTMLToken("DOCTYPE", data=doctype)
+        # Recovery: malformed escaped form "<\!doctype" (common author error). Treat as DOCTYPE instead of text
+        # so that downstream frameset/body logic sees an early DOCTYPE token and does not prematurely create <body>.
+        if self.html[self.pos:self.pos+10].lower().startswith("<\\!doctype"):
+            # Skip "<\" then the literal "!doctype"
+            self.pos += 2  # <\
+            if self.html[self.pos:self.pos+7].lower() == '!doctype':
+                self.pos += 7
+                while self.pos < self.length and self.html[self.pos].isspace():
+                    self.pos += 1
+                start = self.pos
+                while self.pos < self.length and self.html[self.pos] != ">":
+                    self.pos += 1
+                doctype = self.html[start:self.pos].strip()
+                if self.pos < self.length:
+                    self.pos += 1
+                return HTMLToken("DOCTYPE", data=doctype)
 
         # Only handle comments in DATA state
         if self.state == "DATA":

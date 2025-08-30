@@ -1218,20 +1218,8 @@ class TurboHTML:
                 # Do not synthesize body if a root frameset is already present (frameset document)
                 return
             # Extended benign set for delaying body creation while frameset still possible.
-            benign_no_body = {
-                # Structural/metadata/benign flow elements that should not yet force body creation while
-                # a root <frameset> remains possible.
-                "frameset","frame","param","source","track","base","basefont","bgsound","link","meta",
-                "script","style","title","img","br","wbr","svg","math","input"
-            }
-            if tag_name == 'input':
-                inp_type = (token.attributes.get('type','') or '').lower()
-                if inp_type != 'hidden':
-                    benign = False
-                else:
-                    benign = True
-            else:
-                benign = tag_name in benign_no_body
+            benign_no_body = {"frameset","frame","param","source","track","base","basefont","bgsound","link","meta","script","style","title","svg","math"}
+            benign = tag_name in benign_no_body
             if not (benign and context.frameset_ok):
                 self.debug("Implicitly creating body node")
                 if context.document_state != DocumentState.IN_FRAMESET:
@@ -1252,12 +1240,14 @@ class TurboHTML:
 
         # If we see any non-whitespace text or a non-frameset-ok element while frameset_ok is True, flip it off
         if context.frameset_ok:
-            benign = {
-                # Elements that do NOT invalidate frameset_ok when encountered before body content.
-                "frameset", "frame", "noframes", "param", "source", "track",
-                "base", "basefont", "bgsound", "link", "meta", "script", "style", "title",
-                "img", "br", "wbr", "svg", "math"
-            }
+            # Elements that do NOT commit the document to a body (frameset still possible). Includes metadata,
+            # frameset structures, legacy presentational head-compatible elements (basefont, bgsound), and an
+            # initial top-level foreign root (svg/math) which will be treated as benign and discarded if a
+            # subsequent root <frameset> appears.
+            benign = {"frameset", "frame", "noframes", "param", "source", "track", "base", "basefont", "bgsound", "link", "meta", "script", "style", "title", "svg", "math"}
+            # Treat <input type="hidden"> as benign (does not commit to body parsing in frameset-capable docs)
+            if tag_name == 'input' and (token.attributes.get('type', '') or '').lower() == 'hidden':
+                benign = benign | {'input'}
             def _foreign_root_wrapper_benign() -> bool:
                 body = self._get_body_node()
                 if not body or len(body.children) != 1:
@@ -1279,12 +1269,7 @@ class TurboHTML:
                         stack.append(ch)
                 return True
             benign_dynamic = _foreign_root_wrapper_benign()
-            if tag_name == 'input':
-                inp_type = (token.attributes.get('type','') or '').lower()
-                # Hidden inputs are benign for frameset_ok; others invalidate.
-                if inp_type != 'hidden':
-                    context.frameset_ok = False
-            elif tag_name not in benign and not benign_dynamic:
+            if tag_name not in benign and not benign_dynamic:
                 context.frameset_ok = False
 
         # Fragment table context: implicit tbody for leading <tr> when no table element open.

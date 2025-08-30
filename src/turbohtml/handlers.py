@@ -6363,12 +6363,12 @@ class FramesetTagHandler(TagHandler):
                 return False
             if not context.current_parent.find_ancestor("frameset"):
                 body = self.parser._get_body_node()
-                # If an explicit <body> start tag was seen (frameset_ok already flipped False by body tag suppression logic)
-                # spec says subsequent root <frameset> is ignored.
-                if body and not context.frameset_ok:
-                    self.debug("Ignoring root <frameset>; body already established (frameset_ok False)")
-                    return True
                 if body:
+                    # Classify existing body content: determine if any meaningful (non-benign) content blocks
+                    # root <frameset> takeover per spec (any non-whitespace text or non-metadata element).
+                    # We treat legacy presentational head-compatible elements (basefont,bgsound), hidden inputs,
+                    # pure metadata (base,link,meta,script,style,title,param,source,track) and a single foreign root
+                    # (svg/math) with only ignorable descendants as benign.
                     allowed_tags = {"base","basefont","bgsound","link","meta","script","style","title","input","img","br","wbr","param","source","track","svg svg","math math"}
                     meaningful = False
                     body_children = list(body.children)
@@ -6438,8 +6438,16 @@ class FramesetTagHandler(TagHandler):
                             elif ch.tag_name not in allowed_tags:
                                 meaningful = True
                                 break
-                    if meaningful:
+                    if meaningful and context.frameset_ok:
                         self.debug("Ignoring <frameset>; body already meaningful")
+                        return True
+                    if meaningful and not context.frameset_ok:
+                        self.debug("Ignoring root <frameset>; frameset_ok False and body has meaningful content")
+                        return True
+                    if not context.frameset_ok:
+                        # Spec: once frameset-ok flag is set to not ok (explicit body start tag or meaningful content),
+                        # a subsequent root <frameset> must be ignored. Benign existing body content does not re‑enable.
+                        self.debug("Ignoring root <frameset>; frameset_ok already False")
                         return True
                 self.debug("Creating root frameset")
                 body = self.parser._get_body_node()
@@ -6635,6 +6643,7 @@ class BodyElementHandler(TagHandler):
             body = self.parser._ensure_body_node(context)  # type: ignore[attr-defined]
             context.move_to_element(body)
             self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
+            context.frameset_ok = False  # explicit body in fragment context disallows frameset takeover
             return True
         body = None
         if self.parser.html_node:
@@ -6652,6 +6661,7 @@ class BodyElementHandler(TagHandler):
                     body.attributes[lk] = v
         context.move_to_element(body)
         self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
+        context.frameset_ok = False  # explicit body tag encountered (spec: frameset-ok flag set to not ok)
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
