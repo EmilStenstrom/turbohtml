@@ -1595,6 +1595,9 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
     # Override to widen interception scope inside select (TemplateAwareHandler limits to handled_tags otherwise)
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:  # type: ignore[override]
         if self._is_in_select(context) and not self._is_in_template_content(context):
+            # Do NOT intercept script/style so RawtextTagHandler can process them within select per spec
+            if tag_name in ("script","style"):
+                return False
             return True
         return super().should_handle_start(tag_name, context)
 
@@ -1717,8 +1720,12 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             return False  # Allow normal paragraph handling after relocation
 
         if self._is_in_select(context) and tag_name in RAWTEXT_ELEMENTS:
-            self.debug(f"Ignoring rawtext element {tag_name} inside select")
-            return True
+            # Ignore other rawtext containers (e.g. title, textarea, noframes) inside select; script/style fall through
+            if tag_name not in ('script','style'):
+                self.debug(f"Ignoring rawtext element {tag_name} inside select")
+                return True
+            # script/style: allow RawtextTagHandler to handle (return False)
+            return False
 
         # Spec-adjacent recovery: treat void <hr> start tag inside <select> as present (expected tree
         # retains it). We insert it rather than ignoring so the tree matches reference output. This reduces earlier
@@ -4046,7 +4053,17 @@ class RawtextTagHandler(SelectAwareHandler):
     """Handles rawtext elements like script, style, title, etc."""
 
     def _should_handle_start_impl(self, tag_name: str, context: "ParseContext") -> bool:
+        # Permit script/style/title/xmp/noscript/rawtext-like tags generally.
+        # We intentionally ALLOW script/style inside <select> (spec allows script in select; style behavior differs
+        # but tests expect script element creation). SelectAwareHandler would normally block; we re-allow here by
+        # overriding select filtering in should_handle_start below.
         return tag_name in RAWTEXT_ELEMENTS
+
+    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        # Override SelectAwareHandler filtering: allow script/style inside select so they form rawtext elements.
+        if tag_name in ("script", "style"):
+            return self._should_handle_start_impl(tag_name, context)
+        return super().should_handle_start(tag_name, context)
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         tag_name = token.tag_name
@@ -4057,15 +4074,60 @@ class RawtextTagHandler(SelectAwareHandler):
         # If current element is <table> but the most recently opened non-table element is a pending <tr>
         # (TableTagHandler may have created tbody/tr without entering), relocate insertion point.
         if tag_name in ('style','script') and context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
-            # Find deepest open tr element
-            tr_node = None
-            for el in reversed(context.open_elements._stack):  # type: ignore[attr-defined]
-                if el.tag_name == 'tr':
-                    tr_node = el
-                    break
-            if tr_node and context.current_parent.tag_name == 'table':
-                context.move_to_element(tr_node)
-                self.debug("Relocated insertion point to <tr> for rawtext element")
+            table = self.parser.find_current_table(context)
+            if table:
+                in_template_content = False
+                curp = context.current_parent
+                while curp:
+                    if curp.tag_name == 'content' and curp.parent and curp.parent.tag_name == 'template':
+                        in_template_content = True; break
+                    curp = curp.parent
+                # Detect whether table already has row/cell/caption descendants
+                has_row_desc = False
+                for ch in table.children:
+                    if ch.tag_name in ('tbody','thead','tfoot','tr','caption','td','th'):
+                        has_row_desc = True; break
+                # If we are directly under table with NO row descendants yet, allow direct script/style child
+                if context.current_parent is table and not has_row_desc:
+                    self.debug(f"Leaving <{tag_name}> as direct child of <table> (no row descendants yet)")
+                elif in_template_content and context.current_parent is table and not has_row_desc:
+                    self.debug(f"Template content: suppressing tbody/tr synthesis for <{tag_name}>")
+                else:
+                    # Determine candidate (do not force row creation when parent is a section like tbody—leave script there)
+                    candidate = None
+                    for el in reversed(context.open_elements._stack):  # type: ignore[attr-defined]
+                        if el is table:
+                            break
+                        if el.tag_name in ('td','th'):
+                            candidate = el; break
+                        if el.tag_name == 'tr' and not candidate:
+                            candidate = el
+                        if el.tag_name == 'caption' and not candidate:
+                            candidate = el
+                        if el.tag_name in ('tbody','thead','tfoot') and not candidate:
+                            # Only descend into section if we already have a tr or cell; otherwise permit direct child
+                            candidate = el
+                    if not candidate and not in_template_content:
+                        # Only synthesize if there is already table body context expected (avoid for fresh table)
+                        tr_existing = table.find_child_by_tag('tr')
+                        if not tr_existing and has_row_desc:
+                            tbody_token = HTMLToken('StartTag', tag_name='tbody')
+                            tbody = self.parser.insert_element(tbody_token, context, mode='normal', enter=True, parent=table)
+                            tr_token = HTMLToken('StartTag', tag_name='tr')
+                            tr_existing = self.parser.insert_element(tr_token, context, mode='normal', enter=True, parent=tbody)
+                        candidate = tr_existing
+                    # If candidate is a section wrapper (tbody/thead/tfoot) keep script/style as direct child of that section
+                    if candidate and candidate is not context.current_parent:
+                        # Avoid moving into section if parent is section already
+                        if candidate.tag_name not in ('tbody','thead','tfoot') or context.current_parent.tag_name not in ('tbody','thead','tfoot'):
+                            context.move_to_element(candidate)
+                            self.debug(f"Adjusted insertion point to <{candidate.tag_name}> for rawtext {tag_name}")
+                # Determine if we already have an open cell/row/caption we should descend into
+                # Priority: td/th > tr > caption
+
+        # Inside caption: ensure we do not accidentally re-route style/script to head (keep within caption subtree)
+        if tag_name in ('style','script') and context.current_parent.tag_name == 'caption':
+            self.debug("Ensuring rawtext stays inside <caption>")
 
         # Per spec, certain rawtext elements (e.g. xmp) act like block elements that
         # implicitly close an open <p>. (Similar handling already exists for plaintext.)
@@ -4075,6 +4137,7 @@ class RawtextTagHandler(SelectAwareHandler):
 
         # Create RAWTEXT element via unified insertion (push + enter)
         new_node = self.parser.insert_element(token, context, mode='normal', enter=True)
+        # No post-insertion relocation needed; insertion point pre-adjustment ensures correct placement.
         # Switch to RAWTEXT state and let tokenizer handle the content
         self.debug(f"Switching to RAWTEXT content state for {tag_name}")
         context.content_state = ContentState.RAWTEXT
@@ -5716,6 +5779,13 @@ class HeadElementHandler(TagHandler):
         # Do not let head element handler interfere inside template content
         if self._is_in_template_content(context):
             return False
+        # Suppress head-level interception for style/script when inside table descendants (caption/row/cell)
+        if tag_name in ("style","script"):
+            anc = context.current_parent
+            while anc and anc.tag_name not in ('document','html'):
+                if anc.tag_name in ('caption','tr','td','th','tbody','thead','tfoot'):
+                    return False
+                anc = anc.parent
         # Late meta/title after body/html should not be treated as head elements (demoted to body)
         if tag_name in ("meta","title") and context.document_state in (DocumentState.AFTER_BODY, DocumentState.AFTER_HTML):
             return False
@@ -6325,6 +6395,16 @@ class FramesetTagHandler(TagHandler):
                         self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
                     else:
                         self.parser.transition_to_state(context, DocumentState.AFTER_HEAD, self.parser.html_node)
+                # Pop the noframes element from open elements stack if present so following comment is sibling
+                target = None
+                for el in reversed(context.open_elements._stack):  # type: ignore[attr-defined]
+                    if el.tag_name == 'noframes':
+                        target = el; break
+                if target:
+                    while not context.open_elements.is_empty():
+                        popped = context.open_elements.pop()
+                        if popped is target:
+                            break
             return True
 
         return False
