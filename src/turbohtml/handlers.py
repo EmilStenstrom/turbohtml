@@ -3584,13 +3584,45 @@ class FormTagHandler(TagHandler):
 
         # Spec: if a form element is already open (and not in template), ignore additional <form> start tags.
         if tag_name == 'form':
+            # HTML Standard maintains a form element pointer; here we derive the effect structurally.
+            # Suppress a new <form> if an existing one is open outside templates, except in a specific
+            # malformed recovery: a premature </form> was just ignored inside table insertion modes and
+            # the current insertion point is the table element whose ancestral form remains open.
+            in_table_mode = context.document_state in (
+                DocumentState.IN_TABLE,
+                DocumentState.IN_TABLE_BODY,
+                DocumentState.IN_ROW,
+                DocumentState.IN_CELL,
+                DocumentState.IN_CAPTION,
+            )
+            existing_form = None
             for el in reversed(context.open_elements._stack):  # type: ignore[attr-defined]
+                if el.tag_name == 'template':
+                    break
                 if el.tag_name == 'form':
-                    self.debug("Ignoring nested <form> start tag (form element already open)")
-                    return True
-                # Stop search at scoping roots where an ancestor form would not apply (html node)
+                    existing_form = el
+                    break
                 if el.tag_name in ('html', '#document'):
                     break
+            if existing_form:
+                allow_nested_recovery = False
+                if (
+                    in_table_mode
+                    and context.current_parent.tag_name == 'table'
+                    and self.parser._prev_token  # type: ignore[attr-defined]
+                    and getattr(self.parser._prev_token, 'ignored_end_tag', False)  # previous token was an ignored </form>
+                ):
+                    # Confirm that the existing form is an ancestor of the current table (structural recovery condition)
+                    cur = context.current_parent.parent
+                    while cur and cur is not existing_form and cur.tag_name not in ('html', '#document'):
+                        cur = cur.parent
+                    if cur is existing_form:
+                        allow_nested_recovery = True
+                if allow_nested_recovery:
+                    self.debug("Allowing nested <form> after ignored premature </form> inside table (structural recovery)")
+                else:
+                    self.debug("Ignoring <form>; open form exists (single form constraint)")
+                    return True
 
         # Create and append the new node via unified insertion
         mode = 'void' if tag_name == 'input' else 'normal'
@@ -3598,6 +3630,59 @@ class FormTagHandler(TagHandler):
         new_node = self.parser.insert_element(token, context, mode=mode, enter=enter, push_override=(tag_name == 'form'))
 
         # No persistent pointer; dynamic detection is used instead
+        return True
+
+    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name == 'form'
+
+    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        # Spec-like: if no form element in open elements stack (outside template), ignore.
+        stack = context.open_elements._stack  # type: ignore[attr-defined]
+        # Find deepest form element outside template
+        form_el = None
+        for node in reversed(stack):
+            if node.tag_name == 'template':
+                break
+            if node.tag_name == 'form':
+                form_el = node
+                break
+        if not form_el:
+            self.debug("Ignoring </form>; no open form element outside template")
+            token.ignored_end_tag = True  # mark for potential next-token recovery logic
+            return True
+        # If we're in table-related insertion mode and the form element is an ancestor above the table tree,
+        # ignore premature </form> so it remains open (spec form pointer not popped in this malformed context).
+        if context.document_state in (
+            DocumentState.IN_TABLE,
+            DocumentState.IN_TABLE_BODY,
+            DocumentState.IN_ROW,
+            DocumentState.IN_CELL,
+            DocumentState.IN_CAPTION,
+        ):
+            # Current parent will be table/section/cell; if form_el is not current_parent and is an ancestor of it, ignore.
+            cur = context.current_parent
+            under_form = False
+            while cur and cur is not form_el and cur.tag_name not in ('html', '#document'):
+                cur = cur.parent
+            if cur is form_el:
+                self.debug("Ignoring </form> inside table insertion mode (form remains open)")
+                token.ignored_end_tag = True
+                return True
+        # General malformed case: if the form element is not the current element, ignore (premature end)
+        if context.current_parent is not form_el:
+            self.debug("Ignoring </form>; form element not current node (premature end)")
+            token.ignored_end_tag = True
+            return True
+        # Pop elements until the form element has been popped (spec step)
+        while stack:
+            popped = stack.pop()
+            if popped is form_el:
+                break
+        # Insertion point: move to parent of form if current_parent was inside form
+        if context.current_parent is form_el or (context.current_parent and context.current_parent.find_ancestor('form')):
+            parent = form_el.parent
+            if parent:
+                context.move_to_element(parent)
         return True
 
 

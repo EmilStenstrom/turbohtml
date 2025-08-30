@@ -103,6 +103,12 @@ class TurboHTML:
                 self.text_handler = handler
                 break
 
+        # Track token history for minimal contextual inferences (e.g. permitting a nested
+        # <form> after an ignored premature </form> in table insertion modes). We keep only
+        # the immediately previous token to avoid persistent parse-state flags.
+        self._prev_token = None  # The token processed in the prior loop iteration
+        self._last_token = None  # The token currently being processed (internal convenience)
+
         # Parse immediately upon construction
         self._parse()
         self._post_process_tree()
@@ -638,6 +644,10 @@ class TurboHTML:
         self.tokenizer = HTMLTokenizer(self.html)
 
         for token in self.tokenizer.tokenize():
+            # Update rolling token references so handlers can inspect the previously
+            # processed token (self._prev_token) without mutating ParseContext.
+            self._prev_token = self._last_token
+            self._last_token = token
             self.debug(f"_parse_fragment: {token}, context: {context}", indent=0)
 
             # Skip DOCTYPE in fragments
@@ -972,6 +982,9 @@ class TurboHTML:
         #     self.debug(f"TOKENS: {list(debug_tokenizer.tokenize())}", indent=0)
 
         for token in self.tokenizer.tokenize():
+            # Maintain previous token pointer for heuristic-free contextual decisions
+            self._prev_token = self._last_token
+            self._last_token = token
             self.debug(f"_parse: {token}, context: {context}", indent=0)
 
             if token.type == "DOCTYPE":
