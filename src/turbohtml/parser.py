@@ -1774,7 +1774,7 @@ class TurboHTML:
             return
         # Comments after </html> (AFTER_HTML) should appear as direct child of html (one level, not indented under body)
         if context.document_state == DocumentState.AFTER_HTML:
-            # Place comment at document root (sibling of <html>) per expected tree formatting
+            # Comments after </html> are root-level siblings (do not group under body)
             self.root.append_child(comment_node)
             return
 
