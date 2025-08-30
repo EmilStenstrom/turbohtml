@@ -2369,33 +2369,24 @@ class ParagraphTagHandler(TagHandler):
             else:
                 body = self.parser._ensure_body_node(context)
                 context.move_to_element(body)
-            # Ensure the paragraph is removed from the open elements stack
+            # Remove the paragraph element from the open elements stack
             if context.open_elements.contains(closing_p):
-                if context.open_elements.contains(closing_p):
-                    context.open_elements.remove_element(closing_p)
-            # Pop descendant formatting elements of this paragraph
-            if context.active_formatting_elements._stack:
-                descendant_fmt = set()
-
-                def collect_fmt(node: Node):
-                    for ch in node.children:
-                        if ch.tag_name in FORMATTING_ELEMENTS:
-                            descendant_fmt.add(ch)
-                        collect_fmt(ch)
-
-                collect_fmt(closing_p)
-                if descendant_fmt:
-                    new_stack = []
-                    for elem in context.open_elements._stack:
-                        if elem in descendant_fmt:
-                            self.debug(
-                                f"Popping formatting element <{elem.tag_name}> at paragraph boundary for reconstruction later"
-                            )
-                            continue
-                        new_stack.append(elem)
-                    context.open_elements._stack = new_stack
-                    # Keep formatting elements in the active formatting list so they can be
-                    # reconstructed in the correct context per the adoption agency algorithm.
+                context.open_elements.remove_element(closing_p)
+            # Detach descendant formatting elements of this paragraph from the open elements stack (spec: they remain in active list
+            # and will be reconstructed when needed). This enables correct wrapping for subsequent paragraphs / text runs.
+            descendant_fmt = []
+            for el in context.open_elements._stack:
+                if el.tag_name in FORMATTING_ELEMENTS and el.find_ancestor('p') is closing_p:
+                    descendant_fmt.append(el)
+            if descendant_fmt:
+                new_stack = []
+                to_remove = set(descendant_fmt)
+                for el in context.open_elements._stack:
+                    if el in to_remove:
+                        self.debug(f"Paragraph close: detaching formatting <{el.tag_name}> for later reconstruction")
+                        continue
+                    new_stack.append(el)
+                context.open_elements._stack = new_stack
             if in_svg_ip or in_math_ip:
                 self.parser.reconstruct_active_formatting_elements(context)
             return True
