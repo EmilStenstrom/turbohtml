@@ -24,6 +24,7 @@ from turbohtml.handlers import (
     BoundaryElementHandler,
     ButtonTagHandler,
     PlaintextHandler,
+    MisnestedSpanHandler,
     UnknownElementHandler,
     RubyElementHandler,
 )
@@ -87,6 +88,7 @@ class TurboHTML:
             RawtextTagHandler(self),
             BoundaryElementHandler(self),
             FormattingElementHandler(self),
+            MisnestedSpanHandler(self),
             ImageTagHandler(self),
             TextHandler(self),
             FormTagHandler(self),

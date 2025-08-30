@@ -149,10 +149,26 @@ class HTMLTokenizer:
                 # candidate; if EOF occurs before the closing '>' that partial tag is dropped (no text emitted) producing the
                 # expected empty script element (tests16: ...</SCRIPT <EOF with expected-named-closing-tag-but-got-eof errors).
                 if i < self.length and (self.html[i].isspace() or self.html[i] in "/>"):
-                    # Advance through any attribute-like junk until the real tag closing '>' taking
-                    # quoted strings into account (an end tag cannot have attributes, but malformed
-                    # input may include them; per spec they are ignored yet we must not terminate
-                    # prematurely on a '>' that appears inside a quoted attribute value like foo=">").
+                    # Look ahead for a '>' that would terminate this candidate BEFORE another '</script'
+                    # starts. If another '</script' appears first, treat the current sequence as literal
+                    # text (deferring honoring decision to a later candidate) so we don't conflate multiple
+                    # partial candidates into one large fragment (tests16: multiple '</script ' sequences).
+                    lower_tail = self.html[i:].lower()
+                    next_candidate_rel = lower_tail.find("</script")
+                    next_gt_rel = lower_tail.find(">")
+                    if next_candidate_rel != -1 and (next_gt_rel == -1 or next_candidate_rel < next_gt_rel):
+                        # Emit text up to the start of the next candidate, leaving it for reprocessing.
+                        # This counts as the FIRST suppressed candidate in an escaped script comment context.
+                        text_chunk = self.html[self.pos:self.pos + next_candidate_rel + (i - self.pos)]
+                        if text_chunk:
+                            text_chunk = self._replace_invalid_characters(text_chunk)
+                            # Mark first suppression if pattern applies and not already set.
+                            if not self.script_suppressed_end_once and self._in_escaped_script_comment(self.script_content + text_chunk):
+                                self.script_suppressed_end_once = True
+                            self.script_content += text_chunk
+                            self.pos = self.pos + next_candidate_rel + (i - self.pos)
+                            return HTMLToken("Character", data=text_chunk)
+                    # Advance through any attribute-like junk until real tag closing '>' accounting for quotes
                     scan = i
                     saw_gt = False
                     quote: Optional[str] = None
@@ -170,7 +186,9 @@ class HTMLTokenizer:
                         if c == ">":
                             saw_gt = True
                             break
-                        # End tag closes at first whitespace + '>' sequence even with stray '/'
+                        # If we reach a new tag opener, stop; we'll treat current as partial (no '>' found)
+                        if c == '<' and self.html.startswith("</script", scan):
+                            break
                         scan += 1
                     if saw_gt:
                         end_tag_close = scan  # position of '>'
@@ -202,20 +220,28 @@ class HTMLTokenizer:
                                 return HTMLToken("Character", data=text_before)
                             return HTMLToken("EndTag", tag_name="script")
                     else:
-                        # EOF before closing '>' in a *candidate* end tag (whitespace or '/' after name).
-                        # Need to decide whether this candidate would have been honored. If it would have been honored
-                        # (normal case: no comment‑escape suppression) we DROP the partial candidate producing an empty
-                        # script (tests16: '</SCRIPT '). If it would NOT have been honored because we are in an escaped
-                        # comment-like context (<!--<script ... with no --> yet) then we must treat the whole sequence as
-                        # literal text (tests16 comment escaped sequences expecting text that includes '</script ').
+                        # Partial candidate (no terminating '>') possibly at EOF or before unrelated content.
                         text_before = self.html[self.pos:tag_start - 2]
                         full_content = self.script_content + text_before
                         honor_if_complete = self._should_honor_script_end_tag(full_content)
                         if honor_if_complete:
-                            self.debug("  EOF in candidate </script ... – would honor; dropping partial end tag text")
+                            # Treat as implicit end (close script) without including partial tag text.
+                            self.debug("  implicit script end on partial </script (no '>') honoring closure")
+                            # Emit preceding text (if any) then end tag.
                             self.pos = self.length
-                            return None
-                        self.debug("  EOF in candidate </script ... – suppressed by escaped context; emitting text")
+                            self.state = "DATA"
+                            self.rawtext_tag = None
+                            self.script_content = ""
+                            self.script_non_executable = False
+                            self.script_suppressed_end_once = False
+                            if text_before:
+                                text_before = self._replace_invalid_characters(text_before)
+                                # Queue end tag after emitting text
+                                self._pending_tokens.append(HTMLToken("EndTag", tag_name="script"))
+                                return HTMLToken("Character", data=text_before)
+                            return HTMLToken("EndTag", tag_name="script")
+                        # Not honored: emit the entire remaining fragment as text
+                        self.debug("  partial </script treated as text (suppressed)")
                         frag = self.html[self.pos:]
                         self.pos = self.length
                         frag = self._replace_invalid_characters(frag)
