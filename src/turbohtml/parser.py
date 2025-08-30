@@ -1066,14 +1066,28 @@ class TurboHTML:
     # Tag Handling Methods
     def _handle_start_tag(self, token: HTMLToken, tag_name: str, context: ParseContext, end_tag_idx: int) -> None:
         """Handle all opening HTML tags."""
+        # Root frameset document guard: once a root <frameset> exists (even if AFTER_FRAMESET via </frameset>)
+        # ignore any further non-frameset flow content that would otherwise synthesize a <body> or append
+        # children under <html>. (Spec: frameset documents do not have a body element.) This suppresses
+        # unwanted body creation observed in tests6/tests18/tests19.
+        if self._has_root_frameset() and context.document_state in (DocumentState.IN_FRAMESET, DocumentState.AFTER_FRAMESET):
+            if tag_name not in ("frameset", "frame", "noframes", "html"):  # allow attribute merge on later <html>
+                self.debug(f"Ignoring <{tag_name}> start tag in root frameset document")
+                return
         # If we're after the body/html and encounter any start tag (other than duplicate structure),
         # re-enter the body insertion mode per HTML5 spec parse error recovery.
         if context.document_state in (DocumentState.AFTER_BODY, DocumentState.AFTER_HTML) and tag_name not in ("html", "body"):
+            # Ignore stray <head> (and its contents) after </html> (tests expect it to be dropped entirely)
+            if context.document_state == DocumentState.AFTER_HTML and tag_name == 'head':
+                self.debug("Ignoring stray <head> after </html>")
+                return
             body_node = self._get_body_node() or self._ensure_body_node(context)
             if body_node:
+                # For head elements (meta, title, etc.) appearing after body/html, tests expect them inside body
+                # rather than re‑opening a head context. Transition back to IN_BODY and use body as insertion point.
                 context.move_to_element(body_node)
                 context.transition_to_state(DocumentState.IN_BODY, body_node)
-                self.debug(f"Resumed IN_BODY for <{tag_name}> after post-body state")
+                self.debug(f"Resumed IN_BODY for <{tag_name}> after post-body state (relocated head element if any)")
 
         # Skip implicit body creation for fragments
         if (
@@ -1083,6 +1097,13 @@ class TurboHTML:
             and tag_name != "html"
             and not self._is_in_template_content(context)
         ):
+            if tag_name == 'frameset':
+                # Do not implicitly create body when a root <frameset> appears – frameset documents omit body.
+                # Continue processing so FramesetTagHandler can create the frameset element.
+                pass
+            if self._has_root_frameset():
+                # Do not synthesize body if a root frameset is already present (frameset document)
+                return
             # Extended benign set for delaying body creation while frameset still possible.
             benign_no_body = {
                 # Structural/metadata/benign flow elements that should not yet force body creation while
@@ -1501,10 +1522,12 @@ class TurboHTML:
                 self.debug("Ignoring stray </body> in table insertion mode")
                 return
             else:
-                # Stray </body> after body closed or in pre-body states: keep insertion point at existing body
-                body_node = self._get_body_node()
+                # Stray </body> in pre-body or post-body states: synthesize body (if absent), then mark AFTER_BODY
+                body_node = self._get_body_node() or self._ensure_body_node(context)
                 if body_node:
-                    context.move_to_element(body_node)
+                    # Do not move current_parent if we're still at html (keep for upcoming demotion); just mark state
+                    if context.document_state not in (DocumentState.AFTER_BODY, DocumentState.AFTER_HTML):
+                        context.transition_to_state(DocumentState.AFTER_BODY, context.current_parent)
                 return
 
         # Try tag handlers first
@@ -1589,6 +1612,10 @@ class TurboHTML:
                 if k not in self.html_node.attributes:
                     self.html_node.attributes[k] = v
             context.move_to_element(self.html_node)
+            # In a frameset document (root frameset present), suppress any implicit body creation side-effects.
+            if self._has_root_frameset():
+                context.index = end_tag_idx
+                return True
 
             # Don't immediately switch to IN_BODY - let the normal flow handle that
             # The HTML tag should not automatically transition states
@@ -1627,6 +1654,23 @@ class TurboHTML:
                 body = self._ensure_body_node(context)
                 if body:
                     context.transition_to_state(DocumentState.IN_BODY, body)
+        # Special demotion: late metadata (<meta>, <title>) appearing after body/html should become body children.
+        # When in AFTER_BODY or AFTER_HTML insertion modes, suppress special head handling so these tags are
+        # treated as normal start tags under body (tests15 cases 3 and 5 expectations).
+        if (
+            tag_name in ("meta", "title")
+            and context.document_state in (DocumentState.AFTER_BODY, DocumentState.AFTER_HTML)
+        ):
+            # Ensure body exists and set insertion point to it, BUT keep state as AFTER_BODY/AFTER_HTML until
+            # generic start tag handling runs so HeadElementHandler suppress predicate returns False.
+            if self._has_root_frameset():  # frameset documents drop late metadata entirely
+                context.index = end_tag_idx
+                return True
+            body = self._get_body_node() or self._ensure_body_node(context)
+            if body:
+                context.move_to_element(body)
+            context.index = end_tag_idx
+            return False
         context.index = end_tag_idx
         return False
 
@@ -1701,6 +1745,11 @@ class TurboHTML:
                 self.html_node.append_child(comment_node)
             else:
                 self.root.append_child(comment_node)
+            return
+        # Comments after </html> (AFTER_HTML) should appear as direct child of html (one level, not indented under body)
+        if context.document_state == DocumentState.AFTER_HTML:
+            # Place comment at document root (sibling of <html>) per expected tree formatting
+            self.root.append_child(comment_node)
             return
 
         # Comments in IN_BODY state should go as children of html, positioned before head

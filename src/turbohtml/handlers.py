@@ -629,6 +629,20 @@ class TextHandler(TagHandler):
                 self._append_text(text, context)
             return True
 
+        # IN_TABLE whitespace that should remain directly inside <table> (before any tbody/tr) instead of foster parenting
+        if text and text.isspace():
+            # Leading whitespace inside an open table before any row/section must be a direct child of that table.
+            tbl = self.parser.find_current_table(context)
+            if tbl:
+                has_section = any(ch.tag_name in ('tbody','thead','tfoot','tr') for ch in tbl.children)
+                if not has_section:
+                    # Only relocate if current_parent is not already the table (otherwise earlier branch handled it)
+                    if context.current_parent is not tbl:
+                        if self.parser.env_debug:
+                            self.debug(f"Placing leading table whitespace into <table> (state={context.document_state})")
+                        self.parser.insert_text(text, context, parent=tbl, merge=True)
+                        return True
+
         # Malformed DOCTYPE tail
         if context.document_state == DocumentState.INITIAL and text.strip() == "]>":
             text = text.lstrip()
@@ -640,8 +654,8 @@ class TextHandler(TagHandler):
                 self._append_text(ws, context)
             return True
 
-        # AFTER_BODY handling (stay in AFTER_BODY)
-        if context.document_state == DocumentState.AFTER_BODY:
+        # AFTER_BODY / AFTER_HTML handling (stay in post-body states)
+        if context.document_state in (DocumentState.AFTER_BODY, DocumentState.AFTER_HTML):
             # If foreign root (math/svg) will follow, we want its preceding character data coerced into body.
             # For simplicity, always append AFTER_BODY character data straight into body (not preserving current_parent)
             body = self.parser._get_body_node() or self.parser._ensure_body_node(context)
@@ -2860,9 +2874,24 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     context.move_to_element(saved_parent)
             return True
 
-        # If it's whitespace-only text, allow it in table
+        # If it's whitespace-only text, decide if it should become a leading table child before tbody/tr.
         if text.isspace():
-            self.debug("Whitespace text in table, keeping in table")
+            table = self.parser.find_current_table(context)
+            if table:
+                # Leading = table has no tbody/thead/tfoot/tr yet and this space occurs while current_parent is not a cell
+                has_row_content = any(ch.tag_name in ('tbody','thead','tfoot','tr') for ch in table.children)
+                if not has_row_content:
+                    # Also ensure we haven't already inserted leading whitespace
+                    existing_ws = any(
+                        ch.tag_name == '#text' and ch.text_content and ch.text_content.isspace()
+                        for ch in table.children
+                    )
+                    if not existing_ws:
+                        self.debug("Promoting leading table whitespace as direct <table> child")
+                        self.parser.insert_text(text, context, parent=table, merge=True)
+                        return True
+            # Fallback: keep whitespace where it is
+            self.debug("Whitespace text in table, keeping in current parent")
             self.parser.insert_text(text, context, parent=context.current_parent, merge=True)
             return True
 
@@ -5437,6 +5466,9 @@ class HeadElementHandler(TagHandler):
         # Do not let head element handler interfere inside template content
         if self._is_in_template_content(context):
             return False
+        # Late meta/title after body/html should not be treated as head elements (demoted to body)
+        if tag_name in ("meta","title") and context.document_state in (DocumentState.AFTER_BODY, DocumentState.AFTER_HTML):
+            return False
         return tag_name in HEAD_ELEMENTS
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
@@ -5553,6 +5585,24 @@ class HeadElementHandler(TagHandler):
 
         # Handle head elements in head normally
         else:
+            # Late metadata appearing after body/html closure should not re-enter head (meta/title demotion)
+            if tag_name in ("meta","title") and context.document_state in (DocumentState.AFTER_BODY, DocumentState.AFTER_HTML):
+                body = self.parser._get_body_node() or self.parser._ensure_body_node(context)
+                if body:
+                    self.parser.insert_element(
+                        token,
+                        context,
+                        mode='normal',
+                        enter=tag_name not in VOID_ELEMENTS,
+                        parent=body,
+                        tag_name_override=tag_name,
+                        push_override=False,
+                    )
+                    if context.document_state != DocumentState.IN_BODY:
+                        self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
+                    if tag_name not in VOID_ELEMENTS and tag_name in RAWTEXT_ELEMENTS:
+                        context.content_state = ContentState.RAWTEXT
+                    return True
             self.debug("Handling element in head context")
             # If we're not in head (and not after head), switch to head
             if context.document_state not in (DocumentState.IN_HEAD, DocumentState.AFTER_HEAD):
@@ -5767,6 +5817,23 @@ class HtmlTagHandler(TagHandler):
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         self.debug(f"handling end tag, current state: {context.document_state}")
 
+        # Ignore </html> entirely while any table-related insertion mode is active. The HTML Standard
+        # treats a stray </html> as a parse error that is otherwise ignored; accepting it prematurely
+        # while a table (or its sections/rows/cells) remains open causes subsequent character tokens
+        # to append after the table instead of being foster‑parented before it. By deferring the
+        # AFTER_HTML transition until after leaving table modes we preserve correct ordering of text
+        # preceding trailing table content (tables01.dat regression). This has no effect on well‑formed
+        # documents where </html> appears after the table has been fully closed.
+        if context.document_state in (
+            DocumentState.IN_TABLE,
+            DocumentState.IN_TABLE_BODY,
+            DocumentState.IN_ROW,
+            DocumentState.IN_CELL,
+            DocumentState.IN_CAPTION,
+        ):
+            self.debug("Ignoring </html> in active table insertion mode (defer AFTER_HTML transition)")
+            return True
+
         # If we're in head, implicitly close it
         if context.document_state == DocumentState.IN_HEAD:
             self.debug("Closing head and switching to body")
@@ -5774,11 +5841,19 @@ class HtmlTagHandler(TagHandler):
             if body:
                 self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
 
-        # Any content after </html> should be treated as body content
-        elif context.document_state == DocumentState.AFTER_HTML:
-            self.debug("Content after </html>, switching to body mode")
-            body = self.parser._ensure_body_node(context)
-            self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
+        # After processing </html>, keep insertion point at body (if present) so stray trailing whitespace/text
+        # tokens become body children, but transition to AFTER_HTML so subsequent stray <head> is ignored.
+        # Frameset documents never synthesize a body; keep insertion mode at AFTER_FRAMESET.
+        if self.parser._has_root_frameset():  # type: ignore[attr-defined]
+            self.debug("Root <frameset> present – ignoring </html> (stay AFTER_FRAMESET, no body)")
+            if context.document_state != DocumentState.AFTER_FRAMESET:
+                # Ensure we are anchored at <html> (frameset already child) and state reflects frameset closure
+                self.parser.transition_to_state(context, DocumentState.AFTER_FRAMESET, self.parser.html_node)
+            return True
+        body = self.parser._get_body_node() or self.parser._ensure_body_node(context)
+        if body:
+            context.move_to_element(body)
+        self.parser.transition_to_state(context, DocumentState.AFTER_HTML, body or context.current_parent)
 
         return True
 
@@ -6047,7 +6122,12 @@ class BodyElementHandler(TagHandler):
             if body:
                 # Not at body element: ignore
                 if context.current_parent is not body:
-                    return True  # ignore stray </body>
+                    # Spec-aligned: completely ignore stray </body> when the body element is not the current node.
+                    # Do NOT transition to AFTER_BODY here; doing so while still inside table/inlines or
+                    # unknown elements incorrectly reclassifies subsequent start tags and text as post‑body
+                    # content (webkit01.dat regression). Metadata demotion logic for late <meta>/<title>
+                    # continues to function because those tests operate only after a *real* body closure.
+                    return True
 
                 if self.parser.fragment_context == 'html':
                     # Fragment 'html' context: treat first </body> as a no-op close (stay inside body),
