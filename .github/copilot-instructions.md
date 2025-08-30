@@ -36,6 +36,7 @@ No heuristics allowed, and if found remove and replace with spec-compliant code 
 
 ### Testing Workflow
 1. Target failing areas first (use `--filter-files` or `--test-specs`).
+2. Use `--debug --print-fails` to trace execution path through the parser.
 2. Iterate: fix → focused run → full run.
 3. Guard regressions: inspect `git diff test-summary.txt` or `python regressions.py` often.
 4. Never merge with net fewer passing tests unless justified.
