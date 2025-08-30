@@ -272,6 +272,10 @@ class TemplateTagHandler(TagHandler):
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
         if tag_name != "template":
             return False
+        # Suppress template end tag handling while in PLAINTEXT so </template> becomes literal text
+        from turbohtml.context import ContentState as _CS
+        if context.content_state == _CS.PLAINTEXT:
+            return False
         # Normally foreign contexts suppress template handling, but if we're currently inside
         # a real HTML template's content fragment (ancestor 'content' whose parent is an actual
         # unprefixed <template> element) we still need to process the </template> end tag to
@@ -4048,6 +4052,21 @@ class RawtextTagHandler(SelectAwareHandler):
         tag_name = token.tag_name
         self.debug(f"handling {tag_name}")
 
+        # Table row alignment: if a <style> or <script> appears immediately after a <tr> start tag
+        # we must ensure it becomes a child of the row (tbody/tr) rather than a direct child of <table>.
+        # If current element is <table> but the most recently opened non-table element is a pending <tr>
+        # (TableTagHandler may have created tbody/tr without entering), relocate insertion point.
+        if tag_name in ('style','script') and context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
+            # Find deepest open tr element
+            tr_node = None
+            for el in reversed(context.open_elements._stack):  # type: ignore[attr-defined]
+                if el.tag_name == 'tr':
+                    tr_node = el
+                    break
+            if tr_node and context.current_parent.tag_name == 'table':
+                context.move_to_element(tr_node)
+                self.debug("Relocated insertion point to <tr> for rawtext element")
+
         # Per spec, certain rawtext elements (e.g. xmp) act like block elements that
         # implicitly close an open <p>. (Similar handling already exists for plaintext.)
         if tag_name == "xmp" and context.current_parent.tag_name == "p":
@@ -6584,8 +6603,20 @@ class PlaintextHandler(SelectAwareHandler):
     """Handles plaintext element which switches to plaintext mode"""
 
     def _should_handle_start_impl(self, tag_name: str, context: "ParseContext") -> bool:
-        # Handle plaintext start tag, or any tag when already in PLAINTEXT mode
-        return tag_name == "plaintext" or context.content_state == ContentState.PLAINTEXT
+        # While in PLAINTEXT mode we treat all subsequent tags as literal text here.
+        if context.content_state == ContentState.PLAINTEXT:
+            return True
+        if tag_name != 'plaintext':
+            return False
+        cur = context.current_parent
+        # Inside plain SVG/MathML foreign subtree that is NOT an integration point, we should NOT
+        # enter HTML PLAINTEXT mode; instead the <plaintext> tag is just another foreign element
+        # with normal parsing of its (HTML) end tag token. We still handle it here so we can create
+        # the element explicitly and not trigger global PLAINTEXT consumption.
+        if self.parser.is_plain_svg_foreign(context):  # type: ignore[attr-defined]
+            return True
+        # Always intercept inside select so we can ignore (prevent fallback generic element creation)
+        return True
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         if context.content_state == ContentState.PLAINTEXT:
@@ -6596,8 +6627,31 @@ class PlaintextHandler(SelectAwareHandler):
             return True
 
         self.debug("handling plaintext")
+        # Ignore plaintext start tag entirely inside a select subtree (spec: disallowed start tag ignored)
+        if context.current_parent.tag_name == 'select' or context.current_parent.find_ancestor(lambda n: n.tag_name == 'select'):
+            self.debug("Ignoring <plaintext> inside <select> subtree (no PLAINTEXT mode)")
+            return True
 
-        if context.document_state in (DocumentState.INITIAL, DocumentState.AFTER_HEAD, DocumentState.AFTER_BODY):
+        # Plain foreign SVG/MathML: create a foreign plaintext element but DO NOT switch tokenizer
+        if self.parser.is_plain_svg_foreign(context):  # type: ignore[attr-defined]
+            self.debug("Plain foreign context: creating <plaintext> as foreign element (no PLAINTEXT mode)")
+            self.parser.insert_element(
+                token,
+                context,
+                mode='normal',
+                enter=True,
+                tag_name_override='svg plaintext' if context.current_context == 'svg' else 'math plaintext',
+                push_override=True,
+            )
+            return True
+
+        # Do not synthesize body or change insertion mode when inside template content fragment
+        in_template_content = (
+            context.current_parent.tag_name == 'content'
+            and context.current_parent.parent
+            and context.current_parent.parent.tag_name == 'template'
+        )
+        if not in_template_content and context.document_state in (DocumentState.INITIAL, DocumentState.AFTER_HEAD, DocumentState.AFTER_BODY):
             body = self.parser._ensure_body_node(context)
             self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
 
@@ -6640,17 +6694,58 @@ class PlaintextHandler(SelectAwareHandler):
                 tag_name_override='plaintext',
                 push_override=True,
             )
+        self.debug("Entering PLAINTEXT content state")
         context.content_state = ContentState.PLAINTEXT
+        # Switch tokenizer to PLAINTEXT so remaining input is treated as text
+        self.parser.tokenizer.start_plaintext()
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
         # Handle all end tags in PLAINTEXT mode
-        return context.content_state == ContentState.PLAINTEXT
+        if context.content_state == ContentState.PLAINTEXT:
+            return True
+        # Treat stray </plaintext> as literal text when not in PLAINTEXT state
+        if tag_name == 'plaintext':
+            return True
+        return False
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
-        self.debug(f"treating end tag as text: </{token.tag_name}>")
+        # If we are in PLAINTEXT mode, every end tag becomes literal text.
+        if context.content_state == ContentState.PLAINTEXT:
+            self.debug(f"PLAINTEXT mode: literalizing </{token.tag_name}>")
+            literal = f"</{token.tag_name}>"
+            text_node = Node("#text")
+            text_node.text_content = literal
+            context.current_parent.append_child(text_node)
+            return True
+        # If start tag was ignored inside select we also ignore its end tag (do nothing)
+        if token.tag_name == 'plaintext' and (context.current_parent.tag_name == 'select' or context.current_parent.find_ancestor(lambda n: n.tag_name == 'select')):
+            self.debug("Ignoring stray </plaintext> inside <select> subtree")
+            return True
+        # Outside PLAINTEXT mode: if we have an actual <svg plaintext> (or math) element open, close it normally
+        if token.tag_name == 'plaintext':
+            # Look for a foreign plaintext element on stack
+            target = context.current_parent if context.current_parent.tag_name.endswith(' plaintext') else context.current_parent.find_ancestor(lambda n: n.tag_name.endswith(' plaintext'))
+            if target:
+                # Pop stack until target
+                while not context.open_elements.is_empty():
+                    popped = context.open_elements.pop()
+                    if popped is target:
+                        break
+                if target.parent:
+                    context.move_to_element(target.parent)
+                return True
+            # Stray </plaintext>: emit literal text
+            self.debug("Stray </plaintext>: emitting literal text")
+            literal = "</plaintext>"
+            text_node = Node("#text")
+            text_node.text_content = literal
+            context.current_parent.append_child(text_node)
+            return True
+        # Any other end tag we claimed (shouldn't happen) literalize
+        literal = f"</{token.tag_name}>"
         text_node = Node("#text")
-        text_node.text_content = f"</{token.tag_name}>"
+        text_node.text_content = literal
         context.current_parent.append_child(text_node)
         return True
 

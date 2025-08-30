@@ -86,6 +86,13 @@ class HTMLTokenizer:
         if tag_name == "script":
             self.script_content = ""
 
+    def start_plaintext(self) -> None:
+        """Switch tokenizer into PLAINTEXT mode: all subsequent characters are literal text."""
+        self.state = "PLAINTEXT"
+        self.rawtext_tag = None
+        self.buffer = []
+        self.temp_buffer = []
+
     def tokenize(self) -> Iterator[HTMLToken]:
         """Generate tokens from the HTML string"""
         while self.pos < self.length or self._pending_tokens:
@@ -112,6 +119,23 @@ class HTMLTokenizer:
                     self.debug(f"RAWTEXT token: {token}")
                     token.is_last_token = self.pos >= self.last_pos
                     yield token
+            elif self.state == "PLAINTEXT":
+                if self.pos < self.length:
+                    raw = self.html[self.pos : self.length]
+                    # Replace NULL and disallowed C0 control chars (except tab/newline/carriage return/form feed) with U+FFFD
+                    out_chars = []
+                    for ch in raw:
+                        code = ord(ch)
+                        if code == 0x00 or (0x01 <= code <= 0x1F and ch not in ('\t','\n','\r','\f')):
+                            out_chars.append('\uFFFD')
+                        else:
+                            out_chars.append(ch)
+                    data = ''.join(out_chars)
+                    self.pos = self.length
+                    token = HTMLToken("Character", data=data)
+                    token.is_last_token = True
+                    yield token
+                break
 
     def _tokenize_rawtext(self) -> Optional[HTMLToken]:
         """Tokenize content in RAWTEXT state"""
