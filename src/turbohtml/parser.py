@@ -1107,7 +1107,7 @@ class TurboHTML:
             # Extended benign set for delaying body creation while frameset still possible.
             benign_no_body = {
                 # Structural/metadata/benign flow elements that should not yet force body creation while
-                # a root <frameset> remains possible (matches earlier passing behavior).
+                # a root <frameset> remains possible.
                 "frameset","frame","param","source","track","base","basefont","bgsound","link","meta",
                 "script","style","title","img","br","wbr","svg","math","input"
             }
@@ -1263,7 +1263,7 @@ class TurboHTML:
                 return
         if tag_name == 'tr':
             # Stray <tr> outside any <table>: emit bare <tr> when no open table exists and preceding
-            # siblings do not include a <table>. Formerly keyed off a transient flag set by stray </table>.
+            # siblings do not include a <table>.
             if (
                 not self.find_current_table(context)
                 and context.current_parent.tag_name not in ("table", "caption")
@@ -1423,7 +1423,7 @@ class TurboHTML:
                     open_cell = el; break
             if open_cell is not None:
                 context.move_to_element(open_cell)
-                self.debug(f"Skipped foster parenting <{tag_name}>; restored insertion to open cell <{open_cell.tag_name}>")
+                self.debug(f"Skipped foster parenting <{tag_name}>; insertion point set to open cell <{open_cell.tag_name}>")
             else:
                 self.debug(f"Foster parenting {tag_name} out of table")
                 self._foster_parent_element(tag_name, token.attributes, context)
@@ -1469,10 +1469,10 @@ class TurboHTML:
                 and not (context.current_parent and context.current_parent.find_ancestor(lambda n: n.tag_name in ("td","th")))
             ):
                 context.move_to_element(deepest_cell)
-                self.debug(f"Restored insertion point to open cell <{deepest_cell.tag_name}> prior to handling </{tag_name}>")
+                self.debug(f"Insertion point set to open cell <{deepest_cell.tag_name}> prior to handling </{tag_name}>")
 
     # Detect stray </table> in contexts expecting tbody wrapper later
-        # Stray </table> with no open table: ignore (structural recovery; previously flagged)
+        # Stray </table> with no open table: ignore (structural recovery)
         if tag_name == 'table' and not self.find_current_table(context):
             # Stray </table> with no open table: ignore. A following <tr> will be handled by
             # structural stray <tr> logic above without needing a persistent flag.
@@ -2039,9 +2039,8 @@ class TurboHTML:
                 continue
             # Suppress redundant sibling <nobr> reconstruction at block/body level: when the current
             # insertion parent is a block container whose last child is already a <nobr>, skip cloning
-            # another stale <nobr> here. This avoids producing an extra empty sibling <nobr> immediately
-            # before a following block (tests26 redundant wrapper case) while leaving other formatting
-            # reconstruction unaffected.
+            # another stale <nobr> here. This prevents creation of an empty peer wrapper immediately
+            # before an incoming block element while leaving other formatting reconstruction unaffected.
             if (
                 entry.element.tag_name == 'nobr'
                 and context.current_parent.tag_name in ('body','div','section','article','p')

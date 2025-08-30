@@ -345,7 +345,7 @@ class HTMLTokenizer:
         # If we're here, either no end tag or not our tag
         # Find the next potential end tag or EOF
         start = self.pos
-        # Optimized scan for next '</' (end tag start) or EOF (same semantics as previous loop)
+        # Optimized scan for next '</' (end tag start) or EOF (same semantics as initial scan loop)
         next_close = self.html.find("</", start + 1)
         if next_close == -1:
             self.pos = self.length
@@ -379,7 +379,7 @@ class HTMLTokenizer:
         if self.pos + 1 < self.length:
             nxt = self.html[self.pos + 1]
             # HTML Standard (Data state): after '<' only letter / '!' / '/' / '?' may begin markup.
-            # A space must NOT trigger tag parsing ("< text" => literal '<'). Previous logic allowed space.
+            # A space must NOT trigger tag parsing ("< text" => literal '<').
             if not (nxt.isalpha() or nxt in "!/?"):
                 self.pos += 1
                 return HTMLToken("Character", data="<")
@@ -468,7 +468,7 @@ class HTMLTokenizer:
                     self.pos = self.length
                     unclosed_to_eof = True
                 else:
-                    # Fallback to previous heuristic: stop before a '<' that starts a new tag
+                    # Stop before a '<' that starts a new tag
                     next_lt_pos = self.html.find('<', after_tag_start)
                     if next_lt_pos == -1 or next_lt_pos > self.pos + closing_gt_pos + len(tag_match.group(0)):
                         # Use up to closing '>' (will be handled later by normal matcher, so treat as text)
@@ -555,14 +555,7 @@ class HTMLTokenizer:
                 f"Found tag: bang={bang}, is_end_tag={is_end_tag}, tag_name={tag_name}, attributes={attributes}"
             )
 
-            # Special case: malformed <code x</code> pattern (tests26:9). The substring after <code contains a
-            # bare attribute fragment with a '<' so normal attribute parsing would treat 'x<' as part of an
-            # attribute name. Expected tree: two consecutive <code> elements each with attributes
-            # code="" and x<="" followed by a standalone text node containing '"' then a newline.
-            # We approximate by emitting a StartTag now (first <code>) and queueing a synthetic EndTag
-            # plus a second StartTag for the re-opened <code>, then a Character token for the trailing
-            # '"\n'. The parser will close the first when it encounters the queued EndTag, then create
-            # the second <code>, then append the text node as a sibling of the second <code>.
+            # Malformed <code> patterns are not specially cased; attribute tails are handled uniformly.
 
             # Generic malformed attribute/text tail cases: raw '<', backticks used as quotes, newlines in value,
             # or leading escaped quote. Convert whole substring into text content.

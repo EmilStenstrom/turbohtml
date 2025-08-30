@@ -577,22 +577,17 @@ class TextHandler(TagHandler):
 
     def handle_text(self, text: str, context: "ParseContext") -> bool:
         self.debug(f"handling text '{text}' in state {context.document_state}")
-        # TEMP DEBUG (tests26:5 ordering) - log stack and AFE when seeing '2' or '3'
-        if text in ('2','3') and self.parser.env_debug:
-            open_stack = [e.tag_name for e in context.open_elements._stack]
-            afe = [e.element.tag_name for e in context.active_formatting_elements._stack if e.element]
-            self.debug(f"TRACE char {text}: open={open_stack} afe={afe} parent={context.current_parent.tag_name}")
 
         # Stateless integration point consistency: if an SVG/MathML integration point element (foreignObject/desc/title
         # or math annotation-xml w/ HTML encoding, or MathML text integration leaves) remains open on the stack but the
         # current insertion point has drifted outside its subtree (should not normally happen unless a prior stray end
         # tag was swallowed), re-enter the deepest such integration point so trailing character data stays inside.
-        # This replaces the previous transient routing sentinel.
+        # Transient routing sentinel logic inlined here.
         integration_point_tags = {
             "svg foreignObject","svg desc","svg title",
             "math annotation-xml","math mtext","math mi","math mo","math mn","math ms"
         }
-        # Only look at ancestors (not arbitrary earlier open elements) to avoid resurrecting closed/suppressed nodes.
+        # Only consider ancestors (not arbitrary earlier open elements) to avoid resurrecting closed/suppressed nodes.
         ancestor_ips = []
         cur = context.current_parent
         while cur and cur.tag_name not in ("html", "document-fragment"):
@@ -600,7 +595,7 @@ class TextHandler(TagHandler):
                 ancestor_ips.append(cur)
             cur = cur.parent
         # If we have any integration point ancestors but current_parent is no longer inside the *deepest* one due to
-        # an earlier drift, we'd want to re-enter. However, since we restricted to ancestors, drift cannot occur.
+        # Ancestor restriction prevents drift.
         # Additionally, avoid re-enter when the integration point lived inside template content and we are now
         # outside that template's content fragment.
         # (No action required; logic retained for future heuristics.)
@@ -626,7 +621,7 @@ class TextHandler(TagHandler):
 
         # Foreign (MathML/SVG) content: append text directly to current foreign element without
         # triggering body/table salvage heuristics. This preserves correct subtree placement
-        # for cases like post-body <math><mi>foo</mi> where previous logic routed text to body.
+        # Handles post-body <math><mi>foo</mi> cases where text must remain within foreign subtree.
         if context.current_context in ("math", "svg"):
             # If a pending integration text target was recorded (swallowed stray end tag inside integration point),
             # route text into that target to keep it inside the foreignObject/desc/title subtree.
@@ -641,7 +636,7 @@ class TextHandler(TagHandler):
             if tbl:
                 has_section = any(ch.tag_name in ('tbody','thead','tfoot','tr') for ch in tbl.children)
                 if not has_section:
-                    # Only relocate if current_parent is not already the table (otherwise earlier branch handled it)
+                    # Only relocate if current_parent is not already the table
                     if context.current_parent is not tbl:
                         if self.parser.env_debug:
                             self.debug(f"Placing leading table whitespace into <table> (state={context.document_state})")
@@ -746,7 +741,7 @@ class TextHandler(TagHandler):
                     any(e.tag_name == 'nobr' for e in elems) and (not elems or elems[-1].tag_name != 'nobr')
                 )
                 # New: if trailing text follows a table and there exists an active formatting element
-                # whose DOM node is no longer open (was foster‑parented / adoption removed) we should
+                # whose DOM node is no longer open (was foster‑parented / adoption removed) we must
                 # reconstruct before appending so the text is wrapped (e.g. tests7.dat:30 requires a
                 # second <b> after the table). This mirrors spec "reconstruct active formatting elements"
                 # step before inserting character tokens in the body insertion mode.
@@ -791,7 +786,7 @@ class TextHandler(TagHandler):
                 # sequences like <table><b><tr>...bbb</table>ccc which produce <b><b>bbb<table>...<b>ccc.
                 # Here the active formatting entry's element (the second <b>) remains open so the
                 # reconstruction algorithm would not clone it. We synthesize a new wrapper of the
-                # same tag so the trailing text does not merge into the earlier formatting run.
+                # same tag so the trailing text does not merge into the prior formatting run.
                 if elems and elems[-1].tag_name == 'table' and text:
                     # Find last formatting element sibling before the table (walk backwards skipping table)
                     fmt_before = None
@@ -929,16 +924,17 @@ class TextHandler(TagHandler):
         ):
             context.move_to_element(context.current_parent.parent)
 
-        # Removed non-spec inline wrapper duplication heuristics (before/after table). Spec reconstruction
+        # No non-spec inline wrapper duplication heuristics (before/after table); rely on spec reconstruction
         # alone should govern when formatting elements reappear.
 
 
         # Whitespace handling deferred to tokenizer and spec rules (no additional trimming here).
-        # Removed malformed <code> duplication heuristic: treat stray characters as plain text per spec.
+        # Malformed <code> sequences are treated as plain text per spec.
         # Before final append, if there is a stale <nobr> active formatting element (entry present whose element
         # is not on the open elements stack) and current insertion point does not already have a descendant
         # <nobr> as its last child, run reconstruction so that the text is wrapped in a fresh <nobr> sibling
-        # (matches expected separate wrappers for trailing runs in tests26). Minimal spec-aligned trigger:
+        # Ensures separate wrappers for trailing runs where segmentation would otherwise collapse.
+        # Minimal spec-aligned trigger:
         # presence of stale active formatting element entry.
         # Stale <nobr> reconstruction: if a <nobr> formatting element entry exists whose element
         # is no longer on the open elements stack (i.e. adoption or end tag removed it) and the
@@ -981,7 +977,7 @@ class TextHandler(TagHandler):
         # If current insertion parent is a <nobr> that already contains a non-text child (e.g. <i>)
         # but no text yet, and there exists another <nobr> formatting entry (open or stale) distinct
         # from the current element, create a new sibling <nobr> so the upcoming text forms its own
-        # wrapper rather than merging into the earlier structural wrapper. This mirrors the effect
+        # wrapper rather than merging into the structural wrapper. This mirrors the effect
         # of adoption + reconstruction sequencing producing segmented wrappers for separate runs.
         if (
             context.current_parent.tag_name == 'nobr'
@@ -1090,8 +1086,8 @@ class TextHandler(TagHandler):
                 self.parser.reconstruct_active_formatting_elements(context)  # type: ignore[attr-defined]
                 context.move_to_element(cur_parent)
 
-        # Create text node and insert it before the table (merging with previous sibling if text)
-        # Attempt merge with previous sibling when it is a text node to avoid fragmentation
+        # Create text node and insert it before the table (merging with last sibling if text)
+        # Attempt merge with last sibling when it is a text node to avoid fragmentation
         prev_index = table_parent.children.index(table) - 1
         if prev_index >= 0 and table_parent.children[prev_index].tag_name == "#text":
             prev_node = table_parent.children[prev_index]
@@ -1108,7 +1104,7 @@ class TextHandler(TagHandler):
             context.frameset_ok = False
 
     def _append_text(self, text: str, context: "ParseContext") -> None:
-        """Helper to append text, either as new node or merged with previous"""
+        """Helper to append text, either as new node or merged with last sibling"""
         # Context-sensitive replacement character handling:
         #  * In pure foreign SVG/MathML subtrees (not at an HTML integration point) we preserve
         #    U+FFFD so explicit replacement characters remain in plain SVG cases requiring preservation
@@ -1122,7 +1118,7 @@ class TextHandler(TagHandler):
             and context.current_parent.tag_name not in ("script", "style")
         ):
             text = text.replace("\uFFFD", "")
-        # If all text removed (became empty), nothing to do
+        # If all text removed (became empty) nothing to do
         if text == "":
             return
 
@@ -1145,10 +1141,10 @@ class TextHandler(TagHandler):
             self._handle_pre_text(text, context, context.current_parent)
             return
 
-        # Try to merge with previous text node
+        # Try to merge with last text node
         if context.current_parent.last_child_is_text():
             prev_node = context.current_parent.children[-1]
-            self.debug(f"merging with previous text node '{prev_node.text_content}'")
+            self.debug(f"merging with last text node '{prev_node.text_content}'")
             if text:
                 prev_node.text_content += text
             # Post-merge sanitization for normal content
@@ -1266,7 +1262,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 extra = self.parser.adoption_agency.run_until_stable('a', context)
                 if extra:
                     self.debug(f"Additional adoption runs after forced first: {extra}")
-                # Remove any lingering <a> entries (spec says the one we just processed is removed)
+                # Remove any lingering <a> entries (spec says the one just processed is removed)
                 lingering = [e for e in list(context.active_formatting_elements._stack) if e.element and e.element.tag_name == 'a']
                 for e in lingering:
                     context.active_formatting_elements.remove_entry(e)
@@ -1316,10 +1312,10 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 )
             # Structural adjustment: if we are about to insert another <nobr> inside a block (e.g. div)
             # but there is an open <i> formatting element immediately after a reconstructed <nobr>, and
-            # that <i> already has (or previously had) a <nobr> descendant, clone the <i> so that the next
+            # that <i> already has a <nobr> descendant, clone the <i> so that the next
             # <nobr> insertion occurs under a fresh <i> wrapper (matching expected sibling <i> duplication
             # around separate <nobr> runs). This mirrors spec behavior where reconstruction can clone
-            # multiple formatting elements when interrupted by blocks, but our earlier adoption left the
+            # multiple formatting elements when interrupted by blocks, but adoption left the
             # original <i> in place preventing a needed clone.
             if tag_name == 'nobr':
                 # Find most recent <i> in active formatting list
@@ -1328,7 +1324,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                     i_elem = afe_i_entries[-1].element
                     # Pattern we need: open stack has ... block(div/section/article/p), nobr, i where i is *inside* the nobr,
                     # and current_parent is the block. We want to clone <i> as sibling under the block so the upcoming <nobr>
-                    # becomes child of the cloned <i> (producing second <i> wrapper as in expected tree for tests26:5).
+                    # becomes child of the cloned <i> (producing a second <i> wrapper reflecting nested formatting depth).
                     if (
                         i_elem is not None
                         and context.open_elements.contains(i_elem)
