@@ -866,31 +866,37 @@ class TextHandler(TagHandler):
         # INITIAL/IN_HEAD promotion
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
             was_initial = context.document_state == DocumentState.INITIAL
-            # Find first non-whitespace (excluding replacement) character
+            # HTML Standard "space character" set: TAB, LF, FF, CR, SPACE (NOT all Unicode isspace())
+            HTML_SPACE = {'\t', '\n', '\f', '\r', ' '}
+            # Find first character that is not an HTML space (replacement char is treated as data)
             first_non_space_index = None
             for i, ch in enumerate(text):
-                if ch == '\uFFFD':  # treat replacement char like regular data for triggering body
+                if ch == '\uFFFD':  # replacement triggers body like any other data
                     first_non_space_index = i
                     break
-                if not ch.isspace():
+                if ch not in HTML_SPACE:
+                    # Non-HTML space (even if Python str.isspace()==True, e.g. U+205F) counts as data
                     first_non_space_index = i
                     break
             if first_non_space_index is not None:
+                # If we were already IN_HEAD (not INITIAL) and there is a leading HTML space prefix, keep it in head
                 if not was_initial and first_non_space_index > 0:
                     head = self.parser._ensure_head_node()
                     context.move_to_element(head)
                     self._append_text(text[:first_non_space_index], context)
                 body = self.parser._ensure_body_node(context)
                 self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
+                # Append the non-space (or full text if INITIAL) to body
                 self._append_text(text if was_initial else text[first_non_space_index:], context)
                 return True
-            # All whitespace (or empty) in head gets appended to head; in INITIAL it's ignored
+            # All pure HTML space (or empty) in head gets appended to head; in INITIAL it's ignored entirely
             if context.document_state == DocumentState.IN_HEAD:
+                # text here consists only of HTML space characters
                 head = self.parser._ensure_head_node()
                 context.move_to_element(head)
                 self._append_text(text, context)
                 return True
-            return True  # Ignore pure whitespace in INITIAL
+            return True  # Ignore pure HTML space in INITIAL
 
         # Narrow misnested inline split heuristic (text-phase) for pattern:
         #   <b><p><i>... </b> <space>ItalicText
