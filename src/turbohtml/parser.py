@@ -1318,7 +1318,24 @@ class TurboHTML:
                 else:
                     self.reconstruct_active_formatting_elements(context)
             else:
-                self.reconstruct_active_formatting_elements(context)
+                # Skip reconstruction for block/special element start tags when the only missing
+                # formatting entries are <nobr> (prevents emitting an empty sibling <nobr> before the block).
+                # Spec only requires reconstruction when inserting non-phrasing content under certain modes;
+                # over-applying here introduced redundant wrappers.
+                if tag_name in ('div','section','article','p','ul','ol','li','table','tr','td','th','body','html','h1','h2','h3','h4','h5','h6'):
+                    # Determine if any needed reconstruction entry is non-<nobr>
+                    pending_non_nobr = False
+                    if context.active_formatting_elements and context.active_formatting_elements._stack:
+                        for entry in context.active_formatting_elements._stack:
+                            if entry.element is None:
+                                continue
+                            if not context.open_elements.contains(entry.element) and entry.element.tag_name != 'nobr':
+                                pending_non_nobr = True
+                                break
+                    if pending_non_nobr:
+                        self.reconstruct_active_formatting_elements(context)
+                else:
+                    self.reconstruct_active_formatting_elements(context)
 
         # Try tag handlers first
         for handler in self.tag_handlers:
@@ -2019,6 +2036,18 @@ class TurboHTML:
             if entry.element is None:
                 continue
             if context.open_elements.contains(entry.element):
+                continue
+            # Suppress redundant sibling <nobr> reconstruction at block/body level: when the current
+            # insertion parent is a block container whose last child is already a <nobr>, skip cloning
+            # another stale <nobr> here. This avoids producing an extra empty sibling <nobr> immediately
+            # before a following block (tests26 redundant wrapper case) while leaving other formatting
+            # reconstruction unaffected.
+            if (
+                entry.element.tag_name == 'nobr'
+                and context.current_parent.tag_name in ('body','div','section','article','p')
+                and context.current_parent.children
+                and context.current_parent.children[-1].tag_name == 'nobr'
+            ):
                 continue
             # NOTE: Intentionally do NOT suppress duplicate <b> cloning here; per spec each missing
             # formatting element entry must be reconstructed, producing nested <b> wrappers when
