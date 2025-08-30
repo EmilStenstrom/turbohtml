@@ -312,6 +312,23 @@ class TemplateTagHandler(TagHandler):
 
         if context.current_parent and context.current_parent.tag_name == "template":
             template_node = context.current_parent
+            # Pop any open elements whose ancestor chain includes this template's content fragment.
+            # Spec: when leaving a template the parser resets the insertion mode appropriately and
+            # the template element is removed from the stack of open elements; descendant elements
+            # inside the template's contents must not remain on the stack influencing outer parsing.
+            if context.open_elements._stack:  # type: ignore[attr-defined]
+                new_stack = []
+                for el in context.open_elements._stack:  # preserve order for survivors
+                    cur = el.parent
+                    keep = True
+                    while cur:
+                        if cur is template_node:
+                            keep = False
+                            break
+                        cur = cur.parent
+                    if keep:
+                        new_stack.append(el)
+                context.open_elements._stack = new_stack  # type: ignore[attr-defined]
             if context.open_elements.contains(template_node):
                 context.open_elements.remove_element(template_node)
             parent = template_node.parent or template_node
@@ -1641,14 +1658,16 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
 
             # If we're already in a select, close it and ignore the nested select
             if self._is_in_select(context):
-                self.debug("Found nested select, closing outer select")
-                outer_select = context.current_parent.find_ancestor("select")
-                if outer_select and outer_select.parent:
-                    self.debug(f"Moving up to outer select's parent: {outer_select.parent}")
-                    context.move_to_element(outer_select.parent)
-                    # Don't create anything for the nested select itself
-                    self.debug("Ignoring nested select tag")
-                    return True
+                self.debug("Found nested select, popping outer <select> from open elements (spec reprocess rule)")
+                # Pop stack until outer select removed (implicitly closing any option/optgroup inside)
+                while not context.open_elements.is_empty():
+                    popped = context.open_elements.pop()
+                    if popped.tag_name == 'select':
+                        if popped.parent:
+                            context.move_to_element(popped.parent)
+                        break
+                # Ignore the nested <select> token itself (do not create new select)
+                return True
 
             # Create new select/datalist using standardized insertion
             self.parser.insert_element(token, context, mode='normal')
@@ -1760,6 +1779,31 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
 
 
         if self._is_in_select(context) and tag_name in TABLE_ELEMENTS:
+            # Regression-safe refinement:
+            # * Do NOT auto-pop select for every table-related tag (earlier change produced unintended
+            #   table structures inside foreignObject or built tbody/tr under select – tests17 failures).
+            # * When in a table insertion mode already (e.g. select nested inside an open table cell),
+            #   allow foster-parenting logic below to operate.
+            # * When inside an SVG foreignObject integration point, emit <table> outside the select subtree
+            #   (handled below) but otherwise ignore non-<table> table-scope tags inside select (they should
+            #   be ignored per select insertion mode rules).
+            select_ancestor = context.current_parent.find_ancestor('select')
+            # If in IN_TABLE and encountering a row-group/row/cell boundary token inside a select, pop select first so
+            # table content does not siphon character data into an open <option> (tables01.dat:9 expectation: 'B' in cell).
+            if (
+                context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW)
+                and tag_name in ('tr','tbody','thead','tfoot','td','th','caption')
+                and select_ancestor is not None
+            ):
+                self.debug(f"Popping <select> before processing table structural tag <{tag_name}> in table context")
+                # Pop until select removed (close option/optgroup descendants)
+                while not context.open_elements.is_empty():
+                    popped = context.open_elements.pop()
+                    if popped is select_ancestor:
+                        if popped.parent:
+                            context.move_to_element(popped.parent)
+                        break
+                return False  # Reprocess under appropriate table handler
             select_element = context.current_parent.find_ancestor("select")
             if select_element:
                 if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_CAPTION):
@@ -1854,12 +1898,21 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             # If we're not in a select/datalist, create elements at body level
             if not parent:
                 self.debug(f"Creating {tag_name} outside select/datalist")
-                # Move up to body level if we're inside another option/optgroup
+                # If an <option> is currently open, properly close (pop) it so text does not merge.
+                if context.current_parent.tag_name == 'option':
+                    closing_option = context.current_parent
+                    self.debug("Popping stray <option> before creating standalone select/datalist child")
+                    while not context.open_elements.is_empty():
+                        popped = context.open_elements.pop()
+                        if popped is closing_option:
+                            break
+                    if closing_option.parent:
+                        context.move_to_element(closing_option.parent)
+                # Move up to body level if still inside option/optgroup chain after popping
                 target_parent = context.current_parent.move_up_while_in_tags(("option", "optgroup"))
                 if target_parent != context.current_parent:
                     self.debug(f"Moved up from {context.current_parent.tag_name} to {target_parent.tag_name}")
                     context.move_to_element(target_parent)
-                # Standardized creation (normal mode => push + enter)
                 new_node = self.parser.insert_element(token, context, mode='normal', enter=True)
                 self.debug(f"Created {tag_name} via insert_element: {new_node}, parent now: {context.current_parent}")
                 return True
@@ -1869,10 +1922,24 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                 self.debug("Creating optgroup inside select/datalist")
                 # If we're inside an option, move up to select/datalist level
                 if context.current_parent.tag_name == "option":
-                    self.debug("Moving up from option to select/datalist level")
-                    parent = context.current_parent.find_ancestor(lambda n: n.tag_name in ("select", "datalist"))
-                    if parent:
-                        context.move_to_element(parent)
+                    # Properly close the open <option>: pop it off the open elements stack
+                    closing_option = context.current_parent
+                    self.debug("Closing current <option> before starting <optgroup>")
+                    while not context.open_elements.is_empty():
+                        popped = context.open_elements.pop()
+                        if popped is closing_option:
+                            break
+                    if closing_option.parent:
+                        context.move_to_element(closing_option.parent)
+                    else:
+                        parent_body = self.parser._ensure_body_node(context)  # type: ignore[attr-defined]
+                        if parent_body:
+                            context.move_to_element(parent_body)
+                # Ensure insertion at select/datalist level (flatten misnested optgroup nesting)
+                if context.current_parent.tag_name == 'optgroup':
+                    container = context.current_parent.find_ancestor(lambda n: n.tag_name in ("select","datalist"))
+                    if container:
+                        context.move_to_element(container)
                 new_optgroup = self.parser.insert_element(token, context, mode='normal', enter=True)
                 self.debug(f"Created optgroup via insert_element: {new_optgroup}, parent now: {context.current_parent}")
                 return True
@@ -1950,8 +2017,23 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         tag_name = token.tag_name
         self.debug(f"Handling end tag {tag_name}, current_parent={context.current_parent}")
 
-        if tag_name in ("select", "datalist", "optgroup", "option"):
-            # Use standard ancestor close pattern
+        if tag_name in ("select", "datalist"):
+            # Pop open elements stack up to and including the select/datalist; implicitly close option/optgroup
+            target = context.current_parent.find_ancestor(tag_name)
+            if not target:
+                for el in reversed(context.open_elements._stack):  # type: ignore[attr-defined]
+                    if el.tag_name == tag_name:
+                        target = el; break
+            if target:
+                while not context.open_elements.is_empty():
+                    popped = context.open_elements.pop()
+                    if popped is target:
+                        break
+                if target.parent:
+                    context.move_to_element(target.parent)
+                self.debug(f"Closed <{tag_name}> (popped including descendants)")
+            return True
+        if tag_name in ("optgroup", "option"):
             return self.handle_end_by_ancestor(token, context)
 
         return False
@@ -6401,7 +6483,7 @@ class FramesetTagHandler(TagHandler):
             # Late <noframes> after a root frameset: ensure any previously buffered post-</html>
             # comments (stored while waiting to see if a trailing <noframes> would appear) are
             # flushed AFTER we insert this element so that they appear following it as root
-            # siblings (expected ordering in webkit01 frameset tests).
+            # siblings (frameset comment ordering requirement).
             # Determine if we need to reorder root-level comments that appeared after explicit </html>
             # but before this late <noframes>. We only perform this when html end was seen earlier before
             # any noframes (context.frameset_html_end_before_noframes True) and the document is now in
@@ -6585,7 +6667,7 @@ class BodyElementHandler(TagHandler):
                     # Spec-aligned: completely ignore stray </body> when the body element is not the current node.
                     # Do NOT transition to AFTER_BODY here; doing so while still inside table/inlines or
                     # unknown elements incorrectly reclassifies subsequent start tags and text as post‑body
-                    # content (webkit01.dat regression). Metadata demotion logic for late <meta>/<title>
+                    # content. Metadata demotion logic for late <meta>/<title>
                     # continues to function because those tests operate only after a *real* body closure.
                     return True
 
