@@ -143,8 +143,12 @@ class HTMLTokenizer:
             # If potential tag is script, check for end tag conditions per HTML5 script data / escaped states.
             if potential_tag == "script":
                 # The next character after the tag name determines if this could be an end tag token.
-                # End tag is allowed if next char is whitespace, '/', or '>' (attributes are parse errors but ignored).
-                if (i < self.length and (self.html[i].isspace() or self.html[i] in "/>")) or i >= self.length:
+                # End tag *candidate* ONLY if the next char is whitespace, '/', or '>' (HTML Standard – script data end tag name state).
+                # IMPORTANT: EOF directly after "</script" (no whitespace) is NOT a candidate and must be treated as literal text
+                # so that the substring "</script" is emitted (tests16: ...</SCRIPT EOF). A trailing space ("</script ") *is* a
+                # candidate; if EOF occurs before the closing '>' that partial tag is dropped (no text emitted) producing the
+                # expected empty script element (tests16: ...</SCRIPT <EOF with expected-named-closing-tag-but-got-eof errors).
+                if i < self.length and (self.html[i].isspace() or self.html[i] in "/>"):
                     # Advance through any attribute-like junk until the real tag closing '>' taking
                     # quoted strings into account (an end tag cannot have attributes, but malformed
                     # input may include them; per spec they are ignored yet we must not terminate
@@ -199,8 +203,21 @@ class HTMLTokenizer:
                                 text_before = self._replace_invalid_characters(text_before)
                                 return HTMLToken("Character", data=text_before)
                             return HTMLToken("EndTag", tag_name="script")
-                    elif i >= self.length:
-                        # EOF encountered after '</script' with no closing '>' – treat entire fragment as text
+                    else:
+                        # EOF before closing '>' in a *candidate* end tag (whitespace or '/' after name).
+                        # Need to decide whether this candidate would have been honored. If it would have been honored
+                        # (normal case: no comment‑escape suppression) we DROP the partial candidate producing an empty
+                        # script (tests16: '</SCRIPT '). If it would NOT have been honored because we are in an escaped
+                        # comment-like context (<!--<script ... with no --> yet) then we must treat the whole sequence as
+                        # literal text (tests16 comment escaped sequences expecting text that includes '</script ').
+                        text_before = self.html[self.pos:tag_start - 2]
+                        full_content = self.script_content + text_before
+                        honor_if_complete = self._should_honor_script_end_tag(full_content)
+                        if honor_if_complete:
+                            self.debug("  EOF in candidate </script ... – would honor; dropping partial end tag text")
+                            self.pos = self.length
+                            return None
+                        self.debug("  EOF in candidate </script ... – suppressed by escaped context; emitting text")
                         frag = self.html[self.pos:]
                         self.pos = self.length
                         frag = self._replace_invalid_characters(frag)
@@ -208,9 +225,7 @@ class HTMLTokenizer:
                             self.script_content += frag
                             return HTMLToken("Character", data=frag)
                         return None
-                    else:
-                        self.debug("  ignoring script end tag due to escape/comment context")
-                        # Fall through to treat as text
+                    # If not honored, fall through and treat sequence as text
 
         # If we're here, either no end tag or it should be ignored
         # Find the next potential end tag or EOF
