@@ -13,7 +13,12 @@ TAG_OPEN_RE = re.compile(r"<(!?)(/)?([^\s/>]+)([^>]*)>")
 # Attribute name: any run of characters excluding whitespace, '=', '/', '>' (allows '<', quotes, backticks, backslashes)
 # NOTE: We allow '>' inside quoted attribute values; initial regex match may terminate early at a '>' inside quotes.
 # We post‑process below when attribute quotes are unbalanced to continue scanning until the real closing '>'.
-ATTR_RE = re.compile(r'([^\s=/>]+)(?:\s*=\s*"([^"]*)"|\s*=\s*\'([^\']*)\'|\s*=\s*([^>\s]+)|)(?=\s|$|>)')
+# Attribute parsing regex:
+# - Attribute name: one or more non whitespace/=/> characters
+# - Optional value: = followed by double-quoted, single-quoted, or unquoted run (up to whitespace, '>', or '/')
+# - Lookahead now also permits a trailing '/' so constructs like id='foo'/ are tokenized as id="foo" with a
+#   separate trailing slash considered by self-closing detection logic instead of being folded into the value.
+ATTR_RE = re.compile(r'([^\s=/>]+)(?:\s*=\s*"([^"]*)"|\s*=\s*\'([^\']*)\'|\s*=\s*([^>\s]+)|)(?=\s|$|/|>)')
 
 
 class HTMLToken:
@@ -725,33 +730,15 @@ class HTMLTokenizer:
         # More complex case: check if the trailing / is part of an attribute value
         # or self-closing syntax
         if trimmed.endswith("/"):
-            # Try parsing without the trailing /
-            without_slash = attr_string.rstrip("/")
-            attrs_without_slash = self._parse_attributes(without_slash)
-
-            # Also try parsing with the slash
-            attrs_with_slash = self._parse_attributes(attr_string)
-
-            # If parsing without slash gives a quoted attribute value in the last attribute,
-            # and parsing with slash gives an unquoted value with quotes and slash,
-            # then the slash was self-closing syntax
-            if attrs_without_slash and attrs_with_slash:
-                # Get the last attribute from each parse
-                last_key_without = list(attrs_without_slash.keys())[-1] if attrs_without_slash else None
-                last_key_with = list(attrs_with_slash.keys())[-1] if attrs_with_slash else None
-
-                if (
-                    last_key_without == last_key_with
-                    and last_key_without
-                    and not attrs_without_slash[last_key_without].startswith('"')  # Clean value
-                    and attrs_with_slash[last_key_with].startswith('"')            # Malformed with quotes
-                    and attrs_with_slash[last_key_with].endswith('/')               # And ends with slash
-                ):
-                    # The slash was self-closing syntax
-                    return True, attrs_without_slash
-
-            # Default: treat as part of attribute value
-            return False, attrs_with_slash
+            # If there's no whitespace before the trailing '/', and the preceding character is not a quote,
+            # treat the slash as part of the last unquoted attribute value (e.g. bar=qux/ ). Otherwise, it's
+            # a parse error solidus ignored for non-void elements. We already do not mark non-void as self-closing.
+            stripped = attr_string.rstrip()
+            if stripped.endswith('/') and not re.search(r"['\"]\s*/\s*$", stripped):
+                # Preserve full string (attribute parser will keep the slash in the value)
+                return False, self._parse_attributes(attr_string)
+            without_slash = attr_string.rstrip('/').rstrip()
+            return False, self._parse_attributes(without_slash)
 
         # No trailing slash
         return False, self._parse_attributes(attr_string)
