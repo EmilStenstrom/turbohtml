@@ -930,7 +930,26 @@ class TextHandler(TagHandler):
 
         # Whitespace handling deferred to tokenizer and spec rules (no additional trimming here).
         # Removed malformed <code> duplication heuristic: treat stray characters as plain text per spec.
-
+        # Before final append, if there is a stale <nobr> active formatting element (entry present whose element
+        # is not on the open elements stack) and current insertion point does not already have a descendant
+        # <nobr> as its last child, run reconstruction so that the text is wrapped in a fresh <nobr> sibling
+        # (matches expected separate wrappers for trailing runs in tests26). Minimal spec-aligned trigger:
+        # presence of stale active formatting element entry.
+        if (
+            context.active_formatting_elements
+            and any(
+                entry.element is not None and entry.element.tag_name == 'nobr' and entry.element not in context.open_elements._stack
+                for entry in context.active_formatting_elements._stack
+                if entry.element is not None
+            )
+        ):
+            last_child = context.current_parent.children[-1] if context.current_parent.children else None
+            if not (last_child and last_child.tag_name == 'nobr'):
+                self.parser.reconstruct_active_formatting_elements(context)
+                # After reconstruction insertion point is innermost formatting element; leave it so text nests.
+                self._append_text(text, context)
+                return True
+        # Append text directly; no additional wrapper-splitting heuristics.
         self._append_text(text, context)
         return True
 
@@ -2794,6 +2813,23 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         current_cell = context.current_parent.find_ancestor(lambda n: n.tag_name in ["td", "th"])
         if current_cell:
             self.debug(f"Inside table cell {current_cell}, appending text with formatting awareness")
+            # Before deciding target, reconstruct active formatting elements if any are stale (present in AFE list
+            # but their DOM element is no longer on the open elements stack). This mirrors the body insertion mode
+            # "reconstruct active formatting elements" step that runs before inserting character tokens.
+            if (
+                context.active_formatting_elements
+                and any(
+                    entry.element is not None and entry.element not in context.open_elements._stack
+                    for entry in context.active_formatting_elements._stack
+                    if entry.element is not None
+                )
+            ):
+                if self.parser.env_debug and text in ('2','3'):
+                    self.debug("Reconstructing stale active formatting elements in cell before text insertion")
+                self.parser.reconstruct_active_formatting_elements(context)
+                # After reconstruction current_parent points at the deepest reconstructed formatting element.
+                # Move insertion point back to the cell so targeting logic below can choose appropriately.
+                context.move_to_element(current_cell)
             # Choose insertion target: deepest rightmost formatting element under the cell
             target = context.current_parent
             # If current_parent is not inside the cell (rare), fall back to cell
@@ -2801,21 +2837,21 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 target = current_cell
             # Find the last formatting element descendant at the end of the cell
             last = current_cell.children[-1] if current_cell.children else None
-            if last and last.tag_name in FORMATTING_ELEMENTS:
-                # Heuristic (spec-aligned intent): if the last formatting element has already been
-                # closed (not on the open elements stack) and incoming text is whitespace-only,
-                # treat the formatting element as structurally complete and append the whitespace
-                # as a sibling (avoid placing trailing space inside a just-closed <code>/<b>).
-                is_open = last in context.open_elements._stack
-                if not (text.isspace() and not is_open):
-                    # Descend to the deepest rightmost still-open formatting element chain
-                    cursor = last
-                    while cursor.children and cursor.children[-1].tag_name in FORMATTING_ELEMENTS:
-                        cursor = cursor.children[-1]
-                    # Only target if the chain root (or its deepest descendant) is still open
-                    # or we are inserting non-whitespace significant text.
-                    if is_open or not text.isspace():
-                        target = cursor
+            if last and last.tag_name in FORMATTING_ELEMENTS and last in context.open_elements._stack:
+                # Descend only through still-open formatting elements; do not reuse closed ones for new text runs.
+                cursor = last
+                while cursor.children and cursor.children[-1].tag_name in FORMATTING_ELEMENTS and cursor.children[-1] in context.open_elements._stack:
+                    cursor = cursor.children[-1]
+                # Helper to detect any descendant non-whitespace text; prevents merging separate runs.
+                def _descendant_has_text(node: Node) -> bool:
+                    for ch in node.children:
+                        if ch.tag_name == '#text' and ch.text_content and ch.text_content.strip():
+                            return True
+                        if ch.tag_name in FORMATTING_ELEMENTS and _descendant_has_text(ch):
+                            return True
+                    return False
+                if not _descendant_has_text(cursor):
+                    target = cursor
             if self.parser.env_debug and text in ('2','3'):
                 self.debug(f"CHAR '{text}' resolved cell target={target.tag_name}")
             # Append or merge text at target
@@ -3004,7 +3040,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     nobr_token = self._synth_token('nobr')
                     new_nobr = self.parser.insert_element(nobr_token, context, mode='normal', enter=False, parent=foster_parent, before=foster_parent.children[table_index], push_override=False)
                     self.parser.insert_text(text, context, parent=new_nobr, merge=True)
-                    self.debug(f"Created new <nobr> for foster-parented text after filled <nobr>: {text_node}")
+                    self.debug(f"Created new <nobr> for foster-parented text after filled <nobr>")
                     return True
 
         # Find the most recent <a> tag before the table

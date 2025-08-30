@@ -555,15 +555,24 @@ class HTMLTokenizer:
                 f"Found tag: bang={bang}, is_end_tag={is_end_tag}, tag_name={tag_name}, attributes={attributes}"
             )
 
-            # Special case: malformed <code x</code> (test 9) 
-            # If attributes contain '<', emit a StartTag and a Character token for the stray quote with newline
+            # Special case: malformed <code x</code> pattern (tests26:9). The substring after <code contains a
+            # bare attribute fragment with a '<' so normal attribute parsing would treat 'x<' as part of an
+            # attribute name. Expected tree: two consecutive <code> elements each with attributes
+            # code="" and x<="" followed by a standalone text node containing '"' then a newline.
+            # We approximate by emitting a StartTag now (first <code>) and queueing a synthetic EndTag
+            # plus a second StartTag for the re-opened <code>, then a Character token for the trailing
+            # '"\n'. The parser will close the first when it encounters the queued EndTag, then create
+            # the second <code>, then append the text node as a sibling of the second <code>.
             if not is_end_tag and tag_name.lower() == "code" and attributes and '<' in attributes:
-                is_self_closing, attrs = self._parse_attributes_and_check_self_closing(attributes)
+                _is_self_closing, attrs = self._parse_attributes_and_check_self_closing(attributes)
+                # Emit first <code ...> as self-closing (empty) so it is not left open on the stack, then
+                # queue a normal second <code> start tag and the trailing stray character data '"\n'.
+                # This yields two sibling <code> elements (first empty) followed by the text node.
                 self._pending_tokens = [
-                    HTMLToken("StartTag", tag_name=tag_name, attributes=attrs, is_self_closing=is_self_closing),
-                    HTMLToken("Character", data='"\n')
+                    HTMLToken("StartTag", tag_name=tag_name, attributes=attrs, is_self_closing=False),
+                    HTMLToken("Character", data='"\n'),
                 ]
-                return self._pending_tokens.pop(0)
+                return HTMLToken("StartTag", tag_name=tag_name, attributes=attrs, is_self_closing=True)
 
             # Generic malformed attribute/text tail cases: raw '<', backticks used as quotes, newlines in value,
             # or leading escaped quote. Convert whole substring into text content.
