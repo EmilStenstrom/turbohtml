@@ -321,8 +321,8 @@ class TurboHTML:
             do_push = True if push_override is None else push_override
             if do_push:
                 context.open_elements.push(new_node)
-
-        if enter and not is_void and mode in ('normal','transient'):
+        # Do not enter a node that the token marked self-closing (HTML void-like syntax) even if not in VOID_ELEMENTS
+        if enter and not is_void and mode in ('normal','transient') and not token.is_self_closing:
             context.enter_element(new_node)
         return new_node
 
@@ -1574,27 +1574,16 @@ class TurboHTML:
             self.debug(f"Default end tag: skipping complex element {tag_name}")
             return
 
-        # Look for the matching element in current parent only (immediate closure)
+        # Only close if the current node matches; otherwise ignore (spec: parse error, ignored)
         if context.current_parent.tag_name == tag_name:
-            # Found matching element, set current_parent to its parent
             if context.current_parent.parent:
-                old_parent = context.current_parent
                 context.move_up_one_level()
-                # Ensure text after </code> inside a table cell lands as sibling, not child
-                # (Insertion point already at parent after move_up_one_level.)
-                self.debug(
-                    f"Default end tag: closed {tag_name}, current_parent now: {context.current_parent.tag_name}"
-                )
+                self.debug(f"Default end tag: closed {tag_name}, current_parent now {context.current_parent.tag_name}")
             else:
-                # At root level, restore to appropriate context
-                if self.fragment_context:
-                    context.move_to_element(self.root)
-                else:
-                    context.move_to_element_with_fallback(self.body_node, self.html_node)
-                self.debug(f"Default end tag: closed {tag_name}, restored to root context")
-        else:
-            # Per spec: ignore unmatched end tag (no ancestor popping heuristic)
-            self.debug(f"Default end tag: no immediate match for {tag_name}, ignoring")
+                # At root; nothing meaningful to pop
+                self.debug(f"Default end tag: root-level {tag_name} close ignored (already at root)")
+            return
+        self.debug(f"Default end tag: no immediate match for </{tag_name}>, ignoring")
 
     def _handle_special_element(
         self, token: HTMLToken, tag_name: str, context: ParseContext, end_tag_idx: int

@@ -563,16 +563,6 @@ class HTMLTokenizer:
             # plus a second StartTag for the re-opened <code>, then a Character token for the trailing
             # '"\n'. The parser will close the first when it encounters the queued EndTag, then create
             # the second <code>, then append the text node as a sibling of the second <code>.
-            if not is_end_tag and tag_name.lower() == "code" and attributes and '<' in attributes:
-                _is_self_closing, attrs = self._parse_attributes_and_check_self_closing(attributes)
-                # Emit first <code ...> as self-closing (empty) so it is not left open on the stack, then
-                # queue a normal second <code> start tag and the trailing stray character data '"\n'.
-                # This yields two sibling <code> elements (first empty) followed by the text node.
-                self._pending_tokens = [
-                    HTMLToken("StartTag", tag_name=tag_name, attributes=attrs, is_self_closing=False),
-                    HTMLToken("Character", data='"\n'),
-                ]
-                return HTMLToken("StartTag", tag_name=tag_name, attributes=attrs, is_self_closing=True)
 
             # Generic malformed attribute/text tail cases: raw '<', backticks used as quotes, newlines in value,
             # or leading escaped quote. Convert whole substring into text content.

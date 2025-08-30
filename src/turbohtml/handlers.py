@@ -935,18 +935,24 @@ class TextHandler(TagHandler):
         # <nobr> as its last child, run reconstruction so that the text is wrapped in a fresh <nobr> sibling
         # (matches expected separate wrappers for trailing runs in tests26). Minimal spec-aligned trigger:
         # presence of stale active formatting element entry.
+        # Stale <nobr> reconstruction: if a <nobr> formatting element entry exists whose element
+        # is no longer on the open elements stack (i.e. adoption or end tag removed it) and the
+        # current insertion point does not already end with a <nobr>, run reconstruction so the
+        # upcoming text is wrapped in a fresh sibling <nobr>. This yields separate wrappers for
+        # sequential text runs after mis-nesting recovery without introducing extra wrappers when
+        # the last child is already an appropriate <nobr> container.
         if (
             context.active_formatting_elements
             and any(
                 entry.element is not None and entry.element.tag_name == 'nobr' and entry.element not in context.open_elements._stack
-                for entry in context.active_formatting_elements._stack
-                if entry.element is not None
+                for entry in context.active_formatting_elements._stack if entry.element is not None
             )
         ):
             last_child = context.current_parent.children[-1] if context.current_parent.children else None
-            if not (last_child and last_child.tag_name == 'nobr'):
+            # Treat trailing <nobr> as reusable only if it's empty; if it already has children we
+            # reconstruct to create a new sibling wrapper for a new text run.
+            if not (last_child and last_child.tag_name == 'nobr' and not last_child.children):
                 self.parser.reconstruct_active_formatting_elements(context)
-                # After reconstruction insertion point is innermost formatting element; leave it so text nests.
                 self._append_text(text, context)
                 return True
         # Append text directly; no additional wrapper-splitting heuristics.
