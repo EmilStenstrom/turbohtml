@@ -2432,29 +2432,22 @@ class TurboHTML:
         # Step 2: If the last entry's element is already on the open elements stack, return
         # (Optimization: we detect earliest needing reconstruction below)
 
-        # Find the earliest entry that needs reconstruction per spec:
-        # Walk backwards until we find first entry whose element is not on the open elements stack.
+        # Forward scan (legacy implementation used by current handler logic): find earliest entry whose
+        # element is missing from the open elements stack, then reconstruct from that point forward.
         index_to_reconstruct_from = None
         for i, entry in enumerate(afe_list):
-            # Skip markers (not implemented) – all entries treated as normal
             if entry.element is None:
                 continue
             if not context.open_elements.contains(entry.element):
                 index_to_reconstruct_from = i
                 break
         if index_to_reconstruct_from is None:
-            # Every formatting element already open
             return
 
-        # Do NOT coalesce duplicate <nobr> entries: allowing multiple entries (subject to Noah's Ark clause)
-    # enables reconstruction to produce sibling <nobr> wrappers (numeric segment separation behavior).
-        # Recompute afe_list (unchanged) for clarity.
         afe_list = list(context.active_formatting_elements)
-        # index_to_reconstruct_from already computed above; if somehow None (race), abort.
         if index_to_reconstruct_from is None:
             return
 
-        # Step 3: For each entry from index_to_reconstruct_from onwards, reconstruct if missing (strict spec)
         for entry in afe_list[index_to_reconstruct_from:]:
             if entry.element is None:
                 continue
