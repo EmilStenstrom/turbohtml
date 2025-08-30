@@ -1232,11 +1232,6 @@ class TurboHTML:
         # to emit a standalone frame element so fragment/innerHTML tests expecting a lone <frame> succeed.
         if tag_name == 'frame' and not self._has_root_frameset() and context.frameset_ok:
             return
-            self.debug("Implicitly creating body node")
-            if context.document_state != DocumentState.IN_FRAMESET:
-                body = self._ensure_body_node(context)
-                if body:
-                    context.transition_to_state(DocumentState.IN_BODY, body)
 
         # If we see any non-whitespace text or a non-frameset-ok element while frameset_ok is True, flip it off
         if context.frameset_ok:
