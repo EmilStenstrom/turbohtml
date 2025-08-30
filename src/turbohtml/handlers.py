@@ -842,7 +842,10 @@ class TextHandler(TagHandler):
                     # (expected behavior for sequences like <p><b><i><u></p> <p>X) producing nested formatting
                     # wrappers around the whitespace and second paragraph.
                     return True
-                if not (after_table_case or trailing_nobr_case):
+                # Append text here unless a table-specific placement adjustment (after_table_case)
+                # defers it. This ensures reconstructed formatting chains receive the character
+                # data in the standard flow.
+                if not after_table_case:
                     self._append_text(text, context)
                     return True
 
@@ -1209,50 +1212,22 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                             context.move_to_element(boundary)
 
         if tag_name == "nobr" and context.open_elements.has_element_in_scope("nobr"):
+            # Spec: when a <nobr> start tag is seen and one is already in scope, run the adoption
+            # agency algorithm once for "nobr" then continue with normal insertion.
             self.debug("Duplicate <nobr> in scope; running adoption agency before creating new one")
             self.parser.adoption_agency.run_algorithm("nobr", context, 1)
             self.parser.reconstruct_active_formatting_elements(context)
             if self.parser.env_debug:
                 self.debug("AFTER adoption simple-case for duplicate <nobr>: stacks:")
                 self.debug(f"    Open stack: {[e.tag_name for e in context.open_elements._stack]}")
-                self.debug(
-                    f"    Active formatting: {[e.element.tag_name for e in context.active_formatting_elements if e.element]}"
-                )
-            nobr_entries = [e for e in context.active_formatting_elements._stack if e.element and e.element.tag_name == 'nobr']
-            if len(nobr_entries) > 1:
-                keep = nobr_entries[-1]
-                for e in nobr_entries[:-1]:
-                    context.active_formatting_elements.remove_entry(e)
-                if self.parser.env_debug:
-                    self.debug("    Pruned older <nobr> entries; remaining:" + str([e.element.tag_name for e in context.active_formatting_elements if e.element]))
-            if context.current_parent.tag_name == "nobr":
-                depth = 1
-                cur = context.current_parent
-                while cur.parent and cur.parent.tag_name == 'nobr' and len(cur.parent.children) == 1:
-                    depth += 1
-                    cur = cur.parent
-                    if depth > 8:
-                        break
-                if depth >= 2:
-                    if context.current_parent.parent:
-                        context.move_to_element(context.current_parent.parent)
-                    if self.parser.env_debug:
-                        self.debug(f"    Depth {depth} >=2: structurally suppressing creation of additional <nobr>")
+                self.debug(f"    Active formatting: {[e.element.tag_name for e in context.active_formatting_elements if e.element]}")
+            # Allow multiple <nobr> entries if produced by mis-nesting recovery; no artificial pruning.
             if self.parser.env_debug:
                 self.debug(
                     f"Post-duplicate handling before element creation: parent={context.current_parent.tag_name}, open={[e.tag_name for e in context.open_elements._stack]}, active={[e.element.tag_name for e in context.active_formatting_elements if e.element]}"
                 )
 
-        if tag_name == "nobr" and context.current_parent.tag_name == "nobr":
-            depth = 1
-            cur = context.current_parent
-            while cur.parent and cur.parent.tag_name == 'nobr' and len(cur.parent.children) == 1:
-                depth += 1
-                cur = cur.parent
-                if depth > 8:
-                    break
-            if depth >= 2:
-                return True
+        # Allow nested <nobr>; spec imposes no artificial nesting depth limit.
 
         # Descendant of <object> not added to active list.
         inside_object = (
