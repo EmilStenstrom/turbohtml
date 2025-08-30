@@ -1728,6 +1728,78 @@ class TurboHTML:
                 if body:
                     context.move_to_element(body)
 
+        # Legacy quirk: any </br> end tag (with or without attributes) must be treated
+        # as a <br> start tag token (parse error) per HTML spec. A <br> element is void
+        # so a closing tag is never legitimate. We synthesize a StartTag token and
+        # delegate to normal start tag handling, then ignore the original end tag.
+        if tag_name == 'br':
+            # If we're in a table-related insertion mode but not inside an open cell, foster-parent the <br>
+            in_table_mode = context.document_state in (
+                DocumentState.IN_TABLE,
+                DocumentState.IN_TABLE_BODY,
+                DocumentState.IN_ROW,
+                DocumentState.IN_CAPTION,
+            )
+            inside_cell = any(el.tag_name in ('td', 'th') for el in context.open_elements._stack)
+            if in_table_mode and not inside_cell:
+                table = self.find_current_table(context)
+                if table and table.parent:
+                    br = Node('br')
+                    parent = table.parent
+                    idx = parent.children.index(table)
+                    parent.children.insert(idx, br)
+                    br.parent = parent
+                    return
+            # Otherwise treat normally as a start tag
+            synth = HTMLToken('StartTag', tag_name='br', attributes={})
+            self._handle_start_tag(synth, 'br', context, self.tokenizer.pos)
+            return
+
+        # Special-case </p>: if there is no open <p> element in scope, the spec inserts
+        # a synthetic <p> then immediately pops it (empty paragraph). We approximate
+        # button scope by simply checking for any open <p>; remaining edge cases (scope
+        # boundaries inside form/table contexts) are not required by current failing tests.
+        if tag_name == 'p' and context.document_state in (
+            DocumentState.IN_BODY,
+            DocumentState.AFTER_BODY,
+            DocumentState.AFTER_HTML,
+            DocumentState.IN_TABLE,
+            DocumentState.IN_TABLE_BODY,
+            DocumentState.IN_ROW,
+            DocumentState.IN_CELL,
+        ):
+            has_p = any(el.tag_name == 'p' for el in context.open_elements._stack)
+            if not has_p:
+                # Spec: If no <p> element in button scope, parse error; insert HTML element for 'p', then immediately close.
+                # (Strict spec) Do not suppress synthesis even if an empty trailing <p> already exists –
+                # the algorithm always inserts one when no <p> is in button scope.
+                last_child = context.current_parent.children[-1] if context.current_parent.children else None
+                insertion_parent = context.current_parent
+                # If insertion parent is a foreign element (pure SVG/MathML node, not an integration point), per spec
+                # the stray </p> acts in the HTML insertion mode outside that foreign subtree. We therefore append the
+                # synthetic <p> to the nearest ancestor that is NOT a foreign (svg */math *) element. This matches
+                # test expectation where <svg></p><foo> yields sibling <p> and not nested <p> inside <svg>.
+                if insertion_parent.tag_name.startswith(('svg ','math ')) and insertion_parent.tag_name not in (
+                    'svg foreignObject','svg desc','svg title','math annotation-xml'
+                ):
+                    ancestor = insertion_parent.parent
+                    while ancestor and ancestor.tag_name.startswith(('svg ','math ')) and ancestor.tag_name not in (
+                        'svg foreignObject','svg desc','svg title','math annotation-xml'
+                    ):
+                        ancestor = ancestor.parent
+                    if ancestor is not None:
+                        insertion_parent = ancestor
+                        context.move_to_element(insertion_parent)
+                p_node = Node('p')
+                insertion_parent.append_child(p_node)
+                self.debug("Synthesized empty <p> for stray </p> (no open <p> in scope); placed at HTML insertion parent outside foreign subtree when applicable; not pushing on stack (immediate close)")
+                return
+        # Ignore </p> entirely while still constructing head (spec: in head insertion mode such
+        # an end tag is a parse error and is ignored; we must NOT synthesize body early).
+        if tag_name == 'p' and context.document_state in (DocumentState.IN_HEAD, DocumentState.AFTER_HEAD):
+            self.debug("Ignoring </p> in head insertion mode")
+            return
+
         # If a table cell (td/th) remains open on the stack but current_parent has drifted
         # outside that cell (e.g., due to foreign content breakout or adoption adjustments),
         # restore insertion point to the deepest such cell BEFORE further end-tag processing.

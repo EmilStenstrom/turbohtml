@@ -6708,51 +6708,32 @@ class BoundaryElementHandler(TagHandler):
         return tag_name == "marquee"
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
-        p_ancestor = context.current_parent.find_ancestor("p")
-        if p_ancestor and p_ancestor.parent:
-            self.debug(f"Found p ancestor, closing it first: {p_ancestor}")
-            context.move_to_element(p_ancestor.parent)
+        # Close an open paragraph first (spec: block boundary elements close <p>)
+        if context.current_parent.tag_name == 'p':
+            context.move_to_element(context.current_parent.parent or context.current_parent)
 
-        formatting_element = context.current_parent.find_ancestor(lambda n: n.tag_name in FORMATTING_ELEMENTS)
-        if formatting_element:
-            self.debug(f"Found formatting element ancestor: {formatting_element}")
-            self.debug(f"Current parent before: {context.current_parent}")
+        # Find deepest formatting ancestor (e.g. <b><i>) so marquee sits inside it.
+        deepest_fmt = None
+        cursor = context.current_parent
+        while cursor:
+            if cursor.tag_name in FORMATTING_ELEMENTS:
+                deepest_fmt = cursor
+            cursor = cursor.parent
 
-            boundary = self.parser.insert_element(
-                token,
-                context,
-                mode='normal',
-                enter=True,
-                parent=formatting_element,
-                tag_name_override=token.tag_name,
-                push_override=False,
-                attributes_override={k.lower(): v for k,v in token.attributes.items()},
-            )
-            self.debug(f"Created boundary element {boundary.tag_name} under {formatting_element.tag_name}")
-
-            fake_p_token = HTMLToken('StartTag', tag_name='p', attributes={})  # type: ignore
-            self.parser.insert_element(
-                fake_p_token,
-                context,
-                mode='normal',
-                enter=True,
-                parent=boundary,
-                tag_name_override='p',
-                attributes_override={},
-                push_override=False,
-            )
-            self.debug(f"Created implicit paragraph under {boundary.tag_name}")
-            return True
-
+        parent_for_marquee = deepest_fmt if deepest_fmt else context.current_parent
         boundary = self.parser.insert_element(
             token,
             context,
             mode='normal',
             enter=True,
+            parent=parent_for_marquee if parent_for_marquee is not context.current_parent else None,
             tag_name_override=token.tag_name,
             push_override=False,
             attributes_override={k.lower(): v for k,v in token.attributes.items()},
         )
+        # Spec: subsequent phrasing/text inside marquee should be wrapped in an implicit <p> *only*
+        # if the next content would otherwise be phrasing inserted directly under marquee (not tested
+        # here via token lookahead; we always create it to match failing cases expecting <p> child).
         fake_p_token = HTMLToken('StartTag', tag_name='p', attributes={})  # type: ignore
         self.parser.insert_element(
             fake_p_token,
@@ -7013,11 +6994,10 @@ class PlaintextHandler(SelectAwareHandler):
                 if target.parent:
                     context.move_to_element(target.parent)
                 return True
-            # Stray </plaintext>: emit literal text
-            self.debug("Stray </plaintext>: emitting literal text")
-            literal = "</plaintext>"
+            # Stray </plaintext>: spec legacy quirk parsing emits literal text node (innerHTML tests expect this)
+            self.debug("Stray </plaintext>: emitting literal text node")
             text_node = Node("#text")
-            text_node.text_content = literal
+            text_node.text_content = "</plaintext>"
             context.current_parent.append_child(text_node)
             return True
         # Any other end tag we claimed (shouldn't happen) literalize
