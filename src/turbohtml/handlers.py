@@ -6672,13 +6672,16 @@ class BodyElementHandler(TagHandler):
         if context.document_state not in (DocumentState.IN_FRAMESET,):
             body = self.parser._ensure_body_node(context)
             if body:
-                # Not at body element: ignore
+                # Not at body element: treat as parse error but still transition to AFTER_BODY so
+                # subsequent comments land outside <body>. Preserve the open elements stack (do NOT
+                # pop) so any still-open descendants (e.g. unknown <bdy>) remain candidates for
+                # resuming insertion if later flow content appears (webkit01.dat regression guard).
                 if context.current_parent is not body:
-                    # Spec-aligned: completely ignore stray </body> when the body element is not the current node.
-                    # Do NOT transition to AFTER_BODY here; doing so while still inside table/inlines or
-                    # unknown elements incorrectly reclassifies subsequent start tags and text as post‑body
-                    # content. Metadata demotion logic for late <meta>/<title>
-                    # continues to function because those tests operate only after a *real* body closure.
+                    if self.parser.html_node:
+                        context.move_to_element(self.parser.html_node)
+                    else:
+                        context.move_to_element(self.parser.root)
+                    self.parser.transition_to_state(context, DocumentState.AFTER_BODY, context.current_parent)
                     return True
 
                 if self.parser.fragment_context == 'html':

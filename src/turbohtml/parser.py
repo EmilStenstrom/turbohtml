@@ -1196,10 +1196,28 @@ class TurboHTML:
                 return
             body_node = self._get_body_node() or self._ensure_body_node(context)
             if body_node:
-                # For head elements (meta, title, etc.) appearing after body/html, tests expect them inside body
-                # rather than re‑opening a head context. Transition back to IN_BODY and use body as insertion point.
-                context.move_to_element(body_node)
-                context.transition_to_state(DocumentState.IN_BODY, body_node)
+                # For head elements (meta, title, etc.) appearing after body/html, tests expect them inside body.
+                # Attempt to resume at the deepest still-open descendant element (excluding body/html) so that
+                # previously open flow containers (e.g. unknown <bdy>) continue to receive content after a stray </body>.
+                resume_parent = body_node
+                # Scan open elements stack for deepest descendant of body that is not special (other than body itself)
+                if context.open_elements._stack:
+                    for el in reversed(context.open_elements._stack):
+                        if el is body_node:
+                            break  # stop once we reach body
+                        # Only resume inside elements that are still attached to body subtree
+                        cur = el
+                        attached = False
+                        while cur:
+                            if cur is body_node:
+                                attached = True; break
+                            cur = cur.parent
+                        if attached:
+                            resume_parent = el
+                            break
+                context.move_to_element(resume_parent)
+                # Transition using resume_parent to keep insertion inside deepest open descendant (e.g. <bdy>)
+                context.transition_to_state(DocumentState.IN_BODY, resume_parent)
                 self.debug(f"Resumed IN_BODY for <{tag_name}> after post-body state (relocated head element if any)")
 
         # Skip implicit body creation for fragments
