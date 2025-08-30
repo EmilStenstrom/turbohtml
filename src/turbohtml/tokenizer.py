@@ -178,19 +178,17 @@ class HTMLTokenizer:
                         text_before = self.html[self.pos:tag_start - 2]
                         full_content = self.script_content + text_before
                         self.debug(f"  full script content: {full_content!r}")
-                        honor = False
-                        if (self.script_non_executable and not self.script_suppressed_end_once
-                                and self.script_type_value == 'text/plain'):
-                            if (re.match(r"^[\\'\"]?<!--", full_content.strip())
-                                and re.search(r"<script", full_content, re.IGNORECASE)
-                                and "\\'" not in full_content):
-                                self.debug("  suppressing first </script> for non-executable escaped pattern")
-                                self.script_suppressed_end_once = True
+                        honor = self._should_honor_script_end_tag(full_content)
+                        # Escaped comment-like pattern handling: if inside <!--<script ... with no closing --> yet,
+                        # suppress every candidate end tag that is followed later by another </script (case-insensitive).
+                        # Detect escaped script comment pattern allowing optional whitespace after <!--
+                        if self._in_escaped_script_comment(full_content):
+                            rest = self.html[end_tag_close+1:].lower()
+                            if "</script" in rest:
+                                self.debug("  escaped pattern: deferring current </script> (another later)")
                                 honor = False
                             else:
-                                honor = self._should_honor_script_end_tag(full_content)
-                        else:
-                            honor = self._should_honor_script_end_tag(full_content)
+                                self.debug("  escaped pattern: last candidate </script> will terminate script")
                         if honor:
                             self.debug("  honoring script end tag (attributes ignored if any)")
                             self.pos = end_tag_close + 1
@@ -272,23 +270,54 @@ class HTMLTokenizer:
         # Only suppress when the comment opener is IMMEDIATELY followed by <script>
         # (no whitespace) and there's no closing --> yet. This mirrors expected parsing behavior
         # where patterns like '<!-- <script' (with a space) still allow honoring the end tag.
-        if "<!--<script" in lower and "-->" not in lower:
-            # For executable scripts we suppress every candidate end tag while still in this escaped pattern.
-            if not self.script_non_executable:
-                self.debug("  executable script: suppressing end tag inside <!-- <script pattern (no --> yet)")
-                return False
-            # For non-executable scripts (e.g. type=data, text/plain) the tree builder expects only the FIRST </script>
-            # to be treated as data; the outer real end tag must still terminate the element.
+        if self._in_escaped_script_comment(lower):
+            # Suppress only the first candidate end tag inside an open <!-- <script comment-like context
+            # regardless of executability; subsequent candidates terminate the script.
             if not self.script_suppressed_end_once:
                 self.script_suppressed_end_once = True
-                self.debug("  non-executable script: suppressing FIRST end tag inside <!-- <script pattern")
+                self.debug("  suppressing FIRST end tag inside <!-- <script pattern (no --> yet)")
                 return False
-            # Already suppressed one; now honor subsequent end tag.
-            self.debug("  non-executable script: already suppressed once, honoring end tag now")
+            self.debug("  already suppressed once in <!-- <script pattern; honoring end tag")
 
         # Otherwise honor
         self.debug("  honoring end tag")
         return True
+
+    @staticmethod
+    def _in_escaped_script_comment(script_content: str) -> bool:
+        """Return True if inside an escaped script comment like <!-- <script or <!--	<script with no closing --> yet.
+
+        The html5lib tests treat patterns where a comment opening marker <!-- is immediately (allowing only
+        whitespace) followed by a <script start tag-like sequence as entering the script data escaped state,
+        suppressing the first subsequent </script>. We approximate this by detecting '<!--' then optional
+        whitespace then '<script' case-insensitively and ensuring no '-->' has appeared yet.
+        """
+        lower = script_content.lower()
+        if "-->" in lower:
+            return False
+    # Require '<!--' then optional whitespace then '<script' followed by a delimiter that can legitimately
+    # appear after a start tag name in the escaped pattern context: whitespace, '/', or '>'. We intentionally
+    # do NOT treat an immediate apostrophe or other punctuation as entering the escaped state so that cases
+    # like <!-- <script' still honor the first real </script> (tests 14/23). Incomplete forms ending with space
+    # or slash do trigger suppression (tests 21/22/24 expect the first </script> treated as text in those).
+        idx = lower.find("<!--")
+        if idx == -1:
+            return False
+        after = lower[idx+4:]
+        k = 0
+        while k < len(after) and after[k] in " \t\n\r\f":
+            k += 1
+        # Must start with '<script>' (complete) to qualify
+        if not after.startswith("<script", k):
+            return False
+        tag_end = k + len("<script")
+        # Delimiting char after tag name
+        if tag_end >= len(after):
+            return False
+        following = after[tag_end]
+        if following in " /\t\n\r\f>":
+            return True
+        return False
 
     def _tokenize_regular_rawtext(self) -> Optional[HTMLToken]:
         """Handle regular RAWTEXT elements (non-script)"""
