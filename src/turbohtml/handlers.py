@@ -930,90 +930,68 @@ class TextHandler(TagHandler):
 
         # Whitespace handling deferred to tokenizer and spec rules (no additional trimming here).
         # Malformed <code> sequences are treated as plain text per spec.
-        # Before final append, if there is a stale <nobr> active formatting element (entry present whose element
-        # is not on the open elements stack) and current insertion point does not already have a descendant
-        # <nobr> as its last child, run reconstruction so that the text is wrapped in a fresh <nobr> sibling
-        # Ensures separate wrappers for trailing runs where segmentation would otherwise collapse.
-        # Minimal spec-aligned trigger:
-        # presence of stale active formatting element entry.
-        # Stale <nobr> reconstruction: if a <nobr> formatting element entry exists whose element
-        # is no longer on the open elements stack (i.e. adoption or end tag removed it) and the
-        # current insertion point does not already end with a <nobr>, run reconstruction so the
-        # upcoming text is wrapped in a fresh sibling <nobr>. This yields separate wrappers for
-        # sequential text runs after mis-nesting recovery without introducing extra wrappers when
-        # the last child is already an appropriate <nobr> container.
-        if (
-            context.active_formatting_elements
-            and any(
-                entry.element is not None and entry.element.tag_name == 'nobr' and entry.element not in context.open_elements._stack
-                for entry in context.active_formatting_elements._stack if entry.element is not None
-            )
-        ):
-            last_child = context.current_parent.children[-1] if context.current_parent.children else None
-            # Treat trailing <nobr> as reusable only if it's empty; if it already has children we
-            # reconstruct to create a new sibling wrapper for a new text run.
-            if not (last_child and last_child.tag_name == 'nobr' and not last_child.children):
-                # If current insertion parent is a <nobr> that already has non-text child content
-                # (e.g. <i>) we want the reconstructed <nobr> to become a SIBLING, not a nested
-                # child (expected tree shows separate <nobr> wrappers at div level). Temporarily
-                # lift insertion point to its parent so reconstruction inserts there.
-                restore_target = None
-                if (
-                    context.current_parent.tag_name == 'nobr'
-                    and any(ch.tag_name != '#text' for ch in context.current_parent.children)
-                    and context.current_parent.parent is not None
-                ):
-                    restore_target = context.current_parent.parent
-                    context.move_to_element(restore_target)
-                self.parser.reconstruct_active_formatting_elements(context)
-                # Append text inside the newly reconstructed <nobr> (current_parent now last reconstructed)
-                self._append_text(text, context)
-                # After appending, restore insertion point to the parent level (sibling context) so
-                # subsequent elements attach at correct depth.
-                if restore_target is not None:
-                    context.move_to_element(restore_target)
-                return True
-
-        # If current insertion parent is a <nobr> that already contains a non-text child (e.g. <i>)
-        # but no text yet, and there exists another <nobr> formatting entry (open or stale) distinct
-        # from the current element, create a new sibling <nobr> so the upcoming text forms its own
-        # wrapper rather than merging into the structural wrapper. This mirrors the effect
-        # of adoption + reconstruction sequencing producing segmented wrappers for separate runs.
-        if (
-            context.current_parent.tag_name == 'nobr'
-            and text
-            and not any(ch.tag_name == '#text' for ch in context.current_parent.children)
-            and any(ch.tag_name != '#text' for ch in context.current_parent.children)
-            and context.active_formatting_elements
-        ):
-            cur_elem = context.current_parent
+        # Unified <nobr> segmentation logic.
+        # Goal: ensure trailing text runs create a fresh <nobr> wrapper only when an existing active formatting
+        # <nobr> entry is stale (not on the open stack) OR when the current <nobr> contains non-text children
+        # and another distinct <nobr> entry exists (necessitating sibling segmentation).
+        if context.active_formatting_elements:
+            has_stale_nobr = False
             another_nobr_entry = False
+            current_is_nobr = context.current_parent.tag_name == 'nobr'
+            cur_elem = context.current_parent if current_is_nobr else None
             for entry in context.active_formatting_elements._stack:
-                if entry.element is None:
+                el = entry.element
+                if not el or el.tag_name != 'nobr':
                     continue
-                if entry.element.tag_name == 'nobr' and entry.element is not cur_elem:
+                if not context.open_elements.contains(el):
+                    has_stale_nobr = True
+                if current_is_nobr and el is not cur_elem:
                     another_nobr_entry = True
+                if has_stale_nobr and (another_nobr_entry or not current_is_nobr):
                     break
-            if another_nobr_entry:
-                # Synthesize a new sibling <nobr> after current
+
+            if has_stale_nobr:
+                last_child = context.current_parent.children[-1] if context.current_parent.children else None
+                reuse_trailing_empty = last_child and last_child.tag_name == 'nobr' and not last_child.children
+                if not reuse_trailing_empty:
+                    restore_target = None
+                    if (
+                        current_is_nobr
+                        and any(ch.tag_name != '#text' for ch in context.current_parent.children)
+                        and context.current_parent.parent is not None
+                    ):
+                        restore_target = context.current_parent.parent
+                        context.move_to_element(restore_target)
+                    self.parser.reconstruct_active_formatting_elements(context)
+                    self._append_text(text, context)
+                    if restore_target is not None:
+                        context.move_to_element(restore_target)
+                    return True
+
+            # Sibling segmentation case: current <nobr> has non-text child(ren), no text yet, and another entry exists.
+            if (
+                current_is_nobr
+                and text
+                and not any(ch.tag_name == '#text' for ch in context.current_parent.children)
+                and any(ch.tag_name != '#text' for ch in context.current_parent.children)
+                and another_nobr_entry
+            ):
                 from .tokenizer import HTMLToken  # local import
-                parent = cur_elem.parent if cur_elem.parent else context.current_parent
-                if parent:
+                parent = cur_elem.parent if cur_elem and cur_elem.parent else context.current_parent
+                if parent and cur_elem.parent:
                     synth = HTMLToken('StartTag', tag_name='nobr', attributes={})
-                    # Insert after current <nobr>
-                    if cur_elem.parent:
-                        idx = cur_elem.parent.children.index(cur_elem)
-                        new_elem = self.parser.insert_element(synth, context, parent=cur_elem.parent, mode='normal', enter=True, push_override=True)
-                        # Move new_elem to position immediately after cur_elem if not already
-                        if new_elem.parent and new_elem.parent.children[-1] is not new_elem:
-                            # Already in correct order; else reposition
-                            pass
-                        # Ensure insertion point is the new wrapper so text lands there
-                        context.move_to_element(new_elem)
-                        self._append_text(text, context)
-                        # Restore insertion point to parent (subsequent siblings continue outside)
-                        context.move_to_element(new_elem.parent)
-                        return True
+                    new_elem = self.parser.insert_element(
+                        synth,
+                        context,
+                        parent=cur_elem.parent,
+                        mode='normal',
+                        enter=True,
+                        push_override=True,
+                    )
+                    context.move_to_element(new_elem)
+                    self._append_text(text, context)
+                    context.move_to_element(new_elem.parent)
+                    return True
         # Append text directly; no additional wrapper-splitting heuristics.
         self._append_text(text, context)
         return True
