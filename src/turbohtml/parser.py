@@ -576,6 +576,49 @@ class TurboHTML:
                     _adjust_foreign_attrs(ch)
         _adjust_foreign_attrs(self.root)
 
+        # Reorder AFTER_HEAD whitespace that (due to earlier implicit body creation) ended up
+        # after the <body> element instead of between <head> and <body>. Spec: whitespace
+        # character tokens in the AFTER_HEAD insertion mode are inserted before creating the
+        # body element. If our construction produced <head><body><text ws> reorder to
+        # <head><text ws><body>. Only perform when the text node is pure whitespace and no
+        # other intervening element/content exists that would make reordering unsafe.
+        html = self.html_node if not self.fragment_context else None
+        if html and len(html.children) >= 3:
+            # Pattern: head, body, whitespace-text (optionally more whitespace-only text siblings)
+            head = html.children[0] if html.children and html.children[0].tag_name == 'head' else None
+            # Find first body element index
+            body_index = None
+            for i,ch in enumerate(html.children):
+                if ch.tag_name == 'body':
+                    body_index = i; break
+            if head and body_index is not None and body_index+1 < len(html.children):
+                after = html.children[body_index+1]
+                if after.tag_name == '#text' and after.text_content is not None and after.text_content.strip() == '':
+                    # Ensure there is no earlier whitespace text already between head and body
+                    between_ok = True
+                    for mid in html.children[1:body_index]:
+                        if not (mid.tag_name == '#text' and mid.text_content is not None and mid.text_content.strip() == ''):
+                            between_ok = False; break
+                    if between_ok:
+                        # Move the whitespace text node so it sits right after head (index after any existing
+                        # whitespace already there, preserving relative order of multiple whitespace nodes)
+                        ws_nodes = []
+                        j = body_index+1
+                        while j < len(html.children) and html.children[j].tag_name == '#text' and html.children[j].text_content is not None and html.children[j].text_content.strip() == '':
+                            ws_nodes.append(html.children[j]); j += 1
+                        # Remove collected whitespace nodes
+                        for n in ws_nodes:
+                            html.remove_child(n)
+                        # Determine insertion index (after head and any existing whitespace directly after head)
+                        insert_at = 1
+                        while insert_at < len(html.children) and html.children[insert_at].tag_name == '#text' and html.children[insert_at].text_content is not None and html.children[insert_at].text_content.strip() == '':
+                            insert_at += 1
+                        for offset,n in enumerate(ws_nodes):
+                            html.children.insert(insert_at+offset, n)
+                            n.parent = html
+
+        # Frameset trailing comments: no buffering; any required reordering handled during <noframes> insertion.
+
 
     def _create_initial_context(self):
         """Create a minimal ParseContext for structural post-processing heuristics.
@@ -1053,6 +1096,25 @@ class TurboHTML:
                     if body:
                         context.move_to_element(body)
                         context.transition_to_state(DocumentState.IN_BODY, body)
+                # AFTER_HEAD: whitespace-only character tokens must be inserted at the html element
+                # (parse error if body already started) without creating the body. Only non-whitespace
+                # text forces implicit body creation. This preserves ordering for tests expecting the
+                # newline/space node before <body> (webkit01 cases 34/35).
+                if (
+                    context.document_state == DocumentState.AFTER_HEAD
+                    and data
+                    and data.strip() == ""
+                ):
+                    html_node = self.html_node
+                    if html_node and html_node in self.root.children:
+                        # Append or merge with preceding text under html (not inside head/body)
+                        if html_node.children and html_node.children[-1].tag_name == '#text':
+                            html_node.children[-1].text_content += data
+                        else:
+                            text_node = self.create_text_node(data)
+                            html_node.append_child(text_node)
+                        # Skip normal text handling
+                        continue
                 if (
                     context.current_parent.tag_name == 'listing'
                     and not context.current_parent.children
@@ -1809,18 +1871,22 @@ class TurboHTML:
                 self.root.append_child(comment_node)
             return
 
-        # Frameset documents AFTER_FRAMESET: html already closed logically; trailing comments become root siblings.
+        # Frameset documents AFTER_FRAMESET ordering (no parser flags):
+        # We distinguish three structural phases using only context flag and tree shape:
+        #   1. Before explicit </html> (context.frameset_html_end_before_noframes False): comments still inside <html>.
+        #   2. After </html> but before a root-level <noframes>: comments are appended as root siblings (temporarily
+        #      preceding any later <noframes>); when a <noframes> appears we will relocate these comments after it.
+        #   3. After first post-</html> <noframes>: subsequent comments remain root siblings after existing nodes.
         if context.document_state == DocumentState.AFTER_FRAMESET:
-            if not self.fragment_context:
-                self._ensure_html_node()
-            html = self.html_node
-            if context.frameset_html_end_before_noframes:  # type: ignore[attr-defined]
-                # Explicit </html> before first <noframes>: all subsequent comments are root siblings (even after later <noframes>).
-                self.root.append_child(comment_node)
+            if not context.frameset_html_end_before_noframes:  # type: ignore[attr-defined]
+                # Still logically inside html subtree
+                if self.html_node and self.html_node in self.root.children:
+                    self.html_node.append_child(comment_node)
+                else:
+                    self.root.append_child(comment_node)
             else:
-                if html not in self.root.children:
-                    self.root.append_child(html)
-                html.append_child(comment_node)
+                # Phase 2 or 3: append as root sibling; potential reordering handled at <noframes> insertion.
+                self.root.append_child(comment_node)
             return
 
         # Comments in IN_BODY state should go as children of html, positioned before head

@@ -3638,8 +3638,12 @@ class FormTagHandler(TagHandler):
                 if (
                     in_table_mode
                     and context.current_parent.tag_name == 'table'
-                    and self.parser._prev_token  # type: ignore[attr-defined]
-                    and getattr(self.parser._prev_token, 'ignored_end_tag', False)  # previous token was an ignored </form>
+                    and (
+                        self.parser._prev_token is not None
+                        and self.parser._prev_token.type == 'EndTag'
+                        and self.parser._prev_token.tag_name == 'form'
+                        and self.parser._prev_token.ignored_end_tag  # deterministic attribute on tokens
+                    )
                 ):
                     # Confirm that the existing form is an ancestor of the current table (structural recovery condition)
                     cur = context.current_parent.parent
@@ -3677,7 +3681,7 @@ class FormTagHandler(TagHandler):
                 break
         if not form_el:
             self.debug("Ignoring </form>; no open form element outside template")
-            token.ignored_end_tag = True  # mark for potential next-token recovery logic
+            token.ignored_end_tag = True
             return True
         # If we're in table-related insertion mode and the form element is an ancestor above the table tree,
         # ignore premature </form> so it remains open (spec form pointer not popped in this malformed context).
@@ -3696,10 +3700,12 @@ class FormTagHandler(TagHandler):
             if cur is form_el:
                 self.debug("Ignoring </form> inside table insertion mode (form remains open)")
                 token.ignored_end_tag = True
+                token.ignored_end_tag = True
                 return True
         # General malformed case: if the form element is not the current element, ignore (premature end)
         if context.current_parent is not form_el:
             self.debug("Ignoring </form>; form element not current node (premature end)")
+            token.ignored_end_tag = True
             token.ignored_end_tag = True
             return True
         # Pop elements until the form element has been popped (spec step)
@@ -6228,7 +6234,7 @@ class HtmlTagHandler(TagHandler):
         # Frameset documents never synthesize a body; keep insertion mode at AFTER_FRAMESET.
         if self.parser._has_root_frameset():  # type: ignore[attr-defined]
             self.debug("Root <frameset> present – ignoring </html> (stay AFTER_FRAMESET, no body)")
-            # Record ordering if no <noframes> yet: explicit </html> precedes any <noframes>.
+            # Record ordering if no <noframes> descendant yet: explicit </html> precedes any late <noframes>.
             html = self.parser.html_node  # type: ignore[attr-defined]
             if not any(ch.tag_name == 'noframes' for ch in html.children):
                 context.frameset_html_end_before_noframes = True  # type: ignore[attr-defined]
@@ -6390,6 +6396,14 @@ class FramesetTagHandler(TagHandler):
 
         elif tag_name == "noframes":
             self.debug("Creating noframes element")
+            # Late <noframes> after a root frameset: ensure any previously buffered post-</html>
+            # comments (stored while waiting to see if a trailing <noframes> would appear) are
+            # flushed AFTER we insert this element so that they appear following it as root
+            # siblings (expected ordering in webkit01 frameset tests).
+            # Determine if we need to reorder root-level comments that appeared after explicit </html>
+            # but before this late <noframes>. We only perform this when html end was seen earlier before
+            # any noframes (context.frameset_html_end_before_noframes True) and the document is now in
+            # AFTER_FRAMESET (frameset document) OR a normal document with root-level trailing comments.
             # First <noframes>: if ordering not yet set, it must be False (</html> either absent or after this element)
             # We do not flip frameset_html_end_before_noframes here; absence of prior True value already encodes order.
             # Place <noframes> inside <head> when we are still before or in head (non‑frameset doc) just like
@@ -6414,6 +6428,33 @@ class FramesetTagHandler(TagHandler):
                 push_override=True,
             )
             context.content_state = ContentState.RAWTEXT
+            # Structural reordering: move any root-level comment siblings that appear after the <html>
+            # element (i.e., appended post-</html>) so they follow this newly inserted <noframes>.
+            if context.frameset_html_end_before_noframes:  # type: ignore[attr-defined]
+                root = self.parser.root
+                html = self.parser.html_node
+                # Identify newly inserted noframes node (top of stack or last inserted under chosen parent)
+                inserted = None
+                if parent.children:
+                    inserted = parent.children[-1]
+                if inserted and inserted.tag_name == 'noframes':
+                    # Collect root-level comments after html (if both are root siblings)
+                    if html in root.children and inserted in root.children:
+                        html_index = root.children.index(html)
+                        nf_index = root.children.index(inserted)
+                        # Only relocate comments strictly between html and noframes (source-order post-html)
+                        between = [ch for ch in root.children[html_index+1:nf_index] if ch.tag_name == '#comment']
+                        # Move them to immediately after inserted noframes preserving relative order
+                        if between:
+                            # Remove first to avoid index shifts
+                            for n in between:
+                                root.remove_child(n)
+                            # New insertion index after inserted (which may have moved if parent != root)
+                            # Recompute nf_index after removals
+                            nf_index = root.children.index(inserted)
+                            for offset, n in enumerate(between):
+                                root.children.insert(nf_index + 1 + offset, n)
+                                n.parent = root
             return True
 
         return False

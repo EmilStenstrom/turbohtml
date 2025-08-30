@@ -39,6 +39,7 @@ class HTMLToken:
         self.attributes = attributes or {}
         self.is_self_closing = is_self_closing
         self.is_last_token = is_last_token
+        self.ignored_end_tag = False
 
     def __repr__(self):
         if self.type == "Character":
