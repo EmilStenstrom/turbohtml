@@ -1612,6 +1612,24 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             return True
 
         if tag_name in ("select", "datalist"):
+            # If direct child of table before any row group/caption, foster-parent select BEFORE table (tests18:28/29 expectation)
+            if context.current_parent.tag_name == 'table':
+                table = context.current_parent
+                # Check for existing row/caption descendants; only foster if none
+                has_struct = any(ch.tag_name in ('tbody','thead','tfoot','tr','caption') for ch in table.children)
+                if not has_struct:
+                    parent = table.parent or context.current_parent
+                    before = table if table in parent.children else None
+                    new_sel = self.parser.insert_element(
+                        token,
+                        context,
+                        mode='normal',
+                        enter=True,
+                        parent=parent,
+                        before=before,
+                    )
+                    self.debug("Foster parented <select> before <table> (no table structure yet)")
+                    return True
             # Foster parent if in table context (but not in a cell or caption)
             if self._should_foster_parent_in_table(context):
                 self.debug("Foster parenting select out of table")
@@ -4074,54 +4092,87 @@ class RawtextTagHandler(SelectAwareHandler):
         # If current element is <table> but the most recently opened non-table element is a pending <tr>
         # (TableTagHandler may have created tbody/tr without entering), relocate insertion point.
         if tag_name in ('style','script') and context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
-            table = self.parser.find_current_table(context)
-            if table:
-                in_template_content = False
-                curp = context.current_parent
-                while curp:
-                    if curp.tag_name == 'content' and curp.parent and curp.parent.tag_name == 'template':
-                        in_template_content = True; break
-                    curp = curp.parent
-                # Detect whether table already has row/cell/caption descendants
-                has_row_desc = False
-                for ch in table.children:
-                    if ch.tag_name in ('tbody','thead','tfoot','tr','caption','td','th'):
-                        has_row_desc = True; break
-                # If we are directly under table with NO row descendants yet, allow direct script/style child
-                if context.current_parent is table and not has_row_desc:
-                    self.debug(f"Leaving <{tag_name}> as direct child of <table> (no row descendants yet)")
-                elif in_template_content and context.current_parent is table and not has_row_desc:
-                    self.debug(f"Template content: suppressing tbody/tr synthesis for <{tag_name}>")
+            # If current parent is <select>, do not perform table-based relocation; script/style allowed inside select.
+            if context.current_parent.tag_name == 'select':
+                self.debug("Inside <select>: skipping table relocation for rawtext element")
+            else:
+                # Preceding open <select> sibling before <table> case (tests18:28/29):
+                # If a <select> was foster-parented immediately before the <table> and remains open, subsequent rawtext
+                # tokens still belong inside that <select>. If current_parent is the table and its immediate previous
+                # sibling is an open <select>, move insertion into the select and bypass table relocation.
+                cur_parent = context.current_parent
+                skip_table_reloc = False
+                if cur_parent.tag_name == 'table' and cur_parent.parent:
+                    parent = cur_parent.parent
+                    try:
+                        table_index = parent.children.index(cur_parent)
+                    except ValueError:
+                        table_index = -1
+                    if table_index > 0:
+                        preceding = parent.children[table_index - 1]
+                        if preceding.tag_name == 'select':
+                            if any(el is preceding for el in context.open_elements._stack):  # type: ignore[attr-defined]
+                                context.move_to_element(preceding)
+                                self.debug("Redirected rawtext insertion into preceding open <select> before <table>")
+                                skip_table_reloc = True
+
+                if not skip_table_reloc:
+                    table = self.parser.find_current_table(context)
                 else:
-                    # Determine candidate (do not force row creation when parent is a section like tbody—leave script there)
-                    candidate = None
-                    for el in reversed(context.open_elements._stack):  # type: ignore[attr-defined]
-                        if el is table:
+                    table = None
+                if table and not skip_table_reloc:
+                    in_template_content = False
+                    curp = context.current_parent
+                    while curp:
+                        if curp.tag_name == 'content' and curp.parent and curp.parent.tag_name == 'template':
+                            in_template_content = True
                             break
-                        if el.tag_name in ('td','th'):
-                            candidate = el; break
-                        if el.tag_name == 'tr' and not candidate:
-                            candidate = el
-                        if el.tag_name == 'caption' and not candidate:
-                            candidate = el
-                        if el.tag_name in ('tbody','thead','tfoot') and not candidate:
-                            # Only descend into section if we already have a tr or cell; otherwise permit direct child
-                            candidate = el
-                    if not candidate and not in_template_content:
-                        # Only synthesize if there is already table body context expected (avoid for fresh table)
-                        tr_existing = table.find_child_by_tag('tr')
-                        if not tr_existing and has_row_desc:
-                            tbody_token = HTMLToken('StartTag', tag_name='tbody')
-                            tbody = self.parser.insert_element(tbody_token, context, mode='normal', enter=True, parent=table)
-                            tr_token = HTMLToken('StartTag', tag_name='tr')
-                            tr_existing = self.parser.insert_element(tr_token, context, mode='normal', enter=True, parent=tbody)
-                        candidate = tr_existing
-                    # If candidate is a section wrapper (tbody/thead/tfoot) keep script/style as direct child of that section
-                    if candidate and candidate is not context.current_parent:
-                        # Avoid moving into section if parent is section already
-                        if candidate.tag_name not in ('tbody','thead','tfoot') or context.current_parent.tag_name not in ('tbody','thead','tfoot'):
-                            context.move_to_element(candidate)
-                            self.debug(f"Adjusted insertion point to <{candidate.tag_name}> for rawtext {tag_name}")
+                        curp = curp.parent
+                    # Detect whether table already has row/cell/caption descendants
+                    has_row_desc = False
+                    for ch in table.children:
+                        if ch.tag_name in ('tbody','thead','tfoot','tr','caption','td','th'):
+                            has_row_desc = True
+                            break
+                    # If we are directly under table with NO row descendants yet, allow direct script/style child
+                    if context.current_parent is table and not has_row_desc:
+                        self.debug(f"Leaving <{tag_name}> as direct child of <table> (no row descendants yet)")
+                    elif in_template_content and context.current_parent is table and not has_row_desc:
+                        self.debug(f"Template content: suppressing tbody/tr synthesis for <{tag_name}>")
+                    else:
+                        # Determine candidate (do not force row creation when parent is a section like tbody—leave script there)
+                        candidate = None
+                        for el in reversed(context.open_elements._stack):  # type: ignore[attr-defined]
+                            if el is table:
+                                break
+                            if el.tag_name in ('td','th'):
+                                candidate = el
+                                break
+                            if el.tag_name == 'tr' and not candidate:
+                                candidate = el
+                            if el.tag_name == 'caption' and not candidate:
+                                candidate = el
+                            if el.tag_name in ('tbody','thead','tfoot') and not candidate:
+                                # Only descend into section if we already have a tr or cell; otherwise permit direct child
+                                candidate = el
+                        # Prefer current_parent if it is a td/th even if not on open elements stack (our implementation may not push cells)
+                        if context.current_parent.tag_name in ('td','th'):
+                            candidate = context.current_parent
+                        if not candidate and not in_template_content:
+                            # Only synthesize if there is already table body context expected (avoid for fresh table)
+                            tr_existing = table.find_child_by_tag('tr')
+                            if not tr_existing and has_row_desc:
+                                tbody_token = HTMLToken('StartTag', tag_name='tbody')
+                                tbody = self.parser.insert_element(tbody_token, context, mode='normal', enter=True, parent=table)
+                                tr_token = HTMLToken('StartTag', tag_name='tr')
+                                tr_existing = self.parser.insert_element(tr_token, context, mode='normal', enter=True, parent=tbody)
+                            candidate = tr_existing
+                        # If candidate is a section wrapper (tbody/thead/tfoot) keep script/style as direct child of that section
+                        if candidate and candidate is not context.current_parent:
+                            # Avoid moving into section if parent is already that section; always move into cell/tr/caption
+                            if candidate.tag_name in ('td','th','tr','caption') or context.current_parent.tag_name not in ('tbody','thead','tfoot'):
+                                context.move_to_element(candidate)
+                                self.debug(f"Adjusted insertion point to <{candidate.tag_name}> for rawtext {tag_name}")
                 # Determine if we already have an open cell/row/caption we should descend into
                 # Priority: td/th > tr > caption
 
@@ -5816,15 +5867,23 @@ class HeadElementHandler(TagHandler):
             if table:
                 # Only style/script should be treated as early rawtext inside table. Title/textarea should be fostered.
                 if tag_name in ("style", "script"):
+                    # Special case: if current_parent is a foster‑parented <select> immediately before the table,
+                    # keep the rawtext element INSIDE that <select> (tests18:28/29). This mirrors normal insertion
+                    # point behavior: select is still open and current_parent points at it. Previous logic rerouted
+                    # to the table, which misplaced <script>.
+                    if context.current_parent.tag_name == 'select':
+                        container = context.current_parent
                     # Use current section (tbody/thead/tfoot) when already open so script/style stay inside it
-                    if context.current_parent.tag_name in ("tbody","thead","tfoot"):
+                    elif context.current_parent.tag_name in ("tbody","thead","tfoot"):
                         container = context.current_parent
                     else:
                         container = table
                     before = None
-                    for ch in container.children:
-                        if ch.tag_name in ("thead", "tbody", "tfoot", "tr"):
-                            before = ch; break
+                    # When inserting inside select we never reorder relative to table sections.
+                    if container is not context.current_parent or container is table:
+                        for ch in container.children:
+                            if ch.tag_name in ("thead", "tbody", "tfoot", "tr"):
+                                before = ch; break
                     self.parser.insert_element(
                         token,
                         context,
@@ -6166,14 +6225,18 @@ class HtmlTagHandler(TagHandler):
         # Frameset documents never synthesize a body; keep insertion mode at AFTER_FRAMESET.
         if self.parser._has_root_frameset():  # type: ignore[attr-defined]
             self.debug("Root <frameset> present – ignoring </html> (stay AFTER_FRAMESET, no body)")
+            # Record ordering if no <noframes> yet: explicit </html> precedes any <noframes>.
+            html = self.parser.html_node  # type: ignore[attr-defined]
+            if not any(ch.tag_name == 'noframes' for ch in html.children):
+                context.frameset_html_end_before_noframes = True  # type: ignore[attr-defined]
             if context.document_state != DocumentState.AFTER_FRAMESET:
-                # Ensure we are anchored at <html> (frameset already child) and state reflects frameset closure
-                self.parser.transition_to_state(context, DocumentState.AFTER_FRAMESET, self.parser.html_node)
+                self.parser.transition_to_state(context, DocumentState.AFTER_FRAMESET, html)
             return True
         body = self.parser._get_body_node() or self.parser._ensure_body_node(context)
         if body:
             context.move_to_element(body)
         self.parser.transition_to_state(context, DocumentState.AFTER_HTML, body or context.current_parent)
+        # Explicit </html> presence inferred from token history (no persistent flag set).
 
         return True
 
@@ -6324,6 +6387,8 @@ class FramesetTagHandler(TagHandler):
 
         elif tag_name == "noframes":
             self.debug("Creating noframes element")
+            # First <noframes>: if ordering not yet set, it must be False (</html> either absent or after this element)
+            # We do not flip frameset_html_end_before_noframes here; absence of prior True value already encodes order.
             # Place <noframes> inside <head> when we are still before or in head (non‑frameset doc) just like
             # other head rawtext containers in these tests; once a frameset root is established the element
             # becomes a descendant of frameset (handled above). This matches html5lib expectations where
@@ -6405,6 +6470,23 @@ class FramesetTagHandler(TagHandler):
                         popped = context.open_elements.pop()
                         if popped is target:
                             break
+                # Ensure insertion point is parent (sibling position for subsequent comments)
+                if parent:
+                    context.move_to_element(parent)
+                # For non-root frameset documents (no root <frameset>), subsequent comments should be direct
+                # siblings under the document node (expected tree shows <!-- abc --> aligned with <noframes>,
+                # not indented as its child). Move insertion to document root to produce comment as sibling.
+                if not self.parser._has_root_frameset():  # type: ignore[attr-defined]
+                    # Non-frameset document: subsequent character/comment tokens belong in <body>
+                    body = self.parser._get_body_node() or self.parser._ensure_body_node(context)
+                    if body:
+                        context.move_to_element(body)
+                    else:
+                        context.move_to_element(self.parser.html_node)
+                # Exit RAWTEXT mode established by <noframes> start
+                from turbohtml.context import ContentState as _CS  # local import to avoid cycle at top
+                if context.content_state == _CS.RAWTEXT:
+                    context.content_state = _CS.NONE
             return True
 
         return False

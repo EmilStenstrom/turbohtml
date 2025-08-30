@@ -57,6 +57,9 @@ class ParseContext:
         from turbohtml.adoption import ActiveFormattingElements, OpenElementsStack
         self.active_formatting_elements = ActiveFormattingElements()
         self.open_elements = OpenElementsStack()
+        # Historical bit (single minimal flag): in a frameset document, did an explicit </html>
+        # occur before the first <noframes>? Used only for trailing comment placement.
+        self.frameset_html_end_before_noframes = False
 
 
     # --- Properties / helpers ---

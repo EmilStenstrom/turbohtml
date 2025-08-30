@@ -726,8 +726,10 @@ class TurboHTML:
                     if tn == 'body':
                         ensure_head()
                         body = ensure_body()
-                        # apply attributes
-                        body.attributes.update(token.attributes)
+                        # Merge without overwrite
+                        for k, v in token.attributes.items():
+                            if k not in body.attributes:
+                                body.attributes[k] = v
                         context.move_to_element(body)
                         context.transition_to_state(DocumentState.IN_BODY, body)
                         continue
@@ -1657,7 +1659,10 @@ class TurboHTML:
                 context.frameset_ok = False
             body = self._ensure_body_node(context)
             if body:
-                body.attributes.update(token.attributes)
+                # Merge body attributes without overwriting existing values (spec: first wins)
+                for k, v in token.attributes.items():
+                    if k not in body.attributes:
+                        body.attributes[k] = v
                 context.transition_to_state(DocumentState.IN_BODY, body)
             return True
         elif tag_name == "frameset" and context.document_state == DocumentState.INITIAL:
@@ -1771,6 +1776,20 @@ class TurboHTML:
         if context.document_state == DocumentState.AFTER_HTML:
             # Place comment at document root (sibling of <html>) per expected tree formatting
             self.root.append_child(comment_node)
+            return
+
+        # Frameset documents AFTER_FRAMESET: html already closed logically; trailing comments become root siblings.
+        if context.document_state == DocumentState.AFTER_FRAMESET:
+            if not self.fragment_context:
+                self._ensure_html_node()
+            html = self.html_node
+            if context.frameset_html_end_before_noframes:  # type: ignore[attr-defined]
+                # Explicit </html> before first <noframes>: all subsequent comments are root siblings (even after later <noframes>).
+                self.root.append_child(comment_node)
+            else:
+                if html not in self.root.children:
+                    self.root.append_child(html)
+                html.append_child(comment_node)
             return
 
         # Comments in IN_BODY state should go as children of html, positioned before head
