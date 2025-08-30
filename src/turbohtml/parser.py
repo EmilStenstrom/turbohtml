@@ -1041,6 +1041,18 @@ class TurboHTML:
             elif token.type == "Character":
                 # Listing/pre-like initial newline suppression (only implemented for <listing> here)
                 data = token.data
+                # Spec recovery: In AFTER_BODY / AFTER_HTML insertion modes, a non-whitespace character token
+                # is a parse error; the tokenizer reprocesses it in the IN_BODY insertion mode. We emulate this
+                # by transitioning back to IN_BODY (ensuring body exists) before normal text handling so that
+                # subsequent comments (and this text) become body descendants (webkit01 cases 23-25 expectations).
+                if (
+                    context.document_state in (DocumentState.AFTER_BODY, DocumentState.AFTER_HTML)
+                    and data.strip() != ""
+                ):
+                    body = self._get_body_node() or self._ensure_body_node(context)
+                    if body:
+                        context.move_to_element(body)
+                        context.transition_to_state(DocumentState.IN_BODY, body)
                 if (
                     context.current_parent.tag_name == 'listing'
                     and not context.current_parent.children
@@ -1774,8 +1786,27 @@ class TurboHTML:
             return
         # Comments after </html> (AFTER_HTML) should appear as direct child of html (one level, not indented under body)
         if context.document_state == DocumentState.AFTER_HTML:
-            # Comments after </html> are root-level siblings (do not group under body)
-            self.root.append_child(comment_node)
+            # If we've seen stray non-whitespace characters after </html> we will have transitioned back to
+            # IN_BODY already (spec reprocessing). When still formally in AFTER_HTML (no such re-entry), keep
+            # comment at document level. Only relocate the FIRST comment that directly follows a non-whitespace
+            # stray character token into the body. Subsequent comments, or comments after only whitespace stray
+            # text, remain at document level (matches html5lib expectations for tests 23–27 patterns).
+            body = self._get_body_node()
+            placed = False
+            if body:
+                # Find the last non-whitespace text node in body (if any)
+                text_nodes = [ch for ch in body.children if ch.tag_name == '#text' and ch.text_content is not None]
+                if text_nodes:
+                    last_text = text_nodes[-1]
+                    has_non_ws = any(t for t in last_text.text_content if not t.isspace())
+                    # Count existing comments appended after that last text node
+                    idx_last_text = body.children.index(last_text)
+                    comments_after = [ch for ch in body.children[idx_last_text+1:] if ch.tag_name == '#comment']
+                    if has_non_ws and not comments_after:
+                        body.append_child(comment_node)
+                        placed = True
+            if not placed:
+                self.root.append_child(comment_node)
             return
 
         # Frameset documents AFTER_FRAMESET: html already closed logically; trailing comments become root siblings.

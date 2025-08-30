@@ -6220,8 +6220,11 @@ class HtmlTagHandler(TagHandler):
             if body:
                 self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
 
-        # After processing </html>, keep insertion point at body (if present) so stray trailing whitespace/text
-        # tokens become body children, but transition to AFTER_HTML so subsequent stray <head> is ignored.
+    # After processing </html>, keep insertion point at body (if present) so stray trailing whitespace/text
+    # tokens become body children, but transition to AFTER_HTML so subsequent stray <head> is ignored.
+    # If we already re-entered IN_BODY earlier due to stray text (parse error recovery) and encounter another
+    # </html>, we STILL transition again to AFTER_HTML so that following comments return to document level
+    # (html5lib expectation in sequences like </html> x <!--c--> </html> <!--d--> where c is in body, d is root).
         # Frameset documents never synthesize a body; keep insertion mode at AFTER_FRAMESET.
         if self.parser._has_root_frameset():  # type: ignore[attr-defined]
             self.debug("Root <frameset> present – ignoring </html> (stay AFTER_FRAMESET, no body)")
