@@ -263,8 +263,6 @@ class AdoptionAgencyAlgorithm:
 
     def __init__(self, parser):
         self.parser = parser
-        # Debug facility removed (was parser.env_debug). Keep attribute for external checks but disable.
-        self.debug_enabled = False
 
 
     def should_run_adoption(self, tag_name: str, context) -> bool:
@@ -313,7 +311,6 @@ class AdoptionAgencyAlgorithm:
 
     def run_algorithm(self, tag_name: str, context, iteration_count: int = 0) -> bool:
         # Run adoption algorithm (WHATWG HTML spec)
-        # Debug prints removed
         # Spec step 1: Choose the last (most recent) element in the list of active formatting elements
         # whose tag name matches the target tag name.
         formatting_entry = None
@@ -375,7 +372,6 @@ class AdoptionAgencyAlgorithm:
         """
         runs = 0
         while runs < max_runs and self.should_run_adoption(tag_name, context):
-            # iteration_count passed as 1-based for debugging parity
             if not self.run_algorithm(tag_name, context, runs + 1):
                 break
             runs += 1
@@ -447,8 +443,6 @@ class AdoptionAgencyAlgorithm:
         else:
             return self.parser.root
 
-    # Removed unused _reconstruct_formatting_elements (no call sites in current codebase)
-
     def _safe_detach_node(self, node: Node) -> None:
         """Detach node from its parent safely, even if linkage is inconsistent.
 
@@ -513,7 +507,7 @@ class AdoptionAgencyAlgorithm:
         # in the list of active formatting elements
         bookmark_index = context.active_formatting_elements.get_index(formatting_entry)
 
-        # Step 9: Create a list of elements to be removed from the stack of open elements
+    # Step 9: Create a list of elements to be removed from the stack of open elements
         formatting_index = context.open_elements.index_of(formatting_element)
         furthest_index = context.open_elements.index_of(furthest_block)
 
@@ -529,8 +523,7 @@ class AdoptionAgencyAlgorithm:
             return False
 
 
-        # Step 11: Create a list "node list" and initialize it to empty
-        node_list = []  # unused container retained for clarity
+    # Step 11: (spec node list concept omitted – not needed for current implementation)
 
         # Step 12: Reconstruction loop
         # This loop implements steps 12.1-12.3 with inner and outer loops
@@ -541,12 +534,8 @@ class AdoptionAgencyAlgorithm:
 
         max_iterations = len(context.open_elements._stack) + 10
         # Track previous stack index to ensure we make upward progress; the
-        # previous implementation compared against (index-1) which caused
-        # legitimate upward moves (index-1) to appear as no progress and
-        # prematurely terminated reconstruction, losing required clones.
+    # Track previous stack index to ensure we make upward progress.
         prev_node_index = None
-        # Track a single intervening formatting element we cloned (for optional inner wrapper)
-        cloned_intervening_tag: Optional[str] = None
         while True:
             if inner_loop_counter >= max_iterations:
                 break
@@ -596,14 +585,6 @@ class AdoptionAgencyAlgorithm:
 
             # Step 12.5: Create a clone of node
             node_clone = Node(tag_name=node.tag_name, attributes=node.attributes.copy())
-            # Record intervening formatting clone (only first) for potential inner wrapper later
-            if (
-                cloned_intervening_tag is None
-                and formatting_element.tag_name == 'b'
-                and furthest_block.tag_name == 'p'
-                and node.tag_name in ('i', 'em')
-            ):
-                cloned_intervening_tag = node.tag_name
 
             # Step 12.6: Replace the entry for node in active formatting elements
             # with an entry for the clone
@@ -629,18 +610,7 @@ class AdoptionAgencyAlgorithm:
             last_node = node_clone
             node = node_clone
 
-        # Step 13: Insert last_node into common_ancestor (always execute; prints optional)
-        # Adjustment: For iterative </a> complex adoptions beyond the first,
-        # Conformance outputs show the newly formed block (last_node, typically a <div>) nesting
-        # inside the nearest ancestor <div> that already contains earlier <a> wrappers, rather than
-        # being appended directly under <body>. When the common_ancestor resolved to the root/body,
-        # we rewrite it to the deepest <div> ancestor of the formatting element (if any) so each
-        # successive iteration produces a deeper nested <div><a><div><a> ladder instead of a flat
-        # sequence of sibling <div>/<a> pairs.
-        # Additional Step 13 adjustment for </a> ladder iterations:
-        # After first complex iteration, the cloned <b> (last_node) should become a top-level sibling
-        # of the outer <div>, not remain nested inside it. Mark that <b> so later iterations can
-        # target it as the common ancestor for appended nested <div> blocks.
+    # Step 13: Insert last_node into common_ancestor (always execute)
     # Step 13
         if common_ancestor is last_node:
             pass
@@ -763,12 +733,6 @@ class AdoptionAgencyAlgorithm:
             fb_index = context.open_elements.index_of(furthest_block)
             context.open_elements._stack.insert(fb_index + 1, formatting_clone)
 
-        # prior heuristic reinstatement attempts. The previous implementation
-        # performed a full depth-based stable sort of the open elements stack which, while
-        # ensuring ancestor-before-descendant order, can reorder sibling groups in ways the
-        # spec's push/pop sequence would not, altering later tree construction decisions.
-        # If specific misordering cases reappear (descendant before ancestor), implement a
-        # minimal local swap instead of full-stack sorting.
         self._normalize_local_misordered_pair(context, formatting_clone, furthest_block)
 
         # Cleanup: remove empty formatting clone before text when not immediately re-nested
@@ -799,14 +763,7 @@ class AdoptionAgencyAlgorithm:
         Avoids full-stack reordering side-effects while still preventing repeated adoption loops
         where descendant precedes its ancestor.
         """
-        # Previous implementation skipped <a> to allow deeper ladder construction, but this produced
-        # runaway nested <a> chains (<a><a><a>...) because the formatting clone (now a descendant of
-        # the furthest block) remained earlier on the open elements stack, continually satisfying
-        # adoption preconditions. We now normalize uniformly for all formatting elements: if the
-        # clone's stack index is before the furthest block, move it to directly after the furthest
-        # block. This matches the spec requirement that the open elements stack reflect DOM ancestor
-        # ordering (ancestors before descendants). We do NOT require the clone be an ancestor of the
-        # furthest block—being a descendant is the misordering we correct.
+        # Minimal local normalization: if clone appears before furthest_block on stack, move it after.
         stack = context.open_elements._stack
         if len(stack) < 2:
             return
@@ -821,16 +778,10 @@ class AdoptionAgencyAlgorithm:
             # Adjust index if removal shifts positions
             fbi = stack.index(furthest_block)
             stack.insert(fbi + 1, clone)
-            if self.debug_enabled:
-                print("    LocalStackNorm: moved formatting clone after furthest_block (swap)")
-
-
 
 
     def _validate_no_circular_references(self, formatting_clone: Node, furthest_block: Node) -> None:
         """Validate that no circular references were created in the DOM tree"""
-        if self.debug_enabled:
-            print(f"    Adoption Agency: Validating no circular references")
 
         # Check that formatting_clone doesn't have furthest_block as an ancestor
         current = formatting_clone.parent
@@ -843,8 +794,6 @@ class AdoptionAgencyAlgorithm:
 
             if current == furthest_block:
                 # This is expected - furthest_block should be the parent
-                if self.debug_enabled:
-                    print(f"    Adoption Agency: Valid parent relationship confirmed")
                 break
 
             visited.add(id(current))
@@ -911,8 +860,6 @@ class AdoptionAgencyAlgorithm:
             table_index = table.parent.children.index(table)
             table.parent.children.insert(table_index, node)
             node.parent = table.parent
-            if self.debug_enabled:
-                print(f"    Adoption Agency: Foster parented {node.tag_name} before table at index {table_index}")
         else:
             # Fallback - need to find a safe parent that won't create circular reference
             safe_parent = self._find_safe_parent(node, context)
@@ -925,8 +872,7 @@ class AdoptionAgencyAlgorithm:
                     body_or_root.append_child(node)
                 else:
                     # Cannot safely place the node - this indicates a serious issue
-                    if self.debug_enabled:
-                        print(f"    Adoption Agency: WARNING - Cannot safely foster parent {node.tag_name}")
+                    pass
 
     def _find_safe_parent(self, node: Node, context) -> Optional[Node]:
         # Find a safe ancestor under which to reparent a node during foster parenting (spec helper)
