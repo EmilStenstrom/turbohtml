@@ -1066,49 +1066,6 @@ class TextHandler(TagHandler):
                     )
                     context.move_to_element(body_node)
                     return True
-                # Spec-aligned formatting continuation: if trailing text follows a table and the most
-                # recent formatting element before that table is still open (so normal reconstruction
-                # would be a no-op), we still need a fresh wrapper per expected tree shape for
-                # sequences like <table><b><tr>...bbb</table>ccc which produce <b><b>bbb<table>...<b>ccc.
-                # Here the active formatting entry's element (the second <b>) remains open so the
-                # reconstruction algorithm would not clone it. We synthesize a new wrapper of the
-                # same tag so the trailing text does not merge into the prior formatting run.
-                if elems and elems[-1].tag_name == "table" and text:
-                    # Find last formatting element sibling before the table (walk backwards skipping table)
-                    fmt_before = None
-                    for sibling in reversed(elems[:-1]):
-                        if sibling.tag_name in FORMATTING_ELEMENTS:
-                            fmt_before = sibling
-                            break
-                    if fmt_before is not None:
-                        from .tokenizer import (
-                            HTMLToken,
-                        )  # local import to avoid cycle at module load
-
-                        fake_token = HTMLToken(
-                            "StartTag",
-                            tag_name=fmt_before.tag_name,
-                            attributes=fmt_before.attributes.copy(),
-                        )
-                        new_wrapper = self.parser.insert_element(
-                            fake_token,
-                            context,
-                            parent=context.current_parent,
-                            mode="normal",
-                            enter=True,
-                        )
-                        # Mirror formatting insertion: push to active formatting elements for future reconstruction
-                        context.active_formatting_elements.push(new_wrapper, fake_token)
-                        self._append_text(
-                            text, context
-                        )  # current_parent now new_wrapper
-                        # Restore insertion point to body (subsequent siblings attach at body level)
-                        body_node = (
-                            self.parser._ensure_body_node(context)
-                            or context.current_parent
-                        )
-                        context.move_to_element(body_node)
-                        return True
                 # Before short‑circuiting append, ensure any active formatting elements that were
                 # popped by the paragraph end (e.g. <p>1<s><b>2</p>3...) are reconstructed so that
                 # following text is wrapped (spec: reconstruct active formatting elements algorithm).
@@ -1695,59 +1652,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
             self.debug(
                 f"Post-duplicate handling before element creation: parent={context.current_parent.tag_name}, open={[e.tag_name for e in context.open_elements._stack]}, active={[e.element.tag_name for e in context.active_formatting_elements if e.element]}"
             )
-            # Structural adjustment: if we are about to insert another <nobr> inside a block (e.g. div)
-            # but there is an open <i> formatting element immediately after a reconstructed <nobr>, and
-            # that <i> already has a <nobr> descendant, clone the <i> so that the next
-            # <nobr> insertion occurs under a fresh <i> wrapper (matching expected sibling <i> duplication
-            # around separate <nobr> runs). This mirrors spec behavior where reconstruction can clone
-            # multiple formatting elements when interrupted by blocks, but adoption left the
-            # original <i> in place preventing a needed clone.
-            if tag_name == "nobr":
-                # Find most recent <i> in active formatting list
-                afe_i_entries = [
-                    e
-                    for e in context.active_formatting_elements._stack
-                    if e.element and e.element.tag_name == "i"
-                ]
-                if afe_i_entries:
-                    i_elem = afe_i_entries[-1].element
-                    # Pattern we need: open stack has ... block(div/section/article/p), nobr, i where i is *inside* the nobr,
-                    # and current_parent is the block. We want to clone <i> as sibling under the block so the upcoming <nobr>
-                    # becomes child of the cloned <i> (producing a second <i> wrapper reflecting nested formatting depth).
-                    if (
-                        i_elem is not None
-                        and context.open_elements.contains(i_elem)
-                        and context.current_parent.tag_name
-                        in ("div", "section", "article", "p")
-                        and i_elem.parent is not None
-                        and i_elem.parent.tag_name == "nobr"
-                        and i_elem.parent.parent is context.current_parent
-                    ):
-                        from .node import Node as _Node
-
-                        # Insert clone after the existing nobr (i's grandparent's child list position of that nobr)
-                        nobr_container = i_elem.parent
-                        block_parent = context.current_parent
-                        try:
-                            nobr_index = block_parent.children.index(nobr_container)
-                        except ValueError:
-                            nobr_index = len(block_parent.children) - 1
-                        clone_i = _Node("i", i_elem.attributes.copy())
-                        block_parent.children.insert(nobr_index + 1, clone_i)
-                        clone_i.parent = block_parent
-                        # Push clone onto open elements & active formatting
-                        context.open_elements.push(clone_i)
-                        from .tokenizer import HTMLToken
-
-                        dummy_token = HTMLToken(
-                            "StartTag", tag_name="i", attributes=clone_i.attributes
-                        )
-                        context.active_formatting_elements.push(clone_i, dummy_token)
-                        context.move_to_element(clone_i)
-                        # Always log clone event (was env_debug gated)
-                        self.debug(
-                            "Cloned <i> sibling under block for upcoming <nobr> segmentation"
-                        )
+            # Removed unused complex structural adjustment for duplicate <nobr> segmentation
 
         # Allow nested <nobr>; spec imposes no artificial nesting depth limit.
 
@@ -2555,44 +2460,23 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
 
         return False
 
-    def _find_foster_parent_for_table_element_in_current_table(
-        self, table: "Node", table_tag: str
-    ) -> Optional["Node"]:
-        """Return foster parent candidate for table-related tag in current table context."""
-        if table_tag == "table":
-            return table.parent
-        if table_tag in ("tr",):
-            last_section = None
-            for child in table.children:
+    def _find_foster_parent_for_table_element_in_current_table(self, table: "Node", table_tag: str) -> Optional["Node"]:
+        """Greatly simplified: only distinguish row/ cell vs others (unused detailed heuristics removed)."""
+        if table_tag == "tr":
+            # Find last tbody/thead/tfoot else None
+            for child in reversed(table.children):
                 if child.tag_name in ("tbody", "thead", "tfoot"):
-                    last_section = child
-            if last_section:
-                return last_section
+                    return child
             return None
-
-        elif table_tag in ("td", "th"):
-            last_section = None
-            for child in table.children:
-                if child.tag_name in ("tbody", "thead", "tfoot"):
-                    last_section = child
-
-            if last_section:
-                last_tr = None
-                for child in last_section.children:
-                    if child.tag_name == "tr":
-                        last_tr = child
-                if last_tr:
-                    return last_tr
-                return last_section
+        if table_tag in ("td", "th"):
+            # Find last tr in last section
+            for section in reversed(table.children):
+                if section.tag_name in ("tbody", "thead", "tfoot"):
+                    for child in reversed(section.children):
+                        if child.tag_name == "tr":
+                            return child
             return None
-
-        elif table_tag in ("tbody", "thead", "tfoot", "caption"):
-            return table
-
-        elif table_tag in ("col", "colgroup"):
-            return table
-
-        return table
+        return table if table_tag != "table" else table.parent
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
         return tag_name in ("select", "option", "optgroup", "datalist")
