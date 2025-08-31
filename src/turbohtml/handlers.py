@@ -2666,8 +2666,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     parent=parent,
                     before=before,
                 )
-                context.active_formatting_elements.push_marker()
-                self.debug("Pushed active formatting marker at <table> sibling boundary")
+                
                 return True
 
         if context.current_parent and context.current_parent.tag_name == "p":
@@ -2696,9 +2695,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     self.debug("Quirks mode: keep table inside non-empty <p>")
 
         new_table = self.parser.insert_element(token, context, mode='normal', enter=True)
-        # Insert active formatting marker to bound formatting across table boundary
-        context.active_formatting_elements.push_marker()
-        self.debug("Pushed active formatting marker at <table> boundary")
+    
         self.parser.transition_to_state(context, DocumentState.IN_TABLE)
         return True
 
@@ -2761,9 +2758,9 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     popped = context.open_elements.pop()
                     if popped is select_desc:
                         break
-            context.active_formatting_elements.clear_up_to_last_marker()
+            
             self.parser.transition_to_state(context, DocumentState.IN_BODY, context.current_parent)
-            self.debug("Closed </table>, popped formatting marker")
+            self.debug("Closed </table>")
             self.debug(f"</table> post-pop open stack: {[e.tag_name for e in context.open_elements._stack]}")
             context.open_elements.remove_element(target)
         elif tag in ('tbody','thead','tfoot'):

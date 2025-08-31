@@ -51,12 +51,6 @@ class ActiveFormattingElements:
         if len(self._stack) > self._max_size:
             self._stack.pop(0)
 
-    def push_marker(self) -> None:
-        # Marker support removed (no-op)
-        return
-
-    def is_marker(self, entry: FormattingElementEntry) -> bool:
-        return False  # markers disabled
 
     def find(self, tag_name: str, attributes: Dict[str, str] = None) -> Optional[FormattingElementEntry]:
         """Find a formatting element by tag name and optionally attributes"""
@@ -118,10 +112,6 @@ class ActiveFormattingElements:
     def __len__(self) -> int:
         return len(self._stack)
 
-    # --- spec utility: clear the list of active formatting elements up to the last marker ---
-    def clear_up_to_last_marker(self) -> None:
-        # Marker clearing no-op
-        return
 
     def insert_at_index(self, index: int, element: Node, token: HTMLToken) -> None:
         # Clamp index to valid range
