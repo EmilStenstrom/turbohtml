@@ -489,27 +489,6 @@ class AdoptionAgencyAlgorithm:
         if parent is not None:
             context.move_to_element(parent)
         return True
-
-    
-        
-        
-        # Collect candidates first (avoid mutating while traversing)
-        root = context.current_parent
-        # Walk from document root to be safe
-        doc = self.parser.root
-        candidates = []
-        stack = [doc]
-        while stack:
-            node = stack.pop()
-            stack.extend(reversed(node.children))
-            if node.tag_name == 'b' and node.parent and node.parent.tag_name == 'a':
-                if node.attributes:
-                    continue
-                text_children = [c for c in node.children if c.tag_name == '#text' and c.text_content and c.text_content.strip()]
-                if text_children:
-                    continue
-                elem_children = [c for c in node.children if c.tag_name != '#text']
-    
     def _get_body_or_root(self, context):
         """Get the body element or fallback to root"""
         body_node = None
@@ -525,58 +504,7 @@ class AdoptionAgencyAlgorithm:
         else:
             return self.parser.root
 
-    def _reconstruct_formatting_elements(self, elements: List[Node], context):
-        """Reconstruct formatting elements that were implicitly closed"""
-        if not elements:
-            return
-
-        if self.debug_enabled:
-            print(f"    Adoption Agency: Reconstructing formatting elements: {[e.tag_name for e in elements]}")
-            print(f"    Adoption Agency: Current parent before reconstruction: {context.current_parent.tag_name}")
-
-        # Reconstruct each formatting element as nested children
-        current_parent = context.current_parent
-
-        for element in elements:
-            # Clone the formatting element
-            clone = Node(element.tag_name, element.attributes.copy())
-
-            # Add as child of current parent
-            current_parent.append_child(clone)
-
-            # Add to open elements stack so subsequent parsing knows about it
-            context.open_elements.push(clone)
-
-            # Update the active formatting elements to point to the clone instead of the original
-            entry = context.active_formatting_elements.find_element(element)
-            if entry:
-                # Replace the element in the active formatting elements entry
-                entry.element = clone
-                if self.debug_enabled:
-                    print(
-                        f"    Adoption Agency: Updated active formatting elements entry to point to cloned {clone.tag_name}"
-                    )
-            else:
-                # Element not found in active formatting elements, add the clone
-                # This happens when we reconstruct elements that were previously closed
-                from turbohtml.tokenizer import HTMLToken
-
-                dummy_token = HTMLToken("StartTag", clone.tag_name, clone.attributes)
-                context.active_formatting_elements.push(clone, dummy_token)
-                if self.debug_enabled:
-                    print(f"    Adoption Agency: Added cloned {clone.tag_name} to active formatting elements")
-
-            # Update current parent to be the clone for nesting
-            current_parent = clone
-
-            if self.debug_enabled:
-                print(f"    Adoption Agency: Reconstructed {clone.tag_name} inside {clone.parent.tag_name}")
-
-        # Update context's current parent to the innermost reconstructed element
-        context.move_to_element(current_parent)
-
-        if self.debug_enabled:
-            print(f"    Adoption Agency: Current parent after reconstruction: {context.current_parent.tag_name}")
+    # Removed unused _reconstruct_formatting_elements (no call sites in current codebase)
 
     def _safe_detach_node(self, node: Node) -> None:
         """Detach node from its parent safely, even if linkage is inconsistent.
