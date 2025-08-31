@@ -5368,22 +5368,6 @@ class VoidElementHandler(SelectAwareHandler):
 
         return True
 
-    def _create_element_from_node(self, node: "Node") -> "Node":
-        """Create a new element with the same tag name and attributes as the given node"""
-        from .tokenizer import HTMLToken
-
-        # Create a token-like object for the new element
-        token = HTMLToken("start_tag", node.tag_name, {}, False)
-
-        # Copy attributes if any
-        if node.attributes:
-            token.attributes.update(node.attributes)
-        # Use unified insertion (void if original node is void, else normal). We don't know context
-        # here, so default to creating a normal element under current_parent.
-        return self.parser.insert_element(
-            token, self.parser.context, mode="normal", enter=True
-        )
-
 
 class AutoClosingTagHandler(TemplateAwareHandler):
     """Handles auto-closing behavior for certain tags"""
@@ -6387,43 +6371,6 @@ class ForeignTagHandler(TagHandler):
                     self.debug(
                         f"MathML leaf kept prefixed: tag={tag_name_lower}, ancestor_text_ip={ancestor_text_ip is not None}, frag_leaf_root={frag_leaf_root}, fragment_context={self.parser.fragment_context}"
                     )
-                if (
-                    self.parser.fragment_context
-                    and self.parser.fragment_context.startswith("math ")
-                ):
-                    # Consider presence of BOTH mglyph and malignmark anywhere so far in fragment
-                    frag_root = (
-                        self.parser.root.children[0]
-                        if self.parser.root.children
-                        else None
-                    )
-                    mglyph_found = False
-                    malignmark_found = False
-                    if frag_root:
-                        stack = [frag_root]
-                        while stack and (not (mglyph_found and malignmark_found)):
-                            node = stack.pop()
-                            if node.tag_name == "math mglyph":
-                                mglyph_found = True
-                            elif node.tag_name == "math malignmark":
-                                malignmark_found = True
-                            # Descend only into math subtree for performance
-                            if node.tag_name.startswith("math "):
-                                stack.extend(reversed(node.children))
-                    has_chain = mglyph_found and malignmark_found
-                    if has_chain:
-                        self.parser.insert_element(
-                            token,
-                            context,
-                            mode="normal",
-                            enter=not token.is_self_closing,
-                            tag_name_override=tag_name_lower,
-                            attributes_override=self._fix_foreign_attribute_case(
-                                token.attributes, "math"
-                            ),
-                            push_override=not token.is_self_closing,
-                        )
-                        return True
 
             # Handle HTML elements inside annotation-xml
             if context.current_parent.tag_name == "math annotation-xml":
