@@ -612,7 +612,8 @@ class TurboHTML:
             body_index = None
             for i,ch in enumerate(html.children):
                 if ch.tag_name == 'body':
-                    body_index = i; break
+                    body_index = i
+                    break
             if head and body_index is not None and body_index+1 < len(html.children):
                 after = html.children[body_index+1]
                 if after.tag_name == '#text' and after.text_content is not None and after.text_content.strip() == '':
@@ -620,14 +621,16 @@ class TurboHTML:
                     between_ok = True
                     for mid in html.children[1:body_index]:
                         if not (mid.tag_name == '#text' and mid.text_content is not None and mid.text_content.strip() == ''):
-                            between_ok = False; break
+                            between_ok = False
+                            break
                     if between_ok:
                         # Move the whitespace text node so it sits right after head (index after any existing
                         # whitespace already there, preserving relative order of multiple whitespace nodes)
                         ws_nodes = []
                         j = body_index+1
                         while j < len(html.children) and html.children[j].tag_name == '#text' and html.children[j].text_content is not None and html.children[j].text_content.strip() == '':
-                            ws_nodes.append(html.children[j]); j += 1
+                            ws_nodes.append(html.children[j])
+                            j += 1
                         # Remove collected whitespace nodes
                         for n in ws_nodes:
                             html.remove_child(n)
@@ -1210,7 +1213,8 @@ class TurboHTML:
                         attached = False
                         while cur:
                             if cur is body_node:
-                                attached = True; break
+                                attached = True
+                                break
                             cur = cur.parent
                         if attached:
                             resume_parent = el
@@ -1339,7 +1343,8 @@ class TurboHTML:
                 container = None
                 for ch in reversed(root.children):
                     if ch.tag_name in ('tbody','thead','tfoot'):
-                        container = ch; break
+                        container = ch
+                        break
                 if not container:
                     container = Node('tbody')
                     root.append_child(container)
@@ -1354,7 +1359,8 @@ class TurboHTML:
                 container = None
                 for ch in reversed(root.children):
                     if ch.tag_name in ('tbody','thead','tfoot'):
-                        container = ch; break
+                        container = ch
+                        break
                 if not container:
                     container = Node('tbody')
                     root.append_child(container)
@@ -1362,7 +1368,8 @@ class TurboHTML:
                 last_tr = None
                 for ch in reversed(container.children):
                     if ch.tag_name == 'tr':
-                        last_tr = ch; break
+                        last_tr = ch
+                        break
                 if not last_tr:
                     last_tr = Node('tr')
                     container.append_child(last_tr)
@@ -1403,7 +1410,8 @@ class TurboHTML:
                 last_tr = None
                 for ch in reversed(root.children):
                     if ch.tag_name == 'tr':
-                        last_tr = ch; break
+                        last_tr = ch
+                        break
                 if not last_tr:
                     last_tr = Node('tr')
                     root.append_child(last_tr)
@@ -1661,7 +1669,8 @@ class TurboHTML:
             open_cell = None
             for el in reversed(context.open_elements._stack):
                 if el.tag_name in ('td','th'):
-                    open_cell = el; break
+                    open_cell = el
+                    break
             if open_cell is not None:
                 context.move_to_element(open_cell)
                 self.debug(f"Skipped foster parenting <{tag_name}>; insertion point set to open cell <{open_cell.tag_name}>")
@@ -1832,7 +1841,8 @@ class TurboHTML:
             on_stack = None
             for el in reversed(context.open_elements._stack):
                 if el.tag_name == 'form':
-                    on_stack = el; break
+                    on_stack = el
+                    break
             if on_stack is None:
                 self.debug("Ignoring premature </form> (form not on open elements stack)")
                 return
