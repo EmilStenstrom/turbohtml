@@ -874,7 +874,8 @@ class TextHandler(TagHandler):
             cur = context.current_parent
             while cur:
                 if cur.tag_name == 'content' and cur.parent and cur.parent.tag_name == 'template':
-                    boundary = cur; break
+                    boundary = cur
+                    break
                 cur = cur.parent
             if boundary:
                 last_child = boundary.children[-1] if boundary.children else None
@@ -882,8 +883,17 @@ class TextHandler(TagHandler):
                     return True
                 if last_child and last_child.tag_name == 'table' and text and not text.isspace():
                     # Insert before trailing table at template content boundary (no merge to preserve node boundary)
-                    self.parser.insert_text(text, context, parent=boundary, before=last_child, merge=False, strip_replacement=False); return True
-            self._append_text(text, context); return True
+                    self.parser.insert_text(
+                        text,
+                        context,
+                        parent=boundary,
+                        before=last_child,
+                        merge=False,
+                        strip_replacement=False,
+                    )
+                    return True
+            self._append_text(text, context)
+            return True
 
         # INITIAL/IN_HEAD promotion
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
@@ -1075,7 +1085,8 @@ class TextHandler(TagHandler):
             needs_reconstruct = False
             for entry in context.active_formatting_elements:
                 if entry.element and not foster_block.find_ancestor(entry.element.tag_name):
-                    needs_reconstruct = True; break
+                    needs_reconstruct = True
+                    break
             if needs_reconstruct and foster_block.tag_name not in ('table','tbody','thead','tfoot','tr'):
                 # Temporarily set insertion point to foster_block and reconstruct
                 cur_parent = context.current_parent
@@ -1745,7 +1756,8 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             deepest_cell = None
             for el in reversed(context.open_elements._stack):
                 if el.tag_name in ('td','th'):
-                    deepest_cell = el; break
+                    deepest_cell = el
+                    break
             if deepest_cell and context.current_parent is not deepest_cell:
                 context.move_to_element(deepest_cell)
                 self.debug("Relocated insertion point to open cell for <p> after foreign content")
@@ -2018,7 +2030,8 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             if not target:
                 for el in reversed(context.open_elements._stack):  # type: ignore[attr-defined]
                     if el.tag_name == tag_name:
-                        target = el; break
+                        target = el
+                        break
             if target:
                 while not context.open_elements.is_empty():
                     popped = context.open_elements.pop()
@@ -2066,7 +2079,8 @@ class ParagraphTagHandler(TagHandler):
             target_p = None
             for el in reversed(context.open_elements._stack):  # type: ignore[attr-defined]
                 if el.tag_name == 'p':
-                    target_p = el; break
+                    target_p = el
+                    break
             if target_p:
                 while not context.open_elements.is_empty():
                     popped = context.open_elements.pop()
@@ -3421,45 +3435,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
         return True
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
-        # Don't handle end tags inside template content that would affect document state
-        if self._is_in_template_content(context):
-            return False
-
-        # Handle table-related end tags in table context
-        if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_CAPTION):
-            # Handle table structure elements
-            if tag_name in ("table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption"):
-                return True
-
-            # Handle p end tags only when inside table cells
-            if tag_name == "p":
-                # Do NOT intercept </p> inside SVG/MathML integration points (foreignObject/desc/title,
-                # MathML text IPs, or annotation-xml with HTML/XHTML). Let HTML handlers close it locally.
-                in_svg_ip = context.current_parent.tag_name in (
-                    "svg foreignObject",
-                    "svg desc",
-                    "svg title",
-                ) or context.current_parent.has_ancestor_matching(
-                    lambda n: n.tag_name in ("svg foreignObject", "svg desc", "svg title")
-                )
-                in_math_ip = context.current_parent.find_ancestor(
-                    lambda n: n.tag_name in ("math mtext", "math mi", "math mo", "math mn", "math ms")
-                ) is not None or (
-                    context.current_parent.tag_name == "math annotation-xml"
-                    and context.current_parent.attributes.get("encoding", "").lower()
-                    in ("application/xhtml+xml", "text/html")
-                )
-                if in_svg_ip or in_math_ip:
-                    return False
-                cell = context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th"))
-                return cell is not None
-
-            # Handle formatting elements that might interact with tables
-            if tag_name in FORMATTING_ELEMENTS:
-                return True
-
-        return False
+    # duplicate should_handle_end removed (earlier definition in class is canonical)
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         tag_name = token.tag_name
@@ -5577,7 +5553,8 @@ class ForeignTagHandler(TagHandler):
             html_nested = False
             while cur and cur is not matching_element:
                 if not (cur.tag_name.startswith('svg ') or cur.tag_name.startswith('math ') or cur.tag_name in ('#text','#comment')):
-                    html_nested = True; break
+                    html_nested = True
+                    break
                 cur = cur.parent
             if html_nested:
                 matching_element = None
@@ -5680,7 +5657,8 @@ class ForeignTagHandler(TagHandler):
                         outside = False
                         while cur:
                             if cur is opened:
-                                outside = True; break
+                                outside = True
+                                break
                             cur = cur.parent
                         if outside:
                             # Swallow unmatched end tag outside integration subtree
@@ -5893,7 +5871,8 @@ class HeadElementHandler(TagHandler):
                     if container is not context.current_parent or container is table:
                         for ch in container.children:
                             if ch.tag_name in ("thead", "tbody", "tfoot", "tr"):
-                                before = ch; break
+                                before = ch
+                                break
                     self.parser.insert_element(
                         token,
                         context,
@@ -6351,11 +6330,14 @@ class FramesetTagHandler(TagHandler):
                                 has_meaning = False
                                 for gc in ch.children:
                                     if gc.tag_name == '#text' and gc.text_content and gc.text_content.strip():
-                                        has_meaning = True; break
+                                        has_meaning = True
+                                        break
                                     if gc.tag_name != '#text':
-                                        has_meaning = True; break
+                                        has_meaning = True
+                                        break
                                 if has_meaning:
-                                    meaningful = True; break
+                                    meaningful = True
+                                    break
                                 # whitespace-only block; ignore
                             elif ch.tag_name not in allowed_tags:
                                 meaningful = True
@@ -6497,7 +6479,8 @@ class FramesetTagHandler(TagHandler):
                 target = None
                 for el in reversed(context.open_elements._stack):  # type: ignore[attr-defined]
                     if el.tag_name == 'noframes':
-                        target = el; break
+                        target = el
+                        break
                 if target:
                     while not context.open_elements.is_empty():
                         popped = context.open_elements.pop()
@@ -6571,7 +6554,8 @@ class BodyElementHandler(TagHandler):
         if self.parser.html_node:
             for ch in self.parser.html_node.children:
                 if ch.tag_name == 'body':
-                    body = ch; break
+                    body = ch
+                    break
         if body is None:
             body = Node('body', {k.lower(): v for k,v in token.attributes.items()})
             if self.parser.html_node:
