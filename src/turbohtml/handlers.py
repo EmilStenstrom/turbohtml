@@ -1,5 +1,5 @@
 import re
-from typing import List, Optional, Protocol, Tuple, Set
+from typing import Optional, Protocol, Set
 
 from turbohtml.constants import (
     AUTO_CLOSING_TAGS,
@@ -11,7 +11,6 @@ from turbohtml.constants import (
     HTML_BREAK_OUT_ELEMENTS,
     HTML_ELEMENTS,
     MATHML_ELEMENTS,
-    SVG_CASE_SENSITIVE_ATTRIBUTES,
     RAWTEXT_ELEMENTS,
     SVG_CASE_SENSITIVE_ELEMENTS,
     TABLE_ELEMENTS,
@@ -91,7 +90,7 @@ class TagHandler:
         """Foster parent an element before the current table"""
         table = self.parser.find_current_table(context)
         if table and table.parent:
-            table_index = table.parent.children.index(table)
+            table.parent.children.index(table)
             return self.parser.insert_element(
                 token,
                 context,
@@ -147,7 +146,6 @@ class TemplateAwareHandler(TagHandler):
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
         # Allow some handlers even inside template content (formatting and auto-closing semantics still apply)
         if self._is_in_template_content(context):
-            from typing import TYPE_CHECKING
             # Importing class names locally avoids circular references at import time
             allowed_types = (FormattingElementHandler, AutoClosingTagHandler)
             if isinstance(self, allowed_types):
@@ -266,7 +264,7 @@ class TemplateTagHandler(TagHandler):
         template_node = self.parser.insert_element(token, context, parent=insertion_parent, mode='normal', enter=True)
         # Create template content fragment using unified insertion (transient so it is not on open stack)
         content_token = self._synth_token("content")
-        content_node = self.parser.insert_element(content_token, context, mode='transient', enter=True, parent=template_node)
+        self.parser.insert_element(content_token, context, mode='transient', enter=True, parent=template_node)
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
@@ -423,7 +421,7 @@ class TemplateContentFilterHandler(TagHandler):
                 return False
             template_node = self.parser.insert_element(token, context, mode='normal', enter=True)
             content_token = self._synth_token("content")
-            content_node = self.parser.insert_element(content_token, context, mode='transient', enter=True, parent=template_node)
+            self.parser.insert_element(content_token, context, mode='transient', enter=True, parent=template_node)
             return True
 
         insertion_parent = context.current_parent
@@ -456,7 +454,7 @@ class TemplateContentFilterHandler(TagHandler):
                     break
                 if prev and prev.tag_name == "tr":
                     fake_tr_token = HTMLToken("StartTag", tag_name="tr", attributes={})
-                    tr_node = self.parser.insert_element(fake_tr_token, context, parent=boundary, mode='transient', enter=True)
+                    self.parser.insert_element(fake_tr_token, context, parent=boundary, mode='transient', enter=True)
                     self.parser.insert_element(token, context, mode='transient', enter=True)
                 else:
                     self.parser.insert_element(token, context, parent=boundary, mode='transient', enter=True)
@@ -758,7 +756,7 @@ class TextHandler(TagHandler):
                 after_table_case = (
                     elems and elems[-1].tag_name == 'table' and any(e.tag_name == 'b' for e in elems[:-1])
                 )
-                trailing_nobr_case = (
+                (
                     any(e.tag_name == 'nobr' for e in elems) and (not elems or elems[-1].tag_name != 'nobr')
                 )
                 # New: if trailing text follows a table and there exists an active formatting element
@@ -1574,7 +1572,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
 
             p_element = context.current_parent.find_ancestor("p")
             if p_element and p_element.parent == current:
-                self.debug(f"Staying in paragraph that's inside formatting element")
+                self.debug("Staying in paragraph that's inside formatting element")
                 context.move_to_element(p_element)
                 return True
 
@@ -1634,7 +1632,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                 if not has_struct:
                     parent = table.parent or context.current_parent
                     before = table if table in parent.children else None
-                    new_sel = self.parser.insert_element(
+                    self.parser.insert_element(
                         token,
                         context,
                         mode='normal',
@@ -2246,7 +2244,7 @@ class ParagraphTagHandler(TagHandler):
                 if in_svg_ip or in_math_ip:
                     self.debug("In integration point inside table; not foster-parenting <p>")
                 else:
-                    self.debug(f"Foster parenting paragraph out of table")
+                    self.debug("Foster parenting paragraph out of table")
                     self.parser._foster_parent_element(token.tag_name, token.attributes, context)
                 return True
 
@@ -2505,7 +2503,7 @@ class TableElementHandler(TagHandler):
         if not self.parser.find_current_table(context):
             # Create table element via unified insertion (push + enter)
             new_table_token = self._synth_token("table")
-            new_table = self.parser.insert_element(new_table_token, context, mode='normal', enter=True)
+            self.parser.insert_element(new_table_token, context, mode='normal', enter=True)
             self.parser.transition_to_state(context, DocumentState.IN_TABLE)
 
         # Create and return the requested element (may be the table or a descendant)
@@ -2634,7 +2632,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
     def _handle_caption(self, token: "HTMLToken", context: "ParseContext") -> bool:
         """Handle caption element"""
         table_parent = self.parser.find_current_table(context)
-        new_caption = self.parser.insert_element(
+        self.parser.insert_element(
             token,
             context,
             mode='normal',
@@ -2658,7 +2656,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 parent = current_table.parent
                 idx = parent.children.index(current_table)
                 before = parent.children[idx + 1] if idx + 1 < len(parent.children) else None
-                new_table = self.parser.insert_element(
+                self.parser.insert_element(
                     token,
                     context,
                     mode='normal',
@@ -2694,7 +2692,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 else:
                     self.debug("Quirks mode: keep table inside non-empty <p>")
 
-        new_table = self.parser.insert_element(token, context, mode='normal', enter=True)
+        self.parser.insert_element(token, context, mode='normal', enter=True)
     
         self.parser.transition_to_state(context, DocumentState.IN_TABLE)
         return True
@@ -2781,7 +2779,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             self.debug("Ignoring colgroup outside table context")
             return True
         self.debug("Creating new colgroup")
-        new_colgroup = self.parser.insert_element(
+        self.parser.insert_element(
             token,
             context,
             mode='normal',
@@ -2869,7 +2867,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             self.debug("Found tbody/tr ancestor, creating new tbody")
             # Create new empty tbody after the colgroup
             tbody_token = self._synth_token("tbody")
-            new_tbody = self.parser.insert_element(
+            self.parser.insert_element(
                 tbody_token,
                 context,
                 mode='normal',
@@ -2887,7 +2885,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
     def _handle_tbody(self, token: "HTMLToken", context: "ParseContext") -> bool:
         """Handle tbody element"""
         table_parent = self.parser.find_current_table(context)
-        new_tbody = self.parser.insert_element(
+        self.parser.insert_element(
             token,
             context,
             mode='normal',
@@ -3244,7 +3242,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     nobr_token = self._synth_token('nobr')
                     new_nobr = self.parser.insert_element(nobr_token, context, mode='normal', enter=False, parent=foster_parent, before=foster_parent.children[table_index], push_override=False)
                     self.parser.insert_text(text, context, parent=new_nobr, merge=True)
-                    self.debug(f"Created new <nobr> for foster-parented text after filled <nobr>")
+                    self.debug("Created new <nobr> for foster-parented text after filled <nobr>")
                     return True
 
         # Find the most recent <a> tag before the table
@@ -3740,7 +3738,7 @@ class FormTagHandler(TagHandler):
         # Create and append the new node via unified insertion
         mode = 'void' if tag_name == 'input' else 'normal'
         enter = tag_name != 'input'
-        new_node = self.parser.insert_element(token, context, mode=mode, enter=enter, push_override=(tag_name == 'form'))
+        self.parser.insert_element(token, context, mode=mode, enter=enter, push_override=(tag_name == 'form'))
 
         # No persistent pointer; dynamic detection is used instead
         return True
@@ -3774,7 +3772,6 @@ class FormTagHandler(TagHandler):
         ):
             # Current parent will be table/section/cell; if form_el is not current_parent and is an ancestor of it, ignore.
             cur = context.current_parent
-            under_form = False
             while cur and cur is not form_el and cur.tag_name not in ('html', '#document'):
                 cur = cur.parent
             if cur is form_el:
@@ -4133,7 +4130,6 @@ class HeadingTagHandler(SimpleElementHandler):
         return tag_name in HEADING_ELEMENTS
 
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
-        tag_name = token.tag_name
 
         # Check if we're inside a table cell
         if self._is_in_table_cell(context):
@@ -4273,7 +4269,7 @@ class RawtextTagHandler(SelectAwareHandler):
             context.move_up_one_level()
 
         # Create RAWTEXT element via unified insertion (push + enter)
-        new_node = self.parser.insert_element(token, context, mode='normal', enter=True)
+        self.parser.insert_element(token, context, mode='normal', enter=True)
         # No post-insertion relocation needed; insertion point pre-adjustment ensures correct placement.
         # Switch to RAWTEXT state and let tokenizer handle the content
         self.debug(f"Switching to RAWTEXT content state for {tag_name}")
@@ -4305,7 +4301,7 @@ class RawtextTagHandler(SelectAwareHandler):
                 # move current_parent to html level for subsequent content
                 if context.document_state == DocumentState.AFTER_HEAD and original_parent.tag_name == "head":
                     context.move_to_element(self.parser.html_node)
-                    self.debug(f"AFTER_HEAD state: moved current_parent from head to html")
+                    self.debug("AFTER_HEAD state: moved current_parent from head to html")
                 # Clear RAWTEXT content mode
                 context.content_state = ContentState.NONE
                 self.debug("Returned to NONE content state")
@@ -4336,7 +4332,7 @@ class RawtextTagHandler(SelectAwareHandler):
         merged = context.current_parent.children and context.current_parent.children[-1].tag_name == "#text"
         # Preserve replacement characters inside <script> rawtext per spec expectations (domjs-unsafe cases)
         strip = not (context.current_parent.tag_name == "script")
-        node = self.parser.insert_text(
+        self.parser.insert_text(
             text, context, parent=context.current_parent, merge=True, strip_replacement=strip
         )
         if merged:
@@ -4372,7 +4368,7 @@ class VoidElementHandler(SelectAwareHandler):
                 table = self.parser.find_current_table(context)  # type: ignore[attr-defined]
                 if table and table.parent:
                     foster_parent = table.parent
-                    table_index = foster_parent.children.index(table)
+                    foster_parent.children.index(table)
                     # Insert before the table using centralized helper (void mode avoids stack/enter side-effects)
                     self.parser.insert_element(
                         token,
@@ -4419,7 +4415,7 @@ class VoidElementHandler(SelectAwareHandler):
                     # Non-hidden input foster parented outside the table (before the table)
                     self.debug("Foster parenting non-hidden input outside table")
                     if table_ancestor.parent:
-                        table_index = table_ancestor.parent.children.index(table_ancestor)
+                        table_ancestor.parent.children.index(table_ancestor)
                         self.parser.insert_element(
                             token,
                             context,
@@ -4690,13 +4686,13 @@ class ForeignTagHandler(TagHandler):
                 table = self.parser.find_current_table(context)
                 if table and table.parent:
                     self.debug(f"Foster parenting foreign element <{tag_name}> before table")
-                    table_index = table.parent.children.index(table)
+                    table.parent.children.index(table)
 
                     # Create the new node via unified insertion (no push onto open elements stack)
                     if tag_name_lower == "math":
                         context.current_context = "math"  # set context before insertion for downstream handlers
                         fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "math")
-                        new_node = self.parser.insert_element(
+                        self.parser.insert_element(
                             token,
                             context,
                             mode='normal',
@@ -4711,7 +4707,7 @@ class ForeignTagHandler(TagHandler):
                     else:  # svg
                         context.current_context = "svg"
                         fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
-                        new_node = self.parser.insert_element(
+                        self.parser.insert_element(
                             token,
                             context,
                             mode='normal',
@@ -4826,7 +4822,7 @@ class ForeignTagHandler(TagHandler):
             if table and table.parent and not in_caption_or_cell:
 
                 # Foster parent the HTML element before the table
-                table_index = table.parent.children.index(table)
+                table.parent.children.index(table)
                 self.debug(f"Foster parenting HTML element <{tag_name_lower}> before table")
 
                 # Create the HTML element (not pushed; just entered) via unified insertion
@@ -5271,7 +5267,6 @@ class ForeignTagHandler(TagHandler):
                         f"MathML leaf kept prefixed: tag={tag_name_lower}, ancestor_text_ip={ancestor_text_ip is not None}, frag_leaf_root={frag_leaf_root}, fragment_context={self.parser.fragment_context}"
                     )
                 if self.parser.fragment_context and self.parser.fragment_context.startswith("math "):
-                    chain_tags = {"math mglyph", "math malignmark"}
                     # Consider presence of BOTH mglyph and malignmark anywhere so far in fragment
                     frag_root = self.parser.root.children[0] if self.parser.root.children else None
                     mglyph_found = False
@@ -6654,7 +6649,7 @@ class BodyElementHandler(TagHandler):
                 self.parser.html_node.append_child(body)
         else:
             for k,v in token.attributes.items():
-                lk = k.lower();
+                lk = k.lower()
                 if lk not in body.attributes:
                     body.attributes[lk] = v
         context.move_to_element(body)
@@ -6719,7 +6714,7 @@ class BoundaryElementHandler(TagHandler):
             cursor = cursor.parent
 
         parent_for_marquee = deepest_fmt if deepest_fmt else context.current_parent
-        boundary = self.parser.insert_element(
+        self.parser.insert_element(
             token,
             context,
             mode='normal',
@@ -6853,7 +6848,6 @@ class PlaintextHandler(SelectAwareHandler):
             return True
         if tag_name != 'plaintext':
             return False
-        cur = context.current_parent
         # Inside plain SVG/MathML foreign subtree that is NOT an integration point, we should NOT
         # enter HTML PLAINTEXT mode; instead the <plaintext> tag is just another foreign element
         # with normal parsing of its (HTML) end tag token. We still handle it here so we can create

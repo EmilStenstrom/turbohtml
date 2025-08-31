@@ -491,7 +491,7 @@ class TurboHTML:
         walk(self.root)
 
         # MathML attribute case normalization (definitionURL, etc.) for nodes not processed by foreign handler
-        from .constants import MATHML_CASE_SENSITIVE_ATTRIBUTES, MATHML_ELEMENTS, FORMATTING_ELEMENTS
+        from .constants import MATHML_CASE_SENSITIVE_ATTRIBUTES, MATHML_ELEMENTS
         def normalize_mathml(node: Node):
             parts = node.tag_name.split()
             local = parts[-1] if parts else node.tag_name
@@ -883,7 +883,7 @@ class TurboHTML:
 
     def _create_fragment_context(self) -> "ParseContext":
         """Create parsing context for fragment parsing"""
-        from turbohtml.context import DocumentState, ContentState
+        from turbohtml.context import DocumentState
 
         # Create context based on the fragment context element
         if self.fragment_context == "template":
@@ -1686,7 +1686,7 @@ class TurboHTML:
         # container (div/section/article) to avoid altering correct placement for legitimate block
         # insertions already inside the phrasing ancestor.
         if tag_name in ('div','section','article'):
-            from turbohtml.constants import SPECIAL_CATEGORY_ELEMENTS, FORMATTING_ELEMENTS, BLOCK_ELEMENTS
+            from turbohtml.constants import SPECIAL_CATEGORY_ELEMENTS, BLOCK_ELEMENTS
             # Skip salvage repositioning inside template content or foreign (math/svg) contexts.
             # Rationale: preventing block-level insertion from being relocated into isolated
             # template content fragments or foreignObject subtrees where the phrasing ancestor
@@ -1773,7 +1773,7 @@ class TurboHTML:
                 # Spec: If no <p> element in button scope, parse error; insert HTML element for 'p', then immediately close.
                 # (Strict spec) Do not suppress synthesis even if an empty trailing <p> already exists –
                 # the algorithm always inserts one when no <p> is in button scope.
-                last_child = context.current_parent.children[-1] if context.current_parent.children else None
+                context.current_parent.children[-1] if context.current_parent.children else None
                 insertion_parent = context.current_parent
                 # If insertion parent is a foreign element (pure SVG/MathML node, not an integration point), per spec
                 # the stray </p> acts in the HTML insertion mode outside that foreign subtree. We therefore append the
@@ -2089,7 +2089,7 @@ class TurboHTML:
             # In INITIAL state, check if html_node is already in tree
             if self.html_node in self.root.children:
                 # HTML node exists, comment should go inside it
-                self.debug(f"Adding comment to html in initial state")
+                self.debug("Adding comment to html in initial state")
                 # Find the position to insert - before the first non-comment element (like head)
                 insert_index = 0
                 for i, child in enumerate(self.html_node.children):
@@ -2119,7 +2119,7 @@ class TurboHTML:
 
             if body_node:
                 self.html_node.insert_before(comment_node, body_node)
-                self.debug(f"Inserted comment before body")
+                self.debug("Inserted comment before body")
             else:
                 # If no body found, just append
                 self.html_node.append_child(comment_node)
@@ -2130,7 +2130,7 @@ class TurboHTML:
         if context.document_state == DocumentState.AFTER_BODY:
             # If </body> seen but </html> not yet processed, comment should remain inside html AFTER body
             # Comments after body but before html close: spec places them inside <html>.
-            has_html_closed = any(ch.tag_name == '#comment' for ch in self.root.children if ch is not comment_node)
+            any(ch.tag_name == '#comment' for ch in self.root.children if ch is not comment_node)
             if self.html_node not in self.root.children:
                 self.root.append_child(self.html_node)
             body = self._get_body_node()
@@ -2184,7 +2184,7 @@ class TurboHTML:
         # Comments in IN_BODY state should go as children of html, positioned before head
         if context.document_state == DocumentState.IN_BODY and context.current_parent.tag_name == "html":
             # If we're in body state but current parent is html, place comment before head
-            self.debug(f"Adding comment to html in body state")
+            self.debug("Adding comment to html in body state")
             # Find head element and insert comment before it
             head_node = None
             for child in context.current_parent.children:
@@ -2194,7 +2194,7 @@ class TurboHTML:
 
             if head_node:
                 context.current_parent.insert_before(comment_node, head_node)
-                self.debug(f"Inserted comment before head")
+                self.debug("Inserted comment before head")
             else:
                 # If no head found, just append
                 context.current_parent.append_child(comment_node)
@@ -2468,7 +2468,6 @@ class TurboHTML:
             # formatting element entry must be reconstructed, producing nested <b> wrappers when
             # multiple <b> elements were active at the time a block element interrupted them.
             # Reuse existing current_parent if same tag and attribute set and still empty (prevents redundant wrapper)
-            reuse = False
             if (
                 entry.element.tag_name == 'nobr'  # Only reuse for <nobr>; other tags (e.g., <b>, <i>) must clone to preserve nesting depth
                 and context.current_parent

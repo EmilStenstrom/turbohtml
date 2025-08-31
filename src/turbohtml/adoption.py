@@ -535,7 +535,7 @@ class AdoptionAgencyAlgorithm:
             node_clone = Node(tag_name=node.tag_name, attributes=node.attributes.copy())
 
             # 12.6 replace entry with clone
-            clone_entry = FormattingElementEntry(node_clone, node_entry.token)
+            FormattingElementEntry(node_clone, node_entry.token)
             bookmark_index_before = context.active_formatting_elements.get_index(node_entry)
             context.active_formatting_elements.replace_entry(node_entry, node_clone, node_entry.token)
 

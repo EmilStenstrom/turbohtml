@@ -1,6 +1,5 @@
 from enum import Enum, auto
 
-from turbohtml.node import Node
 
 
 class DocumentState(Enum):

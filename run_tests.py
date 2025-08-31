@@ -216,7 +216,7 @@ class TestRunner:
                         file_failed += 1
                         file_test_indices.append(("fail", i))
                         self._handle_failure(file_path, i, result)
-                except Exception as e:
+                except Exception:
                     print(f"\nError in test {file_path.name}:{i}")
                     print(f"Input HTML:\n{test.data}\n")
                     raise  # Re-raise the exception to show the full traceback
@@ -294,7 +294,7 @@ class TestReporter:
             if result.debug_output:
                 lines.extend(
                     [
-                        f"=== DEBUG PRINTS WHEN PARSING ===",
+                        "=== DEBUG PRINTS WHEN PARSING ===",
                         f"{result.debug_output.rstrip()}\n",  # Remove trailing whitespace and add linebreak
                     ]
                 )
@@ -311,7 +311,7 @@ class TestReporter:
     def print_summary(self, passed: int, failed: int, skipped: int = 0, file_results: dict = None):
         """Print test summary and optionally save to file"""
         total = passed + failed
-        total_with_skipped = total + skipped
+        total + skipped
         summary = f"Tests passed: {passed}/{total}"
 
         if not self.config["fail_fast"]:
@@ -344,7 +344,7 @@ class TestReporter:
 
             # Calculate percentage based on runnable tests (excluding skipped)
             runnable_tests = result["passed"] + result["failed"]
-            total_tests = result["total"]
+            result["total"]
             skipped_tests = result.get("skipped", 0)
 
             # Format: "filename: 15/16 (94%) [.....x] (2 skipped)"
