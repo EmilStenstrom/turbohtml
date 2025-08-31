@@ -3033,73 +3033,6 @@ class ParagraphTagHandler(TagHandler):
             )
             return True
 
-        # Special case: if we're in table context, handle implicit p creation correctly
-        if (
-            not in_svg_ip
-            and not in_math_ip
-            and context.document_state == DocumentState.IN_TABLE
-            and self.parser.find_current_table(context)
-        ):
-            self.debug("No open p element found in table context, creating implicit p")
-            table = self.parser.find_current_table(context)
-
-            # Check if table has a paragraph ancestor (indicating it's inside a p, not foster parented)
-            paragraph_ancestor = table.find_ancestor("p")
-            if paragraph_ancestor:
-                # The table is inside a paragraph; create the implicit empty <p> BEFORE the table
-                # as a sibling within the same paragraph (paragraph + table sibling structure)
-                p_token = self._synth_token("p")
-                if table in paragraph_ancestor.children:
-                    idx = paragraph_ancestor.children.index(table)
-                else:
-                    idx = len(paragraph_ancestor.children)
-                before = table if table in paragraph_ancestor.children else None
-                self.parser.insert_element(
-                    p_token,
-                    context,
-                    mode="normal",
-                    enter=False,
-                    parent=paragraph_ancestor,
-                    before=before,
-                    push_override=False,
-                )
-                self.debug(
-                    f"Inserted implicit empty <p> before table inside paragraph {paragraph_ancestor}"
-                )
-                # Don't change current_parent - the implicit p is immediately closed
-                return True
-
-            # Check if table has a paragraph sibling (indicating it was foster parented from a p)
-            elif (
-                table.parent
-                and table.previous_sibling
-                and table.previous_sibling.tag_name == "p"
-            ):
-                # The table was inserted after closing a paragraph. Move the table back
-                # inside the original paragraph and create an implicit empty <p> before it
-                # to match structural expectation for this edge case.
-                original_paragraph = table.previous_sibling
-                parent = table.parent
-                if table in parent.children:
-                    idx = parent.children.index(table)
-                    parent.children.pop(idx)
-                # Insert an empty <p> inside the original paragraph
-                p_token = self._synth_token("p")
-                self.parser.insert_element(
-                    p_token,
-                    context,
-                    mode="normal",
-                    enter=False,
-                    parent=original_paragraph,
-                    push_override=False,
-                )
-                # Append the table into the original paragraph
-                original_paragraph.append_child(table)
-                table.parent = original_paragraph
-                self.debug(
-                    f"Moved table into original paragraph and created implicit p under it: {original_paragraph}"
-                )
-                return True
 
         # In valid body context with valid parent - create implicit p (rare case)
         self.debug(
@@ -7060,71 +6993,18 @@ class ForeignTagHandler(TagHandler):
                                 # Keep text inside integration point by ignoring this end tag
                                 return True
                     return False  # matched ancestor handled elsewhere
-                # Special-case </br>: emit a <br> element
-                if tl == "br":
-                    # Move to outer HTML context (body), then append <br>
-                    context.current_context = None
-                    # In fragment parsing ensure we insert at fragment root
-                    if self.parser.fragment_context:
-                        frag_root = context.current_parent.find_ancestor(
-                            "document-fragment"
-                        )
-                        if frag_root:
-                            context.move_to_element(frag_root)
-                    else:
-                        body = self.parser._ensure_body_node(context)
-                        if body:
-                            context.move_to_element(body)
-                    br = Node("br")
-                    context.current_parent.append_child(br)
-                    # For foreign fragment contexts with no created foreign root, restore foreign context
-                    if (
-                        self.parser.fragment_context
-                        and self.parser.fragment_context.startswith("svg")
-                        and not any(
-                            ch.tag_name.startswith("svg ")
-                            for ch in self.parser.root.children
-                        )
-                    ):
-                        context.current_context = "svg"
-                    if (
-                        self.parser.fragment_context
-                        and self.parser.fragment_context.startswith("math")
-                        and not any(
-                            ch.tag_name.startswith("math ")
-                            for ch in self.parser.root.children
-                        )
-                    ):
-                        context.current_context = "math"
-                    return True
-                # For others (e.g., </p>), exit foreign context and delegate to HTML handlers
+                # Delegate unhandled foreign end tag to HTML handlers
                 prev_foreign = context.current_context
                 context.current_context = None
-                if self.parser.fragment_context:
-                    frag_root = context.current_parent.find_ancestor(
-                        "document-fragment"
-                    )
-                    if frag_root:
-                        context.move_to_element(frag_root)
-                else:
-                    # Move to a safe HTML insertion point; prefer body
-                    body = self.parser._ensure_body_node(context)
-                    if body:
-                        context.move_to_element(body)
-                # After placing HTML element for stray end tag, restore foreign context in pure fragment mode
+                body = self.parser._ensure_body_node(context)
+                if body:
+                    context.move_to_element(body)
                 if self.parser.fragment_context and prev_foreign in ("svg", "math"):
-                    # For svg svg fragment contexts we want later <foo> to be namespaced (svg foo)
-                    if (
-                        prev_foreign == "svg"
-                        and self.parser.fragment_context.startswith("svg")
-                    ):
+                    if prev_foreign == "svg" and self.parser.fragment_context.startswith("svg"):
                         context.current_context = "svg"
-                    elif (
-                        prev_foreign == "math"
-                        and self.parser.fragment_context.startswith("math")
-                    ):
+                    elif prev_foreign == "math" and self.parser.fragment_context.startswith("math"):
                         context.current_context = "math"
-                return False  # Let HTML handlers manage this end tag
+                return False
 
         return True  # Ignore if nothing matched and not a breakout case
 
@@ -7555,27 +7435,6 @@ class HeadElementHandler(TagHandler):
         if self.parser.html_node:
             context.move_to_element(self.parser.html_node)
         return True
-
-        if context.content_state == ContentState.RAWTEXT:
-            self.debug(f"handling RAWTEXT end tag {token.tag_name}")
-            # Restore content state
-            context.content_state = ContentState.NONE
-            # Move up to parent
-            if context.current_parent and context.current_parent.parent:
-                context.move_up_one_level()
-                # If we're in AFTER_HEAD state and current parent is head,
-                # move to html level for subsequent content
-                if (
-                    context.document_state == DocumentState.AFTER_HEAD
-                    and context.current_parent.tag_name == "head"
-                ):
-                    context.move_to_element(self.parser.html_node)
-                self.debug(
-                    f"returned to parent: {context.current_parent}, document state: {context.document_state}"
-                )
-            return True
-
-        return False
 
     def should_handle_text(self, text: str, context: "ParseContext") -> bool:
         # Handle text in RAWTEXT mode or spaces in head
