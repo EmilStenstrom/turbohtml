@@ -263,7 +263,16 @@ HEAD_ELEMENTS = [
     "title",
 ]
 
-RAWTEXT_ELEMENTS = ["title", "textarea", "style", "script", "xmp", "iframe", "noembed", "noframes"]
+RAWTEXT_ELEMENTS = [
+    "title",
+    "textarea",
+    "style",
+    "script",
+    "xmp",
+    "iframe",
+    "noembed",
+    "noframes",
+]
 
 FORMATTING_ELEMENTS = [
     "a",

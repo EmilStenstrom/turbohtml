@@ -8,7 +8,11 @@ from dataclasses import dataclass
 
 from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken
-from turbohtml.constants import FORMATTING_ELEMENTS, BLOCK_ELEMENTS, SPECIAL_CATEGORY_ELEMENTS
+from turbohtml.constants import (
+    FORMATTING_ELEMENTS,
+    BLOCK_ELEMENTS,
+    SPECIAL_CATEGORY_ELEMENTS,
+)
 
 
 @dataclass
@@ -51,8 +55,9 @@ class ActiveFormattingElements:
         if len(self._stack) > self._max_size:
             self._stack.pop(0)
 
-
-    def find(self, tag_name: str, attributes: Dict[str, str] = None) -> Optional[FormattingElementEntry]:
+    def find(
+        self, tag_name: str, attributes: Dict[str, str] = None
+    ) -> Optional[FormattingElementEntry]:
         """Find a formatting element by tag name and optionally attributes"""
         # Search from most recent to oldest
         for entry in reversed(self._stack):
@@ -112,7 +117,6 @@ class ActiveFormattingElements:
     def __len__(self) -> int:
         return len(self._stack)
 
-
     def insert_at_index(self, index: int, element: Node, token: HTMLToken) -> None:
         # Clamp index to valid range
         if index < 0:
@@ -122,7 +126,9 @@ class ActiveFormattingElements:
         entry = FormattingElementEntry(element, token)
         self._stack.insert(index, entry)
 
-    def replace_entry(self, old_entry: FormattingElementEntry, new_element: Node, new_token: HTMLToken) -> None:
+    def replace_entry(
+        self, old_entry: FormattingElementEntry, new_element: Node, new_token: HTMLToken
+    ) -> None:
         """Replace an entry with a new element"""
         for i, entry in enumerate(self._stack):
             if entry is old_entry:
@@ -191,7 +197,17 @@ class OpenElementsStack:
 
     # --- scope handling ---
     def has_element_in_scope(self, tag_name: str) -> bool:
-        scope_boundaries = {"applet", "caption", "html", "table", "td", "th", "marquee", "object", "template"}
+        scope_boundaries = {
+            "applet",
+            "caption",
+            "html",
+            "table",
+            "td",
+            "th",
+            "marquee",
+            "object",
+            "template",
+        }
         for element in reversed(self._stack):
             if element.tag_name == tag_name:
                 return True
@@ -206,7 +222,18 @@ class OpenElementsStack:
         boundary element 'button'. Used primarily to decide whether an open <p> should be
         implicitly closed before inserting a new block / paragraph start tag.
         """
-        scope_boundaries = {"applet", "caption", "html", "table", "td", "th", "marquee", "object", "template", "button"}
+        scope_boundaries = {
+            "applet",
+            "caption",
+            "html",
+            "table",
+            "td",
+            "th",
+            "marquee",
+            "object",
+            "template",
+            "button",
+        }
         for element in reversed(self._stack):
             if element.tag_name == tag_name:
                 return True
@@ -227,10 +254,8 @@ class OpenElementsStack:
 
 
 class AdoptionAgencyAlgorithm:
-
     def __init__(self, parser):
         self.parser = parser
-
 
     def should_run_adoption(self, tag_name: str, context) -> bool:
         # Determine if the adoption agency algorithm should run for this tag (spec conditions)
@@ -270,7 +295,8 @@ class AdoptionAgencyAlgorithm:
             # Verify no special elements after it (for non-<a>)
             idx2 = context.open_elements.index_of(formatting_element)
             trailing_special = any(
-                context.open_elements._is_special_category(e) for e in context.open_elements._stack[idx2 + 1 :]
+                context.open_elements._is_special_category(e)
+                for e in context.open_elements._stack[idx2 + 1 :]
             )
             if not trailing_special:
                 return False
@@ -296,10 +322,17 @@ class AdoptionAgencyAlgorithm:
         # Step 1: If the current node is an HTML element whose tag name is subject,
         # and the current node is not in the list of active formatting elements,
         # then pop the current node off the stack of open elements and return.
-        current_node = context.open_elements.current() if not context.open_elements.is_empty() else None
+        current_node = (
+            context.open_elements.current()
+            if not context.open_elements.is_empty()
+            else None
+        )
 
         if current_node and current_node.tag_name == tag_name:
-            is_in_active_formatting = context.active_formatting_elements.find_element(current_node) is not None
+            is_in_active_formatting = (
+                context.active_formatting_elements.find_element(current_node)
+                is not None
+            )
 
             if not is_in_active_formatting:
                 context.open_elements.pop()
@@ -321,14 +354,20 @@ class AdoptionAgencyAlgorithm:
             pass  # continue anyway
 
         # Step 6: Find the furthest block
-        furthest_block = self._find_furthest_block_spec_compliant(formatting_element, context)
+        furthest_block = self._find_furthest_block_spec_compliant(
+            formatting_element, context
+        )
 
         # Step 7: If no furthest block, then simple case
         if furthest_block is None:
-            return self._handle_no_furthest_block_spec(formatting_element, formatting_entry, context)
+            return self._handle_no_furthest_block_spec(
+                formatting_element, formatting_entry, context
+            )
 
         # Step 8-19: Complex case
-        return self._run_complex_adoption_spec(formatting_entry, furthest_block, context, iteration_count)
+        return self._run_complex_adoption_spec(
+            formatting_entry, furthest_block, context, iteration_count
+        )
 
     # Helper: run adoption repeatedly (spec max 8) until no action
     def run_until_stable(self, tag_name: str, context, max_runs: int = 8) -> int:
@@ -346,7 +385,9 @@ class AdoptionAgencyAlgorithm:
         return runs
 
     # --- Spec helpers ---
-    def _find_furthest_block_spec_compliant(self, formatting_element: Node, context) -> Optional[Node]:
+    def _find_furthest_block_spec_compliant(
+        self, formatting_element: Node, context
+    ) -> Optional[Node]:
         """Locate the furthest block for Step 6 of the adoption agency algorithm.
 
         Spec wording (“furthest block”) can be interpreted as the highest (closest to root)
@@ -356,18 +397,24 @@ class AdoptionAgencyAlgorithm:
         last. Selecting the last introduced structural differences in complex adoption scenarios;
         therefore we retain the first qualifying element strategy (simple forward scan returning
         immediately).
-            """
+        """
         idx = context.open_elements.index_of(formatting_element)
         if idx == -1:
             return None
         stack = context.open_elements._stack
-        for node in stack[idx + 1:]:
-            if node.tag_name in SPECIAL_CATEGORY_ELEMENTS or node.tag_name in BLOCK_ELEMENTS:
+        for node in stack[idx + 1 :]:
+            if (
+                node.tag_name in SPECIAL_CATEGORY_ELEMENTS
+                or node.tag_name in BLOCK_ELEMENTS
+            ):
                 return node
         return None
 
     def _handle_no_furthest_block_spec(
-        self, formatting_element: Node, formatting_entry: FormattingElementEntry, context
+        self,
+        formatting_element: Node,
+        formatting_entry: FormattingElementEntry,
+        context,
     ) -> bool:
         """Simple case: pop formatting element and remove its active entry."""
         # Pop from open elements until we've removed the formatting element
@@ -385,6 +432,7 @@ class AdoptionAgencyAlgorithm:
         if parent is not None:
             context.move_to_element(parent)
         return True
+
     def _get_body_or_root(self, context):
         """Get the body element or fallback to root"""
         body_node = None
@@ -445,10 +493,12 @@ class AdoptionAgencyAlgorithm:
             entry.element = clone
             context.move_to_element(clone)
 
-
-
     def _run_complex_adoption_spec(
-        self, formatting_entry: FormattingElementEntry, furthest_block: Node, context, iteration_count: int = 0
+        self,
+        formatting_entry: FormattingElementEntry,
+        furthest_block: Node,
+        context,
+        iteration_count: int = 0,
     ) -> bool:
         """Run the complex adoption agency algorithm (steps 8-19) per HTML5 spec.
 
@@ -476,14 +526,12 @@ class AdoptionAgencyAlgorithm:
         if not common_ancestor:
             return False
 
-
-    # Step 11: (spec node list concept omitted – not needed for current implementation)
+        # Step 11: (spec node list concept omitted – not needed for current implementation)
 
         # Step 12: reconstruction loop
         node = furthest_block
         last_node = furthest_block
         inner_loop_counter = 0
-
 
         max_iterations = len(context.open_elements._stack) + 10
         # Track previous stack index to ensure we make upward progress.
@@ -508,7 +556,6 @@ class AdoptionAgencyAlgorithm:
             if node == formatting_element:
                 break
 
-
             # 12.3 remove non-formatting node
             node_entry = context.active_formatting_elements.find_element(node)
             if not node_entry:
@@ -525,7 +572,6 @@ class AdoptionAgencyAlgorithm:
                 node = last_node
                 continue
 
-
             # 12.4 after 3 loops drop from active list
             if inner_loop_counter > 3:
                 context.active_formatting_elements.remove_entry(node_entry)
@@ -536,8 +582,12 @@ class AdoptionAgencyAlgorithm:
 
             # 12.6 replace entry with clone
             FormattingElementEntry(node_clone, node_entry.token)
-            bookmark_index_before = context.active_formatting_elements.get_index(node_entry)
-            context.active_formatting_elements.replace_entry(node_entry, node_clone, node_entry.token)
+            bookmark_index_before = context.active_formatting_elements.get_index(
+                node_entry
+            )
+            context.active_formatting_elements.replace_entry(
+                node_entry, node_clone, node_entry.token
+            )
 
             # 12.7 replace in open stack
             context.open_elements.replace_element(node, node_clone)
@@ -550,14 +600,13 @@ class AdoptionAgencyAlgorithm:
             if last_node.parent:
                 last_node.parent.remove_child(last_node)
 
-
             node_clone.append_child(last_node)
 
             # 12.10 advance last_node
             last_node = node_clone
             node = node_clone
 
-    # Step 13: Insert last_node into common_ancestor (always execute)
+        # Step 13: Insert last_node into common_ancestor (always execute)
         if common_ancestor is last_node:
             pass
         else:
@@ -572,17 +621,20 @@ class AdoptionAgencyAlgorithm:
                 ca_cursor = ca_cursor.parent
                 guard_walk += 1
             if not is_desc:
-            # Detach if needed
-                if last_node.parent is not None and last_node.parent is not common_ancestor:
+                # Detach if needed
+                if (
+                    last_node.parent is not None
+                    and last_node.parent is not common_ancestor
+                ):
                     self._safe_detach_node(last_node)
                 # Foster parenting if required
                 if self._should_foster_parent(common_ancestor):
                     self._foster_parent_node(last_node, context, common_ancestor)
                 else:
-                    if common_ancestor.tag_name == 'template':
+                    if common_ancestor.tag_name == "template":
                         content_child = None
                         for ch in common_ancestor.children:
-                            if ch.tag_name == 'content':
+                            if ch.tag_name == "content":
                                 content_child = ch
                                 break
                         (content_child or common_ancestor).append_child(last_node)
@@ -600,7 +652,10 @@ class AdoptionAgencyAlgorithm:
         # NOTE: Previous optimization to skip cloning for trivial empty case caused
         # repeated Adoption Agency invocations without making progress. Always clone
         # to ensure Steps 17-19 can update stacks and active formatting elements.
-        formatting_clone = Node(tag_name=formatting_element.tag_name, attributes=formatting_element.attributes.copy())
+        formatting_clone = Node(
+            tag_name=formatting_element.tag_name,
+            attributes=formatting_element.attributes.copy(),
+        )
 
         # Step 15/16 (spec): Take all children of furthest_block and append them to formatting_clone; then
         # append formatting_clone to furthest_block. The spec does NOT special‑case table containers here; the
@@ -627,7 +682,11 @@ class AdoptionAgencyAlgorithm:
             if furthest_block._would_create_circular_reference(formatting_clone):
                 parent = furthest_block.parent or self._get_body_or_root(context)
                 if parent:
-                    idx = parent.children.index(furthest_block) if furthest_block in parent.children else len(parent.children)
+                    idx = (
+                        parent.children.index(furthest_block)
+                        if furthest_block in parent.children
+                        else len(parent.children)
+                    )
                     parent.children.insert(idx, formatting_clone)
                     formatting_clone.parent = parent
             else:
@@ -639,10 +698,16 @@ class AdoptionAgencyAlgorithm:
         context.active_formatting_elements.remove_entry(formatting_entry)
 
         # Step 18: Insert clone entry at bookmark index
-        if bookmark_index >= 0 and bookmark_index <= len(context.active_formatting_elements):
-            context.active_formatting_elements.insert_at_index(bookmark_index, formatting_clone, formatting_entry.token)
+        if bookmark_index >= 0 and bookmark_index <= len(
+            context.active_formatting_elements
+        ):
+            context.active_formatting_elements.insert_at_index(
+                bookmark_index, formatting_clone, formatting_entry.token
+            )
         else:
-            context.active_formatting_elements.push(formatting_clone, formatting_entry.token)
+            context.active_formatting_elements.push(
+                formatting_clone, formatting_entry.token
+            )
 
         # Step 19: Replace original formatting element in open elements stack with clone (same position)
         # Locate original position (could have shifted if nodes removed); compute fresh index
@@ -651,7 +716,9 @@ class AdoptionAgencyAlgorithm:
             context.open_elements._stack[original_index] = formatting_clone
         else:
             fb_index = context.open_elements.index_of(furthest_block)
-            insert_at = fb_index + 1 if fb_index != -1 else len(context.open_elements._stack)
+            insert_at = (
+                fb_index + 1 if fb_index != -1 else len(context.open_elements._stack)
+            )
             context.open_elements._stack.insert(insert_at, formatting_clone)
 
         # Ensure stack order reflects DOM ancestor-before-descendant: if the clone (a descendant
@@ -661,11 +728,7 @@ class AdoptionAgencyAlgorithm:
         # elements follow it.
         fb_index = context.open_elements.index_of(furthest_block)
         clone_index = context.open_elements.index_of(formatting_clone)
-        if (
-            fb_index != -1
-            and clone_index != -1
-            and clone_index < fb_index
-        ):
+        if fb_index != -1 and clone_index != -1 and clone_index < fb_index:
             context.open_elements._stack.pop(clone_index)
             fb_index = context.open_elements.index_of(furthest_block)
             context.open_elements._stack.insert(fb_index + 1, formatting_clone)
@@ -676,12 +739,21 @@ class AdoptionAgencyAlgorithm:
         if (
             not formatting_clone.children
             and formatting_clone.parent
-            and (formatting_clone.next_sibling and formatting_clone.next_sibling.tag_name == "#text")
-            and not (formatting_clone.previous_sibling and formatting_clone.previous_sibling.tag_name == formatting_clone.tag_name)
+            and (
+                formatting_clone.next_sibling
+                and formatting_clone.next_sibling.tag_name == "#text"
+            )
+            and not (
+                formatting_clone.previous_sibling
+                and formatting_clone.previous_sibling.tag_name
+                == formatting_clone.tag_name
+            )
         ):
             parent = formatting_clone.parent
             parent.remove_child(formatting_clone)
-            afe_entry = context.active_formatting_elements.find_element(formatting_clone)
+            afe_entry = context.active_formatting_elements.find_element(
+                formatting_clone
+            )
             if afe_entry:
                 context.active_formatting_elements.remove_entry(afe_entry)
             if context.open_elements.contains(formatting_clone):
@@ -690,11 +762,11 @@ class AdoptionAgencyAlgorithm:
         # Insertion point: per spec set to furthest_block (current node)
         context.move_to_element(furthest_block)
 
-
         return True
 
-
-    def _normalize_local_misordered_pair(self, context, clone: Node, furthest_block: Node) -> None:
+    def _normalize_local_misordered_pair(
+        self, context, clone: Node, furthest_block: Node
+    ) -> None:
         """Minimal correction: if clone (now ancestor) appears before furthest_block on stack, swap.
 
         Avoids full-stack reordering side-effects while still preventing repeated adoption loops
@@ -716,7 +788,6 @@ class AdoptionAgencyAlgorithm:
             fbi = stack.index(furthest_block)
             stack.insert(fbi + 1, clone)
 
-
     def _iter_descendants(self, node: Node):
         # Yield all descendants (depth-first) of a node
         stack = list(node.children)
@@ -727,7 +798,6 @@ class AdoptionAgencyAlgorithm:
             if cur.children:
                 stack.extend(cur.children)
 
-
     def _should_foster_parent(self, common_ancestor: Node) -> bool:
         # Need foster parenting if ancestor is table-related and not inside cell/caption
         return common_ancestor.tag_name in (
@@ -736,7 +806,9 @@ class AdoptionAgencyAlgorithm:
             "tfoot",
             "thead",
             "tr",
-        ) and not common_ancestor.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
+        ) and not common_ancestor.find_ancestor(
+            lambda n: n.tag_name in ("td", "th", "caption")
+        )
 
     def _foster_parent_node(self, node: Node, context, table: Node = None) -> None:
         # Foster parent per HTML5 rules
@@ -762,22 +834,29 @@ class AdoptionAgencyAlgorithm:
             else:
                 # Last resort - add to the document body or root
                 body_or_root = self._get_body_or_root(context)
-                if body_or_root != node and not node._would_create_circular_reference(body_or_root):
+                if body_or_root != node and not node._would_create_circular_reference(
+                    body_or_root
+                ):
                     body_or_root.append_child(node)
                 else:
                     return  # Cannot safely place node; give up silently
 
     def _find_safe_parent(self, node: Node, context) -> Optional[Node]:
-    # Find safe ancestor for foster parenting
+        # Find safe ancestor for foster parenting
         candidate = context.current_parent
         visited: set[int] = set()
         while candidate is not None and id(candidate) not in visited:
-            if candidate is not node and not node._would_create_circular_reference(candidate):
+            if candidate is not node and not node._would_create_circular_reference(
+                candidate
+            ):
                 return candidate
             visited.add(id(candidate))
             candidate = candidate.parent
         body_or_root = self._get_body_or_root(context)
-        if body_or_root and body_or_root is not node and not node._would_create_circular_reference(body_or_root):
+        if (
+            body_or_root
+            and body_or_root is not node
+            and not node._would_create_circular_reference(body_or_root)
+        ):
             return body_or_root
         return None
-

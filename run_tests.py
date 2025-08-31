@@ -12,7 +12,11 @@ import signal
 # exits quietly instead of emitting a traceback. Guard for non-POSIX platforms.
 try:  # pragma: no cover - platform dependent
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)
-except (AttributeError, OSError, RuntimeError):  # AttributeError on non-Unix, others just in case
+except (
+    AttributeError,
+    OSError,
+    RuntimeError,
+):  # AttributeError on non-Unix, others just in case
     pass
 
 
@@ -81,9 +85,10 @@ class TestRunner:
 
             # Check if we've reached the end of a test (next line starts a new test or is EOF)
             if i + 1 >= len(lines) or (i + 1 < len(lines) and lines[i + 1] == "#data"):
-
                 # Process the current test if it's not empty
-                if current_test_lines and any(line.strip() for line in current_test_lines):
+                if current_test_lines and any(
+                    line.strip() for line in current_test_lines
+                ):
                     test = self._parse_single_test(current_test_lines)
                     if test:
                         tests.append(test)
@@ -158,11 +163,19 @@ class TestRunner:
                 return False
 
         if self.config["exclude_errors"]:
-            if any(exclude in error for exclude in self.config["exclude_errors"] for error in test.errors):
+            if any(
+                exclude in error
+                for exclude in self.config["exclude_errors"]
+                for error in test.errors
+            ):
                 return False
 
         if self.config["filter_errors"]:
-            if not any(include in error for include in self.config["filter_errors"] for error in test.errors):
+            if not any(
+                include in error
+                for include in self.config["filter_errors"]
+                for error in test.errors
+            ):
                 return False
 
         return True
@@ -177,10 +190,22 @@ class TestRunner:
         files = list(self.test_dir.rglob("*.dat"))
 
         if self.config["exclude_files"]:
-            files = [f for f in files if not any(exclude in f.name for exclude in self.config["exclude_files"])]
+            files = [
+                f
+                for f in files
+                if not any(
+                    exclude in f.name for exclude in self.config["exclude_files"]
+                )
+            ]
 
         if self.config["filter_files"]:
-            files = [f for f in files if any(filter_str in f.name for filter_str in self.config["filter_files"])]
+            files = [
+                f
+                for f in files
+                if any(
+                    filter_str in f.name for filter_str in self.config["filter_files"]
+                )
+            ]
 
         return sorted(files, key=self._natural_sort_key)
 
@@ -246,7 +271,9 @@ class TestRunner:
         if self.config["debug"]:
             f = StringIO()
             with redirect_stdout(f):
-                parser = TurboHTML(test.data, debug=True, fragment_context=test.fragment_context)
+                parser = TurboHTML(
+                    test.data, debug=True, fragment_context=test.fragment_context
+                )
                 actual_tree = parser.root.to_test_format()
             debug_output = f.getvalue()
         else:
@@ -286,7 +313,7 @@ class TestReporter:
         """Print detailed test result based on configuration"""
         if not result.passed or self.config["print_fails"]:
             lines = [
-                f'{"PASSED" if result.passed else "FAILED"}:',
+                f"{'PASSED' if result.passed else 'FAILED'}:",
                 f"=== INCOMING HTML ===\n{result.input_html}\n",
                 f"Errors to handle when parsing: {result.expected_errors}\n",
             ]
@@ -308,7 +335,9 @@ class TestReporter:
 
             print("\n".join(lines))
 
-    def print_summary(self, passed: int, failed: int, skipped: int = 0, file_results: dict = None):
+    def print_summary(
+        self, passed: int, failed: int, skipped: int = 0, file_results: dict = None
+    ):
         """Print test summary and optionally save to file"""
         total = passed + failed
         total + skipped
@@ -320,14 +349,18 @@ class TestReporter:
 
             # Only save to file if no filters are applied (running all tests)
             if self._is_running_all_tests() and file_results:
-                detailed_summary = self._generate_detailed_summary(summary, file_results)
+                detailed_summary = self._generate_detailed_summary(
+                    summary, file_results
+                )
                 Path("test-summary.txt").write_text(detailed_summary)
             elif self._is_running_all_tests():
                 Path("test-summary.txt").write_text(summary)
 
         print(f"\n{summary}")
 
-    def _generate_detailed_summary(self, overall_summary: str, file_results: dict) -> str:
+    def _generate_detailed_summary(
+        self, overall_summary: str, file_results: dict
+    ) -> str:
         """Generate a detailed summary with per-file breakdown"""
         lines = [overall_summary, ""]
 
@@ -335,7 +368,10 @@ class TestReporter:
         import re
 
         def natural_sort_key(filename):
-            return [int(text) if text.isdigit() else text.lower() for text in re.split("([0-9]+)", filename)]
+            return [
+                int(text) if text.isdigit() else text.lower()
+                for text in re.split("([0-9]+)", filename)
+            ]
 
         sorted_files = sorted(file_results.keys(), key=natural_sort_key)
 
@@ -350,7 +386,9 @@ class TestReporter:
             # Format: "filename: 15/16 (94%) [.....x] (2 skipped)"
             if runnable_tests > 0:
                 percentage = round(result["passed"] * 100 / runnable_tests)
-                status_line = f"{filename}: {result['passed']}/{runnable_tests} ({percentage}%)"
+                status_line = (
+                    f"{filename}: {result['passed']}/{runnable_tests} ({percentage}%)"
+                )
             else:
                 status_line = f"{filename}: 0/0 (N/A)"
 
@@ -404,7 +442,9 @@ class TestReporter:
 
 def parse_args() -> dict:
     parser = argparse.ArgumentParser()
-    parser.add_argument("-x", "--fail-fast", action="store_true", help="Break on first test failure")
+    parser.add_argument(
+        "-x", "--fail-fast", action="store_true", help="Break on first test failure"
+    )
     parser.add_argument(
         "--test-specs",
         type=str,
@@ -412,21 +452,30 @@ def parse_args() -> dict:
         default=None,
         help="Space-separated list of test specs in format: file:indices (e.g., test1.dat:0,1,2 test2.dat:5,6)",
     )
-    parser.add_argument("-d", "--debug", action="store_true", help="Print debug information")
+    parser.add_argument(
+        "-d", "--debug", action="store_true", help="Print debug information"
+    )
     parser.add_argument(
         "--filter-files",
         type=str,
         nargs="+",
         help="Only run tests from files containing any of these strings (space-separated)",
     )
-    parser.add_argument("-q", "--quiet", action="store_true", help="Suppress progress indicators (dots and x's)")
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Suppress progress indicators (dots and x's)",
+    )
     parser.add_argument(
         "--exclude-errors",
         type=str,
         help="Skip tests containing any of these strings in their errors (comma-separated)",
     )
     parser.add_argument(
-        "--exclude-files", type=str, help="Skip files containing any of these strings in their names (comma-separated)"
+        "--exclude-files",
+        type=str,
+        help="Skip files containing any of these strings in their names (comma-separated)",
     )
     parser.add_argument(
         "--exclude-html",
@@ -438,7 +487,9 @@ def parse_args() -> dict:
         type=str,
         help="Only run tests containing any of these strings in their HTML input (comma-separated)",
     )
-    parser.add_argument("--print-fails", action="store_true", help="Print details for all failing tests")
+    parser.add_argument(
+        "--print-fails", action="store_true", help="Print details for all failing tests"
+    )
     parser.add_argument(
         "--filter-errors",
         type=str,

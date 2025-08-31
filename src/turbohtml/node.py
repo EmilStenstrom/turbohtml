@@ -1,6 +1,16 @@
 from typing import Callable, Dict, List, Optional, Union
 
-BOUNDARY_ELEMENTS = {"applet", "caption", "html", "table", "td", "th", "marquee", "object", "template"}
+BOUNDARY_ELEMENTS = {
+    "applet",
+    "caption",
+    "html",
+    "table",
+    "td",
+    "th",
+    "marquee",
+    "object",
+    "template",
+}
 
 
 class Node:
@@ -13,26 +23,41 @@ class Node:
     - next_sibling/previous_sibling: references to adjacent nodes in the tree
     """
 
-    __slots__ = ("tag_name", "attributes", "children", "parent", "text_content", "next_sibling", "previous_sibling")
+    __slots__ = (
+        "tag_name",
+        "attributes",
+        "children",
+        "parent",
+        "text_content",
+        "next_sibling",
+        "previous_sibling",
+    )
 
-    def __init__(self, tag_name: str, attributes: Optional[Dict[str, str]] = None, preserve_attr_case: bool = False):
+    def __init__(
+        self,
+        tag_name: str,
+        attributes: Optional[Dict[str, str]] = None,
+        preserve_attr_case: bool = False,
+    ):
         # Instrumentation / safety: empty tag names should never be constructed.
         # If this triggers we want a loud failure with context so we can trace upstream logic.
         if tag_name is None or tag_name == "":
-            raise ValueError("Empty tag_name passed to Node constructor (bug: tokenization or handler produced blank tag)")
+            raise ValueError(
+                "Empty tag_name passed to Node constructor (bug: tokenization or handler produced blank tag)"
+            )
         self.tag_name = tag_name
         if attributes:
             if preserve_attr_case:
                 # Keep first occurrence preserving original key casing
-                kept: Dict[str,str] = {}
+                kept: Dict[str, str] = {}
                 for k, v in attributes.items():
                     if k not in kept:
                         kept[k] = v
                 self.attributes = kept
             else:
                 # Lowercase attribute names deterministically; keep first occurrence
-                lowered: Dict[str,str] = {}
-                for k,v in attributes.items():
+                lowered: Dict[str, str] = {}
+                for k, v in attributes.items():
                     lk = k.lower()
                     if lk not in lowered:
                         lowered[lk] = v
@@ -48,7 +73,9 @@ class Node:
     def append_child(self, child: "Node"):
         # Check for circular reference before adding
         if self._would_create_circular_reference(child):
-            raise ValueError(f"Adding {child.tag_name} as child of {self.tag_name} would create circular reference")
+            raise ValueError(
+                f"Adding {child.tag_name} as child of {self.tag_name} would create circular reference"
+            )
 
         if child.parent:
             # Update sibling links in old location
@@ -170,14 +197,14 @@ class Node:
             return "\n".join(result)
         if self.tag_name == "content":
             # Template content should be displayed without angle brackets
-            result = f'| {" " * indent}content'
+            result = f"| {' ' * indent}content"
             for child in self.children:
                 result += "\n" + child.to_test_format(indent + 2)
             return result
         if self.tag_name == "#text":
             return f'| {" " * indent}"{self.text_content}"'
         if self.tag_name == "#comment":
-            return f'| {" " * indent}<!-- {self.text_content} -->'
+            return f"| {' ' * indent}<!-- {self.text_content} -->"
         if self.tag_name == "!doctype":
             # Format DOCTYPE with the actual content, adding space if content is empty
             content = self.text_content if self.text_content is not None else ""
@@ -187,13 +214,13 @@ class Node:
                 return "| <!DOCTYPE >"
 
         # Start with the tag name
-        result = f'| {" " * indent}<{self.tag_name}>'
+        result = f"| {' ' * indent}<{self.tag_name}>"
 
         # Add attributes on their own line if present (sorted alphabetically)
         if self.attributes:
             # Preserve original insertion order for foreign (svg/math) elements where tests rely on
             # specific grouping; otherwise sort alphabetically for deterministic HTML output.
-            if self.tag_name.startswith('svg ') or self.tag_name.startswith('math '):
+            if self.tag_name.startswith("svg ") or self.tag_name.startswith("math "):
                 attr_items = self.attributes.items()
             else:
                 attr_items = sorted(self.attributes.items())
@@ -202,17 +229,20 @@ class Node:
                 #  * Inside foreign (svg/math prefixed tag_name) elements, tests expect prefixes separated
                 #    by a space: xlink:href -> xlink href, xml:lang -> xml lang, xmlns:xlink -> xmlns xlink.
                 #  * On pure HTML elements, retain the original colon form (body xlink:href remains xlink:href).
-                if ':' in key and (self.tag_name.startswith('svg ') or self.tag_name.startswith('math ')):
-                    prefix, local = key.split(':', 1)
-                    if prefix == 'xml' and local in ('lang','space'):
+                if ":" in key and (
+                    self.tag_name.startswith("svg ")
+                    or self.tag_name.startswith("math ")
+                ):
+                    prefix, local = key.split(":", 1)
+                    if prefix == "xml" and local in ("lang", "space"):
                         display_key = f"{prefix} {local}"
-                    elif prefix in ('xlink','xmlns') and local:
+                    elif prefix in ("xlink", "xmlns") and local:
                         display_key = f"{prefix} {local}"
                     else:
                         display_key = key
                 else:
                     display_key = key
-                result += f'\n| {" " * (indent+2)}{display_key}="{value}"'
+                result += f'\n| {" " * (indent + 2)}{display_key}="{value}"'
 
         # Add children
         for child in self.children:
@@ -220,7 +250,9 @@ class Node:
         return result
 
     def find_ancestor(
-        self, tag_name_or_predicate: Union[str, Callable[["Node"], bool]], stop_at_boundary: bool = False
+        self,
+        tag_name_or_predicate: Union[str, Callable[["Node"], bool]],
+        stop_at_boundary: bool = False,
     ) -> Optional["Node"]:
         """Find the nearest ancestor matching the given tag name or predicate.
         Includes the current node in the search.
@@ -265,7 +297,9 @@ class Node:
         child.previous_sibling = None
 
     def find_ancestor_until(
-        self, tag_name_or_predicate: Union[str, Callable[["Node"], bool]], stop_at: "Node"
+        self,
+        tag_name_or_predicate: Union[str, Callable[["Node"], bool]],
+        stop_at: "Node",
     ) -> Optional["Node"]:
         """Find ancestor matching criteria, stopping at a specific node.
 
@@ -386,7 +420,9 @@ class Node:
             current = current.parent
         return False
 
-    def find_ancestor_safe(self, predicate: Callable[["Node"], bool], max_depth: int = 100) -> Optional["Node"]:
+    def find_ancestor_safe(
+        self, predicate: Callable[["Node"], bool], max_depth: int = 100
+    ) -> Optional["Node"]:
         """Find ancestor matching predicate with cycle detection"""
         seen = set()
         current = self.parent
@@ -400,7 +436,10 @@ class Node:
         return None
 
     def find_ancestor_with_early_stop(
-        self, target_tag: str, stop_tags: Union[list, tuple, str], stop_at: Optional["Node"] = None
+        self,
+        target_tag: str,
+        stop_tags: Union[list, tuple, str],
+        stop_at: Optional["Node"] = None,
     ) -> tuple[Optional["Node"], Optional["Node"]]:
         """Find ancestor with target tag, but stop early if hitting stop tags"""
         if isinstance(stop_tags, str):

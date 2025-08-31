@@ -61,13 +61,13 @@ class FileChange:
         for i in range(max_len):
             o = old[i] if i < len(old) else None
             n = new[i] if i < len(new) else None
-            if n == 'x' and o == '.':
+            if n == "x" and o == ".":
                 reg.append(i)
-            elif n == 'x' and o is None:
+            elif n == "x" and o is None:
                 # Newly extended pattern containing a failure at new tail
                 reg.append(i)
             # We do NOT treat '.' -> 's' or 's' -> 'x' (latter is legitimate regression) separately:
-            elif n == 'x' and o == 's':  # previously skipped now failing
+            elif n == "x" and o == "s":  # previously skipped now failing
                 reg.append(i)
         return reg
 
@@ -103,12 +103,12 @@ def parse_diff(diff_text: str) -> Dict[str, FileChange]:
         m = LINE_RE.match(line)
         if not m:
             continue
-        file = m.group('file')
-        pattern = m.group('pattern')
+        file = m.group("file")
+        pattern = m.group("pattern")
         change = changes.setdefault(file, FileChange())
-        if line.startswith('-'):
+        if line.startswith("-"):
             change.old_pattern = pattern
-        elif line.startswith('+'):
+        elif line.startswith("+"):
             change.new_pattern = pattern
     return changes
 

@@ -1,7 +1,6 @@
 from enum import Enum, auto
 
 
-
 class DocumentState(Enum):
     """
     Enumerates document parser states for clarity and safety (head, body...).
@@ -54,6 +53,7 @@ class ParseContext:
 
         # Adoption Agency data structures
         from turbohtml.adoption import ActiveFormattingElements, OpenElementsStack
+
         self.active_formatting_elements = ActiveFormattingElements()
         self.open_elements = OpenElementsStack()
         # Historical bit (single minimal flag): in a frameset document, did an explicit </html>
@@ -61,7 +61,6 @@ class ParseContext:
         self.frameset_html_end_before_noframes = False
         # Explicit </html> end tag encountered (distinguishes pre/post html end in frameset AFTER_FRAMESET mode)
         self.html_end_explicit = False
-
 
     # --- Properties / helpers ---
     @property
@@ -71,7 +70,9 @@ class ParseContext:
     def _set_current_parent(self, new_parent):
         if new_parent != self._current_parent:
             if self._debug:
-                old_name = self._current_parent.tag_name if self._current_parent else "None"
+                old_name = (
+                    self._current_parent.tag_name if self._current_parent else "None"
+                )
                 new_name = new_parent.tag_name if new_parent else "None"
                 self._debug(f"Parent change: {old_name} -> {new_name}")
         self._current_parent = new_parent
@@ -88,9 +89,10 @@ class ParseContext:
     def content_state(self, new_state):
         if new_state != self._content_state:
             if self._debug:
-                self._debug(f"Content State change: {self._content_state} -> {new_state}")
+                self._debug(
+                    f"Content State change: {self._content_state} -> {new_state}"
+                )
             self._content_state = new_state
-
 
     # --- State transitions ---
     def transition_to_state(self, new_state, new_parent=None):
@@ -98,7 +100,9 @@ class ParseContext:
             self._set_current_parent(new_parent)
         if new_state != self._document_state:
             if self._debug:
-                self._debug(f"Document State change: {self._document_state} -> {new_state}")
+                self._debug(
+                    f"Document State change: {self._document_state} -> {new_state}"
+                )
             self._document_state = new_state
 
     # --- Insertion point navigation ---
@@ -119,7 +123,6 @@ class ParseContext:
             self._set_current_parent(ancestor.parent)
             return True
         return False
-
 
     def enter_element(self, element):
         self._set_current_parent(element)
