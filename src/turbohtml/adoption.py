@@ -436,22 +436,6 @@ class AdoptionAgencyAlgorithm:
             if not self.run_algorithm(tag_name, context, runs + 1):
                 break
             runs += 1
-            if tag_name == 'a':
-                # Limit </a> adoption to a single iteration
-                break
-            if tag_name == 'a':
-                # Early stop if no trailing special/block elements; further iterations redundant
-                entry = context.active_formatting_elements.find('a')
-                if entry:
-                    a_el = entry.element
-                    idx = context.open_elements.index_of(a_el)
-                    if idx != -1:
-                        trailing_special = any(
-                            context.open_elements._is_special_category(e)
-                            for e in context.open_elements._stack[idx + 1 :]
-                        )
-                        if not trailing_special:
-                            break
         # No post-loop ladder heuristics
         return runs
 
