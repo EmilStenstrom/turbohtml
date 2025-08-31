@@ -278,7 +278,7 @@ class AdoptionAgencyAlgorithm:
         if not entry:
             return False
         # Skip retained outer formatting elements tracked internally (no dynamic node attributes)
-        el = entry.element
+        # entry.element referenced as formatting_element below
         # (Currently no retained outer mechanism implemented post-refactor; always proceed)
         # If the formatting element is the current node and there are no special category
         # (block/special) elements after it in the open elements stack, treat as simple.
@@ -390,10 +390,7 @@ class AdoptionAgencyAlgorithm:
         therefore we retain the first qualifying element strategy (simple forward scan returning
         immediately).
             """
-        try:
-            idx = context.open_elements.index_of(formatting_element)
-        except Exception:  # defensive; should not happen
-            return None
+        idx = context.open_elements.index_of(formatting_element)
         if idx == -1:
             return None
         stack = context.open_elements._stack
@@ -405,14 +402,7 @@ class AdoptionAgencyAlgorithm:
     def _handle_no_furthest_block_spec(
         self, formatting_element: Node, formatting_entry: FormattingElementEntry, context
     ) -> bool:
-        """Handle the simple case when no furthest block is found (Steps 7.x in spec).
-
-        Operations (minimal, spec-aligned):
-          * Pop elements from open elements stack up to and including formatting element
-          * Remove formatting element from active formatting elements list
-          * Set insertion point to the element *before* the popped formatting element (its parent)
-        Returns True to signal the adoption attempt consumed the end tag.
-        """
+        """Simple case: pop formatting element and remove its active entry."""
         # Pop from open elements until we've removed the formatting element
         stack = context.open_elements._stack
         if formatting_element in stack:
@@ -503,16 +493,13 @@ class AdoptionAgencyAlgorithm:
         """
         formatting_element = formatting_entry.element
 
-        # Step 8: Create a bookmark pointing to the location of the formatting element
-        # in the list of active formatting elements
+        # Step 8: bookmark position of formatting element
         bookmark_index = context.active_formatting_elements.get_index(formatting_entry)
 
-    # Step 9: Create a list of elements to be removed from the stack of open elements
+        # Step 9: Create a list of elements to be removed from the stack of open elements
         formatting_index = context.open_elements.index_of(formatting_element)
-        furthest_index = context.open_elements.index_of(furthest_block)
 
-        # Step 10: Find the common ancestor: the element immediately BEFORE the formatting
-        # element in the stack of open elements (i.e., one position closer to the root).
+        # Step 10: common ancestor (element before formatting element in stack)
         if formatting_index - 1 >= 0:
             common_ancestor = context.open_elements._stack[formatting_index - 1]
         else:
@@ -525,41 +512,37 @@ class AdoptionAgencyAlgorithm:
 
     # Step 11: (spec node list concept omitted – not needed for current implementation)
 
-        # Step 12: Reconstruction loop
-        # This loop implements steps 12.1-12.3 with inner and outer loops
+        # Step 12: reconstruction loop
         node = furthest_block
         last_node = furthest_block
         inner_loop_counter = 0
 
 
         max_iterations = len(context.open_elements._stack) + 10
-        # Track previous stack index to ensure we make upward progress; the
-    # Track previous stack index to ensure we make upward progress.
+        # Track previous stack index to ensure we make upward progress.
         prev_node_index = None
         while True:
             if inner_loop_counter >= max_iterations:
                 break
             inner_loop_counter += 1
 
-            # Step 12.1: Find the previous element in open elements stack
+            # 12.1 previous element up the stack
             node_index = context.open_elements.index_of(node)
             if node_index <= 0:
                 break
-            # Determine the previous element (moving upward). A valid upward move
-            # must strictly decrease the stack index. If it does not, we stop to
-            # avoid infinite looping.
+            # Upward move must strictly decrease index; otherwise stop
             prev_index = node_index - 1
             node = context.open_elements._stack[prev_index]
             if prev_node_index is not None and prev_index >= prev_node_index:
                 break
             prev_node_index = prev_index
 
-            # Step 12.2: If node is the formatting element, then break
+            # 12.2 reached formatting element
             if node == formatting_element:
                 break
 
 
-            # Step 12.3: If node is not in active formatting elements, remove it
+            # 12.3 remove non-formatting node
             node_entry = context.active_formatting_elements.find_element(node)
             if not node_entry:
                 context.open_elements.remove_element(node)
@@ -576,42 +559,38 @@ class AdoptionAgencyAlgorithm:
                 continue
 
 
-            # Step 12.4 (spec): If we've been through this loop three times already and node is
-            # still in the list of active formatting elements, then remove node from that list
-            # (without touching the DOM) and stop processing this node (continue loop).
+            # 12.4 after 3 loops drop from active list
             if inner_loop_counter > 3:
                 context.active_formatting_elements.remove_entry(node_entry)
                 continue
 
-            # Step 12.5: Create a clone of node
+            # 12.5 clone node
             node_clone = Node(tag_name=node.tag_name, attributes=node.attributes.copy())
 
-            # Step 12.6: Replace the entry for node in active formatting elements
-            # with an entry for the clone
+            # 12.6 replace entry with clone
             clone_entry = FormattingElementEntry(node_clone, node_entry.token)
             bookmark_index_before = context.active_formatting_elements.get_index(node_entry)
             context.active_formatting_elements.replace_entry(node_entry, node_clone, node_entry.token)
 
-            # Step 12.7: Replace node with the clone in the open elements stack
+            # 12.7 replace in open stack
             context.open_elements.replace_element(node, node_clone)
 
-            # Step 12.8: If last_node is the furthest block, set the bookmark
+            # 12.8 adjust bookmark if first clone
             if last_node == furthest_block:
                 bookmark_index = bookmark_index_before + 1
 
-            # Step 12.9: Insert last_node as a child of node_clone
+            # 12.9 graft last subtree under clone
             if last_node.parent:
                 last_node.parent.remove_child(last_node)
 
 
             node_clone.append_child(last_node)
 
-            # Step 12.10: Set last_node to node_clone
+            # 12.10 advance last_node
             last_node = node_clone
             node = node_clone
 
     # Step 13: Insert last_node into common_ancestor (always execute)
-    # Step 13
         if common_ancestor is last_node:
             pass
         else:
@@ -625,9 +604,7 @@ class AdoptionAgencyAlgorithm:
                     break
                 ca_cursor = ca_cursor.parent
                 guard_walk += 1
-            if is_desc:
-                pass
-            else:
+            if not is_desc:
             # Detach if needed
                 if last_node.parent is not None and last_node.parent is not common_ancestor:
                     self._safe_detach_node(last_node)
@@ -650,13 +627,7 @@ class AdoptionAgencyAlgorithm:
                             except ValueError:
                                 pass
 
-
-
-            # Post-Step-13 targeted relocation: If we are processing an <a>
-            # on a later iteration and the common ancestor was the body/html, we want the newly
-            # inserted last_node (typically a <div>) to become nested inside the existing top-level
-            # <div> ladder instead of remaining a sibling under <body>. Expected tree shows exactly
-            # one top-level <div> with a cascading <div><a><div><a> structure.
+            # Post-Step-13 relocation logic removed (no special ladder handling retained)
 
         # Step 14: Create a clone of the formatting element (spec always clones)
         # NOTE: Previous optimization to skip cloning for trivial empty case caused
@@ -695,8 +666,7 @@ class AdoptionAgencyAlgorithm:
             else:
                 furthest_block.append_child(formatting_clone)
 
-        # Safety check: Ensure no circular references were created
-        self._validate_no_circular_references(formatting_clone, furthest_block)
+        # (Circular reference validation removed for now to trim unused safety paths)
 
         # Step 17: Remove original formatting element entry from active list
         context.active_formatting_elements.remove_entry(formatting_entry)
@@ -780,46 +750,6 @@ class AdoptionAgencyAlgorithm:
             stack.insert(fbi + 1, clone)
 
 
-    def _validate_no_circular_references(self, formatting_clone: Node, furthest_block: Node) -> None:
-        """Validate that no circular references were created in the DOM tree"""
-
-        # Check that formatting_clone doesn't have furthest_block as an ancestor
-        current = formatting_clone.parent
-        visited = set()
-        depth = 0
-
-        while current and depth < 50:  # Safety limit
-            if id(current) in visited:
-                raise ValueError(f"Circular reference detected: {current.tag_name} already visited")
-
-            if current == furthest_block:
-                # This is expected - furthest_block should be the parent
-                break
-
-            visited.add(id(current))
-            current = current.parent
-            depth += 1
-
-        # Also check the reverse - that furthest_block doesn't have formatting_clone as an ancestor
-        current = furthest_block.parent
-        visited = set()
-        depth = 0
-
-        while current and depth < 50:  # Safety limit
-            if id(current) in visited:
-                raise ValueError(
-                    f"Circular reference detected in furthest_block ancestry: {current.tag_name} already visited"
-                )
-            if current == formatting_clone:
-                raise ValueError(
-                    f"Circular reference: furthest_block {furthest_block.tag_name} has formatting_clone {formatting_clone.tag_name} as ancestor"
-                )
-            visited.add(id(current))
-            current = current.parent
-            depth += 1
-        # If loop exits normally, no circular reference detected
-        return
-
     def _iter_descendants(self, node: Node):
         # Yield all descendants (depth-first) of a node
         stack = list(node.children)
@@ -871,8 +801,7 @@ class AdoptionAgencyAlgorithm:
                 if body_or_root != node and not node._would_create_circular_reference(body_or_root):
                     body_or_root.append_child(node)
                 else:
-                    # Cannot safely place the node - this indicates a serious issue
-                    pass
+                    return  # Cannot safely place node; give up silently
 
     def _find_safe_parent(self, node: Node, context) -> Optional[Node]:
         # Find a safe ancestor under which to reparent a node during foster parenting (spec helper)
