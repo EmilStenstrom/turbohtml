@@ -52,20 +52,16 @@ class ActiveFormattingElements:
             self._stack.pop(0)
 
     def push_marker(self) -> None:
-        """Push a marker entry (spec: used for table/template boundaries)."""
-        # Represent marker as entry with element=None, token=None
-        marker = FormattingElementEntry(element=None, token=None)  # type: ignore
-        self._stack.append(marker)
+        # Marker support removed (no-op)
+        return
 
     def is_marker(self, entry: FormattingElementEntry) -> bool:
-        return entry.element is None
+        return False  # markers disabled
 
     def find(self, tag_name: str, attributes: Dict[str, str] = None) -> Optional[FormattingElementEntry]:
         """Find a formatting element by tag name and optionally attributes"""
         # Search from most recent to oldest
         for entry in reversed(self._stack):
-            if self.is_marker(entry):
-                continue
             if entry.matches(tag_name, attributes):
                 return entry
         return None
@@ -73,8 +69,6 @@ class ActiveFormattingElements:
     def find_element(self, element: Node) -> Optional[FormattingElementEntry]:
         """Find an entry by element instance"""
         for entry in self._stack:
-            if self.is_marker(entry):
-                continue
             if entry.element is element:
                 return entry
         return None
@@ -82,7 +76,7 @@ class ActiveFormattingElements:
     def remove(self, element: Node) -> bool:
         """Remove a formatting element from the active list"""
         for i, entry in enumerate(self._stack):
-            if not self.is_marker(entry) and entry.element is element:
+            if entry.element is element:
                 self._stack.pop(i)
                 return True
         return False
@@ -96,13 +90,9 @@ class ActiveFormattingElements:
 
     # --- spec: Noah's Ark clause (prevent more than 3 identical entries) ---
     def _apply_noahs_ark(self, new_entry: FormattingElementEntry) -> None:
-        if self.is_marker(new_entry):
-            return
         # Count existing matching entries (same tag & attributes)
         matching = []
         for entry in self._stack:
-            if self.is_marker(entry):
-                continue
             if entry.matches(new_entry.element.tag_name, new_entry.element.attributes):
                 matching.append(entry)
         if len(matching) >= 3:
@@ -114,10 +104,10 @@ class ActiveFormattingElements:
                 pass
 
     def is_empty(self) -> bool:
-        return not any(not self.is_marker(e) for e in self._stack)
+        return len(self._stack) == 0
 
     def __iter__(self):
-        return (e for e in self._stack if not self.is_marker(e))
+        return iter(self._stack)
 
     def get_index(self, entry: FormattingElementEntry) -> int:
         try:
@@ -130,20 +120,7 @@ class ActiveFormattingElements:
 
     # --- spec utility: clear the list of active formatting elements up to the last marker ---
     def clear_up_to_last_marker(self) -> None:
-        """Remove entries from the active formatting elements up to and including the last marker.
-
-        Spec: invoked when leaving certain element boundaries (e.g. at </table>). All entries *after*
-        the last marker are discarded and the marker itself is removed; entries before the marker remain.
-        If there is no marker, this is a no-op (defensive – malformed sequences may omit marker pushes).
-        """
-        # Walk backwards to find the last marker
-        for i in range(len(self._stack) - 1, -1, -1):
-            entry = self._stack[i]
-            if self.is_marker(entry):
-                # Remove everything from i (marker) to end
-                del self._stack[i:]
-                return
-        # No marker found: leave list intact (spec does not define clearing in this case)
+        # Marker clearing no-op
         return
 
     def insert_at_index(self, index: int, element: Node, token: HTMLToken) -> None:
@@ -762,9 +739,7 @@ class AdoptionAgencyAlgorithm:
 
 
     def _should_foster_parent(self, common_ancestor: Node) -> bool:
-        # Check if foster parenting is needed
-        # Foster parenting is needed if common ancestor is a table element
-        # and we're not already in a cell or caption
+        # Need foster parenting if ancestor is table-related and not inside cell/caption
         return common_ancestor.tag_name in (
             "table",
             "tbody",
@@ -774,8 +749,7 @@ class AdoptionAgencyAlgorithm:
         ) and not common_ancestor.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
 
     def _foster_parent_node(self, node: Node, context, table: Node = None) -> None:
-        # Foster parent a node according to HTML5 rules
-        # Use provided table or find the table
+        # Foster parent per HTML5 rules
         if not table:
             table = None
             current = context.current_parent
@@ -804,7 +778,7 @@ class AdoptionAgencyAlgorithm:
                     return  # Cannot safely place node; give up silently
 
     def _find_safe_parent(self, node: Node, context) -> Optional[Node]:
-        # Find a safe ancestor under which to reparent a node during foster parenting (spec helper)
+    # Find safe ancestor for foster parenting
         candidate = context.current_parent
         visited: set[int] = set()
         while candidate is not None and id(candidate) not in visited:
