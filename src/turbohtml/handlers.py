@@ -660,8 +660,7 @@ class TextHandler(TagHandler):
                 if not has_section:
                     # Only relocate if current_parent is not already the table
                     if context.current_parent is not tbl:
-                        if self.parser.env_debug:
-                            self.debug(f"Placing leading table whitespace into <table> (state={context.document_state})")
+                        self.debug(f"Placing leading table whitespace into <table> (state={context.document_state})")
                         self.parser.insert_text(text, context, parent=tbl, merge=True)
                         return True
 
@@ -1235,22 +1234,22 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
     def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         tag_name = token.tag_name
         self.debug(f"Handling <{tag_name}>, context={context}")
-        if self.parser.env_debug:
-            table_ancestor = context.current_parent.find_first_ancestor_in_tags(["table"]) if context.current_parent else None
-            if table_ancestor and table_ancestor.parent:
-                parent = table_ancestor.parent
-                try:
-                    tbl_index = parent.children.index(table_ancestor)
-                except ValueError:
-                    tbl_index = -1
-                try:
-                    cur_index = parent.children.index(context.current_parent)
-                except ValueError:
-                    cur_index = -1
-                rel = "before" if 0 <= cur_index < tbl_index else ("after" if cur_index > tbl_index else "unknown")
-                self.debug(
-                    f"fmt-start-debug: current_parent={context.current_parent.tag_name} relative-to-table index={cur_index}->{tbl_index} ({rel}) open={[e.tag_name for e in context.open_elements._stack]}"
-                )
+        # Relative table position debug
+        table_ancestor = context.current_parent.find_first_ancestor_in_tags(["table"]) if context.current_parent else None
+        if table_ancestor and table_ancestor.parent:
+            parent = table_ancestor.parent
+            try:
+                tbl_index = parent.children.index(table_ancestor)
+            except ValueError:
+                tbl_index = -1
+            try:
+                cur_index = parent.children.index(context.current_parent)
+            except ValueError:
+                cur_index = -1
+            rel = "before" if 0 <= cur_index < tbl_index else ("after" if cur_index > tbl_index else "unknown")
+            self.debug(
+                f"fmt-start-debug: current_parent={context.current_parent.tag_name} relative-to-table index={cur_index}->{tbl_index} ({rel}) open={[e.tag_name for e in context.open_elements._stack]}"
+            )
 
         if tag_name == 'a':
             existing = context.active_formatting_elements.find('a')
@@ -1301,15 +1300,13 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
             self.debug("Duplicate <nobr> in scope; running adoption agency before creating new one")
             self.parser.adoption_agency.run_algorithm("nobr", context, 1)
             self.parser.reconstruct_active_formatting_elements(context)
-            if self.parser.env_debug:
-                self.debug("AFTER adoption simple-case for duplicate <nobr>: stacks:")
-                self.debug(f"    Open stack: {[e.tag_name for e in context.open_elements._stack]}")
-                self.debug(f"    Active formatting: {[e.element.tag_name for e in context.active_formatting_elements if e.element]}")
-            # Allow multiple <nobr> entries if produced by mis-nesting recovery; no artificial pruning.
-            if self.parser.env_debug:
-                self.debug(
-                    f"Post-duplicate handling before element creation: parent={context.current_parent.tag_name}, open={[e.tag_name for e in context.open_elements._stack]}, active={[e.element.tag_name for e in context.active_formatting_elements if e.element]}"
-                )
+            self.debug("AFTER adoption simple-case for duplicate <nobr>: stacks:")
+            self.debug(f"    Open stack: {[e.tag_name for e in context.open_elements._stack]}")
+            self.debug(f"    Active formatting: {[e.element.tag_name for e in context.active_formatting_elements if e.element]}")
+            # Allow multiple <nobr> entries (no artificial pruning)
+            self.debug(
+                f"Post-duplicate handling before element creation: parent={context.current_parent.tag_name}, open={[e.tag_name for e in context.open_elements._stack]}, active={[e.element.tag_name for e in context.active_formatting_elements if e.element]}"
+            )
             # Structural adjustment: if we are about to insert another <nobr> inside a block (e.g. div)
             # but there is an open <i> formatting element immediately after a reconstructed <nobr>, and
             # that <i> already has a <nobr> descendant, clone the <i> so that the next
@@ -1350,8 +1347,8 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                         dummy_token = HTMLToken('StartTag', tag_name='i', attributes=clone_i.attributes)
                         context.active_formatting_elements.push(clone_i, dummy_token)
                         context.move_to_element(clone_i)
-                        if self.parser.env_debug:
-                            self.debug("Cloned <i> sibling under block for upcoming <nobr> segmentation")
+                        # Always log clone event (was env_debug gated)
+                        self.debug("Cloned <i> sibling under block for upcoming <nobr> segmentation")
 
         # Allow nested <nobr>; spec imposes no artificial nesting depth limit.
 
@@ -2719,8 +2716,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         if not target:
             return True  # Ignore unmatched end tag entirely
         if tag == 'table':
-            if self.parser.env_debug:
-                self.debug(f"</table> pre-pop open stack: {[e.tag_name for e in context.open_elements._stack]}")
+            self.debug(f"</table> pre-pop open stack: {[e.tag_name for e in context.open_elements._stack]}")
             if context.open_elements.contains(target):
                 stack = context.open_elements._stack  # type: ignore[attr-defined]
                 select_to_pop = None
@@ -2768,8 +2764,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             context.active_formatting_elements.clear_up_to_last_marker()
             self.parser.transition_to_state(context, DocumentState.IN_BODY, context.current_parent)
             self.debug("Closed </table>, popped formatting marker")
-            if self.parser.env_debug:
-                self.debug(f"</table> post-pop open stack: {[e.tag_name for e in context.open_elements._stack]}")
+            self.debug(f"</table> post-pop open stack: {[e.tag_name for e in context.open_elements._stack]}")
             context.open_elements.remove_element(target)
         elif tag in ('tbody','thead','tfoot'):
             self.parser.transition_to_state(context, DocumentState.IN_TABLE, context.current_parent)
@@ -3014,10 +3009,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             return False
 
         self.debug(f"handling text '{text}' in {context}")
-        if self.parser.env_debug and text in ('2','3'):
-            self.debug(
-                f"CHAR '{text}' pre-insert: parent={context.current_parent.tag_name}, open={[e.tag_name for e in context.open_elements._stack]}, active={[e.element.tag_name for e in context.active_formatting_elements if e.element]}"
-            )
+        # (Former env_debug conditional removed)
         # Safety: if inside select subtree, do not process here
         if context.current_parent.find_ancestor(lambda n: n.tag_name in ("select", "option", "optgroup")):
             return False
@@ -3042,8 +3034,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     if entry.element is not None
                 )
             ):
-                if self.parser.env_debug and text in ('2','3'):
-                    self.debug("Reconstructing stale active formatting elements in cell before text insertion")
                 self.parser.reconstruct_active_formatting_elements(context)
                 # After reconstruction current_parent points at the deepest reconstructed formatting element.
                 # Move insertion point back to the cell so targeting logic below can choose appropriately.
@@ -3070,8 +3060,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     return False
                 if not _descendant_has_text(cursor):
                     target = cursor
-            if self.parser.env_debug and text in ('2','3'):
-                self.debug(f"CHAR '{text}' resolved cell target={target.tag_name}")
+            # target now resolved
             # Append or merge text at target
             if target.children and target.children and target.children[-1].tag_name == "#text":
                 target.children[-1].text_content += text
@@ -3291,12 +3280,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 self.debug(f"Inserted new <a> tag before table: {new_a}")
                 return True
 
-        # Check for other formatting context
-        # Collect formatting elements from current position up to foster parent
-        # Before collecting formatting context, if any active formatting element's DOM node is
-        # no longer on the open elements stack (simple-case adoption popped it), run reconstruction
-        # so that stale entries (e.g. an earlier <nobr>) produce the sibling wrapper expected by
-    # when fostering subsequent text (ensures reconstruction of formatting wrapper for trailing text segment).
+        # Collect formatting context up to foster parent; reconstruct if stale AFE entries exist.
         if (
             context.active_formatting_elements
             and any(
@@ -3305,10 +3289,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 if entry.element is not None
             )
         ):
-            if self.parser.env_debug:
-                self.debug(
-                    "Foster-parent text: triggering reconstruction for stale active formatting entries before collecting chain"
-                )
             # Capture children count to detect newly reconstructed wrappers later
             pre_children = list(foster_parent.children)
             self.parser.reconstruct_active_formatting_elements(context)
