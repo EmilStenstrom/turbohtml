@@ -385,19 +385,8 @@ class AdoptionAgencyAlgorithm:
         return runs
 
     # --- Spec helpers ---
-    def _find_furthest_block_spec_compliant(
-        self, formatting_element: Node, context
-    ) -> Optional[Node]:
-        """Locate the furthest block for Step 6 of the adoption agency algorithm.
-
-        Spec wording (“furthest block”) can be interpreted as the highest (closest to root)
-        qualifying element encountered while walking upwards from the formatting element.
-        Empirical conformance output for misnested inline formatting cases aligns with choosing
-        the *first* qualifying special/block element after the formatting element rather than the
-        last. Selecting the last introduced structural differences in complex adoption scenarios;
-        therefore we retain the first qualifying element strategy (simple forward scan returning
-        immediately).
-        """
+    def _find_furthest_block_spec_compliant(self, formatting_element: Node, context) -> Optional[Node]:
+        """Locate the furthest block (heuristic first-qualifying variant preserved as single path)."""
         idx = context.open_elements.index_of(formatting_element)
         if idx == -1:
             return None
@@ -529,124 +518,84 @@ class AdoptionAgencyAlgorithm:
         # Step 11: (spec node list concept omitted – not needed for current implementation)
 
         # Step 12: reconstruction loop
+        # Simplified (heuristic) Step 12 reconstruction loop retained as single implementation
         node = furthest_block
         last_node = furthest_block
         inner_loop_counter = 0
-
         max_iterations = len(context.open_elements._stack) + 10
-        # Track previous stack index to ensure we make upward progress.
         prev_node_index = None
         while True:
             if inner_loop_counter >= max_iterations:
                 break
             inner_loop_counter += 1
-
-            # 12.1 previous element up the stack
             node_index = context.open_elements.index_of(node)
             if node_index <= 0:
                 break
-            # Upward move must strictly decrease index; otherwise stop
             prev_index = node_index - 1
             node = context.open_elements._stack[prev_index]
             if prev_node_index is not None and prev_index >= prev_node_index:
                 break
             prev_node_index = prev_index
-
-            # 12.2 reached formatting element
             if node == formatting_element:
                 break
-
-            # 12.3 remove non-formatting node
             node_entry = context.active_formatting_elements.find_element(node)
             if not node_entry:
                 context.open_elements.remove_element(node)
-                # Spec: simply remove non-formatting node from stack; DOM reparenting of such
-                # intervening nodes is not performed here (they remain in place). Custom <a>
-                # ladder relocation logic removed for spec purity.
-                # Reset node to last_node (the subtree we are restructuring) so the next
-                # iteration's Step 12.1 finds the element immediately above the removed
-                # node relative to the still-current furthest block chain. This prevents
-                # premature termination when index_of(node) becomes -1 (early break) and
-                # allows climbing further to clone remaining formatting ancestors (e.g. <em>
-                # in multi-iteration adoption ladder cases).
                 node = last_node
                 continue
-
-            # 12.4 after 3 loops drop from active list
             if inner_loop_counter > 3:
                 context.active_formatting_elements.remove_entry(node_entry)
                 continue
-
-            # 12.5 clone node
             node_clone = Node(tag_name=node.tag_name, attributes=node.attributes.copy())
-
-            # 12.6 replace entry with clone
-            FormattingElementEntry(node_clone, node_entry.token)
-            bookmark_index_before = context.active_formatting_elements.get_index(
-                node_entry
-            )
-            context.active_formatting_elements.replace_entry(
-                node_entry, node_clone, node_entry.token
-            )
-
-            # 12.7 replace in open stack
+            bookmark_index_before = context.active_formatting_elements.get_index(node_entry)
+            context.active_formatting_elements.replace_entry(node_entry, node_clone, node_entry.token)
             context.open_elements.replace_element(node, node_clone)
-
-            # 12.8 adjust bookmark if first clone
             if last_node == furthest_block:
                 bookmark_index = bookmark_index_before + 1
-
-            # 12.9 graft last subtree under clone
             if last_node.parent:
                 last_node.parent.remove_child(last_node)
-
             node_clone.append_child(last_node)
-
-            # 12.10 advance last_node
             last_node = node_clone
             node = node_clone
 
-        # Step 13: Insert last_node into common_ancestor (always execute)
-        if common_ancestor is last_node:
-            pass
-        else:
-            # Guard: if common_ancestor is already a descendant of last_node, inserting would create a cycle.
-            ca_cursor = common_ancestor
+        # Step 13: Insert last_node into common_ancestor.
+        if common_ancestor is not last_node:
+            # Cycle guard
+            cur = common_ancestor
             is_desc = False
-            guard_walk = 0
-            while ca_cursor is not None and guard_walk < 200:
-                if ca_cursor is last_node:
+            steps = 0
+            while cur is not None and steps < 200:
+                if cur is last_node:
                     is_desc = True
                     break
-                ca_cursor = ca_cursor.parent
-                guard_walk += 1
+                cur = cur.parent
+                steps += 1
             if not is_desc:
-                # Detach if needed
-                if (
-                    last_node.parent is not None
-                    and last_node.parent is not common_ancestor
-                ):
+                if last_node.parent is not common_ancestor:
                     self._safe_detach_node(last_node)
-                # Foster parenting if required
                 if self._should_foster_parent(common_ancestor):
                     self._foster_parent_node(last_node, context, common_ancestor)
                 else:
-                    if common_ancestor.tag_name == "template":
+                    target_parent = common_ancestor
+                    if target_parent.tag_name == "template":
                         content_child = None
-                        for ch in common_ancestor.children:
+                        for ch in target_parent.children:
                             if ch.tag_name == "content":
                                 content_child = ch
                                 break
-                        (content_child or common_ancestor).append_child(last_node)
-                    else:
-                        # Only append if not already child
-                        if last_node.parent is not common_ancestor:
-                            try:
-                                common_ancestor.append_child(last_node)
-                            except ValueError:
-                                pass
+                        target_parent = content_child or target_parent
+                    # Append (legacy heuristic single-path)
+                    if last_node.parent is not target_parent:
+                        target_parent.append_child(last_node)
 
             # Post-Step-13 relocation logic removed (no special ladder handling retained)
+
+        # Spec refinement: If using spec Step12 loop AND the furthest_block ended up as a sibling
+        # where the expected tree requires lifting it out of the formatting chain (e.g. adoption01:17),
+        # and the formatting_element is still ancestor of furthest_block while spec furthest selection
+        # is off (heuristic) we avoid altering. Only adjust when both spec Step12 loop is active and either
+        # spec furthest mode is active or explicit relocation condition holds.
+        # No spec relocation adjustments retained (flags removed)
 
         # Step 14: Create a clone of the formatting element (spec always clones)
         # NOTE: Previous optimization to skip cloning for trivial empty case caused
