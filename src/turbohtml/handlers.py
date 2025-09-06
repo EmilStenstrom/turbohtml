@@ -1551,14 +1551,16 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         )
         if table_ancestor and table_ancestor.parent:
             parent = table_ancestor.parent
-            try:
-                tbl_index = parent.children.index(table_ancestor)
-            except ValueError:
-                tbl_index = -1
-            try:
-                cur_index = parent.children.index(context.current_parent)
-            except ValueError:
-                cur_index = -1
+            tbl_index = -1
+            for i, ch in enumerate(parent.children):
+                if ch is table_ancestor:
+                    tbl_index = i
+                    break
+            cur_index = -1
+            for i, ch in enumerate(parent.children):
+                if ch is context.current_parent:
+                    cur_index = i
+                    break
             rel = (
                 "before"
                 if 0 <= cur_index < tbl_index
@@ -1574,21 +1576,10 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 self.debug(
                     "Duplicate <a>: running adoption agency before creating new <a>"
                 )
-                # Force at least one run even if should_run_adoption() predicate would skip (simple case needed).
-                self.parser.adoption_agency.run_algorithm("a", context, 1)
-                # Then perform any additional necessary runs (complex follow-ups) using stability loop.
-                extra = self.parser.adoption_agency.run_until_stable("a", context)
-                if extra:
-                    self.debug(f"Additional adoption runs after forced first: {extra}")
-                # Remove any lingering <a> entries (spec says the one just processed is removed)
-                lingering = [
-                    e
-                    for e in list(context.active_formatting_elements._stack)
-                    if e.element and e.element.tag_name == "a"
-                ]
-                for e in lingering:
-                    context.active_formatting_elements.remove_entry(e)
-                self.debug("Cleared lingering active <a> entries")
+                # Run full spec loop (up to 8) to stabilize instead of manual pruning.
+                self.parser.adoption_agency.run_until_stable("a", context, max_runs=8)
+                # Do NOT purge lingering entries; spec retains the clone (replaced at bookmark) enabling proper layering.
+                self.debug("Duplicate <a>: adoption run_until_stable completed")
 
         if self._is_in_template_content(context):
             tableish = {
@@ -1827,16 +1818,15 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         )
 
         fmt_ancestor = context.current_parent.find_ancestor(tag_name)
-        if fmt_ancestor and fmt_ancestor is not context.current_parent:
-            has_block = any(
-                ch.tag_name in BLOCK_ELEMENTS for ch in fmt_ancestor.children
-            )
-            if has_block:
-                self.debug(f"Ignoring premature </{tag_name}> (nested block present)")
-                return True
+        # Removed prior heuristic ignoring premature end tag when nested block present.
+        # Spec still requires running the adoption agency algorithm in these cases.
 
-        runs = self.parser.adoption_agency.run_until_stable(tag_name, context)
-        if runs:
+        runs = 0
+        while runs < 8 and self.parser.adoption_agency.should_run_adoption(tag_name, context):
+            runs += 1
+            if not self.parser.adoption_agency.run_algorithm(tag_name, context, runs):
+                break
+        if runs > 0:
             self.debug(
                 f"FormattingElementHandler: Adoption agency completed after {runs} run(s) for </{tag_name}>"
             )
@@ -2732,11 +2722,9 @@ class ParagraphTagHandler(TagHandler):
                             and probe.tag_name.startswith(("math ", "svg "))
                         ):
                             siblings = table.parent.children
-                            try:
+                            if probe in siblings and table in siblings:
                                 if siblings.index(probe) < siblings.index(table):
                                     foreign_before_table = probe
-                            except ValueError:
-                                foreign_before_table = None
                         if foreign_before_table:
                             self.debug(
                                 "Foster parent <p> after foreign subtree directly preceding open table"
@@ -4993,10 +4981,11 @@ class RawtextTagHandler(SelectAwareHandler):
                 skip_table_reloc = False
                 if cur_parent.tag_name == "table" and cur_parent.parent:
                     parent = cur_parent.parent
-                    try:
-                        table_index = parent.children.index(cur_parent)
-                    except ValueError:
-                        table_index = -1
+                    table_index = -1
+                    for i, ch in enumerate(parent.children):
+                        if ch is cur_parent:
+                            table_index = i
+                            break
                     if table_index > 0:
                         preceding = parent.children[table_index - 1]
                         if preceding.tag_name == "select":
@@ -8290,10 +8279,7 @@ class PlaintextHandler(SelectAwareHandler):
                 if a_el.parent:
                     context.move_to_element(a_el.parent)
             # Remove formatting entry (safe even if element already popped)
-            try:
-                context.active_formatting_elements.remove(a_el)
-            except Exception:
-                pass
+            context.active_formatting_elements.remove(a_el)
         elif not a_entry:
             # Fallback: active formatting elements list may not have tracked <a>; detect via current parent / ancestor
             cur_a = (
@@ -8312,10 +8298,7 @@ class PlaintextHandler(SelectAwareHandler):
                         break
                 # active formatting list may or may not contain; guard remove
                 if context.active_formatting_elements:
-                    try:
-                        context.active_formatting_elements.remove(a_el)
-                    except Exception:
-                        pass
+                    context.active_formatting_elements.remove(a_el)
                 if a_el.parent:
                     context.move_to_element(a_el.parent)
 

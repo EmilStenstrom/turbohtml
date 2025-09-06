@@ -2258,35 +2258,6 @@ class TurboHTML:
                 self.debug(f"Ignoring </{tag_name}> in frameset context")
                 return
 
-        # Check if adoption agency algorithm should run iteratively
-        adoption_run_count = 0  # ensure defined even if no runs occur
-        max_runs = 8  # HTML5 spec limit for adoption agency algorithm iterations
-
-        while adoption_run_count < max_runs:
-            if self.adoption_agency.should_run_adoption(tag_name, context):
-                adoption_run_count += 1
-                self.debug(
-                    f"Running adoption agency algorithm #{adoption_run_count} for {tag_name}"
-                )
-
-                if not self.adoption_agency.run_algorithm(
-                    tag_name, context, adoption_run_count
-                ):
-                    # If adoption agency returns False, stop trying
-                    self.debug(
-                        f"Adoption agency returned False on run #{adoption_run_count}, stopping"
-                    )
-                    break
-            else:
-                # No more adoption agency runs needed
-                break
-
-        if adoption_run_count > 0:
-            self.debug(
-                f"Adoption agency completed after {adoption_run_count} run(s) for </{tag_name}>"
-            )
-            # Post-adoption normalization for deep </a> ladder cases (nest flattened div/a sequences)
-            return
 
         # End tag </body> handling nuances:
         #  * While in normal IN_BODY, allow BodyElementHandler to process (may transition to AFTER_BODY).

@@ -1110,13 +1110,15 @@ class HTMLTokenizer:
                 has_semicolon = j < length and text[j] == ";"
                 if has_semicolon:
                     j += 1
-                try:
-                    codepoint = int(digits, 16 if is_hex else 10)
+                # digits collected strictly via hex/decimal loops; safe to convert without exception
+                base = 16 if is_hex else 10
+                if digits:  # redundant guard
+                    codepoint = int(digits, base)
                     decoded_char = self._codepoint_to_char(codepoint)
                     if decoded_char == "\ufffd":
                         decoded_char = NUMERIC_ENTITY_INVALID_SENTINEL
                     result.append(decoded_char)
-                except ValueError:
+                else:
                     result.append(text[i:j])
                 i = j
                 continue
@@ -1267,7 +1269,5 @@ class HTMLTokenizer:
         elif codepoint == 0x10FFFF:
             return "\U0010ffff"
         else:
-            try:
-                return chr(codepoint)
-            except ValueError:
-                return "\ufffd"
+            # codepoint already validated to be within Unicode range and not surrogate; direct conversion
+            return chr(codepoint)
