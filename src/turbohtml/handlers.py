@@ -3888,7 +3888,9 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     )
                     return True
 
-        # Find the most recent <a> tag before the table
+        # Reintroduce limited anchor continuation logic (previously removed) to avoid regression in adoption01.dat:10.
+        # This remains a candidate for future replacement by pure reconstruction once anchor/table interactions
+        # are fully spec-aligned.
         prev_a = None
         for child in reversed(foster_parent.children[:table_index]):
             if child.tag_name == "a":
@@ -3897,22 +3899,13 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     f"Found previous <a> tag: {prev_a} with attributes {prev_a.attributes}"
                 )
                 break
-
-        # Check if we can continue the previous <a> tag or need to create a new one
         if prev_a:
-            # We can only continue the previous <a> if we haven't entered and exited any table structure
-            # since it was created. Check if the current context suggests we're still in the same "run"
-            # by examining if we're directly in the <a> context or if there have been intervening table elements.
-
-            # If we're currently inside the <a> element's context (meaning we're still processing
-            # the same foster parenting run), we can add to it
             if context.current_parent.find_ancestor("a") == prev_a:
                 self.debug("Still in same <a> context, adding text to existing <a> tag")
                 self.parser.insert_text(text, context, parent=prev_a, merge=True)
                 self.debug(f"Added text to existing <a> tag: {prev_a}")
                 return True
             else:
-                # We're not in the same context anymore, so create a new <a> tag
                 self.debug("No longer in same <a> context, creating new <a> tag")
                 a_token = HTMLToken(
                     "StartTag", tag_name="a", attributes=prev_a.attributes.copy()

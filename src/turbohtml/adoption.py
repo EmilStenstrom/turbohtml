@@ -274,6 +274,7 @@ class AdoptionAgencyAlgorithm:
         """
         made_progress_overall = False
         processed_furthest_blocks = set()
+        complex_case_seen = False  # Track if a complex adoption occurred earlier in this invocation
         for iteration_count in range(1, 9):  # spec max 8
             # Locate most recent matching formatting element (Step 1 selection prerequisite)
             formatting_entry = None
@@ -286,6 +287,14 @@ class AdoptionAgencyAlgorithm:
             if not formatting_entry:
                 break  # Nothing to adopt
             formatting_element = formatting_entry.element
+            # Diagnostic: show formatting element selection and stack slice below it
+            if tag_name == 'a':
+                try:
+                    fmt_idx = context.open_elements.index_of(formatting_element)
+                    below = [n.tag_name for n in context.open_elements._stack[fmt_idx+1:]] if fmt_idx != -1 else []
+                    self.parser.debug(f"[adoption][diag-select] fmt=<a> idx={fmt_idx} below={below}")
+                except Exception:
+                    pass
 
             # Instrumentation (kept minimal)
             if tag_name == 'a':
@@ -304,11 +313,15 @@ class AdoptionAgencyAlgorithm:
                 made_progress_overall = True
                 continue
 
-            # Step 4: if not in scope -> abort entire algorithm
-            if not context.open_elements.has_element_in_scope(formatting_element.tag_name):
-                # Spec: parse error; remove formatting element entry from active list then abort.
+            # Step 4: scope check. If the formatting element is not in scope the spec removes it from
+            # the list of active formatting elements and aborts the algorithm for this tag name.
+            # (Previous experimental relaxation for <a> across a pure table structural chain was removed
+            # after introducing regressions in template + anchor tests. We now adhere strictly to spec
+            # scope semantics here.)
+            in_scope = context.open_elements.has_element_in_scope(formatting_element.tag_name)
+            if not in_scope:
                 context.active_formatting_elements.remove_entry(formatting_entry)
-                made_progress_overall = True  # we mutated active formatting elements
+                made_progress_overall = True
                 break
 
             # Step 5 (parse error if not current) – ignored for control flow
@@ -327,6 +340,12 @@ class AdoptionAgencyAlgorithm:
             if furthest_block is None:
                 if self._handle_no_furthest_block_spec(formatting_element, formatting_entry, context):
                     made_progress_overall = True
+                    if tag_name == 'a':
+                        # Count simple-case occurrences for anchors
+                        self.metrics['a_simple_case_count'] = self.metrics.get('a_simple_case_count', 0) + 1
+                        if complex_case_seen:
+                            # Record pattern where a complex case earlier in same run downgrades to simple
+                            self.metrics['a_complex_then_simple'] = self.metrics.get('a_complex_then_simple', 0) + 1
                 # Simple case always terminates algorithm per spec
                 break
             else:
@@ -341,6 +360,9 @@ class AdoptionAgencyAlgorithm:
             )
             if complex_result:
                 made_progress_overall = True
+                if tag_name == 'a':
+                    self.metrics['a_complex_case_count'] = self.metrics.get('a_complex_case_count', 0) + 1
+                complex_case_seen = True
                 continue  # keep looping for same end tag per spec
             else:
                 break
