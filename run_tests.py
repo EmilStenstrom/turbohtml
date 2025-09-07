@@ -246,17 +246,25 @@ class TestRunner:
                 if failed and self.config["fail_fast"]:
                     return passed, failed, skipped
 
-            # Store file results if any tests were run for this file
+            # Store file results if any tests were relevant for this file.
+            # When running with explicit --test-specs we suppress files that only
+            # contributed auto-skipped (script-on/off) tests to reduce noise. This
+            # implements the requested behavior of not listing a "bunch of files"
+            # unrelated to the targeted specs.
             if file_test_indices:
-                # Use relative path to handle duplicate filenames in different directories
-                relative_path = file_path.relative_to(self.test_dir)
-                self.file_results[str(relative_path)] = {
-                    "passed": file_passed,
-                    "failed": file_failed,
-                    "skipped": file_skipped,
-                    "total": file_passed + file_failed + file_skipped,
-                    "test_indices": file_test_indices,
-                }
+                if self.config.get("test_specs") and file_passed == 0 and file_failed == 0:
+                    # All collected indices are skips; omit this file in spec-focused run.
+                    pass
+                else:
+                    # Use relative path to handle duplicate filenames in different directories
+                    relative_path = file_path.relative_to(self.test_dir)
+                    self.file_results[str(relative_path)] = {
+                        "passed": file_passed,
+                        "failed": file_failed,
+                        "skipped": file_skipped,
+                        "total": file_passed + file_failed + file_skipped,
+                        "test_indices": file_test_indices,
+                    }
 
         return passed, failed, skipped
 
