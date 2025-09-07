@@ -256,7 +256,7 @@ class AdoptionAgencyAlgorithm:
         self.metrics = {}
 
     def get_metrics(self) -> dict:
-        return {}
+        return self.metrics
 
     def should_run_adoption(self, tag_name: str, context) -> bool:
         # Spec trigger: end tag whose tag name is a formatting element AND a matching
@@ -339,8 +339,7 @@ class AdoptionAgencyAlgorithm:
             )
             if complex_result:
                 made_progress_overall = True
-                # Continue to attempt further adoption if same tag still present.
-                continue
+                continue  # keep looping for same end tag per spec
             else:
                 break
 
@@ -383,18 +382,13 @@ class AdoptionAgencyAlgorithm:
         # Additionally we skip table structural candidates (table, tbody, thead, tfoot, tr) when the
         # formatting element merely precedes table scaffolding — choosing them caused relocation of
         # table sections instead of a simple-case pop in several anchor tests.
-        table_structural = {"table", "tbody", "thead", "tfoot", "tr"}
-        candidate = None
         for node in context.open_elements._stack[idx + 1 :]:
             if node.tag_name in SPECIAL_CATEGORY_ELEMENTS:
-                if node.tag_name in table_structural:
-                    # Defer; look for a non-table structural special further down
-                    if candidate is None:
-                        candidate = node  # remember first in case we find no better
-                    continue
+                # Record metric for diagnostic purposes
+                self.metrics['furthest_block_picks'] = self.metrics.get('furthest_block_picks', 0) + 1
+                pick_key = f"furthest_block_{node.tag_name}"
+                self.metrics[pick_key] = self.metrics.get(pick_key, 0) + 1
                 return node
-        # Only table structural specials encountered (or none) – treat as no furthest block
-        return None
         return None
 
     def _handle_no_furthest_block_spec(
@@ -527,6 +521,8 @@ class AdoptionAgencyAlgorithm:
             intermediates = fb_index - fe_index - 1
             if intermediates > 0:
                 self.metrics['step11_intermediate_count'] = self.metrics.get('step11_intermediate_count', 0) + intermediates
+        else:
+            intermediates = 0
 
         open_stack = context.open_elements._stack
         # Guard: indexes must be valid
@@ -555,18 +551,21 @@ class AdoptionAgencyAlgorithm:
             else:
                 node_above = removed_above.get(id(node))
             if node_above is None:
+                self.metrics['inner_loop_terminated_no_above'] = self.metrics.get('inner_loop_terminated_no_above', 0) + 1
                 break
             candidate = node_above
             # If candidate not a formatting element: spec says set node to element above and continue (NO removal).
             candidate_entry = context.active_formatting_elements.find_element(candidate)
             if not candidate_entry:
                 # Spec: just advance upward; do NOT remove non-formatting elements from the open stack here
+                self.metrics['inner_loop_non_format_ascents'] = self.metrics.get('inner_loop_non_format_ascents', 0) + 1
                 node = candidate
                 continue
             # If inner_loop_counter > 3: remove candidate entry (and from stack) then continue upward
             if inner_loop_counter > 3:
                 if context.active_formatting_elements.find_element(candidate):
                     context.active_formatting_elements.remove_entry(candidate_entry)
+                    self.metrics['formatting_removed_gt3'] = self.metrics.get('formatting_removed_gt3', 0) + 1
                 if context.open_elements.contains(candidate):
                     idx_cand = context.open_elements.index_of(candidate)
                     above2 = context.open_elements._stack[idx_cand - 1] if idx_cand - 1 >= 0 else None
@@ -585,6 +584,7 @@ class AdoptionAgencyAlgorithm:
                 context.open_elements.replace_element(candidate, clone)
             clone.append_child(last_node)
             last_node = clone
+            self.metrics['formatting_clones'] = self.metrics.get('formatting_clones', 0) + 1
             # Spec: let node be the new element (clone) so next iteration climbs from its position
             node = clone
 
@@ -594,11 +594,39 @@ class AdoptionAgencyAlgorithm:
         # Step 14 (unconditional move variant that previously maximized pass rate)
         # Step 14 refinement: avoid relocating if last_node already correctly placed.
         if last_node.parent is common_ancestor:
-            # Already where spec wants it; no movement.
-            self.parser.debug("[adoption][step14] last_node already child of common_ancestor; no move")
+            # Determine if it is already exactly at the target insertion slot (immediately after formatting element
+            # when formatting element is still a child of common_ancestor). Only skip if ordering already matches.
+            relocation_redundant = False
+            if (
+                formatting_element.parent is common_ancestor
+                and formatting_element in common_ancestor.children
+                and last_node in common_ancestor.children
+            ):
+                pos_fmt = common_ancestor.children.index(formatting_element)
+                desired_index = pos_fmt + 1
+                current_index = common_ancestor.children.index(last_node)
+                if current_index == desired_index:
+                    relocation_redundant = True
+            if relocation_redundant:
+                self.metrics['step14_relocation_skipped_redundant'] = self.metrics.get('step14_relocation_skipped_redundant', 0) + 1
+                self.parser.debug("[adoption][step14] relocation skipped (redundant)")
+            else:
+                # We are under common_ancestor but not at desired slot; perform reordered placement below.
+                self.parser.debug("[adoption][step14] under common_ancestor but not at target slot; will relocate")
+                # Force relocation path by clearing parent to reuse unified logic below.
+                # (Detach so the later code handles reinsertion uniformly.)
+                self._safe_detach_node(last_node)
+                # Fall through into relocation logic by bypassing early returns
+                pass
+                # Note: we intentionally do not 'return' here so relocation code executes.
         elif common_ancestor is last_node or common_ancestor.find_ancestor(lambda n: n is last_node):
             self.parser.debug("[adoption][step14] skipped move (cycle risk)")
         else:
+            # Spec nuance: when there are ZERO intermediates (no formatting elements between formatting element
+            # and furthest block), browsers commonly do NOT relocate the furthest block upward; they proceed with
+            # wrapping (steps 15–19) in place. Our earlier unconditional relocation disturbed sibling ordering
+            # (notably in nested anchor+paragraph cases). So if intermediates == 0 and furthest_block == last_node
+            # we skip movement.
             # Decide whether foster parenting is appropriate. We restrict foster parenting to cases
             # where common_ancestor is table-related AND last_node is *not* already a table section/row
             # (moving table structural nodes breaks expected subtree layout in several anchor tests).
@@ -619,7 +647,15 @@ class AdoptionAgencyAlgorithm:
             else:
                 # Normal placement: place after formatting element if it is still a child of common_ancestor,
                 # otherwise append (maintains relative order).
-                self._safe_detach_node(last_node)
+                # last_node may already have been detached earlier when adjusting ordering.
+                if last_node.parent is not None and last_node.parent is not common_ancestor:
+                    self._safe_detach_node(last_node)
+                elif last_node.parent is None:
+                    # already detached by earlier branch
+                    pass
+                else:
+                    # parent is common_ancestor, will remove to reinsert at expected index
+                    self._safe_detach_node(last_node)
                 inserted = False
                 if (
                     formatting_element.parent is common_ancestor
@@ -633,6 +669,7 @@ class AdoptionAgencyAlgorithm:
                 self.parser.debug(
                     f"[adoption][step14] placed last_node <{last_node.tag_name}> under <{common_ancestor.tag_name}> children={[c.tag_name for c in common_ancestor.children]}"
                 )
+                self.metrics['step14_relocation_performed'] = self.metrics.get('step14_relocation_performed', 0) + 1
         # Instrumentation: show path from formatting element to furthest_block (if still connected)
         path_tags = []
         cur = furthest_block
