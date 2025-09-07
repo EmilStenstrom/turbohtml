@@ -13,7 +13,6 @@ from turbohtml.constants import (
     SPECIAL_CATEGORY_ELEMENTS,
 )
 
-
 @dataclass
 class FormattingElementEntry:
     """Entry in the active formatting elements stack"""
@@ -593,83 +592,8 @@ class AdoptionAgencyAlgorithm:
         # so we retain unconditional move variant (with cycle guard) that produced best pass rate earlier.
         # Step 14 (unconditional move variant that previously maximized pass rate)
         # Step 14 refinement: avoid relocating if last_node already correctly placed.
-        if last_node.parent is common_ancestor:
-            # Determine if it is already exactly at the target insertion slot (immediately after formatting element
-            # when formatting element is still a child of common_ancestor). Only skip if ordering already matches.
-            relocation_redundant = False
-            if (
-                formatting_element.parent is common_ancestor
-                and formatting_element in common_ancestor.children
-                and last_node in common_ancestor.children
-            ):
-                pos_fmt = common_ancestor.children.index(formatting_element)
-                desired_index = pos_fmt + 1
-                current_index = common_ancestor.children.index(last_node)
-                if current_index == desired_index:
-                    relocation_redundant = True
-            if relocation_redundant:
-                self.metrics['step14_relocation_skipped_redundant'] = self.metrics.get('step14_relocation_skipped_redundant', 0) + 1
-                self.parser.debug("[adoption][step14] relocation skipped (redundant)")
-            else:
-                # We are under common_ancestor but not at desired slot; perform reordered placement below.
-                self.parser.debug("[adoption][step14] under common_ancestor but not at target slot; will relocate")
-                # Force relocation path by clearing parent to reuse unified logic below.
-                # (Detach so the later code handles reinsertion uniformly.)
-                self._safe_detach_node(last_node)
-                # Fall through into relocation logic by bypassing early returns
-                pass
-                # Note: we intentionally do not 'return' here so relocation code executes.
-        elif common_ancestor is last_node or common_ancestor.find_ancestor(lambda n: n is last_node):
-            self.parser.debug("[adoption][step14] skipped move (cycle risk)")
-        else:
-            # Spec nuance: when there are ZERO intermediates (no formatting elements between formatting element
-            # and furthest block), browsers commonly do NOT relocate the furthest block upward; they proceed with
-            # wrapping (steps 15–19) in place. Our earlier unconditional relocation disturbed sibling ordering
-            # (notably in nested anchor+paragraph cases). So if intermediates == 0 and furthest_block == last_node
-            # we skip movement.
-            # Decide whether foster parenting is appropriate. We restrict foster parenting to cases
-            # where common_ancestor is table-related AND last_node is *not* already a table section/row
-            # (moving table structural nodes breaks expected subtree layout in several anchor tests).
-            table_structural = {"table", "tbody", "thead", "tfoot", "tr"}
-            do_foster = False
-            if self._should_foster_parent(common_ancestor):
-                if last_node.tag_name not in table_structural:
-                    # Additionally ensure last_node is not inside a td/th (spec would keep it there).
-                    inside_cell = last_node.find_ancestor(lambda n: n.tag_name in ("td", "th")) is not None
-                    if not inside_cell:
-                        do_foster = True
-            if do_foster:
-                self._safe_detach_node(last_node)
-                self._foster_parent_node(last_node, context, common_ancestor)
-                self.parser.debug(
-                    f"[adoption][step14] foster-parented last_node <{last_node.tag_name}> relative to <{common_ancestor.tag_name}>"
-                )
-            else:
-                # Normal placement: place after formatting element if it is still a child of common_ancestor,
-                # otherwise append (maintains relative order).
-                # last_node may already have been detached earlier when adjusting ordering.
-                if last_node.parent is not None and last_node.parent is not common_ancestor:
-                    self._safe_detach_node(last_node)
-                elif last_node.parent is None:
-                    # already detached by earlier branch
-                    pass
-                else:
-                    # parent is common_ancestor, will remove to reinsert at expected index
-                    self._safe_detach_node(last_node)
-                inserted = False
-                if (
-                    formatting_element.parent is common_ancestor
-                    and formatting_element in common_ancestor.children
-                ):
-                    pos_fmt = common_ancestor.children.index(formatting_element)
-                    common_ancestor.insert_child_at(pos_fmt + 1, last_node)
-                    inserted = True
-                if not inserted:
-                    common_ancestor.append_child(last_node)
-                self.parser.debug(
-                    f"[adoption][step14] placed last_node <{last_node.tag_name}> under <{common_ancestor.tag_name}> children={[c.tag_name for c in common_ancestor.children]}"
-                )
-                self.metrics['step14_relocation_performed'] = self.metrics.get('step14_relocation_performed', 0) + 1
+        # Unified Step 14 relocation following spec: relocate only if ordering or parent differ.
+        self._step14_place_last_node(formatting_element, last_node, furthest_block, common_ancestor)
         # Instrumentation: show path from formatting element to furthest_block (if still connected)
         path_tags = []
         cur = furthest_block
@@ -707,13 +631,12 @@ class AdoptionAgencyAlgorithm:
         furthest_block.append_child(fe_clone)
         # Step 18: Replace formatting element entry in active formatting elements with clone (keep same position)
         context.active_formatting_elements.replace_entry(formatting_entry, fe_clone, formatting_entry.token)
-        # Step 19: Remove formatting element from open elements stack; insert fe_clone immediately AFTER furthest_block (spec: below it)
+        # Step 19: Remove formatting element from open elements stack; insert fe_clone immediately AFTER furthest_block
         if context.open_elements.contains(formatting_element):
             context.open_elements.remove_element(formatting_element)
         if context.open_elements.contains(furthest_block):
             fb_index2 = context.open_elements.index_of(furthest_block)
             context.open_elements._stack.insert(fb_index2 + 1, fe_clone)
-        # Set insertion point to the new clone (so subsequent characters go inside formatting element per spec intent)
         context.move_to_element(fe_clone)
         stack_tags = [e.tag_name for e in context.open_elements._stack]
         afe_tags = [e.element.tag_name for e in context.active_formatting_elements if e.element]
@@ -731,9 +654,57 @@ class AdoptionAgencyAlgorithm:
         while stack:
             cur = stack.pop()
             yield cur
-            # All nodes have a children list
             if cur.children:
                 stack.extend(cur.children)
+
+    # --- Step 14 helper ---
+    def _step14_place_last_node(self, formatting_element: Node, last_node: Node, furthest_block: Node, common_ancestor: Node) -> None:
+        """Place last_node relative to common_ancestor following spec's 'appropriate place for inserting a node'.
+
+        We approximate the spec insertion algorithm here to avoid duplicating broader parser insertion code.
+        Foster parenting is only applied if common_ancestor is table-related and conditions warrant it.
+        """
+        # If already correct parent & correct slot (just after formatting_element if applicable) skip.
+        if last_node.parent is common_ancestor:
+            if (
+                formatting_element.parent is common_ancestor
+                and formatting_element in common_ancestor.children
+                and last_node in common_ancestor.children
+            ):
+                pos_fmt = common_ancestor.children.index(formatting_element)
+                desired_index = pos_fmt + 1
+                cur_index = common_ancestor.children.index(last_node)
+                if cur_index == desired_index:
+                    self.metrics['step14_relocation_skipped_redundant'] = self.metrics.get('step14_relocation_skipped_redundant', 0) + 1
+                    self.parser.debug('[adoption][step14] skip relocation (redundant)')
+                    return
+        # Detach if parent differs or ordering mismatch
+        if last_node.parent is not None:
+            self._safe_detach_node(last_node)
+        table_structural = {"table", "tbody", "thead", "tfoot", "tr"}
+        do_foster = False
+        if self._should_foster_parent(common_ancestor):
+            if last_node.tag_name not in table_structural:
+                inside_cell = last_node.find_ancestor(lambda n: n.tag_name in ("td", "th")) is not None
+                if not inside_cell:
+                    do_foster = True
+        if do_foster:
+            self._foster_parent_node(last_node, context=None, table=common_ancestor)  # context unused in foster helper path here
+            self.metrics['step14_relocation_performed'] = self.metrics.get('step14_relocation_performed', 0) + 1
+            self.parser.debug(f"[adoption][step14] foster-parented <{last_node.tag_name}> under <{common_ancestor.tag_name}>")
+            return
+        inserted = False
+        if (
+            formatting_element.parent is common_ancestor
+            and formatting_element in common_ancestor.children
+        ):
+            pos_fmt = common_ancestor.children.index(formatting_element)
+            common_ancestor.insert_child_at(pos_fmt + 1, last_node)
+            inserted = True
+        if not inserted:
+            common_ancestor.append_child(last_node)
+        self.metrics['step14_relocation_performed'] = self.metrics.get('step14_relocation_performed', 0) + 1
+        self.parser.debug(f"[adoption][step14] placed <{last_node.tag_name}> under <{common_ancestor.tag_name}> children={[c.tag_name for c in common_ancestor.children]}")
 
     def _should_foster_parent(self, common_ancestor: Node) -> bool:
         # Need foster parenting if ancestor is table-related and not inside cell/caption
