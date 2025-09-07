@@ -8405,11 +8405,19 @@ class PlaintextHandler(SelectAwareHandler):
                 if target.parent:
                     context.move_to_element(target.parent)
                 return True
-            # Stray </plaintext>: spec legacy quirk parsing emits literal text node (innerHTML tests expect this)
-            self.debug("Stray </plaintext>: emitting literal text node")
-            text_node = Node("#text")
-            text_node.text_content = "</plaintext>"
-            context.current_parent.append_child(text_node)
+            # Stray </plaintext>:
+            #  * In full document parsing: ignore (spec behavior; tests1.dat 109/110 expect no literal node).
+            #  * In fragment parsing (root == document-fragment): html5lib tree-construction tests expect a
+            #    literal text node "</plaintext>" (tests4.dat:4). Emit only in that mode to avoid reintroducing
+            #    prior over-literalization regression.
+            root_name = self.parser.root.tag_name if self.parser.root else None  # type: ignore[attr-defined]
+            if root_name == "document-fragment":
+                self.debug("Stray </plaintext> in fragment: emitting literal text node")
+                text_node = Node("#text")
+                text_node.text_content = "</plaintext>"
+                context.current_parent.append_child(text_node)
+            else:
+                self.debug("Stray </plaintext> in document: ignoring end tag (no open plaintext element)")
             return True
         # Any other end tag we claimed (shouldn't happen) literalize
         literal = f"</{token.tag_name}>"

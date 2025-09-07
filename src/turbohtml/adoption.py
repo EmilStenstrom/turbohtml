@@ -306,6 +306,9 @@ class AdoptionAgencyAlgorithm:
 
             # Step 4: if not in scope -> abort entire algorithm
             if not context.open_elements.has_element_in_scope(formatting_element.tag_name):
+                # Spec: parse error; remove formatting element entry from active list then abort.
+                context.active_formatting_elements.remove_entry(formatting_entry)
+                made_progress_overall = True  # we mutated active formatting elements
                 break
 
             # Step 5 (parse error if not current) – ignored for control flow
@@ -375,15 +378,16 @@ class AdoptionAgencyAlgorithm:
         idx = context.open_elements.index_of(formatting_element)
         if idx == -1:
             return None
-        # Spec: furthest block must be an element in the "special" category below the formatting element.
-        # Earlier code also considered BLOCK_ELEMENTS; that broadened selection beyond spec and triggered
-        # unnecessary complex-case adoption. We restrict strictly to SPECIAL_CATEGORY_ELEMENTS now.
-        # Additionally we skip table structural candidates (table, tbody, thead, tfoot, tr) when the
-        # formatting element merely precedes table scaffolding — choosing them caused relocation of
-        # table sections instead of a simple-case pop in several anchor tests.
+        # Spec: furthest block = first element in the special category below formattingElement on the stack.
+        # Previous implementation excluded table structural elements (table/tbody/thead/tfoot/tr) which
+        # suppressed complex adoption in anchor + table mis-nesting cases (tests1.dat 30,77,79,90,101 & tests19).
+        # Removing that exclusion restores spec behavior allowing those elements to participate as the
+        # furthest block so that the algorithm performs the required cloning/reparenting instead of the
+        # simple-case pop that flattened anchor structure.
         for node in context.open_elements._stack[idx + 1 :]:
             if node.tag_name in SPECIAL_CATEGORY_ELEMENTS:
-                # Record metric for diagnostic purposes
+                if formatting_element.tag_name == 'a':
+                    self.parser.debug(f"[adoption][furthest-pick] fmt=<a> candidate=<{node.tag_name}>")
                 self.metrics['furthest_block_picks'] = self.metrics.get('furthest_block_picks', 0) + 1
                 pick_key = f"furthest_block_{node.tag_name}"
                 self.metrics[pick_key] = self.metrics.get(pick_key, 0) + 1
