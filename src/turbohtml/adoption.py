@@ -277,89 +277,94 @@ class AdoptionAgencyAlgorithm:
             return True
         return False
 
-    def run_algorithm(self, tag_name: str, context, iteration_count: int = 0) -> bool:
-        # Run adoption algorithm (WHATWG HTML spec)
-        # Spec step 1: Choose the last (most recent) element in the list of active formatting elements
-        # whose tag name matches the target tag name.
-        formatting_entry = None
-        for entry in reversed(list(context.active_formatting_elements)):
-            if entry.element is None:  # skip marker entries
-                continue
-            if entry.element.tag_name == tag_name:
-                formatting_entry = entry
-                break
-        if not formatting_entry:
-            return False
-        formatting_element = formatting_entry.element
+    def run_algorithm(self, tag_name: str, context, outer_invocation: int = 1) -> bool:
+        """Run the full Adoption Agency Algorithm for a given end tag.
 
-        # Targeted instrumentation: detect the adoption02 second test pattern (div>style>address>nested a) or deep nested <a> stacks.
-        if tag_name == 'a':
-            open_tags = [el.tag_name for el in context.open_elements._stack]
-            if any(t == 'address' for t in open_tags) and 'style' in open_tags and open_tags.count('a') >= 1:
-                self.parser.debug(f"[adoption][trace a] iteration={iteration_count} open={open_tags} active={[e.element.tag_name for e in context.active_formatting_elements if e.element]}")
-        # Table adjacency diagnostics for regressions tests1.dat:20 and tests19/26 patterns
-        if tag_name in ('b','i','nobr'):
-            open_tags = [el.tag_name for el in context.open_elements._stack]
-            if 'table' in open_tags:
-                self.parser.debug(f"[adoption][trace table-mix] end=</{tag_name}> iter={iteration_count} open={open_tags}")
+        This inlines the spec's internal *loop* (up to 8 iterations) inside a single call so callers
+        (handlers) do not need to repeatedly invoke the algorithm. Each iteration attempts to perform
+        one adoption cycle; if no progress is made (stacks unchanged) or the algorithm signals that
+        no further action is required, we terminate early.
+        """
+        made_progress_overall = False
+        processed_furthest_blocks = set()
+        for iteration_count in range(1, 9):  # spec max 8
+            # Locate most recent matching formatting element (Step 1 selection prerequisite)
+            formatting_entry = None
+            for entry in reversed(list(context.active_formatting_elements)):
+                if entry.element is None:
+                    continue
+                if entry.element.tag_name == tag_name:
+                    formatting_entry = entry
+                    break
+            if not formatting_entry:
+                break  # Nothing to adopt
+            formatting_element = formatting_entry.element
 
-        # Intervening <b> entries retained; no active formatting pruning mid-run
-
-        # Step 1: If the current node is an HTML element whose tag name is subject,
-        # and the current node is not in the list of active formatting elements,
-        # then pop the current node off the stack of open elements and return.
-        current_node = (
-            context.open_elements.current()
-            if not context.open_elements.is_empty()
-            else None
-        )
-
-        if current_node and current_node.tag_name == tag_name:
-            is_in_active_formatting = (
-                context.active_formatting_elements.find_element(current_node)
-                is not None
-            )
-
-            if not is_in_active_formatting:
-                context.open_elements.pop()
-                return True
-
-        # Step 2: We already found the formatting element above
-
-        # Step 3: If formatting element is not in stack of open elements
-        if not context.open_elements.contains(formatting_element):
-            context.active_formatting_elements.remove(formatting_element)
-            return True
-
-        # Step 4: If formatting element is in stack but not in scope
-        if not context.open_elements.has_element_in_scope(formatting_element.tag_name):
-            return False
-
-        # Step 5: If formatting element is not the current node, it's a parse error
-        if context.open_elements.current() != formatting_element:
-            pass  # continue anyway
-
-        # Step 6: Find the furthest block
-        furthest_block = self._find_furthest_block_spec_compliant(
-            formatting_element, context
-        )
-
-        # Step 7: If no furthest block, then simple case
-        if furthest_block is None:
-            return self._handle_no_furthest_block_spec(
-                formatting_element, formatting_entry, context
-            )
-        else:
-            self.parser.debug(f"[adoption] chosen furthest_block=<{furthest_block.tag_name}> for </{tag_name}>")
-            # Additional trace for anchor cases
+            # Instrumentation (kept minimal)
             if tag_name == 'a':
-                self.parser.debug(f"[adoption][trace a] furthest candidates debug done")
+                open_tags = [el.tag_name for el in context.open_elements._stack]
+                if 'table' in open_tags or 'address' in open_tags:
+                    self.parser.debug(f"[adoption][loop] tag=a iter={iteration_count} open={open_tags}")
 
-        # Step 8-19: Complex case
-        result = self._run_complex_adoption_spec(
-            formatting_entry, furthest_block, context, iteration_count
-        )
-        return result
+            # Snapshot signatures for progress detection
+            open_sig_before = tuple(id(el) for el in context.open_elements._stack)
+            afe_sig_before = tuple(id(e.element) for e in context.active_formatting_elements if e.element)
+
+            # Step 1 fast path: current node matches but is not active formatting element
+            current_node = context.open_elements.current() if not context.open_elements.is_empty() else None
+            if current_node and current_node.tag_name == tag_name and context.active_formatting_elements.find_element(current_node) is None:
+                context.open_elements.pop()
+                made_progress_overall = True
+                continue  # One iteration consumed; attempt next
+
+            # Step 3: formatting element must be on open stack else remove from AFE
+            if not context.open_elements.contains(formatting_element):
+                context.active_formatting_elements.remove(formatting_element)
+                made_progress_overall = True
+                continue
+
+            # Step 4: if not in scope -> abort entire algorithm
+            if not context.open_elements.has_element_in_scope(formatting_element.tag_name):
+                break
+
+            # Step 5 (parse error if not current) – ignored for control flow
+
+            # Step 6: furthest block
+            furthest_block = self._find_furthest_block_spec_compliant(formatting_element, context)
+
+            # Instrumentation: if an <aside> exists as a descendant of formatting element OR as a candidate furthest block
+            # log current stack and AFE to understand adoption01 last subtest divergence.
+            if furthest_block and furthest_block.tag_name == 'aside':
+                self.parser.debug(
+                    f"[adoption][aside-trace] iter={iteration_count} fmt=<{formatting_element.tag_name}> furthest=aside stack={[e.tag_name for e in context.open_elements._stack]} afe={[e.element.tag_name for e in context.active_formatting_elements if e.element]}"
+                )
+
+            # Step 7: simple case
+            if furthest_block is None:
+                if self._handle_no_furthest_block_spec(formatting_element, formatting_entry, context):
+                    made_progress_overall = True
+                # Simple case always terminates algorithm per spec
+                break
+            else:
+                self.parser.debug(f"[adoption] chosen furthest_block=<{furthest_block.tag_name}> for </{tag_name}> iter={iteration_count}")
+
+            # Steps 8–19: complex case (may repeat up to 8 times)
+            if id(furthest_block) in processed_furthest_blocks:
+                break
+            processed_furthest_blocks.add(id(furthest_block))
+            complex_result = self._run_complex_adoption_spec(
+                formatting_entry, furthest_block, context, iteration_count
+            )
+            if complex_result:
+                made_progress_overall = True
+                # Continue to attempt further adoption if same tag still present.
+                continue
+            else:
+                break
+
+            # (progress detection block removed as loop always continues or breaks earlier)
+
+        return made_progress_overall
 
     # Helper: run adoption repeatedly (spec max 8) until no action
     def run_until_stable(self, tag_name: str, context, max_runs: int = 8) -> int:
@@ -369,39 +374,34 @@ class AdoptionAgencyAlgorithm:
         to live in various callers so external code no longer manages the iteration variable.
         """
         runs = 0
-        while runs < max_runs and self.should_run_adoption(tag_name, context):
-            if not self.run_algorithm(tag_name, context, runs + 1):
-                break
-            runs += 1
+        # With the internal spec loop implemented inside run_algorithm, one invocation is sufficient.
+        if self.should_run_adoption(tag_name, context):
+            if self.run_algorithm(tag_name, context):
+                runs = 1
         return runs
 
     # --- Spec helpers ---
     def _find_furthest_block_spec_compliant(self, formatting_element: Node, context) -> Optional[Node]:
-        """Locate the furthest block per HTML Standard: the last element after the formatting element in the
-        stack of open elements that is either a special element or a block element.
+        """Locate the furthest block per HTML Standard.
 
-        Instrumentation (furthest_block_alternatives) counts how many earlier qualifying candidates existed
-        that are skipped by choosing the last; this helps compare behavior against prior first-qualifying mode.
+        Spec wording: "Let furthestBlock be the topmost node in the stack of open elements that is lower
+        in the stack than formattingElement, and is an element in the special category." The stack grows
+        downward with the most recently pushed (current node) at the *bottom*. "Topmost" therefore means
+        the first qualifying element encountered when scanning downward from the formatting element's
+        position (i.e. the closest descendant on the stack), NOT the last. Our earlier implementation
+        incorrectly picked the last qualifying candidate, which prevented multi-iteration anchor nesting
+        (adoption01 test 4 expected outer div to be chosen, not the deepest div).
         """
         idx = context.open_elements.index_of(formatting_element)
         if idx == -1:
             return None
-        candidates = []
-        for node in context.open_elements._stack[idx + 1:]:
-            if node.tag_name in SPECIAL_CATEGORY_ELEMENTS or node.tag_name in BLOCK_ELEMENTS:
-                candidates.append(node)
-        if not candidates:
-            return None
-        # Strategy refinement:
-        # - If any table-related element is among candidates, use spec LAST (tends to stabilize foster parenting cases).
-        # - Else retain current hybrid: LAST if last is <aside>, otherwise FIRST (nearest) for better layering in anchor cases.
-        table_related = {"table","tbody","tfoot","thead","tr","td","th","caption"}
-        if any(c.tag_name in table_related for c in candidates):
-            return candidates[-1]
-        last = candidates[-1]
-        if last.tag_name == "aside":
-            return last
-        return candidates[0]
+        for node in context.open_elements._stack[idx + 1 :]:
+            if (
+                node.tag_name in SPECIAL_CATEGORY_ELEMENTS
+                or node.tag_name in BLOCK_ELEMENTS
+            ):
+                return node
+        return None
 
     def _handle_no_furthest_block_spec(
         self,
@@ -478,6 +478,7 @@ class AdoptionAgencyAlgorithm:
                 break
         if first_missing_index is None:
             return
+        self.parser.debug(f"[reconstruct] start missing_index={first_missing_index} afe={[e.element.tag_name if e.element else 'MARK' for e in stack]} open={[n.tag_name for n in open_stack]}")
         for entry in list(stack[first_missing_index:]):
             if entry.element is None or entry.element in open_stack:
                 continue
@@ -486,6 +487,7 @@ class AdoptionAgencyAlgorithm:
             context.open_elements.push(clone)
             entry.element = clone
             context.move_to_element(clone)
+            self.parser.debug(f"[reconstruct] cloned <{clone.tag_name}> new_open={[n.tag_name for n in context.open_elements._stack]}")
 
     def _run_complex_adoption_spec(
         self,
@@ -537,119 +539,129 @@ class AdoptionAgencyAlgorithm:
         if fe_index == -1 or fb_index == -1 or fb_index <= fe_index:
             return False
 
-        # --- Spec Step 12 (backward traversal restored) ---
+        # --- Accurate Spec Steps 11–13 implementation ---
+        # Step 11: node and lastNode initialized to furthest_block
+        node = furthest_block
         last_node = furthest_block
-        cur_index = fb_index - 1
-        while cur_index > fe_index:
-            candidate = open_stack[cur_index]
+        # Capture ordering so we can find element immediately above a node even if it is later removed.
+        # We'll recompute indices on each loop since open_stack mutates (removals & replacements) but we
+        # keep a mapping of previous-above relationships for removed nodes.
+        inner_loop_counter = 0
+        # For removed nodes we store the element that was above them at time of removal.
+        removed_above: dict[int, Node] = {}
+        while True:
+            if node is formatting_element:
+                break  # Step: stop before reaching formatting element
+            inner_loop_counter += 1
+            # Find nodeAbove (element immediately above node in open elements stack)
+            if context.open_elements.contains(node):
+                idx_cur = context.open_elements.index_of(node)
+                above_index = idx_cur - 1
+                node_above = context.open_elements._stack[above_index] if above_index >= 0 else None
+            else:
+                node_above = removed_above.get(id(node))
+            if node_above is None:
+                break
+            candidate = node_above
+            # If candidate not a formatting element: spec says set node to element above and continue (NO removal).
             candidate_entry = context.active_formatting_elements.find_element(candidate)
             if not candidate_entry:
-                # Selective removal: only remove if inline (not block or special) to preserve future furthest blocks.
-                if candidate.tag_name not in BLOCK_ELEMENTS and candidate.tag_name not in SPECIAL_CATEGORY_ELEMENTS:
-                    removed = context.open_elements.remove_element(candidate)
-                    if removed:
-                        self.metrics['step12_removed_non_afe'] = self.metrics.get('step12_removed_non_afe', 0) + 1
-                        self.parser.debug(f"[adoption] step12.3 removed non-AFE inline candidate <{candidate.tag_name}> (backward)")
-                        fb_index = context.open_elements.index_of(furthest_block)
-                        open_stack = context.open_elements._stack
-                        cur_index = fb_index - 1
-                        continue
-                cur_index -= 1
+                node = candidate
                 continue
-            afe_stack = context.active_formatting_elements._stack
-            pos = -1
-            for i, entry in enumerate(afe_stack):
-                if entry is candidate_entry:
-                    pos = i
-                    break
-            if pos != -1 and (len(afe_stack) - pos) > 3:
-                context.active_formatting_elements.remove_entry(candidate_entry)
-                self.metrics['step12_pruned_afe'] = self.metrics.get('step12_pruned_afe', 0) + 1
-                self.parser.debug(f"[adoption] step12.4 pruned candidate <{candidate.tag_name}> (backward)")
-                cur_index -= 1
+            # If inner_loop_counter > 3: remove candidate entry (and from stack) then continue upward
+            if inner_loop_counter > 3:
+                if context.active_formatting_elements.find_element(candidate):
+                    context.active_formatting_elements.remove_entry(candidate_entry)
+                if context.open_elements.contains(candidate):
+                    idx_cand = context.open_elements.index_of(candidate)
+                    above2 = context.open_elements._stack[idx_cand - 1] if idx_cand - 1 >= 0 else None
+                    removed_above[id(candidate)] = above2
+                    context.open_elements.remove_element(candidate)
+                node = candidate
                 continue
-            # 12.5 clone candidate
+            # If candidate IS the formatting element, stop (do not clone formatting element itself)
+            if candidate is formatting_element:
+                node = candidate
+                break
+            # Otherwise clone candidate formatting element
             clone = Node(candidate.tag_name, candidate.attributes.copy())
             context.active_formatting_elements.replace_entry(candidate_entry, clone, candidate_entry.token)
-            context.open_elements.replace_element(candidate, clone)
-            # 12.7 reparent last_node under clone
-            if last_node.parent:
-                last_node.parent.remove_child(last_node)
+            if context.open_elements.contains(candidate):
+                context.open_elements.replace_element(candidate, clone)
             clone.append_child(last_node)
             last_node = clone
-            cur_index -= 1
+            # Spec: let node be the new element (clone) so next iteration climbs from its position
+            node = clone
 
-        # Step 13: Insert last_node using common_ancestor override (even if no clone chain -> last_node == furthest_block => spec still proceeds but insertion becomes no-op)
-        if last_node is not common_ancestor:
+        # Step 14 (refined): Insert last_node at the "appropriate place for inserting a node" using common_ancestor as override.
+        if common_ancestor is last_node or common_ancestor.find_ancestor(lambda n: n is last_node):
+            self.parser.debug("[adoption][step14] skipped move (cycle risk)")
+        else:
             self._safe_detach_node(last_node)
+            # Determine insertion position relative to formatting element if it remains child of common ancestor
             if self._should_foster_parent(common_ancestor):
                 self._foster_parent_node(last_node, context, common_ancestor)
+                self.parser.debug(f"[adoption][step14] foster-parented last_node <{last_node.tag_name}> relative to <{common_ancestor.tag_name}>")
             else:
-                if furthest_block.parent is common_ancestor and furthest_block in common_ancestor.children:
-                    insert_pos = common_ancestor.children.index(furthest_block)
-                    common_ancestor.insert_child_at(insert_pos, last_node)
-                else:
+                inserted = False
+                if formatting_element.parent is common_ancestor and formatting_element in common_ancestor.children:
+                    pos_fmt = common_ancestor.children.index(formatting_element)
+                    # Insert AFTER formatting element per spec's adjusted insertion when override target used
+                    common_ancestor.insert_child_at(pos_fmt + 1, last_node)
+                    inserted = True
+                if not inserted:
                     common_ancestor.append_child(last_node)
-        self.parser.debug(f"[adoption] after step13 placement chain_root=<{last_node.tag_name}> parent=<{last_node.parent.tag_name if last_node.parent else 'None'}>")
+                self.parser.debug(
+                    f"[adoption][step14] placed last_node <{last_node.tag_name}> under <{common_ancestor.tag_name}> children={[c.tag_name for c in common_ancestor.children]}"
+                )
+        # Instrumentation: show path from formatting element to furthest_block (if still connected)
+        path_tags = []
+        cur = furthest_block
+        while cur is not None and cur is not formatting_element and len(path_tags) < 25:
+            path_tags.append(cur.tag_name)
+            cur = cur.parent
+        if cur is formatting_element:
+            path_tags.append(formatting_element.tag_name)
+        self.parser.debug(f"[adoption][diag] path(furthest->fmt)={'/'.join(path_tags)}")
+        self.parser.debug(f"[adoption][diag] common_ancestor_children={[c.tag_name for c in (common_ancestor.children if common_ancestor.children else [])]}")
+        self.parser.debug(f"[adoption] after step13 (spec) chain_root=<{last_node.tag_name}> parent=<{last_node.parent.tag_name if last_node.parent else 'None'}>")
+
+        # De-duplicate last_node (furthest_block chain root) in open elements stack if movement created duplicate logical entries.
+        # Keep the earliest occurrence (closest to root) and drop later duplicates to maintain stack invariants.
+        occurrences = [i for i, el in enumerate(context.open_elements._stack) if el is last_node]
+        if len(occurrences) > 1:
+            # remove from end backwards except first
+            for i in reversed(occurrences[1:]):
+                context.open_elements._stack.pop(i)
+            self.parser.debug(f"[adoption][dedupe] removed duplicate stack entries for <{last_node.tag_name}> now stack={[e.tag_name for e in context.open_elements._stack]}")
 
         # Always proceed with formatting element cloning (Steps 14–19); removed ladder-lift early-exit heuristic.
 
         # (No single-intermediate-clone normalization; revert to straightforward cloning path.)
 
-        # Step 14: Create a clone of the formatting element (spec always clones)
-        # NOTE: Previous optimization to skip cloning for trivial empty case caused
-        # repeated Adoption Agency invocations without making progress. Always clone
-        # to ensure Steps 17-19 can update stacks and active formatting elements.
-        formatting_clone = Node(
-            tag_name=formatting_element.tag_name,
-            attributes=formatting_element.attributes.copy(),
-        )
+        # Previous relocation adjustment removed; spec insertion above covers extraction.
 
-        # Step 15/16 (reverted to spec-style transplant): move all children of furthest_block into formatting_clone,
-        # then append the clone as the sole child wrapper (restoring earlier baseline to measure effect on regressions).
-        fb_children = list(furthest_block.children)
-        for ch in fb_children:
+        # Step 15: Create a clone of the formatting element
+        fe_clone = Node(formatting_element.tag_name, formatting_element.attributes.copy())
+        # Step 16: Move all children of furthest_block into fe_clone
+        for ch in list(furthest_block.children):
             furthest_block.remove_child(ch)
-            formatting_clone.append_child(ch)
-        furthest_block.append_child(formatting_clone)
-
-        self.parser.debug(f"[adoption] after step16 furthest_block=<{furthest_block.tag_name}> clone=<{formatting_clone.tag_name}> children={[c.tag_name for c in formatting_clone.children]}")
-
-        # Step 17: Remove original formatting element entry from active list
-        context.active_formatting_elements.remove_entry(formatting_entry)
-
-        # Step 18: Insert clone entry at bookmark index
-        if bookmark_index >= 0 and bookmark_index <= len(
-            context.active_formatting_elements
-        ):
-            context.active_formatting_elements.insert_at_index(
-                bookmark_index, formatting_clone, formatting_entry.token
-            )
-        else:
-            context.active_formatting_elements.push(
-                formatting_clone, formatting_entry.token
-            )
-
-        # Step 19: remove original formatting element from open stack, insert clone immediately after furthest_block.
-        open_stack = context.open_elements._stack
-        if formatting_element in open_stack:
-            open_stack.remove(formatting_element)
-        fb_index = context.open_elements.index_of(furthest_block)
-        if fb_index == -1:
-            fb_index = len(open_stack) - 1
-        open_stack.insert(fb_index + 1, formatting_clone)
-        # Invariant check (debug only)
-        if formatting_clone.parent is not furthest_block:
-            # Expected after spec transplant: clone is child of furthest_block
-            self.parser.debug("[adoption][warn] clone parent mismatch post revert Step19")
-        # Add foster parenting instrumentation to see if subsequent character tokens get fostered outside the clone
-        self.parser.debug("[adoption][instrument] step19 complete; monitoring foster parenting for misplaced inline text")
-
-        # Insertion point: per spec set to furthest_block (current node)
-        context.move_to_element(furthest_block)
-
+            fe_clone.append_child(ch)
+        # Step 17: Append fe_clone to furthest_block
+        furthest_block.append_child(fe_clone)
+        # Step 18: Replace formatting element entry in active formatting elements with clone (keep same position)
+        context.active_formatting_elements.replace_entry(formatting_entry, fe_clone, formatting_entry.token)
+        # Step 19: Remove formatting element from open elements stack; insert fe_clone immediately AFTER furthest_block (spec: below it)
+        if context.open_elements.contains(formatting_element):
+            context.open_elements.remove_element(formatting_element)
+        if context.open_elements.contains(furthest_block):
+            fb_index2 = context.open_elements.index_of(furthest_block)
+            context.open_elements._stack.insert(fb_index2 + 1, fe_clone)
+        # Set insertion point to the new clone (so subsequent characters go inside formatting element per spec intent)
+        context.move_to_element(fe_clone)
         stack_tags = [e.tag_name for e in context.open_elements._stack]
-        self.parser.debug(f"[adoption] post-step19 stack={stack_tags}")
+        afe_tags = [e.element.tag_name for e in context.active_formatting_elements if e.element]
+        self.parser.debug(f"[adoption] post-step19 fe_clone=<{fe_clone.tag_name}> parent=<{fe_clone.parent.tag_name if fe_clone.parent else 'None'}> stack={stack_tags} afe={afe_tags}")
         self.parser.debug(
             f"[adoption] complex-end tag=<{formatting_element.tag_name}> stack={[e.tag_name for e in context.open_elements._stack]} afe={[e.element.tag_name for e in context.active_formatting_elements if e.element]}"
         )
