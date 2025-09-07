@@ -598,22 +598,47 @@ class AdoptionAgencyAlgorithm:
         # Empirically our suite expects movement even when last_node == furthest_block (some legacy formatting cases),
         # so we retain unconditional move variant (with cycle guard) that produced best pass rate earlier.
         # Step 14 (unconditional move variant that previously maximized pass rate)
-        if common_ancestor is last_node or common_ancestor.find_ancestor(lambda n: n is last_node):
+        # Step 14 refinement: avoid relocating if last_node already correctly placed.
+        if last_node.parent is common_ancestor:
+            # Already where spec wants it; no movement.
+            self.parser.debug("[adoption][step14] last_node already child of common_ancestor; no move")
+        elif common_ancestor is last_node or common_ancestor.find_ancestor(lambda n: n is last_node):
             self.parser.debug("[adoption][step14] skipped move (cycle risk)")
         else:
-            self._safe_detach_node(last_node)
+            # Decide whether foster parenting is appropriate. We restrict foster parenting to cases
+            # where common_ancestor is table-related AND last_node is *not* already a table section/row
+            # (moving table structural nodes breaks expected subtree layout in several anchor tests).
+            table_structural = {"table", "tbody", "thead", "tfoot", "tr"}
+            do_foster = False
             if self._should_foster_parent(common_ancestor):
+                if last_node.tag_name not in table_structural:
+                    # Additionally ensure last_node is not inside a td/th (spec would keep it there).
+                    inside_cell = last_node.find_ancestor(lambda n: n.tag_name in ("td", "th")) is not None
+                    if not inside_cell:
+                        do_foster = True
+            if do_foster:
+                self._safe_detach_node(last_node)
                 self._foster_parent_node(last_node, context, common_ancestor)
-                self.parser.debug(f"[adoption][step14] foster-parented last_node <{last_node.tag_name}> relative to <{common_ancestor.tag_name}>")
+                self.parser.debug(
+                    f"[adoption][step14] foster-parented last_node <{last_node.tag_name}> relative to <{common_ancestor.tag_name}>"
+                )
             else:
+                # Normal placement: place after formatting element if it is still a child of common_ancestor,
+                # otherwise append (maintains relative order).
+                self._safe_detach_node(last_node)
                 inserted = False
-                if formatting_element.parent is common_ancestor and formatting_element in common_ancestor.children:
+                if (
+                    formatting_element.parent is common_ancestor
+                    and formatting_element in common_ancestor.children
+                ):
                     pos_fmt = common_ancestor.children.index(formatting_element)
                     common_ancestor.insert_child_at(pos_fmt + 1, last_node)
                     inserted = True
                 if not inserted:
                     common_ancestor.append_child(last_node)
-                self.parser.debug(f"[adoption][step14] placed last_node <{last_node.tag_name}> under <{common_ancestor.tag_name}> children={[c.tag_name for c in common_ancestor.children]}")
+                self.parser.debug(
+                    f"[adoption][step14] placed last_node <{last_node.tag_name}> under <{common_ancestor.tag_name}> children={[c.tag_name for c in common_ancestor.children]}"
+                )
         # Instrumentation: show path from formatting element to furthest_block (if still connected)
         path_tags = []
         cur = furthest_block
