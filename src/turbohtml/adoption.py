@@ -259,22 +259,11 @@ class AdoptionAgencyAlgorithm:
         return {}
 
     def should_run_adoption(self, tag_name: str, context) -> bool:
-        # Spec: run adoption agency for an end tag token whose tag name is a formatting element
-        # and that element is in the list of active formatting elements.
+        # Spec trigger: end tag whose tag name is a formatting element AND a matching
+        # entry exists in the active formatting elements list.
         if tag_name not in FORMATTING_ELEMENTS:
             return False
-        entry = context.active_formatting_elements.find(tag_name)
-        if entry is not None:
-            return True
-        # Additional trigger: formatting element with same tag is on open elements stack and we are in table context;
-        # some regressions show we skipped adoption causing formatting wrapper to be misplaced (tests1.dat:20 etc.).
-        open_match = None
-        for el in context.open_elements._stack:
-            if el.tag_name == tag_name:
-                open_match = el
-        if open_match and context.document_state in (getattr(context, 'document_state').IN_TABLE, getattr(context, 'document_state').IN_TABLE_BODY, getattr(context, 'document_state').IN_ROW):  # defensive attribute usage
-            return True
-        return False
+        return context.active_formatting_elements.find(tag_name) is not None
 
     def run_algorithm(self, tag_name: str, context, outer_invocation: int = 1) -> bool:
         """Run the full Adoption Agency Algorithm for a given end tag.
@@ -309,12 +298,6 @@ class AdoptionAgencyAlgorithm:
             open_sig_before = tuple(id(el) for el in context.open_elements._stack)
             afe_sig_before = tuple(id(e.element) for e in context.active_formatting_elements if e.element)
 
-            # Step 1 fast path: current node matches but is not active formatting element
-            current_node = context.open_elements.current() if not context.open_elements.is_empty() else None
-            if current_node and current_node.tag_name == tag_name and context.active_formatting_elements.find_element(current_node) is None:
-                context.open_elements.pop()
-                made_progress_overall = True
-                continue  # One iteration consumed; attempt next
 
             # Step 3: formatting element must be on open stack else remove from AFE
             if not context.open_elements.contains(formatting_element):
