@@ -219,12 +219,10 @@ class TestRunner:
 
             for i, test in enumerate(tests):
                 if not self._should_run_test(file_path.name, i, test):
-                    # Check if it was skipped due to script dependency
                     if test.script_directive in ("script-on", "script-off"):
                         skipped += 1
                         file_skipped += 1
                         file_test_indices.append(("skip", i))
-                        self._print_progress("s")
                     continue
 
                 try:
@@ -235,7 +233,6 @@ class TestRunner:
                         passed += 1
                         file_passed += 1
                         file_test_indices.append(("pass", i))
-                        self._print_progress(".")
                     else:
                         failed += 1
                         file_failed += 1
@@ -264,11 +261,18 @@ class TestRunner:
         return passed, failed, skipped
 
     def _run_single_test(self, test: TestCase) -> TestResult:
-        """Run a single test and return the result"""
-        debug_output = ""
+        """Run a single test and return the result.
 
-        # Capture debug output if debug mode is enabled
-        if self.config["debug"]:
+        Verbosity levels:
+          0: no per-test output (only summaries)
+          1: print failing test diffs
+          2: include parser debug for failing tests (debug captured for all tests for simplicity)
+          3: capture parser debug for all tests (currently printed only for failures like level 2)
+        """
+        verbosity = self.config["verbosity"]
+        capture_debug = verbosity >= 2  # capture once (fast enough) when user wants debug
+        debug_output = ""
+        if capture_debug:
             f = StringIO()
             with redirect_stdout(f):
                 parser = TurboHTML(
@@ -280,7 +284,6 @@ class TestRunner:
             parser = TurboHTML(test.data, fragment_context=test.fragment_context)
             actual_tree = parser.root.to_test_format()
 
-        # Compare the actual output with expected
         passed = compare_outputs(test.document, actual_tree)
 
         return TestResult(
@@ -292,15 +295,9 @@ class TestRunner:
             debug_output=debug_output,
         )
 
-    def _print_progress(self, indicator: str):
-        """Print progress indicator unless in quiet mode"""
-        if not self.config["quiet"]:
-            print(indicator, end="", flush=True)
-
     def _handle_failure(self, file_path: Path, test_index: int, result: TestResult):
-        """Handle test failure - print indicator and report if configured"""
-        self._print_progress("x")
-        if self.config["print_fails"]:
+        """Handle test failure - print report based on verbosity (>=1)."""
+        if self.config["verbosity"] >= 1 and not self.config["quiet"]:
             print(f"\nTest failed in {file_path.name}:{test_index}")
             TestReporter(self.config).print_test_result(result)
 
@@ -308,55 +305,72 @@ class TestRunner:
 class TestReporter:
     def __init__(self, config: dict):
         self.config = config
+    # A "full" run means no narrowing flags were supplied. Only then do we write test-summary.txt.
+    def _is_full_run(self) -> bool:
+        return not (
+            self.config.get("test_specs")
+            or self.config.get("filter_files")
+            or self.config.get("exclude_files")
+            or self.config.get("exclude_errors")
+            or self.config.get("filter_errors")
+            or self.config.get("exclude_html")
+            or self.config.get("filter_html")
+        )
 
     def print_test_result(self, result: TestResult):
-        """Print detailed test result based on configuration"""
-        if not result.passed or self.config["print_fails"]:
+        """Print detailed test result according to verbosity.
+
+        Verbosity >=1: print failing test diffs.
+        Verbosity >=2: include debug block for failing tests (if captured).
+        Verbosity >=3: reserved for potential future pass printing (currently same as 2).
+        """
+        verbosity = self.config["verbosity"]
+        if result.passed:
+            # At present we do not print passing tests even at highest verbosity to avoid log noise.
+            return
+        if verbosity >= 1:
             lines = [
-                f"{'PASSED' if result.passed else 'FAILED'}:",
+                "FAILED:",
                 f"=== INCOMING HTML ===\n{result.input_html}\n",
                 f"Errors to handle when parsing: {result.expected_errors}\n",
+                f"=== WHATWG HTML5 SPEC COMPLIANT TREE ===\n{result.expected_output}\n",
+                f"=== CURRENT PARSER OUTPUT TREE ===\n{result.actual_output}",
             ]
-
-            if result.debug_output:
-                lines.extend(
-                    [
-                        "=== DEBUG PRINTS WHEN PARSING ===",
-                        f"{result.debug_output.rstrip()}\n",  # Remove trailing whitespace and add linebreak
-                    ]
-                )
-
-            lines.extend(
-                [
-                    f"=== WHATWG HTML5 SPEC COMPLIANT TREE ===\n{result.expected_output}\n",
-                    f"=== CURRENT PARSER OUTPUT TREE ===\n{result.actual_output}",
-                ]
-            )
-
+            if verbosity >= 2 and result.debug_output:
+                # Insert debug block before trees maybe? Keep after errors for readability.
+                lines.insert(3, f"=== DEBUG PRINTS WHEN PARSING ===\n{result.debug_output.rstrip()}\n")
             print("\n".join(lines))
 
     def print_summary(
         self, passed: int, failed: int, skipped: int = 0, file_results: dict = None
     ):
-        """Print test summary and optionally save to file"""
+        """Print summary and conditionally write test-summary.txt.
+
+        We only persist the summary file when running the full unfiltered suite.
+        Focused/filtered runs should not overwrite the canonical summary file.
+        Quiet mode still limits stdout to the header line.
+        """
         total = passed + failed
-        total + skipped
-        summary = f"Tests passed: {passed}/{total}"
-
-        if not self.config["fail_fast"]:
-            percentage = round(passed * 100 / total) if total else 0
-            summary += f" ({percentage}%) ({skipped} skipped)"
-
-            # Only save to file if no filters are applied (running all tests)
-            if self._is_running_all_tests() and file_results:
-                detailed_summary = self._generate_detailed_summary(
-                    summary, file_results
-                )
-                Path("test-summary.txt").write_text(detailed_summary)
-            elif self._is_running_all_tests():
-                Path("test-summary.txt").write_text(summary)
-
-        print(f"\n{summary}")
+        percentage = round(passed * 100 / total) if total else 0
+        header = f"Tests passed: {passed}/{total} ({percentage}%) ({skipped} skipped)"
+        full_run = self._is_full_run()
+        # If no file breakdown collected, just output header (and write header)
+        if not file_results:
+            if full_run:
+                Path("test-summary.txt").write_text(header)
+            # No leading newline needed; progress indicators are disabled.
+            print(header)
+            return
+        detailed = self._generate_detailed_summary(header, file_results)
+        # Persist only for full runs
+        if full_run:
+            Path("test-summary.txt").write_text(detailed)
+        if self.config.get("quiet"):
+            # Quiet: only header to stdout (no leading blank line)
+            print(header)
+        else:
+            # Full detailed summary (no leading blank line)
+            print(detailed)
 
     def _generate_detailed_summary(
         self, overall_summary: str, file_results: dict
@@ -364,7 +378,7 @@ class TestReporter:
         """Generate a detailed summary with per-file breakdown"""
         lines = [overall_summary, ""]
 
-        # Sort files naturally (tests1.dat, tests2.dat, etc.)
+    # Sort files naturally (tests1.dat, tests2.dat, etc.)
         import re
 
         def natural_sort_key(filename):
@@ -380,7 +394,6 @@ class TestReporter:
 
             # Calculate percentage based on runnable tests (excluding skipped)
             runnable_tests = result["passed"] + result["failed"]
-            result["total"]
             skipped_tests = result.get("skipped", 0)
 
             # Format: "filename: 15/16 (94%) [.....x] (2 skipped)"
@@ -425,20 +438,6 @@ class TestReporter:
 
         return pattern
 
-    def _is_running_all_tests(self) -> bool:
-        """Check if we're running all tests (no filters applied)"""
-        return not any(
-            [
-                self.config.get("test_specs"),
-                self.config.get("filter_files"),
-                self.config.get("exclude_errors"),
-                self.config.get("exclude_files"),
-                self.config.get("exclude_html"),
-                self.config.get("filter_html"),
-                self.config.get("filter_errors"),
-            ]
-        )
-
 
 def parse_args() -> dict:
     parser = argparse.ArgumentParser()
@@ -453,19 +452,23 @@ def parse_args() -> dict:
         help="Space-separated list of test specs in format: file:indices (e.g., test1.dat:0,1,2 test2.dat:5,6)",
     )
     parser.add_argument(
-        "-d", "--debug", action="store_true", help="Print debug information"
-    )
-    parser.add_argument(
         "--filter-files",
         type=str,
         nargs="+",
         help="Only run tests from files containing any of these strings (space-separated)",
     )
     parser.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
+        help="Increase verbosity: -v show failing test diffs; -vv add parser debug for failures; -vvv capture debug for all tests (currently printed only on failures)",
+    )
+    parser.add_argument(
         "-q",
         "--quiet",
         action="store_true",
-        help="Suppress progress indicators (dots and x's)",
+        help="Quiet mode: only print the header line (no per-file breakdown). For a full unfiltered run the detailed summary is still written to test-summary.txt",
     )
     parser.add_argument(
         "--exclude-errors",
@@ -488,22 +491,22 @@ def parse_args() -> dict:
         help="Only run tests containing any of these strings in their HTML input (comma-separated)",
     )
     parser.add_argument(
-        "--print-fails", action="store_true", help="Print details for all failing tests"
-    )
-    parser.add_argument(
         "--filter-errors",
         type=str,
         help="Only run tests containing any of these strings in their errors (comma-separated)",
     )
+    parser.add_argument(
+        "--regressions",
+        action="store_true",
+        help="After a full (unfiltered) run, compare results to committed HEAD test-summary.txt and report new failures (exits 1 if regressions).",
+    )
     args = parser.parse_args()
 
-    # Split the test specs if they contain commas
     test_specs = []
     if args.test_specs:
         for spec in args.test_specs:
             test_specs.extend(spec.split(","))
 
-    # Split exclude lists on commas
     exclude_errors = args.exclude_errors.split(",") if args.exclude_errors else None
     exclude_files = args.exclude_files.split(",") if args.exclude_files else None
     exclude_html = args.exclude_html.split(",") if args.exclude_html else None
@@ -513,7 +516,6 @@ def parse_args() -> dict:
     return {
         "fail_fast": args.fail_fast,
         "test_specs": test_specs,
-        "debug": args.debug,
         "filter_files": args.filter_files,
         "quiet": args.quiet,
         "exclude_errors": exclude_errors,
@@ -521,7 +523,8 @@ def parse_args() -> dict:
         "exclude_html": exclude_html,
         "filter_html": filter_html,
         "filter_errors": filter_errors,
-        "print_fails": args.print_fails,
+        "verbosity": args.verbose,
+        "regressions": args.regressions,
     }
 
 
@@ -534,6 +537,94 @@ def main():
 
     passed, failed, skipped = runner.run()
     reporter.print_summary(passed, failed, skipped, runner.file_results)
+
+    # Integrated regression detection
+    if config.get("regressions"):
+        # Only meaningful for full unfiltered run
+        if not reporter._is_full_run():  # reuse logic
+            print("\n[regressions] Skipping: run was filtered (need full suite).")
+            return
+        _run_regression_check(runner, reporter)
+
+
+def _run_regression_check(runner: TestRunner, reporter: TestReporter):
+    """Compare current in-memory results against committed baseline test-summary.txt.
+
+    Baseline is read via `git show HEAD:test-summary.txt`. If missing, we skip silently.
+    Regression definition (per test index):
+      - '.' -> 'x'
+      - 's' -> 'x'
+      - pattern extension where new char is 'x'
+    Exit code: 1 if regressions found, else 0.
+    """
+    import subprocess, sys, re
+
+    try:
+        proc = subprocess.run(
+            ["git", "show", "HEAD:test-summary.txt"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        print("\n[regressions] git not found; skipping regression analysis.")
+        return
+    if proc.returncode != 0 or not proc.stdout.strip():
+        print("\n[regressions] No baseline test-summary.txt in HEAD; skipping.")
+        return
+
+    baseline_text = proc.stdout
+
+    # Build current patterns mapping file -> pattern
+    current_patterns = {}
+    for filename, result in runner.file_results.items():
+        pattern = reporter._generate_test_pattern(result["test_indices"])  # reuse
+        current_patterns[filename] = pattern
+
+    # Parse baseline lines: look for lines like 'tests1.dat: 93/112 (83%) [..x..]'
+    line_re = re.compile(r"^(?P<file>[\w./-]+\.dat):.*?\[(?P<pattern>[.xs]+)\]")
+    baseline_patterns = {}
+    for line in baseline_text.splitlines():
+        m = line_re.match(line.strip())
+        if m:
+            baseline_patterns[m.group("file")] = m.group("pattern")
+
+    regressions = {}
+    for file, new_pattern in current_patterns.items():
+        old_pattern = baseline_patterns.get(file)
+        if not old_pattern:
+            # Treat new file entirely as potential regressions only where failures exist
+            newly_failed = [i for i, ch in enumerate(new_pattern) if ch == "x"]
+            if newly_failed:
+                regressions[file] = newly_failed
+            continue
+        max_len = max(len(old_pattern), len(new_pattern))
+        reg_indices = []
+        for i in range(max_len):
+            old_ch = old_pattern[i] if i < len(old_pattern) else None
+            new_ch = new_pattern[i] if i < len(new_pattern) else None
+            if new_ch == "x" and (old_ch in (".", "s") or old_ch is None):
+                reg_indices.append(i)
+        if reg_indices:
+            regressions[file] = reg_indices
+
+    print("\n=== regression analysis (HEAD vs current) ===")
+    if not regressions:
+        print("No new regressions detected.")
+        return
+    print("New failing test indices (0-based):")
+    specs = []
+    for file in sorted(regressions):
+        indices = regressions[file]
+        joined = ",".join(str(i) for i in indices)
+        spec = f"\n{file}:{joined}"
+        specs.append(f"{file}:{joined}")
+        print(f"{file} -> {file}:{joined}")
+    print("\nRe-run just the regressed tests with:")
+    print("python run_tests.py --test-specs " + " ".join(specs))
+    # Exit with non-zero to surface in CI
+    sys.exit(1)
 
 
 if __name__ == "__main__":

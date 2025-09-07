@@ -38,7 +38,7 @@ No heuristics allowed, and if found remove and replace with spec-compliant code 
 1. Target failing areas first (use `--filter-files` or `--test-specs`).
 2. Use `--debug --print-fails` to trace execution path through the parser.
 2. Iterate: fix → focused run → full run.
-3. Guard regressions: inspect `git diff test-summary.txt` or `python regressions.py` often.
+3. Guard regressions: run `python run_tests.py --regressions` or inspect `git diff test-summary.txt`.
 4. Never merge with net fewer passing tests unless justified.
 5. Quick snippet runner (full test suite never takes longer than 5s):
    ```
