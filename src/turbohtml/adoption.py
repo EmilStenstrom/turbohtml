@@ -264,7 +264,18 @@ class AdoptionAgencyAlgorithm:
         # and that element is in the list of active formatting elements.
         if tag_name not in FORMATTING_ELEMENTS:
             return False
-        return context.active_formatting_elements.find(tag_name) is not None
+        entry = context.active_formatting_elements.find(tag_name)
+        if entry is not None:
+            return True
+        # Additional trigger: formatting element with same tag is on open elements stack and we are in table context;
+        # some regressions show we skipped adoption causing formatting wrapper to be misplaced (tests1.dat:20 etc.).
+        open_match = None
+        for el in context.open_elements._stack:
+            if el.tag_name == tag_name:
+                open_match = el
+        if open_match and context.document_state in (getattr(context, 'document_state').IN_TABLE, getattr(context, 'document_state').IN_TABLE_BODY, getattr(context, 'document_state').IN_ROW):  # defensive attribute usage
+            return True
+        return False
 
     def run_algorithm(self, tag_name: str, context, iteration_count: int = 0) -> bool:
         # Run adoption algorithm (WHATWG HTML spec)
@@ -286,6 +297,11 @@ class AdoptionAgencyAlgorithm:
             open_tags = [el.tag_name for el in context.open_elements._stack]
             if any(t == 'address' for t in open_tags) and 'style' in open_tags and open_tags.count('a') >= 1:
                 self.parser.debug(f"[adoption][trace a] iteration={iteration_count} open={open_tags} active={[e.element.tag_name for e in context.active_formatting_elements if e.element]}")
+        # Table adjacency diagnostics for regressions tests1.dat:20 and tests19/26 patterns
+        if tag_name in ('b','i','nobr'):
+            open_tags = [el.tag_name for el in context.open_elements._stack]
+            if 'table' in open_tags:
+                self.parser.debug(f"[adoption][trace table-mix] end=</{tag_name}> iter={iteration_count} open={open_tags}")
 
         # Intervening <b> entries retained; no active formatting pruning mid-run
 
@@ -376,7 +392,12 @@ class AdoptionAgencyAlgorithm:
                 candidates.append(node)
         if not candidates:
             return None
-        # Hybrid strategy: prefer LAST when it is an <aside> (improves aside mis-nesting case), else FIRST (nearest) for layering.
+        # Strategy refinement:
+        # - If any table-related element is among candidates, use spec LAST (tends to stabilize foster parenting cases).
+        # - Else retain current hybrid: LAST if last is <aside>, otherwise FIRST (nearest) for better layering in anchor cases.
+        table_related = {"table","tbody","tfoot","thead","tr","td","th","caption"}
+        if any(c.tag_name in table_related for c in candidates):
+            return candidates[-1]
         last = candidates[-1]
         if last.tag_name == "aside":
             return last
@@ -389,6 +410,7 @@ class AdoptionAgencyAlgorithm:
         context,
     ) -> bool:
         """Simple case: pop formatting element and remove its active entry."""
+        self.parser.debug(f"[adoption] simple-case for <{formatting_element.tag_name}>")
         # Pop from open elements until we've removed the formatting element
         stack = context.open_elements._stack
         if formatting_element in stack:
@@ -583,15 +605,14 @@ class AdoptionAgencyAlgorithm:
             attributes=formatting_element.attributes.copy(),
         )
 
-        # Step 15/16: Move all children of furthest_block to formatting_clone, then append formatting_clone.
-        # (Using explicit list to avoid mutation issues during iteration.)
+        # Step 15/16 (reverted to spec-style transplant): move all children of furthest_block into formatting_clone,
+        # then append the clone as the sole child wrapper (restoring earlier baseline to measure effect on regressions).
         fb_children = list(furthest_block.children)
         for ch in fb_children:
             furthest_block.remove_child(ch)
             formatting_clone.append_child(ch)
         furthest_block.append_child(formatting_clone)
 
-        # TEMP DEBUG: record structure snapshot for adoption diagnostics (will be removed once stable)
         self.parser.debug(f"[adoption] after step16 furthest_block=<{furthest_block.tag_name}> clone=<{formatting_clone.tag_name}> children={[c.tag_name for c in formatting_clone.children]}")
 
         # Step 17: Remove original formatting element entry from active list
@@ -609,7 +630,7 @@ class AdoptionAgencyAlgorithm:
                 formatting_clone, formatting_entry.token
             )
 
-        # Step 19 (spec behavior): remove original formatting element and insert clone right after furthest_block.
+        # Step 19: remove original formatting element from open stack, insert clone immediately after furthest_block.
         open_stack = context.open_elements._stack
         if formatting_element in open_stack:
             open_stack.remove(formatting_element)
@@ -617,11 +638,12 @@ class AdoptionAgencyAlgorithm:
         if fb_index == -1:
             fb_index = len(open_stack) - 1
         open_stack.insert(fb_index + 1, formatting_clone)
-        # Invariant check (debug only): parents must precede children
+        # Invariant check (debug only)
         if formatting_clone.parent is not furthest_block:
-            self.parser.debug("[adoption][warn] formatting_clone parent mismatch; expected furthest_block")
-        if context.open_elements.index_of(furthest_block) > context.open_elements.index_of(formatting_clone):
-            self.parser.debug("[adoption][warn] stack ordering anomaly after Step19")
+            # Expected after spec transplant: clone is child of furthest_block
+            self.parser.debug("[adoption][warn] clone parent mismatch post revert Step19")
+        # Add foster parenting instrumentation to see if subsequent character tokens get fostered outside the clone
+        self.parser.debug("[adoption][instrument] step19 complete; monitoring foster parenting for misplaced inline text")
 
         # Insertion point: per spec set to furthest_block (current node)
         context.move_to_element(furthest_block)

@@ -1821,45 +1821,32 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         # Removed prior heuristic ignoring premature end tag when nested block present.
         # Spec still requires running the adoption agency algorithm in these cases.
 
-        runs = 0
-        while runs < 8 and self.parser.adoption_agency.should_run_adoption(tag_name, context):
-            runs += 1
-            if not self.parser.adoption_agency.run_algorithm(tag_name, context, runs):
-                break
+        runs = self.parser.adoption_agency.run_until_stable(tag_name, context, max_runs=8)
         if runs > 0:
-            self.debug(
-                f"FormattingElementHandler: Adoption agency completed after {runs} run(s) for </{tag_name}>"
-            )
+            self.debug(f"FormattingElementHandler: Adoption agency completed after {runs} run(s) for </{tag_name}>")
             return True
 
         self.debug(
             f"FormattingElementHandler: No adoption agency runs needed for </{tag_name}>, proceeding with normal end tag handling"
         )
 
-        if self._is_in_table_cell(context):
-            target = (
-                context.current_parent
-                if context.current_parent.tag_name == tag_name
-                else context.current_parent.find_ancestor(tag_name)
-            )
-            if target:
-                entry = context.active_formatting_elements.find_element(target)
-                if entry:
-                    context.active_formatting_elements.remove(target)
-                # Pop open elements up to target
-                while not context.open_elements.is_empty():
-                    popped = context.open_elements.pop()
-                    if popped == target:
-                        break
-                if target.parent:
-                    context.move_to_element(target.parent)
-                self.debug(f"Closed formatting element {tag_name} inside table cell")
-                return True
-            cell = context.current_parent.find_first_ancestor_in_tags(["td", "th"])
+        # Spec alignment: if the formatting element is on the open elements stack but NOT in scope,
+        # the end tag token must be ignored (no stack pops, no insertion point movement). Our previous
+        # boundary logic incorrectly bubbled out of the table, altering the insertion point and causing
+        # subsequent formatting start tags (e.g. <i>) to be foster‑parented before the table instead of
+        # remaining inside the cell (tests1.dat:20, tests19.dat:89, tests26.dat:2 scenarios).
+        # Detect and short‑circuit here.
+        fmt_on_stack = None
+        for el in context.open_elements._stack:
+            if el.tag_name == tag_name:
+                fmt_on_stack = el
+                break
+        if fmt_on_stack and not context.open_elements.has_element_in_scope(tag_name):
             self.debug(
-                f"Inside table cell {cell.tag_name}, no matching <{tag_name}> to close; ignoring end tag"
+                f"Ignoring </{tag_name}> (formatting element not in scope, per spec steps 4-5)"
             )
             return True
+
 
         # Check if we're inside a boundary element (except table cells)
         boundary = context.current_parent.find_ancestor(
