@@ -566,6 +566,7 @@ class AdoptionAgencyAlgorithm:
         removed_above: dict[int, Node] = {}
         while True:
             if node is formatting_element:
+                # Reached the formatting element; stop inner loop per spec Step 11.
                 break  # Step: stop before reaching formatting element
             inner_loop_counter += 1
             # Find nodeAbove (element immediately above node in open elements stack)
@@ -704,6 +705,8 @@ class AdoptionAgencyAlgorithm:
                     self.metrics['step14_relocation_skipped_redundant'] = self.metrics.get('step14_relocation_skipped_redundant', 0) + 1
                     self.parser.debug('[adoption][step14] skip relocation (redundant)')
                     return
+
+        # (Prior variant always relocated unless redundant placement detected.)
         # Detach if parent differs or ordering mismatch
         if last_node.parent is not None:
             self._safe_detach_node(last_node)

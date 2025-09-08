@@ -3900,16 +3900,17 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 )
                 break
         if prev_a:
-            if context.current_parent.find_ancestor("a") == prev_a:
-                self.debug("Still in same <a> context, adding text to existing <a> tag")
+            active_entry = context.active_formatting_elements.find_element(prev_a)
+            on_stack = context.open_elements.contains(prev_a)
+            if context.current_parent.find_ancestor("a") == prev_a and active_entry and on_stack:
+                self.debug("Still in same active <a> context, adding text to existing <a> tag")
                 self.parser.insert_text(text, context, parent=prev_a, merge=True)
                 self.debug(f"Added text to existing <a> tag: {prev_a}")
                 return True
-            else:
-                self.debug("No longer in same <a> context, creating new <a> tag")
-                a_token = HTMLToken(
-                    "StartTag", tag_name="a", attributes=prev_a.attributes.copy()
-                )
+            elif active_entry and on_stack:
+                # Only clone attributes if the previous <a> is still truly active & on stack (spec-style continuation)
+                self.debug("Creating continuation <a> (active & on stack)")
+                a_token = HTMLToken("StartTag", tag_name="a", attributes=prev_a.attributes.copy())
                 new_a = self.parser.insert_element(
                     a_token,
                     context,
@@ -3920,8 +3921,11 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     push_override=False,
                 )
                 self.parser.insert_text(text, context, parent=new_a, merge=True)
-                self.debug(f"Inserted new <a> tag before table: {new_a}")
+                self.debug(f"Inserted continuation <a> before table: {new_a}")
                 return True
+            else:
+                # Skip heuristic reuse: previous <a> not an active formatting element or not on stack
+                self.debug("Skipping anchor reuse (prev <a> not active/on-stack); treating text as plain foster-parented content")
 
         # Collect formatting context up to foster parent; reconstruct if stale AFE entries exist.
         if context.active_formatting_elements and any(
