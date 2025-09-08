@@ -251,11 +251,7 @@ class OpenElementsStack:
 class AdoptionAgencyAlgorithm:
     def __init__(self, parser):
         self.parser = parser
-        # Pure spec implementation retains no heuristic state.
-        self.metrics = {}
-
-    def get_metrics(self) -> dict:
-        return self.metrics
+        # Pure spec implementation (no metrics / instrumentation state retained).
 
     def should_run_adoption(self, tag_name: str, context) -> bool:
         # Spec trigger: end tag whose tag name is a formatting element AND a matching
@@ -274,7 +270,6 @@ class AdoptionAgencyAlgorithm:
         """
         made_progress_overall = False
         processed_furthest_blocks = set()
-        complex_case_seen = False  # Track if a complex adoption occurred earlier in this invocation
         for iteration_count in range(1, 9):  # spec max 8
             # Locate most recent matching formatting element (Step 1 selection prerequisite)
             formatting_entry = None
@@ -340,12 +335,6 @@ class AdoptionAgencyAlgorithm:
             if furthest_block is None:
                 if self._handle_no_furthest_block_spec(formatting_element, formatting_entry, context):
                     made_progress_overall = True
-                    if tag_name == 'a':
-                        # Count simple-case occurrences for anchors
-                        self.metrics['a_simple_case_count'] = self.metrics.get('a_simple_case_count', 0) + 1
-                        if complex_case_seen:
-                            # Record pattern where a complex case earlier in same run downgrades to simple
-                            self.metrics['a_complex_then_simple'] = self.metrics.get('a_complex_then_simple', 0) + 1
                 # Simple case always terminates algorithm per spec
                 break
             else:
@@ -360,9 +349,6 @@ class AdoptionAgencyAlgorithm:
             )
             if complex_result:
                 made_progress_overall = True
-                if tag_name == 'a':
-                    self.metrics['a_complex_case_count'] = self.metrics.get('a_complex_case_count', 0) + 1
-                complex_case_seen = True
                 continue  # keep looping for same end tag per spec
             else:
                 break
@@ -410,9 +396,6 @@ class AdoptionAgencyAlgorithm:
             if node.tag_name in SPECIAL_CATEGORY_ELEMENTS:
                 if formatting_element.tag_name == 'a':
                     self.parser.debug(f"[adoption][furthest-pick] fmt=<a> candidate=<{node.tag_name}>")
-                self.metrics['furthest_block_picks'] = self.metrics.get('furthest_block_picks', 0) + 1
-                pick_key = f"furthest_block_{node.tag_name}"
-                self.metrics[pick_key] = self.metrics.get(pick_key, 0) + 1
                 return node
         return None
 
@@ -544,8 +527,7 @@ class AdoptionAgencyAlgorithm:
         fb_index = context.open_elements.index_of(furthest_block)
         if fe_index != -1 and fb_index != -1 and fb_index > fe_index:
             intermediates = fb_index - fe_index - 1
-            if intermediates > 0:
-                self.metrics['step11_intermediate_count'] = self.metrics.get('step11_intermediate_count', 0) + intermediates
+            # intermediates count previously used for metrics; retained local for potential future debugging
         else:
             intermediates = 0
 
@@ -577,21 +559,18 @@ class AdoptionAgencyAlgorithm:
             else:
                 node_above = removed_above.get(id(node))
             if node_above is None:
-                self.metrics['inner_loop_terminated_no_above'] = self.metrics.get('inner_loop_terminated_no_above', 0) + 1
                 break
             candidate = node_above
             # If candidate not a formatting element: spec says set node to element above and continue (NO removal).
             candidate_entry = context.active_formatting_elements.find_element(candidate)
             if not candidate_entry:
                 # Spec: just advance upward; do NOT remove non-formatting elements from the open stack here
-                self.metrics['inner_loop_non_format_ascents'] = self.metrics.get('inner_loop_non_format_ascents', 0) + 1
                 node = candidate
                 continue
             # If inner_loop_counter > 3: remove candidate entry (and from stack) then continue upward
             if inner_loop_counter > 3:
                 if context.active_formatting_elements.find_element(candidate):
                     context.active_formatting_elements.remove_entry(candidate_entry)
-                    self.metrics['formatting_removed_gt3'] = self.metrics.get('formatting_removed_gt3', 0) + 1
                 if context.open_elements.contains(candidate):
                     idx_cand = context.open_elements.index_of(candidate)
                     above2 = context.open_elements._stack[idx_cand - 1] if idx_cand - 1 >= 0 else None
@@ -610,7 +589,6 @@ class AdoptionAgencyAlgorithm:
                 context.open_elements.replace_element(candidate, clone)
             clone.append_child(last_node)
             last_node = clone
-            self.metrics['formatting_clones'] = self.metrics.get('formatting_clones', 0) + 1
             # Spec: let node be the new element (clone) so next iteration climbs from its position
             node = clone
 
@@ -621,6 +599,29 @@ class AdoptionAgencyAlgorithm:
         # Step 14 refinement: avoid relocating if last_node already correctly placed.
         # Unified Step 14 relocation following spec: relocate only if ordering or parent differ.
         self._step14_place_last_node(formatting_element, last_node, furthest_block, common_ancestor)
+        # Post-Step14 foster adjustment: If the common_ancestor is a table element and the furthest_block
+        # just placed under it is a block container that per the generic insertion algorithm would have
+        # been foster-parented (p, div, section, article, blockquote, li), relocate it before the table.
+        # This mirrors what would have happened had the text/element insertion occurred outside the
+        # adoption algorithm and prevents paragraphs from remaining as table children (adoption01.dat:5).
+        if (
+            last_node.parent is not None
+            and last_node.parent.tag_name == 'table'
+            and last_node.tag_name in ('p','div','section','article','blockquote','li')
+            and last_node.parent.parent is not None
+        ):
+            table_parent = last_node.parent.parent
+            table_node = last_node.parent
+            if table_node in table_parent.children:
+                try:
+                    table_index = table_parent.children.index(table_node)
+                    # Detach and insert before table (preserve relative order of any existing siblings)
+                    self._safe_detach_node(last_node)
+                    table_parent.children.insert(table_index, last_node)
+                    last_node.parent = table_parent
+                    self.parser.debug(f"[adoption][post-step14-foster] moved <{last_node.tag_name}> before <table> under <{table_parent.tag_name}>")
+                except Exception:
+                    pass
         # Instrumentation: show path from formatting element to furthest_block (if still connected)
         path_tags = []
         cur = furthest_block
@@ -703,7 +704,6 @@ class AdoptionAgencyAlgorithm:
                 desired_index = pos_fmt + 1
                 cur_index = common_ancestor.children.index(last_node)
                 if cur_index == desired_index:
-                    self.metrics['step14_relocation_skipped_redundant'] = self.metrics.get('step14_relocation_skipped_redundant', 0) + 1
                     self.parser.debug('[adoption][step14] skip relocation (redundant)')
                     return
 
@@ -720,6 +720,5 @@ class AdoptionAgencyAlgorithm:
             inserted = True
         if not inserted:
             common_ancestor.append_child(last_node)
-        self.metrics['step14_relocation_performed'] = self.metrics.get('step14_relocation_performed', 0) + 1
         self.parser.debug(f"[adoption][step14] placed <{last_node.tag_name}> under <{common_ancestor.tag_name}> children={[c.tag_name for c in common_ancestor.children]}")
 

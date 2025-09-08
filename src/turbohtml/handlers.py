@@ -1,5 +1,6 @@
 import re
 from typing import Optional, Protocol, Set
+import os
 
 from turbohtml.constants import (
     AUTO_CLOSING_TAGS,
@@ -3720,28 +3721,35 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         cursor = cursor.children[-1]
                     target = cursor
             else:
-                # If we expected an <a> (active formatting) but it wasn't reconstructed (edge case), create it now.
-                a_entry = None
-                if context.active_formatting_elements:
-                    a_entry = context.active_formatting_elements.find("a")
-                if a_entry and not any(
-                    ch.tag_name == "a" for ch in context.current_parent.children
-                ):
-                    self.debug(
-                        "Manual anchor clone in foster-parented paragraph for pending <a> formatting element"
-                    )
-                    a_clone_token = HTMLToken(
-                        "StartTag",
-                        tag_name="a",
-                        attributes=a_entry.element.attributes.copy(),
-                    )
-                    clone = self.parser.insert_element(
-                        a_clone_token, context, mode="normal", enter=True
-                    )
-                    a_entry.element = clone
-                    target = clone
-                    # Restore insertion point to paragraph (text insertion we'll handle via target)
-                    context.move_to_element(context.current_parent)
+                # If we expected an <a> (active formatting) but it wasn't reconstructed, attempt reconstruction once;
+                # if still absent and an active <a> exists elsewhere, create a narrow segmentation clone only when
+                # paragraph sits immediately before the table (replaces prior broad manual clone heuristic).
+                a_entry = context.active_formatting_elements.find("a") if context.active_formatting_elements else None
+                if a_entry and not any(ch.tag_name == "a" for ch in context.current_parent.children):
+                    pre_ids = {id(ch) for ch in context.current_parent.children}
+                    self.parser.reconstruct_active_formatting_elements(context)
+                    new_a = [ch for ch in context.current_parent.children if ch.tag_name == 'a' and id(ch) not in pre_ids]
+                    if new_a:
+                        self.debug('[anchor-cont][reconstruct] late reconstruction produced <a>')
+                    else:
+                        # Narrow segmentation path
+                        a_elem = a_entry.element
+                        if a_elem and context.current_parent.find_ancestor('a') is None:
+                            table_node = self.parser.find_current_table(context)
+                            cur_parent = context.current_parent
+                            if table_node and table_node.parent and cur_parent.parent is table_node.parent:
+                                siblings = table_node.parent.children
+                                try:
+                                    t_index = siblings.index(table_node)
+                                    if t_index > 0 and siblings[t_index-1] is cur_parent:
+                                        seg_token = HTMLToken('StartTag', tag_name='a', attributes=a_elem.attributes.copy())
+                                        self.debug('[anchor-cont][seg-clone] inserting segmentation <a> clone (manual clone removed)')
+                                        # (metrics removed)
+                                        seg_node = self.parser.insert_element(seg_token, context, mode='normal', enter=True)
+                                        a_entry.element = seg_node
+                                        target = seg_node
+                                except ValueError:
+                                    pass
             # Append/merge text at target
             if target.children and target.children[-1].tag_name == "#text":
                 target.children[-1].text_content += text
@@ -3869,44 +3877,58 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     )
                     return True
 
-        # Reintroduce limited anchor continuation logic (previously removed) to avoid regression in adoption01.dat:10.
-        # This remains a candidate for future replacement by pure reconstruction once anchor/table interactions
-        # are fully spec-aligned.
+        # Anchor continuation handling (narrow): only segmentation or split cases are supported.
+        # We intentionally limit behavior to:
+        #   1. Segmentation clone when an active <a> exists elsewhere but wasn't reconstructed inside a fostered block.
+        #   2. Split continuation when the immediately previous active/on-stack <a> already has text – create a
+        #      sibling <a> for the new foster-parented text run. No generic cloning or broad continuation heuristic.
         prev_a = None
         for child in reversed(foster_parent.children[:table_index]):
             if child.tag_name == "a":
                 prev_a = child
                 self.debug(
-                    f"Found previous <a> tag: {prev_a} with attributes {prev_a.attributes}"
+                    f"[anchor-cont][scan-prev] Found previous <a> sibling before table attrs={prev_a.attributes}"
                 )
+                # (metrics removed)
                 break
         if prev_a:
             active_entry = context.active_formatting_elements.find_element(prev_a)
             on_stack = context.open_elements.contains(prev_a)
             if context.current_parent.find_ancestor("a") == prev_a and active_entry and on_stack:
-                self.debug("Still in same active <a> context, adding text to existing <a> tag")
+                self.debug("[anchor-cont][reuse-existing] Appending text into existing active <a> prior to table")
+                # (metrics removed)
                 self.parser.insert_text(text, context, parent=prev_a, merge=True)
                 self.debug(f"Added text to existing <a> tag: {prev_a}")
                 return True
             elif active_entry and on_stack:
-                # Only clone attributes if the previous <a> is still truly active & on stack (spec-style continuation)
-                self.debug("Creating continuation <a> (active & on stack)")
-                a_token = HTMLToken("StartTag", tag_name="a", attributes=prev_a.attributes.copy())
-                new_a = self.parser.insert_element(
-                    a_token,
-                    context,
-                    mode="normal",
-                    enter=False,
-                    parent=foster_parent,
-                    before=foster_parent.children[table_index],
-                    push_override=False,
+                # Narrow continuation replacement: if the previous active/on-stack <a> already has textual content,
+                # create a sibling <a> (split) before the table for this foster-parented text run. This replaces the
+                # broader clone/reconstruct heuristics and is limited to true segmentation (existing <a> non-empty).
+                has_prev_text = any(
+                    ch.tag_name == '#text' and ch.text_content and ch.text_content.strip() != ''
+                    for ch in prev_a.children
                 )
-                self.parser.insert_text(text, context, parent=new_a, merge=True)
-                self.debug(f"Inserted continuation <a> before table: {new_a}")
-                return True
+                if has_prev_text:
+                    self.debug('[anchor-cont][split-continuation] Previous <a> has text; creating split sibling anchor before table')
+                    # (metrics removed)
+                    a_token = HTMLToken('StartTag', tag_name='a', attributes=prev_a.attributes.copy())
+                    new_a = self.parser.insert_element(
+                        a_token,
+                        context,
+                        mode='normal',
+                        enter=False,  # do not push onto open elements stack (mirrors original continuation semantics)
+                        parent=foster_parent,
+                        before=foster_parent.children[table_index],
+                        push_override=False,
+                    )
+                    self.parser.insert_text(text, context, parent=new_a, merge=True)
+                    self.debug(f"[anchor-cont][split-continuation] Inserted split <a> id={id(new_a)}")
+                    return True
+                # Otherwise (no prior text) fall through so plain foster-parented text logic handles it.
             else:
                 # Skip heuristic reuse: previous <a> not an active formatting element or not on stack
-                self.debug("Skipping anchor reuse (prev <a> not active/on-stack); treating text as plain foster-parented content")
+                self.debug("[anchor-cont][skip] Previous <a> not active/on-stack; falling back to plain foster-parented text")
+                # (metrics removed)
 
         # Collect formatting context up to foster parent; reconstruct if stale AFE entries exist.
         if context.active_formatting_elements and any(
