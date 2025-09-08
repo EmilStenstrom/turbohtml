@@ -1693,26 +1693,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 if not inside_object:
                     context.active_formatting_elements.push(new_element, token)
                 return True
-
             table = self.parser.find_current_table(context)
-            if (
-                context.current_parent.tag_name == "p"
-                and table
-                and table.parent == context.current_parent.parent
-            ):
-                self.debug(
-                    "In foster-parented paragraph before table; inserting formatting element inside paragraph"
-                )
-                new_element = self._insert_formatting_element(
-                    token,
-                    context,
-                    parent=context.current_parent,
-                    push_nobr_late=(tag_name == "nobr"),
-                )
-                if not inside_object:
-                    context.active_formatting_elements.push(new_element, token)
-                return True
-
             if table and table.parent:
                 self.debug("Foster parenting formatting element before table")
                 new_element = self._insert_formatting_element(
