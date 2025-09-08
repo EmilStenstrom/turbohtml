@@ -688,8 +688,9 @@ class AdoptionAgencyAlgorithm:
     def _step14_place_last_node(self, formatting_element: Node, last_node: Node, furthest_block: Node, common_ancestor: Node) -> None:
         """Place last_node relative to common_ancestor following spec's 'appropriate place for inserting a node'.
 
-        We approximate the spec insertion algorithm here to avoid duplicating broader parser insertion code.
-        Foster parenting is only applied if common_ancestor is table-related and conditions warrant it.
+        Heuristic foster-parenting of the furthest block was previously attempted here; that deviated from the
+        HTML Standard (which relies on the general insertion algorithm outside the adoption agency). We now
+        restrict Step14 to only: redundancy check, detach, then insert-after-formatting-element or append.
         """
         # If already correct parent & correct slot (just after formatting_element if applicable) skip.
         if last_node.parent is common_ancestor:
@@ -706,22 +707,9 @@ class AdoptionAgencyAlgorithm:
                     self.parser.debug('[adoption][step14] skip relocation (redundant)')
                     return
 
-        # (Prior variant always relocated unless redundant placement detected.)
         # Detach if parent differs or ordering mismatch
         if last_node.parent is not None:
             self._safe_detach_node(last_node)
-        table_structural = {"table", "tbody", "thead", "tfoot", "tr"}
-        do_foster = False
-        if self._should_foster_parent(common_ancestor):
-            if last_node.tag_name not in table_structural:
-                inside_cell = last_node.find_ancestor(lambda n: n.tag_name in ("td", "th")) is not None
-                if not inside_cell:
-                    do_foster = True
-        if do_foster:
-            self._foster_parent_node(last_node, context=None, table=common_ancestor)  # context unused in foster helper path here
-            self.metrics['step14_relocation_performed'] = self.metrics.get('step14_relocation_performed', 0) + 1
-            self.parser.debug(f"[adoption][step14] foster-parented <{last_node.tag_name}> under <{common_ancestor.tag_name}>")
-            return
         inserted = False
         if (
             formatting_element.parent is common_ancestor
@@ -735,65 +723,3 @@ class AdoptionAgencyAlgorithm:
         self.metrics['step14_relocation_performed'] = self.metrics.get('step14_relocation_performed', 0) + 1
         self.parser.debug(f"[adoption][step14] placed <{last_node.tag_name}> under <{common_ancestor.tag_name}> children={[c.tag_name for c in common_ancestor.children]}")
 
-    def _should_foster_parent(self, common_ancestor: Node) -> bool:
-        # Need foster parenting if ancestor is table-related and not inside cell/caption
-        return common_ancestor.tag_name in (
-            "table",
-            "tbody",
-            "tfoot",
-            "thead",
-            "tr",
-        ) and not common_ancestor.find_ancestor(
-            lambda n: n.tag_name in ("td", "th", "caption")
-        )
-
-    def _foster_parent_node(self, node: Node, context, table: Node = None) -> None:
-        # Foster parent per HTML5 rules
-        if not table:
-            table = None
-            current = context.current_parent
-            while current:
-                if current.tag_name == "table":
-                    table = current
-                    break
-                current = current.parent
-
-        if table and table.parent:
-            # Insert before the table
-            table_index = table.parent.children.index(table)
-            table.parent.children.insert(table_index, node)
-            node.parent = table.parent
-        else:
-            # Fallback - need to find a safe parent that won't create circular reference
-            safe_parent = self._find_safe_parent(node, context)
-            if safe_parent:
-                safe_parent.append_child(node)
-            else:
-                # Last resort - add to the document body or root
-                body_or_root = self._get_body_or_root(context)
-                if body_or_root != node and not node._would_create_circular_reference(
-                    body_or_root
-                ):
-                    body_or_root.append_child(node)
-                else:
-                    return  # Cannot safely place node; give up silently
-
-    def _find_safe_parent(self, node: Node, context) -> Optional[Node]:
-        # Find safe ancestor for foster parenting
-        candidate = context.current_parent
-        visited: set[int] = set()
-        while candidate is not None and id(candidate) not in visited:
-            if candidate is not node and not node._would_create_circular_reference(
-                candidate
-            ):
-                return candidate
-            visited.add(id(candidate))
-            candidate = candidate.parent
-        body_or_root = self._get_body_or_root(context)
-        if (
-            body_or_root
-            and body_or_root is not node
-            and not node._would_create_circular_reference(body_or_root)
-        ):
-            return body_or_root
-        return None
