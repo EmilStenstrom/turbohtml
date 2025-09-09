@@ -434,6 +434,9 @@ class TemplateContentFilterHandler(TagHandler):
         "option",
         "optgroup",
         "select",
+        # Treat list container elements like <menu> as plain inside template content so they remain
+        # within the template's content fragment instead of being misplaced outside (template.dat:76).
+        "menu",
     }
 
     def _in_template_content(self, context: "ParseContext") -> bool:

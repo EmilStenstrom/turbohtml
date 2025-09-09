@@ -598,6 +598,24 @@ class AdoptionAgencyAlgorithm:
         # Step 14 (unconditional move variant that previously maximized pass rate)
         # Step 14 refinement: avoid relocating if last_node already correctly placed.
         # Unified Step 14 relocation following spec: relocate only if ordering or parent differ.
+        # Template content preservation: if common_ancestor is a <template> and the furthest block (or formatting element)
+        # lives inside its 'content' fragment, redirect placement to that fragment to avoid leaking nodes outside.
+        if common_ancestor.tag_name == 'template':
+            content_child = None
+            for ch in common_ancestor.children:
+                if ch.tag_name == 'content':
+                    content_child = ch
+                    break
+            if content_child is not None:
+                def _under(node: Node, ancestor: Node) -> bool:
+                    cur = node
+                    while cur is not None:
+                        if cur is ancestor:
+                            return True
+                        cur = cur.parent
+                    return False
+                if _under(furthest_block, content_child) or _under(formatting_element, content_child):
+                    common_ancestor = content_child
         self._step14_place_last_node(formatting_element, last_node, furthest_block, common_ancestor)
         # Post-Step14 foster adjustment: If the common_ancestor is a table element and the furthest_block
         # just placed under it is a block container that per the generic insertion algorithm would have
