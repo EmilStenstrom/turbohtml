@@ -322,7 +322,16 @@ class AdoptionAgencyAlgorithm:
             # Step 5 (parse error if not current) – ignored for control flow
 
             # Step 6: furthest block
+            if tag_name == 'a':
+                try:
+                    fmt_idx_dbg = context.open_elements.index_of(formatting_element)
+                    slice_tags = [n.tag_name for n in context.open_elements._stack[fmt_idx_dbg+1:]] if fmt_idx_dbg != -1 else []
+                    self.parser.debug(f"[adoption][pre-furthest-scan] fmt_idx={fmt_idx_dbg} slice={slice_tags}")
+                except Exception:
+                    pass
             furthest_block = self._find_furthest_block_spec_compliant(formatting_element, context)
+            if tag_name == 'a':
+                self.parser.debug(f"[adoption][furthest-result] {'None' if furthest_block is None else furthest_block.tag_name}")
 
             # Instrumentation: if an <aside> exists as a descendant of formatting element OR as a candidate furthest block
             # log current stack and AFE to understand adoption01 last subtest divergence.
@@ -375,28 +384,24 @@ class AdoptionAgencyAlgorithm:
     def _find_furthest_block_spec_compliant(self, formatting_element: Node, context) -> Optional[Node]:
         """Locate the furthest block per HTML Standard.
 
-        Spec wording: "Let furthestBlock be the topmost node in the stack of open elements that is lower
-        in the stack than formattingElement, and is an element in the special category." The stack grows
-        downward with the most recently pushed (current node) at the *bottom*. "Topmost" therefore means
-        the first qualifying element encountered when scanning downward from the formatting element's
-        position (i.e. the closest descendant on the stack), NOT the last. Our earlier implementation
-        incorrectly picked the last qualifying candidate, which prevented multi-iteration anchor nesting
-        (adoption01 test 4 expected outer div to be chosen, not the deepest div).
+    Spec wording: "Let furthestBlock be the topmost node in the stack of open elements that is lower
+    in the stack than formattingElement, and is an element in the special category." Here the stack's
+    0 index is closest to root; thus "topmost" below the formatting element means the first qualifying
+    element encountered when scanning the sub-slice (closest to root, NOT deepest). We previously picked
+    the deepest which collapses multi-iteration adoption layering (adoption01:4,13). Restore first match.
         """
         idx = context.open_elements.index_of(formatting_element)
         if idx == -1:
             return None
-        # Spec: furthest block = first element in the special category below formattingElement on the stack.
-        # Previous implementation excluded table structural elements (table/tbody/thead/tfoot/tr) which
-        # suppressed complex adoption in anchor + table mis-nesting cases (tests1.dat 30,77,79,90,101 & tests19).
-        # Removing that exclusion restores spec behavior allowing those elements to participate as the
-        # furthest block so that the algorithm performs the required cloning/reparenting instead of the
-        # simple-case pop that flattened anchor structure.
         for node in context.open_elements._stack[idx + 1 :]:
+            if formatting_element.tag_name == 'a':
+                self.parser.debug(f"[adoption][scan] below_fmt_candidate=<{node.tag_name}> special={'yes' if node.tag_name in SPECIAL_CATEGORY_ELEMENTS else 'no'}")
             if node.tag_name in SPECIAL_CATEGORY_ELEMENTS:
                 if formatting_element.tag_name == 'a':
                     self.parser.debug(f"[adoption][furthest-pick] fmt=<a> candidate=<{node.tag_name}>")
                 return node
+        if formatting_element.tag_name == 'a':
+            self.parser.debug('[adoption][furthest-miss] no special candidate found below <a>')
         return None
 
     def _handle_no_furthest_block_spec(
@@ -668,6 +673,14 @@ class AdoptionAgencyAlgorithm:
         # Previous relocation adjustment removed; spec insertion above covers extraction.
 
         # Step 15: Create a clone of the formatting element
+        # Anchor/table structural special-case: if the furthest_block is a table-structural element
+        # directly parented by the formatting <a>, the expected tree (tests1.dat anchor+table cases)
+        # does NOT introduce an <a> clone inside that structural element (e.g. no <table><a><tbody>).
+        # Instead, the original <a> continues wrapping the table chain unchanged while the duplicate
+        # start tag later inserts a new <a> at the current insertion point. To approximate that, we
+        # perform an early exit here: remove the formatting entry from the active list (so we made
+        # progress and will not loop infinitely) but keep the original element on the open stack.
+        # Removed anchor/table special-case relocation skip; rely on uniform placement logic.
         fe_clone = Node(formatting_element.tag_name, formatting_element.attributes.copy())
         # Step 16: Move all children of furthest_block into fe_clone
         for ch in list(furthest_block.children):
@@ -712,6 +725,21 @@ class AdoptionAgencyAlgorithm:
         restrict Step14 to only: redundancy check, detach, then insert-after-formatting-element or append.
         """
         # If already correct parent & correct slot (just after formatting_element if applicable) skip.
+        # Anchor/table mis-nesting: If the formatting element is an ancestor of furthest_block and the
+        # chosen common_ancestor is the formatting_element's parent, relocating the furthest_block under
+        # common_ancestor would extract it out of the formatting element, diverging from expected trees
+        # (tests1.dat anchor+table cases) where the table subtree remains inside the outer <a>. Guard
+        # against this by short‑circuiting relocation in that specific structural pattern.
+        if (
+            formatting_element.tag_name == 'a'
+            and furthest_block.parent is not None
+            and furthest_block.parent is formatting_element
+            and common_ancestor is formatting_element.parent
+        ):
+            # Earlier heuristic preserved the furthest block (e.g. <p>) inside <a>; spec expectations for
+            # adoption01 require the <p> to be extracted so it becomes a sibling of the <a> (allowing a clone
+            # of <a> to appear inside the moved <p>). Remove preservation and allow relocation to proceed.
+            pass
         if last_node.parent is common_ancestor:
             if (
                 formatting_element.parent is common_ancestor
