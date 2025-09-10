@@ -510,10 +510,12 @@ def parse_args() -> dict:
     )
     args = parser.parse_args()
 
-    test_specs = []
-    if args.test_specs:
-        for spec in args.test_specs:
-            test_specs.extend(spec.split(","))
+    # Preserve each provided spec exactly so patterns like 'tests1.dat:1,2,3' remain intact.
+    # Previously we split on commas which broke multi-index specs by turning trailing indices
+    # (without a filename) into orphan tokens that were ignored, effectively only running the
+    # first index. Keeping the raw spec strings allows _should_run_test to parse the comma-
+    # separated index list correctly.
+    test_specs = list(args.test_specs or [])
 
     exclude_errors = args.exclude_errors.split(",") if args.exclude_errors else None
     exclude_files = args.exclude_files.split(",") if args.exclude_files else None
