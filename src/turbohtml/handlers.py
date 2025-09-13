@@ -3181,6 +3181,33 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
         current_table = self.parser.find_current_table(context)
         if not current_table:
+            # Fragment row/section/cell contexts: do not synthesize an implicit <table> wrapper
+            # when encountering table-structural start tags; the fragment root provides the
+            # insertion point and expected output flattens without a surrogate table element.
+            frag_ctx = self.parser.fragment_context
+            if frag_ctx in ("tr", "td", "th", "thead", "tbody", "tfoot") and tag_name in (
+                "tr",
+                "td",
+                "th",
+                "thead",
+                "tbody",
+                "tfoot",
+            ):
+                # For section contexts encountering a first cell, synthesize an implicit <tr>
+                if frag_ctx in ("tbody", "thead", "tfoot") and tag_name in ("td", "th"):
+                    last_child = context.current_parent.children[-1] if context.current_parent.children else None
+                    if not last_child or last_child.tag_name != "tr":
+                        tr_token = self._synth_token("tr")
+                        tr_node = self.parser.insert_element(tr_token, context, mode="normal", enter=True)
+                        context.transition_to_state(DocumentState.IN_ROW, tr_node)
+                inserted = self.parser.insert_element(token, context, mode="normal", enter=True)
+                if tag_name == "tr":
+                    context.transition_to_state(DocumentState.IN_ROW, inserted)
+                elif tag_name in ("td", "th"):
+                    context.transition_to_state(DocumentState.IN_CELL, inserted)
+                elif tag_name in ("thead", "tbody", "tfoot"):
+                    context.transition_to_state(DocumentState.IN_TABLE_BODY, inserted)
+                return True
             parent_tag = (
                 context.current_parent.tag_name if context.current_parent else ""
             )

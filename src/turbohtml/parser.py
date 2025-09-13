@@ -1175,15 +1175,26 @@ class TurboHTML:
         if self.fragment_context == "table" and tag_name == "table":
             return True
 
-        # Ignore matching context element only for table cell/section/row contexts (HTML5 fragment rules)
+        # Ignore the first start tag token whose name matches the fragment context element
+        # for table-related contexts (sections, row, cell). After the first ignore we must
+        # allow subsequent identical tags to be processed normally so that nested structure
+        # (e.g. a <table><td> inside a td fragment) is constructed.
         if self.fragment_context in ("td", "th") and tag_name in ("td", "th"):
-            return True
+            if not context.fragment_context_ignored:
+                context.fragment_context_ignored = True
+                return True
         elif self.fragment_context in ("thead", "tbody", "tfoot") and tag_name in (
             "thead",
             "tbody",
             "tfoot",
         ):
-            return True
+            if not context.fragment_context_ignored:
+                context.fragment_context_ignored = True
+                return True
+        elif self.fragment_context == "tr" and tag_name == "tr":
+            if not context.fragment_context_ignored:
+                context.fragment_context_ignored = True
+                return True
 
         # Non-table fragments: ignore stray table-structural tags so their contents flow to parent (prevents
         # spurious table construction inside phrasing contexts like <span> fragment when encountering <td><span>).

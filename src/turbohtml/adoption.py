@@ -431,14 +431,11 @@ class AdoptionAgencyAlgorithm:
     ) -> bool:
         """Simple case: pop formatting element and remove its active entry."""
         self.parser.debug(f"[adoption] simple-case for <{formatting_element.tag_name}>")
-        # Pop from open elements until we've removed the formatting element
+        # Simple-case: pop elements above formatting element (ignored) then pop formatting element itself.
         stack = context.open_elements._stack
-        popped_above_any = False  # retained local (unused for reconstruction after revert)
         if formatting_element in stack:
-            # Remove any elements above formatting_element first (these are ignored per spec simple case)
             while stack and stack[-1] is not formatting_element:
                 stack.pop()
-                popped_above_any = True
             if stack and stack[-1] is formatting_element:
                 stack.pop()
         # Remove from active formatting list

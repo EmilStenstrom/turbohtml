@@ -65,6 +65,12 @@ class ParseContext:
         # the *next* character token in IN_BODY triggers active formatting elements reconstruction
         # before inserting text. Cleared immediately after consumption (see TextHandler).
         self.post_adoption_reconstruct_pending = False
+        # Fragment parsing: track whether we've already ignored the first start tag
+        # matching the fragment context element (e.g., context='td' and first <td>). The
+        # HTML fragment algorithm only skips the context element token itself; subsequent
+        # identical tags nested inside the fragment should be processed normally. We keep
+        # a simple boolean rather than counting since only the first occurrence is ignored.
+        self.fragment_context_ignored = False
 
     # --- Properties / helpers ---
     @property
