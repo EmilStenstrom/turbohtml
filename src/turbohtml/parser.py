@@ -1015,6 +1015,22 @@ class TurboHTML:
                                     context.transition_to_state(
                                         DocumentState.IN_BODY, body
                                     )
+                        # Select fragment recovery: synthesize <option> element when raw text resembles an option start tag
+                        if (
+                            self.fragment_context == "select"
+                            and data.strip().lower().startswith("<option")
+                            and data.strip().endswith(">")
+                        ):
+                            from turbohtml.tokenizer import HTMLToken
+
+                            opt_token = HTMLToken(
+                                "StartTag", tag_name="option", attributes={}
+                            )
+                            self._handle_start_tag(
+                                opt_token, "option", context, self.tokenizer.pos
+                            )
+                            context.index = self.tokenizer.pos
+                            continue
                         for handler in self.tag_handlers:
                             if handler.should_handle_text(data, context):
                                 self.debug(
