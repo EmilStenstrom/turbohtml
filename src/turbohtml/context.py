@@ -61,6 +61,10 @@ class ParseContext:
         self.frameset_html_end_before_noframes = False
         # Explicit </html> end tag encountered (distinguishes pre/post html end in frameset AFTER_FRAMESET mode)
         self.html_end_explicit = False
+        # One-shot flag: set True by adoption algorithm when it performs a restructuring so that
+        # the *next* character token in IN_BODY triggers active formatting elements reconstruction
+        # before inserting text. Cleared immediately after consumption (see TextHandler).
+        self.post_adoption_reconstruct_pending = False
 
     # --- Properties / helpers ---
     @property

@@ -364,6 +364,15 @@ class AdoptionAgencyAlgorithm:
 
             # (progress detection block removed as loop always continues or breaks earlier)
 
+        # If any adoption work was performed, signal that the very next character token (if any)
+        # in the IN_BODY insertion mode should perform an active formatting elements reconstruction
+        # before inserting its text. This narrowly scopes reconstruction to the post‑adoption point
+        # (mirroring the spec step "reconstruct the active formatting elements" prior to character
+        # token insertion) instead of heuristically scanning every character token for missing
+        # entries (which caused over‑cloning regressions in tricky01.dat when implemented broadly).
+        if made_progress_overall:
+            # Set explicit context field (no dynamic setattr) for one-shot reconstruction.
+            context.post_adoption_reconstruct_pending = True
         return made_progress_overall
 
     # Helper: run adoption repeatedly (spec max 8) until no action

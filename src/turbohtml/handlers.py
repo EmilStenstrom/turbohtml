@@ -798,6 +798,22 @@ class TextHandler(TagHandler):
         # current insertion point has drifted outside its subtree (should not normally happen unless a prior stray end
         # tag was swallowed), re-enter the deepest such integration point so trailing character data stays inside.
         # Transient routing sentinel logic inlined here.
+
+        # One‑shot post‑adoption reconstruction: if the adoption agency algorithm executed on the
+        # previous token (end tag of a formatting element) it sets a transient flag on the context.
+        # Consume that flag here (only once) and perform reconstruction before inserting this text –
+        # narrowly reproducing the spec step "reconstruct the active formatting elements" for the
+        # immediately following character token without broad per‑character scanning (which caused
+        # over‑cloning regressions in tricky01.dat when generalized).
+        if context.post_adoption_reconstruct_pending:
+            if (
+                context.document_state == DocumentState.IN_BODY
+                and not self._is_in_template_content(context)
+            ):
+                self.debug("Post-adoption one-shot reconstruction before character insertion")
+                self.parser.reconstruct_active_formatting_elements(context)
+            # Clear flag unconditionally (one-shot semantics)
+            context.post_adoption_reconstruct_pending = False
         integration_point_tags = {
             "svg foreignObject",
             "svg desc",
