@@ -1582,8 +1582,27 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 )
                 # Run full spec loop (up to 8) to stabilize instead of manual pruning.
                 self.parser.adoption_agency.run_until_stable("a", context, max_runs=8)
-                # Do NOT purge lingering entries; spec retains the clone (replaced at bookmark) enabling proper layering.
-                self.debug("Duplicate <a>: adoption run_until_stable completed")
+                # Spec step (in-body start tag <a>): if an 'a' element is in the list of active
+                # formatting elements after adoption processing, remove it before inserting the new one.
+                lingering = context.active_formatting_elements.find("a")
+                if lingering and lingering.element:
+                    self.debug("Duplicate <a>: removing lingering active formatting <a> before new insertion")
+                    context.active_formatting_elements.remove(lingering.element)
+                    # Also remove from open elements stack if still present to avoid residual scope effects.
+                    if context.open_elements.contains(lingering.element):
+                        context.open_elements.remove_element(lingering.element)
+                self.debug("Duplicate <a>: adoption + lingering cleanup completed")
+                # Spec alignment: After running the adoption agency for the prior <a> and removing any lingering
+                # active formatting entry, the algorithm proceeds with a normal start-tag insertion for the new <a>.
+                # That normal start-tag algorithm (in-body insertion mode) begins by reconstructing the active
+                # formatting elements. The earlier adoption step may have left formatting elements (e.g. <b>, <i>)
+                # whose DOM nodes now reside exclusively inside the first <a>, making their active formatting entries
+                # "missing" at the current insertion point. Without reconstruction here the new <a> would be inserted
+                # outside the expected cloned formatting wrapper (tests1.dat:31 expects a new <b> wrapping the second <a>).
+                # We therefore trigger reconstruction explicitly so only genuinely missing entries are cloned before
+                # inserting the replacement <a>. This is narrowly scoped to the duplicate <a> case to avoid broad
+                # changes to start-tag reconstruction semantics.
+                self.parser.reconstruct_active_formatting_elements(context)
 
         if self._is_in_template_content(context):
             tableish = {
