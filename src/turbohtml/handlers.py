@@ -8005,7 +8005,9 @@ class BoundaryElementHandler(TagHandler):
             if parent_for_marquee is not context.current_parent
             else None,
             tag_name_override=token.tag_name,
-            push_override=False,
+            # Push normally: <marquee> must participate in scope so subsequent
+            # in-body character/phrasing tokens are inserted inside it instead
+            # of an ancestor. (Spec: special element remains on open elements stack.)
             attributes_override={k.lower(): v for k, v in token.attributes.items()},
         )
         # Defer implicit paragraph creation: a <p> will be synthesized by normal paragraph rules
