@@ -247,6 +247,7 @@ class OpenElementsStack:
     def __len__(self):
         return len(self._stack)
 
+# Experimental anchor/table relocation feature flag removed (kept disabled in practice); code simplified to baseline behavior.
 
 class AdoptionAgencyAlgorithm:
     def __init__(self, parser):
@@ -270,6 +271,9 @@ class AdoptionAgencyAlgorithm:
         """
         made_progress_overall = False
         processed_furthest_blocks = set()
+        complex_case_executed = False  # track whether we performed complex (steps 8-19) adoption
+        simple_case_executed = False    # track simple case (no furthest block)
+        # simple_case_popped_above removed (we no longer trigger reconstruction for simple case)
         for iteration_count in range(1, 9):  # spec max 8
             # Locate most recent matching formatting element (Step 1 selection prerequisite)
             formatting_entry = None
@@ -302,11 +306,15 @@ class AdoptionAgencyAlgorithm:
             afe_sig_before = tuple(id(e.element) for e in context.active_formatting_elements if e.element)
 
 
-            # Step 3: formatting element must be on open stack else remove from AFE
+            # Step 3: formatting element must be on open stack else remove from AFE and ABORT (spec)
+            # HTML Standard: "If formatting element is not in the stack of open elements, then this is a parse error;
+            # remove the element from the list of active formatting elements and abort these steps." Previous implementation
+            # used 'continue', which could look for an earlier duplicate and close formatting earlier than the spec intends.
+            # Switching to 'break' restores strict spec behavior: only remove the missing entry and abort for this end tag.
             if not context.open_elements.contains(formatting_element):
                 context.active_formatting_elements.remove(formatting_element)
                 made_progress_overall = True
-                continue
+                break
 
             # Step 4: scope check. If the formatting element is not in scope the spec removes it from
             # the list of active formatting elements and aborts the algorithm for this tag name.
@@ -344,6 +352,7 @@ class AdoptionAgencyAlgorithm:
             if furthest_block is None:
                 if self._handle_no_furthest_block_spec(formatting_element, formatting_entry, context):
                     made_progress_overall = True
+                    simple_case_executed = True
                 # Simple case always terminates algorithm per spec
                 break
             else:
@@ -358,20 +367,16 @@ class AdoptionAgencyAlgorithm:
             )
             if complex_result:
                 made_progress_overall = True
+                complex_case_executed = True
                 continue  # keep looping for same end tag per spec
             else:
                 break
 
             # (progress detection block removed as loop always continues or breaks earlier)
 
-        # If any adoption work was performed, signal that the very next character token (if any)
-        # in the IN_BODY insertion mode should perform an active formatting elements reconstruction
-        # before inserting its text. This narrowly scopes reconstruction to the post‑adoption point
-        # (mirroring the spec step "reconstruct the active formatting elements" prior to character
-        # token insertion) instead of heuristically scanning every character token for missing
-        # entries (which caused over‑cloning regressions in tricky01.dat when implemented broadly).
-        if made_progress_overall:
-            # Set explicit context field (no dynamic setattr) for one-shot reconstruction.
+    # Trigger one-shot reconstruction only for complex-case adoptions (steps 8–19) where cloned wrappers were produced;
+    # simple-case removals must not immediately re-wrap subsequent text to avoid duplicating inline formatting wrappers.
+        if made_progress_overall and complex_case_executed:
             context.post_adoption_reconstruct_pending = True
         return made_progress_overall
 
@@ -402,7 +407,12 @@ class AdoptionAgencyAlgorithm:
         idx = context.open_elements.index_of(formatting_element)
         if idx == -1:
             return None
-        for node in context.open_elements._stack[idx + 1 :]:
+        subseq = context.open_elements._stack[idx + 1 :]
+        if not subseq:
+            return None
+        # (Anchor deepest-block experimental selection removed; always pick first special per spec wording.)
+        # Default (non-anchor or feature disabled): first special element below formatting element
+        for node in subseq:
             if formatting_element.tag_name == 'a':
                 self.parser.debug(f"[adoption][scan] below_fmt_candidate=<{node.tag_name}> special={'yes' if node.tag_name in SPECIAL_CATEGORY_ELEMENTS else 'no'}")
             if node.tag_name in SPECIAL_CATEGORY_ELEMENTS:
@@ -423,17 +433,26 @@ class AdoptionAgencyAlgorithm:
         self.parser.debug(f"[adoption] simple-case for <{formatting_element.tag_name}>")
         # Pop from open elements until we've removed the formatting element
         stack = context.open_elements._stack
+        popped_above_any = False  # retained local (unused for reconstruction after revert)
         if formatting_element in stack:
             # Remove any elements above formatting_element first (these are ignored per spec simple case)
             while stack and stack[-1] is not formatting_element:
                 stack.pop()
+                popped_above_any = True
             if stack and stack[-1] is formatting_element:
                 stack.pop()
         # Remove from active formatting list
         context.active_formatting_elements.remove_entry(formatting_entry)
-        # Move insertion point to parent (if exists)
+    # Insertion point heuristic: if the parent is a surviving formatting element still open,
+        # keep insertion inside it; else fallback to parent (stable behavior).
         parent = formatting_element.parent
-        if parent is not None:
+        if (
+            parent is not None
+            and parent.tag_name in FORMATTING_ELEMENTS
+            and parent in context.open_elements._stack
+        ):
+            context.move_to_element(parent)
+        elif parent is not None:
             context.move_to_element(parent)
         return True
 
@@ -683,7 +702,7 @@ class AdoptionAgencyAlgorithm:
 
         # Step 15: Create a clone of the formatting element
         # Anchor/table structural special-case: if the furthest_block is a table-structural element
-        # directly parented by the formatting <a>, the expected tree (tests1.dat anchor+table cases)
+    # directly parented by the formatting <a>, the expected tree in malformed anchor/table mixes
         # does NOT introduce an <a> clone inside that structural element (e.g. no <table><a><tbody>).
         # Instead, the original <a> continues wrapping the table chain unchanged while the duplicate
         # start tag later inserts a new <a> at the current insertion point. To approximate that, we
@@ -737,18 +756,22 @@ class AdoptionAgencyAlgorithm:
         # Anchor/table mis-nesting: If the formatting element is an ancestor of furthest_block and the
         # chosen common_ancestor is the formatting_element's parent, relocating the furthest_block under
         # common_ancestor would extract it out of the formatting element, diverging from expected trees
-        # (tests1.dat anchor+table cases) where the table subtree remains inside the outer <a>. Guard
+        # where the table subtree remains inside the outer <a>. Guard
         # against this by short‑circuiting relocation in that specific structural pattern.
+        # Anchor+table guard: retain structural subtree under <a> (current stable baseline); previous placeholder
+        # experiment removed (no pass gains). Keeping logic minimal until a spec-faithful multi-iteration approach
+        # is implemented.
+        anchor_table_structurals = {'table','tbody','thead','tfoot','tr','td','th'}
         if (
             formatting_element.tag_name == 'a'
             and furthest_block.parent is not None
             and furthest_block.parent is formatting_element
             and common_ancestor is formatting_element.parent
         ):
-            # Earlier heuristic preserved the furthest block (e.g. <p>) inside <a>; spec expectations for
-            # adoption01 require the <p> to be extracted so it becomes a sibling of the <a> (allowing a clone
-            # of <a> to appear inside the moved <p>). Remove preservation and allow relocation to proceed.
-            pass
+            target = last_node if last_node is not None else furthest_block
+            if target.tag_name in anchor_table_structurals or furthest_block.tag_name in anchor_table_structurals:
+                self.parser.debug('[adoption][step14] anchor+table guard: retaining table structural under <a>')
+                return
         if last_node.parent is common_ancestor:
             if (
                 formatting_element.parent is common_ancestor

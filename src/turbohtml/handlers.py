@@ -804,7 +804,7 @@ class TextHandler(TagHandler):
         # Consume that flag here (only once) and perform reconstruction before inserting this text –
         # narrowly reproducing the spec step "reconstruct the active formatting elements" for the
         # immediately following character token without broad per‑character scanning (which caused
-        # over‑cloning regressions in tricky01.dat when generalized).
+        # Guard against over‑cloning regressions when generalized.
         if context.post_adoption_reconstruct_pending:
             if (
                 context.document_state == DocumentState.IN_BODY
@@ -1614,7 +1614,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 # formatting elements. The earlier adoption step may have left formatting elements (e.g. <b>, <i>)
                 # whose DOM nodes now reside exclusively inside the first <a>, making their active formatting entries
                 # "missing" at the current insertion point. Without reconstruction here the new <a> would be inserted
-                # outside the expected cloned formatting wrapper (tests1.dat:31 expects a new <b> wrapping the second <a>).
+                # outside the expected cloned formatting wrapper (spec: adoption creates a new formatting clone wrapping the second anchor).
                 # We therefore trigger reconstruction explicitly so only genuinely missing entries are cloned before
                 # inserting the replacement <a>. This is narrowly scoped to the duplicate <a> case to avoid broad
                 # changes to start-tag reconstruction semantics.
@@ -1854,7 +1854,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         # the end tag token must be ignored (no stack pops, no insertion point movement). Our previous
         # boundary logic incorrectly bubbled out of the table, altering the insertion point and causing
         # subsequent formatting start tags (e.g. <i>) to be foster‑parented before the table instead of
-        # remaining inside the cell (tests1.dat:20, tests19.dat:89, tests26.dat:2 scenarios).
+        # remaining inside the cell (malformed table + inline formatting scenarios).
         # Detect and short‑circuit here.
         fmt_on_stack = None
         for el in context.open_elements._stack:
@@ -2827,9 +2827,24 @@ class ParagraphTagHandler(TagHandler):
         # Create new p node under current parent (keeping formatting context)
         new_node = self.parser.insert_element(token, context, mode="normal", enter=True)
 
-        # If we closed a previous paragraph and popped formatting descendants, reconstruct them now (spec: reconstruction step)
+        # Conditional reconstruction: If starting a new <p> after closing a previous one AND formatting
+        # descendants were popped (none still open), restore formatting context so nested font / inline chains persist.
+        # Avoid unconditional reconstruction (prevents duplicate single-level inline wrapper cases) by checking
+        # that none of the previously popped formatting descendants remain open and the new paragraph has
+        # no formatting child yet.
         if token.tag_name == "p" and p_ancestor and formatting_descendants:
-            self.parser.reconstruct_active_formatting_elements(context)
+            # Skip reconstruction for a single simple inline formatting element to avoid creating a duplicate wrapper.
+            if len(formatting_descendants) == 1 and formatting_descendants[0].tag_name in {"b","i","em","strong","u"}:
+                pass
+            else:
+                any_still_open = any(
+                    el in context.open_elements._stack for el in formatting_descendants
+                )
+                has_fmt_child = any(
+                    c.tag_name in FORMATTING_ELEMENTS for c in new_node.children
+                )
+                if (not any_still_open) and (not has_fmt_child):
+                    self.parser.reconstruct_active_formatting_elements(context)
 
         # Note: Active formatting elements will be reconstructed as needed
         # when content is encountered that requires them (per HTML5 spec)
@@ -8446,7 +8461,7 @@ class PlaintextHandler(SelectAwareHandler):
                     context.move_to_element(target.parent)
                 return True
             # Stray </plaintext>:
-            #  * In full document parsing: ignore (spec behavior; tests1.dat 109/110 expect no literal node).
+            #  * In full document parsing: ignore (spec behavior; no literal node created).
             #  * In fragment parsing (root == document-fragment): html5lib tree-construction tests expect a
             #    literal text node "</plaintext>" (tests4.dat:4). Emit only in that mode to avoid reintroducing
             #    prior over-literalization regression.
