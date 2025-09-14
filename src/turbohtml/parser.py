@@ -1384,33 +1384,6 @@ class TurboHTML:
             # Let normal table handling place script/style (may end up inside row if appropriate)
             pass
 
-        # Closed-table descendant relocation: if a <p> start tag appears while current_parent
-        # is still a descendant of a table element that has already been closed (table not on
-        # open elements stack), relocate insertion to body so the paragraph becomes a sibling
-        # following the table instead of incorrectly nested inside a residual cell subtree.
-        if tag_name == "p" and context.current_parent:
-            table_ancestor = context.current_parent.find_ancestor("table")
-            if table_ancestor and not context.open_elements.contains(table_ancestor):
-                body_node = self._get_body_node() or self._ensure_body_node(context)
-                if body_node:
-                    context.move_to_element(body_node)
-                    self.debug(
-                        "Relocated <p> start to body after closed table ancestor"
-                    )
-
-        # Ignore orphan table section tags that appear inside SVG integration points (title/desc/foreignObject)
-        # when no HTML table element is currently open. These should be parse errors and skipped (svg.dat cases 2-4).
-        if (
-            tag_name in ("thead", "tbody", "tfoot")
-            and context.current_parent
-            and context.current_parent.tag_name
-            in ("svg title", "svg desc", "svg foreignObject")
-            and not self.find_current_table(context)
-        ):
-            self.debug(
-                f"Ignoring HTML table section <{tag_name}> inside SVG integration point with no table"
-            )
-            return
 
 
         # Per HTML5 spec, before processing most start tags, reconstruct the active

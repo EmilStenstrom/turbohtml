@@ -2669,6 +2669,24 @@ class ParagraphTagHandler(TagHandler):
         self.debug(f"handling {token}, context={context}")
         self.debug(f"Current parent: {context.current_parent}")
 
+        # Closed-table descendant relocation (moved from parser): if a <p> start tag appears while the
+        # current insertion point is still inside a table subtree whose <table> element has already
+        # been closed (table not present on the open elements stack), relocate insertion to <body> so
+        # the paragraph becomes a sibling following the table instead of incorrectly nested within a
+        # residual cell subtree. Run before any implicit paragraph end logic so relocation affects the
+        # new paragraph’s actual insertion container.
+        if token.tag_name == "p" and context.current_parent:
+            table_ancestor = context.current_parent.find_ancestor("table")
+            if table_ancestor and not context.open_elements.contains(table_ancestor):
+                body_node = (
+                    self.parser._get_body_node() or self.parser._ensure_body_node(context)
+                )
+                if body_node:
+                    context.move_to_element(body_node)
+                    self.debug(
+                        "Relocated <p> start to body after closed table ancestor (handler)"
+                    )
+
         # Implicit paragraph end when a start tag that closes <p> appears while inside formatting descendants.
         if (
             token.tag_name != "p"
@@ -3231,6 +3249,19 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         TagHandler hook. Returns True if token is consumed (ignored or synthesized).
         """
         tag_name = token.tag_name
+        # Orphan section suppression (moved from parser): ignore thead/tbody/tfoot that appear directly
+        # inside an SVG integration point element (title/desc/foreignObject) when no HTML <table> is open.
+        # These are parse errors that should not construct HTML table structure (svg.dat cases 2-4).
+        if (
+            tag_name in ("thead", "tbody", "tfoot")
+            and context.current_parent
+            and context.current_parent.tag_name in ("svg title", "svg desc", "svg foreignObject")
+            and not self.parser.find_current_table(context)
+        ):
+            self.debug(
+                f"Ignoring HTML table section <{tag_name}> inside SVG integration point with no open table (early)"
+            )
+            return True
         # Prelude suppression (caption/col/colgroup/thead/tbody/tfoot) outside any table
         if (
             tag_name in ("caption", "col", "colgroup", "thead", "tbody", "tfoot")
