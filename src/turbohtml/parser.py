@@ -22,6 +22,7 @@ from turbohtml.handlers import (
     FramesetTagHandler,
     BodyReentryHandler,
     BodyImplicitCreationHandler,
+    FramesetOkHandler,
     FramesetGuardHandler,
     BodyElementHandler,
     BoundaryElementHandler,
@@ -82,6 +83,7 @@ class TurboHTML:
             TemplateTagHandler(self),
             TemplateContentFilterHandler(self),
             PlaintextHandler(self),
+            FramesetOkHandler(self),
             BodyImplicitCreationHandler(self),
             FramesetGuardHandler(self),
             BodyReentryHandler(self),
@@ -1141,84 +1143,7 @@ class TurboHTML:
     ) -> None:
         """Handle all opening HTML tags."""
 
-        # Ignore stray <frame> tokens before establishing a root <frameset> ONLY while frameset_ok is still True.
-        # Once frameset_ok is False (e.g., due to prior meaningful content or stray </frameset>), allow <frame>
-        # to emit a standalone frame element so fragment/innerHTML tests expecting a lone <frame> succeed.
-        if (
-            tag_name == "frame"
-            and not self._has_root_frameset()
-            and context.frameset_ok
-        ):
-            return
-
-        # If we see any non-whitespace text or a non-frameset-ok element while frameset_ok is True, flip it off
-        if context.frameset_ok:
-            # Elements that do NOT commit the document to a body (frameset still possible). Includes metadata,
-            # frameset structures, legacy presentational head-compatible elements (basefont, bgsound), and an
-            # initial top-level foreign root (svg/math) which will be treated as benign and discarded if a
-            # subsequent root <frameset> appears.
-            benign = {
-                "frameset",
-                "frame",
-                "noframes",
-                "param",
-                "source",
-                "track",
-                "base",
-                "basefont",
-                "bgsound",
-                "link",
-                "meta",
-                "script",
-                "style",
-                "title",
-                "svg",
-                "math",
-            }
-            # Treat <input type="hidden"> as benign (does not commit to body parsing in frameset-capable docs)
-            if (
-                tag_name == "input"
-                and (token.attributes.get("type", "") or "").lower() == "hidden"
-            ):
-                benign = benign | {"input"}
-
-            def _foreign_root_wrapper_benign() -> bool:
-                body = self._get_body_node()
-                if not body or len(body.children) != 1:
-                    return False
-                root = body.children[0]
-                if root.tag_name not in ("svg svg", "math math"):
-                    return False
-                # Scan subtree for any non-whitespace text or disallowed element
-                stack = [root]
-                while stack:
-                    n = stack.pop()
-                    for ch in n.children:
-                        if (
-                            ch.tag_name == "#text"
-                            and ch.text_content
-                            and ch.text_content.strip()
-                        ):
-                            return False
-                        if ch.tag_name not in ("#text", "#comment") and not (
-                            ch.tag_name.startswith("svg ")
-                            or ch.tag_name.startswith("math ")
-                        ):
-                            # Allow a limited set of simple HTML wrappers (div, span) inside integration points
-                            if ch.tag_name not in ("div", "span"):
-                                return False
-                        stack.append(ch)
-                return True
-
-            benign_dynamic = _foreign_root_wrapper_benign()
-            if tag_name not in benign and not benign_dynamic:
-                # Treat a solitary empty <p> (no non-whitespace descendants) before a root <frameset>
-                # as still benign so that tests expecting frameset takeover after <p><frameset> pass.
-                if tag_name == "p":
-                    # Will be populated only with whitespace at this point; keep frameset_ok True and continue
-                    pass
-                else:
-                    context.frameset_ok = False
+        # (Moved) frameset_ok frame suppression and toggling handled by FramesetOkHandler.
 
         # Fragment table context: implicit tbody for leading <tr> when no table element open.
         # Additionally, in a table fragment context, table structure elements must be inserted as

@@ -276,6 +276,76 @@ class BodyImplicitCreationHandler(TagHandler):
                         context.transition_to_state(_DS.IN_BODY, body)
         return False
 
+
+class FramesetOkHandler(TagHandler):
+    """Manages frameset_ok toggling and early <frame> suppression before root frameset is established.
+
+    Consolidates the parser's inline logic so the parser no longer branches on frameset_ok.
+    """
+
+    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+        from turbohtml.context import DocumentState as _DS
+        tag = token.tag_name
+        # Suppress stray <frame> before a root <frameset> only while frameset_ok is True.
+        if tag == "frame" and not self.parser._has_root_frameset() and context.frameset_ok:
+            return True
+        if context.frameset_ok:
+            benign = {
+                "frameset",
+                "frame",
+                "noframes",
+                "param",
+                "source",
+                "track",
+                "base",
+                "basefont",
+                "bgsound",
+                "link",
+                "meta",
+                "script",
+                "style",
+                "title",
+                "svg",
+                "math",
+            }
+            if (
+                tag == "input"
+                and (token.attributes.get("type", "") or "").lower() == "hidden"
+            ):
+                benign = benign | {"input"}
+            def _foreign_root_wrapper_benign() -> bool:
+                body = self.parser._get_body_node()
+                if not body or len(body.children) != 1:
+                    return False
+                root = body.children[0]
+                if root.tag_name not in ("svg svg", "math math"):
+                    return False
+                stack = [root]
+                while stack:
+                    n = stack.pop()
+                    for ch in n.children:
+                        if (
+                            ch.tag_name == "#text"
+                            and ch.text_content
+                            and ch.text_content.strip()
+                        ):
+                            return False
+                        if ch.tag_name not in ("#text", "#comment") and not (
+                            ch.tag_name.startswith("svg ")
+                            or ch.tag_name.startswith("math ")
+                        ):
+                            if ch.tag_name not in ("div", "span"):
+                                return False
+                        stack.append(ch)
+                return True
+            benign_dynamic = _foreign_root_wrapper_benign()
+            if tag not in benign and not benign_dynamic:
+                if tag == "p":
+                    pass  # solitary empty <p> kept benign
+                else:
+                    context.frameset_ok = False
+        return False
+
     def handle_comment(
         self, comment: str, context: "ParseContext"
     ) -> bool:  # pragma: no cover - default
