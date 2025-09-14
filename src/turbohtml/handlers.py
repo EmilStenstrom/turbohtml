@@ -2131,28 +2131,43 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             self.debug(f"Created new {tag_name}: parent now: {context.current_parent}")
             return True
 
-        # Disallowed start tags inside select that force select to close then reprocess (per spec)
-        if self._is_in_select(context) and tag_name in ("input", "keygen", "textarea"):
-            # Close the select element if in scope
-            select_ancestor = context.current_parent.find_ancestor("select")
-            if select_ancestor:
-                # Pop open elements stack until select removed
+        # Disallowed start tags inside select (input, keygen, textarea): spec says
+        #   \'act as if an end tag token with tag name \"select\" had been seen, then reprocess the token\'.
+        # We implement this by popping the open <select> (implicitly closing option/optgroup) then
+        # allowing normal processing (return False) so the element is emitted at the new insertion point.
+        # Exception: fragment parsing with fragment_context == 'select' where we have no actual <select>
+        # element on the stack and tests expect these tokens to be ignored (only option/optgroup retained).
+        if (
+            self._is_in_select(context)
+            and tag_name in ("input", "keygen", "textarea")
+            and self.parser.fragment_context != "select"
+        ):
+            self.debug(
+                f"Auto-closing open <select> before <{tag_name}> (reprocess token outside select)"
+            )
+            # Pop until select removed
+            select_el = None
+            for el in reversed(context.open_elements._stack):
+                if el.tag_name == "select":
+                    select_el = el
+                    break
+            if select_el is not None:
                 while not context.open_elements.is_empty():
                     popped = context.open_elements.pop()
-                    if popped is select_ancestor:
+                    if popped is select_el:
+                        parent = popped.parent or context.current_parent
+                        if parent:
+                            context.move_to_element(parent)
                         break
-                # Move insertion point to select's parent
-                if select_ancestor.parent:
-                    context.move_to_element(select_ancestor.parent)
-            # Now create the disallowed element outside the select
-            if (
-                tag_name != "textarea"
-            ):  # We don't implement textarea rawtext specifics here yet
-                self.parser.insert_element(
-                    token, context, mode="void", enter=False, treat_as_void=True
-                )
-            else:
-                self.parser.insert_element(token, context, mode="normal", enter=True)
+            return False  # Reprocess token as normal start tag now outside select
+        if (
+            self._is_in_select(context)
+            and tag_name in ("input", "keygen", "textarea")
+            and self.parser.fragment_context == "select"
+        ):
+            self.debug(
+                f"Ignoring disallowed <{tag_name}> inside select fragment context (suppress only, no auto-close)"
+            )
             return True
 
         # If we're in a select, ignore any formatting elements
@@ -5209,6 +5224,11 @@ class RawtextTagHandler(SelectAwareHandler):
         # We intentionally ALLOW script/style inside <select> (spec allows script in select; style behavior differs
         # but tests expect script element creation). SelectAwareHandler would normally block; we re-allow here by
         # overriding select filtering in should_handle_start below.
+        if tag_name == "textarea" and (
+            context.current_parent.tag_name == "select"
+            or context.current_parent.find_ancestor(lambda n: n.tag_name == "select")
+        ):
+            return False  # Disallow textarea rawtext handling inside select per spec (ignored)
         return tag_name in RAWTEXT_ELEMENTS
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
@@ -5222,6 +5242,18 @@ class RawtextTagHandler(SelectAwareHandler):
     ) -> bool:
         tag_name = token.tag_name
         self.debug(f"handling {tag_name}")
+
+        # Spec: In select insertion mode, <textarea> start tag is a parse error and ignored.
+        # Do not switch tokenizer state; leave as normal data so subsequent <option> is tokenized correctly.
+        if (
+            tag_name == "textarea"
+            and (
+                context.current_parent.tag_name == "select"
+                or context.current_parent.find_ancestor(lambda n: n.tag_name == "select")
+            )
+        ):
+            self.debug("Ignoring <textarea> inside <select> (no rawtext state)")
+            return True
 
         # Table row alignment: if a <style> or <script> appears immediately after a <tr> start tag
         # we must ensure it becomes a child of the row (tbody/tr) rather than a direct child of <table>.

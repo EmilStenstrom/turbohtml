@@ -167,6 +167,22 @@ def _supp_colgroup_whitespace(parser, context, token, fragment_context):
     return bool(data.strip())
 
 
+def _supp_select_disallowed(parser, context, token, fragment_context):
+    """Suppress start tags that the spec says to ignore in select insertion mode.
+
+    HTML Standard: In the "in select" insertion mode, start tags whose tag name is one of
+    "input", "keygen", "textarea" are parse errors and the token is ignored. We suppress them
+    here for fragment parsing so downstream handlers (e.g. Plaintext) don't change tokenizer state.
+    This avoids incorrectly switching to PLAINTEXT for <textarea> inside a <select> fragment which
+    previously caused subsequent <option> tags to be treated as literal text.
+    """
+    if fragment_context != "select":
+        return False
+    if getattr(token, "type", None) != "StartTag":
+        return False
+    return getattr(token, "tag_name", None) in {"input", "keygen", "textarea"}
+
+
 # Fragment specifications registry (includes suppression predicates)
 FRAGMENT_SPECS: Dict[str, FragmentSpec] = {
     "template": FragmentSpec(
@@ -182,7 +198,11 @@ FRAGMENT_SPECS: Dict[str, FragmentSpec] = {
     "select": FragmentSpec(
         name="select",
         ignored_start_tags={"html", "title", "meta"},
-        suppression_predicates=[_supp_doctype, _supp_malformed_select_like],
+        suppression_predicates=[
+            _supp_doctype,
+            _supp_malformed_select_like,
+            _supp_select_disallowed,
+        ],
     ),
     "colgroup": FragmentSpec(
         name="colgroup",
@@ -310,15 +330,6 @@ def handle_character(parser, context, token, fragment_context):
             if body and context.document_state != DocumentState.IN_BODY:
                 context.move_to_element(body)
                 context.transition_to_state(DocumentState.IN_BODY, body)
-    if (
-        fragment_context == "select"
-        and data.strip().lower().startswith("<option")
-        and data.strip().endswith(">")
-    ):
-        opt_token = HTMLToken("StartTag", tag_name="option", attributes={})
-        parser._handle_start_tag(opt_token, "option", context, parser.tokenizer.pos)
-        context.index = parser.tokenizer.pos
-        return
     for handler in parser.tag_handlers:
         if handler.should_handle_text(data, context):
             parser.debug(
@@ -358,6 +369,20 @@ def parse_fragment(parser: "TurboHTML") -> None:  # pragma: no cover
                 except Exception:  # defensive: predicate failure should not abort parse
                     parser.debug(f"Suppression predicate error: {getattr(pred, '__name__', pred)}")
             if suppressed:
+                # If we suppressed a RAWTEXT/RCDATA start tag (e.g. <textarea>) the tokenizer will already
+                # have switched itself into RAWTEXT state (since it does that eagerly in _try_tag). The real
+                # HTML5 algorithm only switches the tokenizer AFTER the tree builder inserts the element.
+                # Because we ignored the start tag, we must roll the tokenizer back to DATA so that the
+                # following '<option>' (in the failing select fragment test) is tokenized as a StartTag
+                # instead of literal text. This keeps changes narrowly scoped without refactoring the
+                # tokenizer's eager RAWTEXT switch logic.
+                if (
+                    getattr(token, "type", None) == "StartTag"
+                    and getattr(token, "tag_name", None) in RAWTEXT_ELEMENTS
+                    and parser.tokenizer.state == "RAWTEXT"
+                ):
+                    parser.tokenizer.state = "DATA"
+                    parser.tokenizer.rawtext_tag = None
                 continue
         if token.type == "Comment":
             handle_comment(parser, context, token, fragment_context)
