@@ -8623,9 +8623,9 @@ class PlaintextHandler(SelectAwareHandler):
         # If we detached an <a>, defer recreation until first PLAINTEXT character token. This avoids
         # potential later handler interference moving the insertion point before characters arrive.
         if recreate_anchor:
-            # Set deferred flag (fallback) AND attempt immediate recreation now so first character lands inside.
+            # Immediate recreation inside <plaintext> without deferred flag.
             attrs = recreated_anchor_attrs or {}
-            setattr(context, "_recreate_anchor_in_plaintext", attrs)
+            # Ensure insertion point is plaintext element
             if context.current_parent.tag_name != "plaintext":
                 pt = context.current_parent.find_ancestor("plaintext")
                 if pt:

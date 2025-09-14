@@ -298,14 +298,6 @@ def handle_character(parser, context, token, fragment_context):
     if context.content_state == ContentState.PLAINTEXT:
         if not data:
             return
-        pending_anchor_attrs = getattr(context, "_recreate_anchor_in_plaintext", None)
-        if pending_anchor_attrs is not None and context.current_parent.tag_name == "plaintext":
-            has_child_anchor = any(ch.tag_name == "a" for ch in context.current_parent.children)
-            if not has_child_anchor:
-                a_node = Node("a", pending_anchor_attrs)
-                context.current_parent.append_child(a_node)
-                context.enter_element(a_node)
-            delattr(context, "_recreate_anchor_in_plaintext")
         text_node = parser.create_text_node(data)
         context.current_parent.append_child(text_node)
         return
