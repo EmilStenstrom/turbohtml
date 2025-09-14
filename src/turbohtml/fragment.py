@@ -12,7 +12,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, List, Dict
 
-# Centralized imports (previously local within functions for Node/Tokenizer/Constants)
 from .context import DocumentState, ContentState
 from .node import Node
 from .constants import RAWTEXT_ELEMENTS
@@ -31,6 +30,7 @@ class FragmentSpec:
     suppression_predicates: List[
         Callable[["TurboHTML", "ParseContext", "HTMLToken", str], bool]
     ] = field(default_factory=list)
+    treat_all_as_text: bool = False  # For rawtext/RCDATA fragment contexts: emit single Character token
 
 
 
@@ -212,6 +212,14 @@ FRAGMENT_SPECS: Dict[str, FragmentSpec] = {
     "td": FragmentSpec(name="td", suppression_predicates=[_supp_doctype]),
     "th": FragmentSpec(name="th", suppression_predicates=[_supp_doctype]),
     "tr": FragmentSpec(name="tr", suppression_predicates=[_supp_doctype]),
+    "title": FragmentSpec(name="title", suppression_predicates=[_supp_doctype], treat_all_as_text=True),
+    "textarea": FragmentSpec(name="textarea", suppression_predicates=[_supp_doctype], treat_all_as_text=True),
+    "style": FragmentSpec(name="style", suppression_predicates=[_supp_doctype], treat_all_as_text=True),
+    "script": FragmentSpec(name="script", suppression_predicates=[_supp_doctype], treat_all_as_text=True),
+    "xmp": FragmentSpec(name="xmp", suppression_predicates=[_supp_doctype], treat_all_as_text=True),
+    "iframe": FragmentSpec(name="iframe", suppression_predicates=[_supp_doctype], treat_all_as_text=True),
+    "noembed": FragmentSpec(name="noembed", suppression_predicates=[_supp_doctype], treat_all_as_text=True),
+    "noframes": FragmentSpec(name="noframes", suppression_predicates=[_supp_doctype], treat_all_as_text=True),
     "tbody": FragmentSpec(
         name="tbody",
         pre_token_hooks=[],
@@ -344,15 +352,13 @@ def parse_fragment(parser: "TurboHTML") -> None:  # pragma: no cover
     fragment_context = parser.fragment_context
     parser.debug(f"Parsing fragment in context: {fragment_context}")
     context = parser._create_fragment_context()
-    if fragment_context in RAWTEXT_ELEMENTS:
-        text_node = parser.create_text_node(parser.html)
-        context.current_parent.append_child(text_node)
-        parser.debug(
-            f"Fragment: Treated all content as raw text in {fragment_context} context"
-        )
-        return
     parser.tokenizer = HTMLTokenizer(parser.html)
     spec = FRAGMENT_SPECS.get(fragment_context)
+    if spec and spec.treat_all_as_text:
+        parser.tokenizer._pending_tokens.append(
+            HTMLToken("Character", data=parser.html)
+        )
+        parser.tokenizer.pos = parser.tokenizer.length
     for token in parser.tokenizer.tokenize():
         parser._prev_token = parser._last_token
         parser._last_token = token
