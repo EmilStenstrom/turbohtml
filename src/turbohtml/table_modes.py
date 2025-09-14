@@ -17,11 +17,12 @@ from __future__ import annotations
 from typing import Optional
 
 from .context import DocumentState, ParseContext
-
-TABLE_SECTION_TAGS = {"tbody", "thead", "tfoot"}
-TABLE_ROW_TAGS = {"tr"}
-TABLE_CELL_TAGS = {"td", "th"}
-TABLE_PRELUDE_TAGS = {"caption", "col", "colgroup"} | TABLE_SECTION_TAGS
+from .constants import (
+    TABLE_SECTION_TAGS,
+    TABLE_ROW_TAGS,
+    TABLE_CELL_TAGS,
+    TABLE_PRELUDE_TAGS,
+)
 
 # Elements treated specially in table mode when deciding foster parenting.
 # Mirrors exclusions in parser._handle_start_tag condition.

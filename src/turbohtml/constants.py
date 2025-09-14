@@ -236,6 +236,13 @@ TABLE_ELEMENTS = [
     "th",
 ]
 
+# Canonical table category constant sets (centralized from table_modes):
+# Maintained here so membership logic stays deterministic and not duplicated across modules.
+TABLE_SECTION_TAGS = {"tbody", "thead", "tfoot"}
+TABLE_ROW_TAGS = {"tr"}
+TABLE_CELL_TAGS = {"td", "th"}
+TABLE_PRELUDE_TAGS = {"caption", "col", "colgroup"} | TABLE_SECTION_TAGS
+
 TABLE_CONTAINING_ELEMENTS = [
     "html",
     "body",
