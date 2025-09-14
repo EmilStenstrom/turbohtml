@@ -1190,14 +1190,6 @@ class TurboHTML:
             context.transition_to_state(DocumentState.IN_ROW, tr)
             return
 
-        # In frameset insertion modes, only a subset of start tags are honored. Allow frameset, frame, noframes.
-        if context.document_state in (
-            DocumentState.IN_FRAMESET,
-            DocumentState.AFTER_FRAMESET,
-        ):
-            if tag_name not in ("frameset", "frame", "noframes"):
-                self.debug(f"Ignoring start tag <{tag_name}> in frameset context")
-                return
 
         if context.content_state == ContentState.RAWTEXT:
             self.debug("In rawtext mode, ignoring start tag")
