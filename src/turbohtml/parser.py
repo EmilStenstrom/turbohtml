@@ -88,9 +88,9 @@ class TurboHTML:
             FramesetGuardHandler(self),
             BodyReentryHandler(self),
             FramesetTagHandler(self),
-            ForeignTagHandler(self) if handle_foreign_elements else None,
-            SelectTagHandler(self),
+            SelectTagHandler(self),  # must precede table handling to suppress table tokens inside <select>
             TableTagHandler(self),
+            ForeignTagHandler(self) if handle_foreign_elements else None,
             ParagraphTagHandler(self),
             AutoClosingTagHandler(self),
             MenuitemElementHandler(self),
@@ -1214,8 +1214,6 @@ class TurboHTML:
             # Let normal table handling place script/style (may end up inside row if appropriate)
             pass
 
-
-
         # Per HTML5 spec, before processing most start tags, reconstruct the active
         # formatting elements. However, in table insertion modes (IN_TABLE, IN_TABLE_BODY,
         # IN_ROW) and when not inside a cell/caption, reconstructing would wrongly insert
@@ -1233,13 +1231,6 @@ class TurboHTML:
                 )
             )
             if in_table_modes and not in_cell_or_caption:
-                # Original blanket skip avoided reconstructing formatting elements when the insertion
-                # point would be a table element (table/tbody/thead/tfoot/tr). However, after foster
-                # parenting a block just before the table (e.g. <center> outside <table>), the
-                # insertion mode can still be a table mode while current_parent is the body (safe).
-                # In such cases we DO want reconstruction so that formatting elements (like <font>)
-                # removed during the previous block closure can be duplicated before a following
-                # foster-parented start tag (<img>) – maintain correct placement with intervening table context.
                 if context.current_parent.tag_name in (
                     "table",
                     "tbody",
@@ -1247,17 +1238,10 @@ class TurboHTML:
                     "tfoot",
                     "tr",
                 ):
-                    # Still skip: would incorrectly nest formatting under table-related element.
                     pass
                 else:
                     self.reconstruct_active_formatting_elements(context)
             else:
-                # For block / sectioning / heading / table container start tags, skip reconstruction unless
-                # there exists at least one missing active formatting element entry that is NOT <nobr>.
-                # This preserves necessary reconstruction for cases where a formatting element was interrupted
-                # by a block yet still needs to wrap subsequent phrasing content inside the new block, while
-                # avoiding premature cloning in misnested cases like <div><b></div><div> (the open <b> remains
-                # on the stack so is not "missing" and thus no reconstruction occurs).
                 blockish = (
                     "div",
                     "section",
@@ -1282,9 +1266,6 @@ class TurboHTML:
                 if tag_name not in blockish:
                     self.reconstruct_active_formatting_elements(context)
                 else:
-                    # Defer possible reconstruction until after block insertion to avoid cloning a still-open
-                    # formatting element before the block (misnested case). We record whether a missing non-<nobr>
-                    # formatting element exists and, if so, run reconstruction once we've entered the new block.
                     missing_non_nobr = False
                     if (
                         context.active_formatting_elements
