@@ -33,82 +33,6 @@ class FragmentSpec:
     treat_all_as_text: bool = False  # For rawtext/RCDATA fragment contexts: emit single Character token
 
 
-
-
-def _relocate_stray_tr_post_pass(parser: "TurboHTML", context):
-    """Relocate stray root-level <tr> nodes into preceding or nested table sections.
-
-    Mirrors original post-pass logic for tbody/thead/tfoot fragments.
-    """
-    fc = parser.fragment_context
-    if fc not in ("tbody", "thead", "tfoot"):
-        return
-    root_children = list(parser.root.children)
-    if not root_children:
-        return
-    candidate_table = None
-    candidate_section = None
-    for ch in root_children:
-        if ch.tag_name == "table":
-            sec = None
-            for gc in ch.children:
-                if gc.tag_name in ("tbody", "thead", "tfoot"):
-                    sec = gc
-                    break
-            if sec:
-                has_row = any(gc.tag_name == "tr" for gc in sec.children)
-                if not has_row:
-                    candidate_table = ch
-                    candidate_section = sec
-    if candidate_table and candidate_section:
-        moved = 0
-        for ch in list(parser.root.children):
-            if ch.tag_name == "tr":
-                idx_table = parser.root.children.index(candidate_table)
-                idx_tr = parser.root.children.index(ch)
-                if idx_tr > idx_table:
-                    parser.root.remove_child(ch)
-                    candidate_section.append_child(ch)
-                    moved += 1
-        if moved and parser.env_debug:
-            parser.debug(
-                f"[fragment-post] relocated {moved} stray root <tr> node(s) into preceding table section"
-            )
-    if len(parser.root.children) >= 2 and parser.root.children[0].tag_name == "tr":
-        wrapper_tr = parser.root.children[0]
-
-        def find_table_with_empty_section(node):
-            if node.tag_name == "table":
-                sec = None
-                for gc in node.children:
-                    if gc.tag_name in ("tbody", "thead", "tfoot"):
-                        sec = gc
-                        break
-                if sec and not any(gc.tag_name == "tr" for gc in sec.children):
-                    return node, sec
-            for c in node.children:
-                if c.tag_name != "#text":
-                    found = find_table_with_empty_section(c)
-                    if found:
-                        return found
-            return None
-
-        found = find_table_with_empty_section(wrapper_tr)
-        if found:
-            nested_table, nested_section = found
-            stray_moved = 0
-            for i in range(1, len(parser.root.children)):
-                ch = parser.root.children[i]
-                if ch.tag_name == "tr":
-                    parser.root.remove_child(ch)
-                    nested_section.append_child(ch)
-                    stray_moved += 1
-            if stray_moved and parser.env_debug:
-                parser.debug(
-                    f"[fragment-post] nested relocation moved {stray_moved} trailing root <tr> into nested table section"
-                )
-
-
 def _html_finalize_post_pass(parser: "TurboHTML", context):
     """Ensure <head>/<body> synthesis for html fragments (spec fragment parsing).
 
@@ -184,6 +108,37 @@ def _supp_select_disallowed(parser, context, token, fragment_context):
     return token.tag_name in {"input", "keygen", "textarea"}
 
 
+def _supp_duplicate_section_wrapper(parser, context, token, fragment_context):
+    """Suppress an explicit table section start tag that duplicates the fragment context.
+
+    When parsing a fragment with context <tbody>/<thead>/<tfoot>/<tr>/<td>/<th>, the spec's
+    algorithm conceptually starts *inside* that element (except for td/th/tr row/cell specifics
+    which we model via DocumentState). If the HTML being parsed begins with the literal tag
+    matching the fragment context (e.g. fragment_context='tbody' and incoming '<tbody>'), we
+    must NOT create an extra wrapper element: the context element is implicit. The WHATWG test
+    expectations treat that token as ignored (parse error recorded separately) rather than
+    generating an additional nested section. We restrict suppression to the synthetic fragment
+    root level to avoid swallowing legitimate nested sections deeper in the tree (rare but
+    spec‑permitted in some malformed inputs).
+
+    Conditions:
+      - token is a StartTag
+      - fragment_context in target set
+      - token.tag_name == fragment_context
+      - current_parent is the document-fragment root (no prior element established)
+    """
+    if token.type != "StartTag":
+        return False
+    if fragment_context not in {"tbody", "thead", "tfoot", "tr", "td", "th"}:
+        return False
+    if token.tag_name != fragment_context:
+        return False
+    # Only suppress when still at the synthetic fragment root (no element parent yet)
+    if context.current_parent and context.current_parent.tag_name == "document-fragment":
+        return True
+    return False
+
+
 # Fragment specifications registry (includes suppression predicates)
 FRAGMENT_SPECS: Dict[str, FragmentSpec] = {
     "template": FragmentSpec(
@@ -220,25 +175,117 @@ FRAGMENT_SPECS: Dict[str, FragmentSpec] = {
     "iframe": FragmentSpec(name="iframe", suppression_predicates=[_supp_doctype], treat_all_as_text=True),
     "noembed": FragmentSpec(name="noembed", suppression_predicates=[_supp_doctype], treat_all_as_text=True),
     "noframes": FragmentSpec(name="noframes", suppression_predicates=[_supp_doctype], treat_all_as_text=True),
+    "table": FragmentSpec(
+        name="table",
+        suppression_predicates=[_supp_doctype],
+        pre_token_hooks=[],
+    ),
     "tbody": FragmentSpec(
         name="tbody",
-        pre_token_hooks=[],
-        post_pass_hooks=[_relocate_stray_tr_post_pass],
-        suppression_predicates=[_supp_doctype],
+        pre_token_hooks=[],  # hook added later after definition
+        suppression_predicates=[_supp_doctype, _supp_duplicate_section_wrapper],
     ),
     "thead": FragmentSpec(
         name="thead",
         pre_token_hooks=[],
-        post_pass_hooks=[_relocate_stray_tr_post_pass],
-        suppression_predicates=[_supp_doctype],
+        suppression_predicates=[_supp_doctype, _supp_duplicate_section_wrapper],
     ),
     "tfoot": FragmentSpec(
         name="tfoot",
         pre_token_hooks=[],
-        post_pass_hooks=[_relocate_stray_tr_post_pass],
-        suppression_predicates=[_supp_doctype],
+        suppression_predicates=[_supp_doctype, _supp_duplicate_section_wrapper],
     ),
 }
+
+
+def _implied_table_section_pre_token(parser: "TurboHTML", context, token: HTMLToken):
+    """Spec-aligned implied tbody generation (not a heuristic relocation).
+
+    HTML Standard: When a <tr> start tag is processed in the *in table* insertion mode
+    and no table section element (tbody/thead/tfoot) is currently open, the parser
+    implicitly creates a <tbody> element and switches insertion mode to *in table body*.
+
+    During fragment parsing we do not run the full insertion mode cascade; to avoid a
+    post-pass fix-up we apply the minimal equivalent here: if a StartTag 'tr' is about
+    to be handled and the current parent is neither tbody/thead/tfoot nor a properly
+    seeded context element, but we are inside (or directly under) a table element, we
+    create a tbody as the appropriate parent.
+
+    Conditions (all must hold):
+      - token is StartTag 'tr'
+      - there exists an ancestor <table> from current_parent upward OR fragment context
+        indicates table-adjacent (table, tbody, thead, tfoot, tr, td, th)
+      - current_parent is not one of tbody/thead/tfoot/tr (already positioned)
+      - there is no existing tbody/thead/tfoot among root children that should be used
+    """
+    if token.type != "StartTag" or token.tag_name != "tr":
+        return
+
+    # If we're already within a proper section, nothing to do.
+    cp_tag = context.current_parent.tag_name
+    if cp_tag in ("tbody", "thead", "tfoot", "tr"):
+        return
+
+    # Ascend to find a table ancestor (stop at document fragment root). We also record the
+    # last encountered section (tbody/thead/tfoot) so we can re-enter it if flow content
+    # (e.g. <a>) temporarily changed current_parent before the <tr> token.
+    node = context.current_parent
+    table_ancestor = None
+    last_section = None
+    while node and node.tag_name != "document-fragment":
+        if node.tag_name in ("tbody", "thead", "tfoot") and last_section is None:
+            last_section = node
+        if node.tag_name == "table":
+            table_ancestor = node
+            break
+        node = node.parent
+    if not table_ancestor:
+        # Consult open elements stack (fragment cases with fostered content may leave us outside)
+        for el in reversed(list(context.open_elements._stack)):
+            if el.tag_name == "table":
+                table_ancestor = el
+                break
+    if not table_ancestor:
+        return  # No active table to adjust
+
+    # Recovery: if a table ancestor exists and one (or more) section element children already
+    # exist under that table, prefer re-entering the *last* such section rather than synthesizing
+    # a new tbody (matches spec which would have kept it open).
+    if last_section is None:
+        # Search direct children of table for an existing section if we climbed from an inline
+        # descendant (e.g., <tbody><a> ... <tr>) where current_parent is the table or deeper inline.
+        for ch in reversed(table_ancestor.children):  # reverse: prefer most recent
+            if ch.tag_name in ("tbody", "thead", "tfoot"):
+                last_section = ch
+                break
+    if last_section is not None:
+        context.move_to_element(last_section)
+        return
+
+    # No existing section – create implied tbody under the table ancestor (or at current parent if it *is* table)
+    attach_parent = table_ancestor
+    # (Instrumentation removed) – earlier debug printed table children when synthesizing tbody.
+    tbody = Node("tbody")
+    # Insert before first <tr> child to preserve ordering if such a row already slipped in.
+    for i, ch in enumerate(attach_parent.children):
+        if ch.tag_name == "tr":
+            attach_parent.children.insert(i, tbody)
+            tbody.parent = attach_parent
+            context.move_to_element(tbody)
+            return
+    attach_parent.append_child(tbody)
+    context.move_to_element(tbody)
+
+
+### Note:
+# Nested table row placement inside fragment table sections is handled directly in
+# table_modes.fragment_table_section_insert (nearest section ancestor). 
+
+# Register implied section hook for table-related fragment contexts
+for ctx_name in ("html", "table", "tbody", "thead", "tfoot", "td", "th", "tr"):
+    spec = FRAGMENT_SPECS.get(ctx_name)
+    if spec:
+        spec.pre_token_hooks.append(_implied_table_section_pre_token)
 
 
 ########################################
@@ -354,6 +401,13 @@ def parse_fragment(parser: "TurboHTML") -> None:  # pragma: no cover
     context = parser._create_fragment_context()
     parser.tokenizer = HTMLTokenizer(parser.html)
     spec = FRAGMENT_SPECS.get(fragment_context)
+
+    # NOTE: Earlier experimental synthetic stack seeding (table/tbody/tr) for td/th/tr fragment
+    # contexts was removed after introducing regressions (innerHTML pass rate drop). Any required
+    # implied section or row alignment now handled via pre‑token hooks and normal insertion logic
+    # without seeding non‑DOM ancestors.
+    synthetic_stack = []  # retained for pruning logic compatibility (now always empty)
+
     if spec and spec.treat_all_as_text:
         parser.tokenizer._pending_tokens.append(
             HTMLToken("Character", data=parser.html)
@@ -392,3 +446,5 @@ def parse_fragment(parser: "TurboHTML") -> None:  # pragma: no cover
     if spec and spec.post_pass_hooks:
         for hook in spec.post_pass_hooks:
             hook(parser, context)
+
+    # Synthetic stack pruning no-op (bootstrap disabled).

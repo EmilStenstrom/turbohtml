@@ -31,6 +31,12 @@ class Node:
         "text_content",
         "next_sibling",
         "previous_sibling",
+        # Flag for stack-only synthetic nodes (not part of DOM tree). These nodes may be
+        # pushed onto the open elements stack during fragment parsing to emulate required
+        # ancestor context (e.g. table/tbody/tr for td/th fragments) without mutating the
+        # actual fragment DOM. They are pruned after parsing. Keeping this in __slots__
+        # prevents AttributeError when fragment bootstrap logic marks nodes.
+        "synthetic_stack_only",
     )
 
     def __init__(
@@ -69,6 +75,9 @@ class Node:
         self.text_content = ""  # For text nodes or concatenated text in element nodes
         self.next_sibling: Optional["Node"] = None
         self.previous_sibling: Optional["Node"] = None
+        # Default: real DOM node (False). Fragment bootstrap may set True on ephemeral
+        # ancestors that exist only on the open elements stack.
+        self.synthetic_stack_only: bool = False
 
     def append_child(self, child: "Node"):
         # Check for circular reference before adding

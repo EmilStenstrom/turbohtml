@@ -29,6 +29,7 @@ from turbohtml.handlers import (
 )
 from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
+from turbohtml import table_modes  # phase 1 extraction: table predicates
 from turbohtml.adoption import AdoptionAgencyAlgorithm
 from .fragment import parse_fragment  # moved from local scope in _parse_fragment
 
@@ -1402,103 +1403,8 @@ class TurboHTML:
         # open. This mirrors the table insertion mode where such elements are not foster-parented
         # inside phrasing content. We relocate the insertion point to the fragment root before
         # handling them so they become siblings instead of children of an open <a>.
-        if self.fragment_context == "table" and tag_name in (
-            "caption",
-            "colgroup",
-            "col",
-            "tbody",
-            "tfoot",
-            "thead",
-            "tr",
-            "td",
-            "th",
-        ):
-            # Always insert these as direct children of the fragment root per table fragment parsing rules.
-            top = context.current_parent
-            while top.parent:
-                top = top.parent
-            context.move_to_element(top)
-            # Mini table insertion subset for fragment context 'table'
-            root = context.current_parent
-
-            # Helper to find last child of types
-            def _find_last(name):
-                for ch in reversed(root.children):
-                    if ch.tag_name == name:
-                        return ch
-                return None
-
-            from turbohtml.context import DocumentState as _DS  # local to avoid cycle
-
-            if tag_name == "caption":
-                caption = Node("caption", token.attributes)
-                root.append_child(caption)
-                context.open_elements.push(caption)
-                context.move_to_element(caption)
-                context.transition_to_state(_DS.IN_CAPTION, caption)
-                return
-            if tag_name == "colgroup":
-                cg = Node("colgroup", token.attributes)
-                root.append_child(cg)
-                context.open_elements.push(cg)
-                # Remain IN_TABLE
-                return
-            if tag_name == "col":
-                # Append to last colgroup if present else create one per spec-like recovery
-                cg = _find_last("colgroup")
-                if not cg:
-                    cg = Node("colgroup")
-                    root.append_child(cg)
-                col = Node("col", token.attributes)
-                cg.append_child(col)
-                return
-            if tag_name in ("tbody", "thead", "tfoot"):
-                section = Node(tag_name, token.attributes)
-                root.append_child(section)
-                context.open_elements.push(section)
-                context.transition_to_state(_DS.IN_TABLE_BODY, section)
-                return
-            if tag_name == "tr":
-                # Ensure a tbody (or adopt last existing tbody/thead/tfoot)
-                container = None
-                for ch in reversed(root.children):
-                    if ch.tag_name in ("tbody", "thead", "tfoot"):
-                        container = ch
-                        break
-                if not container:
-                    container = Node("tbody")
-                    root.append_child(container)
-                tr = Node("tr", token.attributes)
-                container.append_child(tr)
-                context.open_elements.push(tr)
-                context.move_to_element(tr)
-                context.transition_to_state(_DS.IN_ROW, tr)
-                return
-            if tag_name in ("td", "th"):
-                # Ensure tbody and tr
-                container = None
-                for ch in reversed(root.children):
-                    if ch.tag_name in ("tbody", "thead", "tfoot"):
-                        container = ch
-                        break
-                if not container:
-                    container = Node("tbody")
-                    root.append_child(container)
-                # Find last tr inside container
-                last_tr = None
-                for ch in reversed(container.children):
-                    if ch.tag_name == "tr":
-                        last_tr = ch
-                        break
-                if not last_tr:
-                    last_tr = Node("tr")
-                    container.append_child(last_tr)
-                cell = Node(tag_name, token.attributes)
-                last_tr.append_child(cell)
-                context.open_elements.push(cell)
-                context.move_to_element(cell)
-                context.transition_to_state(_DS.IN_CELL, cell)
-                return
+        if table_modes.fragment_table_insert(tag_name, token, context, self):
+            return
 
         # Fragment context: <colgroup> only admits <col>; drop others (e.g., <a>)
         if self.fragment_context == "colgroup":
@@ -1509,45 +1415,9 @@ class TurboHTML:
             context.current_parent.append_child(col)
             return
 
-        # Fragment context: table section wrappers (tbody, thead, tfoot)
-        if self.fragment_context in ("tbody", "thead", "tfoot") and tag_name in (
-            "tr",
-            "td",
-            "th",
-        ):
-            # Ensure insertion at fragment root for row/cell creation
-            top = context.current_parent
-            while top.parent:
-                top = top.parent
-            root = top
-            # For <tr>: direct child of section fragment root
-            if tag_name == "tr":
-                tr = Node("tr", token.attributes)
-                root.append_child(tr)
-                context.open_elements.push(tr)
-                context.move_to_element(tr)
-                from turbohtml.context import DocumentState as _DS
-
-                context.transition_to_state(_DS.IN_ROW, tr)
-                return
-            else:
-                # td/th: require a tr (last or new)
-                last_tr = None
-                for ch in reversed(root.children):
-                    if ch.tag_name == "tr":
-                        last_tr = ch
-                        break
-                if not last_tr:
-                    last_tr = Node("tr")
-                    root.append_child(last_tr)
-                cell = Node(tag_name, token.attributes)
-                last_tr.append_child(cell)
-                context.open_elements.push(cell)
-                context.move_to_element(cell)
-                from turbohtml.context import DocumentState as _DS
-
-                context.transition_to_state(_DS.IN_CELL, cell)
-                return
+        # Fragment context: table section wrappers (tbody, thead, tfoot) via helper
+        if table_modes.fragment_table_section_insert(tag_name, token, context, self):
+            return
 
         # Fragment context: select – ignore disallowed interactive/form elements that should not appear
         # and must not generate text (we only care about <option>/<optgroup> content for these tests).
@@ -1807,25 +1677,8 @@ class TurboHTML:
                 return
 
         # Check if we need table foster parenting (but not inside template content or integration points)
-        if (
-            context.document_state == DocumentState.IN_TABLE
-            and tag_name not in TABLE_ELEMENTS
-            and tag_name not in HEAD_ELEMENTS
-            and not self._is_in_template_content(context)
-            and not self._is_in_integration_point(context)
-            and context.current_parent.tag_name not in ("td", "th")
-            and not context.current_parent.find_ancestor(
-                lambda n: n.tag_name in ("td", "th")
-            )
-            and not (
-                tag_name == "input"
-                and (
-                    (token.attributes.get("type", "") or "").lower() == "hidden"
-                    and token.attributes.get("type", "")
-                    == token.attributes.get("type", "").strip()
-                )
-            )
-        ):
+        # Table foster parenting decision extracted to table_modes.should_foster_parent
+        if table_modes.should_foster_parent(tag_name, token.attributes, context, self):
             # Salvage: if a table row is still open (tr on stack) but no cell (td/th) is open, yet the table's
             # current row already contains a cell element, then a premature drift out of the cell occurred
             # (e.g. foreign content closure moved insertion point). For flow content like <p> we should
@@ -1833,41 +1686,17 @@ class TurboHTML:
             # keeps the cell element open until its explicit end tag. Limit to paragraph start to avoid
             # over-correcting other element types.
             if tag_name == "p":
-                open_tr = None
-                for el in reversed(context.open_elements._stack):
-                    if el.tag_name == "tr":
-                        open_tr = el
-                        break
-                if open_tr is not None:
-                    # Find the last td/th descendant of this <tr>
-                    last_cell = None
-                    for child in reversed(open_tr.children):
-                        if child.tag_name in ("td", "th"):
-                            last_cell = child
-                            break
-                    if last_cell is not None:
-                        context.move_to_element(last_cell)
-                        self.debug(
-                            "Re-entered last open row cell <{}> for <p> start (cell missing from stack but row still open)".format(
-                                last_cell.tag_name
-                            )
-                        )
-                        # Proceed with normal (non-foster) creation below; skip foster parenting entirely
-                        # by not executing the foster parenting branch.
-                        # (We intentionally do NOT push last_cell again; it remains only in DOM, not stack.)
-                        # Fall through to normal element append below.
+                if table_modes.reenter_last_cell_for_p(context):
+                    self.debug(
+                        "Re-entered last open row cell for <p> start (cell missing from stack but row still open)"
+                    )
 
             # Before fostering, check if a cell remains open on the open elements stack. If so, the
             # Before fostering, check if a cell remains open on the open elements stack. If so, the
             # insertion point drifted out of the cell incorrectly (e.g., foreign content breakout).
             # Restore it so flow content like <p> is inserted inside the cell rather than foster parented.
-            open_cell = None
-            for el in reversed(context.open_elements._stack):
-                if el.tag_name in ("td", "th"):
-                    open_cell = el
-                    break
+            open_cell = table_modes.restore_insertion_open_cell(context)
             if open_cell is not None:
-                context.move_to_element(open_cell)
                 self.debug(
                     f"Skipped foster parenting <{tag_name}>; insertion point set to open cell <{open_cell.tag_name}>"
                 )

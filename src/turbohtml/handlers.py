@@ -18,7 +18,7 @@ from turbohtml.constants import (
     VOID_ELEMENTS,
     BOUNDARY_ELEMENTS,
 )
-from turbohtml.context import ParseContext, DocumentState, ContentState
+from turbohtml.context import ParseContext, ContentState, DocumentState
 from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken
 
@@ -1732,12 +1732,31 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                         # After relocation restore insertion point to existing section wrapper (tbody/thead/tfoot)
                         # if present so the upcoming <tr> becomes its child (expected tree keeps wrapper),
                         # otherwise fall back to table.
+                        # Preserve or restore section wrapper (tbody/thead/tfoot) if present so that
+                        # a following <tr> token becomes its child. Previous logic fell back to the
+                        # table when no wrapper was found, which is correct, but it also overwrote
+                        # the insertion point with the table even when a wrapper existed but had no
+                        # rows yet. That caused the subsequent <tr> to bypass the wrapper in fragment
+                        # contexts producing: <table> <tr> instead of <table><tbody><tr>. We now only
+                        # change insertion point if a wrapper exists; otherwise leave as-is (table).
                         section_wrapper = None
                         for ch in table.children:
                             if ch.tag_name in ("tbody", "thead", "tfoot"):
                                 section_wrapper = ch
                                 break
-                        context.move_to_element(section_wrapper or table)
+                        if section_wrapper:
+                            # Ensure insertion mode reflects being inside a table section, not still in the cell.
+                            context.move_to_element(section_wrapper)
+                            if context.document_state == DocumentState.IN_CELL:
+                                context.transition_to_state(DocumentState.IN_TABLE_BODY, section_wrapper)
+                            # Ensure table and section wrapper are represented on the open elements stack
+                            # so later row handling does not treat the upcoming <tr> as stray. This mirrors
+                            # the document parsing stack shape (table -> tbody) before processing a row.
+                            stack_tags = [el.tag_name for el in context.open_elements._stack]
+                            if table.tag_name not in stack_tags:
+                                context.open_elements.push(table)
+                            if section_wrapper.tag_name not in stack_tags:
+                                context.open_elements.push(section_wrapper)
                         return True
             # Second‑chance relocation when current_parent is a bare section wrapper (<tbody>, <thead>, <tfoot>)
             # under an otherwise empty table inside a fragment cell context.
@@ -1781,8 +1800,16 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                         )
                         if not inside_object:
                             context.active_formatting_elements.push(new_element, token)
-                        # Keep insertion point at the (still present) section wrapper so <tr> nests inside it.
+                        # Keep insertion point at the (still present) section wrapper and update insertion mode.
                         context.move_to_element(section)
+                        if context.document_state == DocumentState.IN_CELL:
+                            context.transition_to_state(DocumentState.IN_TABLE_BODY, section)
+                        # Ensure table and section are on open elements stack for subsequent row token.
+                        stack_tags = [el.tag_name for el in context.open_elements._stack]
+                        if table.tag_name not in stack_tags:
+                            context.open_elements.push(table)
+                        if section.tag_name not in stack_tags:
+                            context.open_elements.push(section)
                         return True
             self.debug(
                 "Inside table cell, inserting formatting element via unified helper"
