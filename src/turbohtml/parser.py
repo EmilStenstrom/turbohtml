@@ -742,9 +742,7 @@ class TurboHTML:
         )  # local import to avoid cycle at module load
 
         body = self._get_body_node() or self.root
-        ctx = ParseContext(
-            0, body, debug_callback=self.debug if self.env_debug else None
-        )
+        ctx = ParseContext(0, body, debug_callback=self.debug)
         return ctx
 
     # DOM traversal helper methods
@@ -793,11 +791,7 @@ class TurboHTML:
         # Create context based on the fragment context element
         if self.fragment_context == "template":
             # Special fragment parsing for templates: create a template/content container
-            context = ParseContext(
-                len(self.html),
-                self.root,
-                debug_callback=self.debug if self.env_debug else None,
-            )
+            context = ParseContext(len(self.html), self.root, debug_callback=self.debug)
             context.transition_to_state(DocumentState.IN_BODY, self.root)
             template_node = Node("template")
             self.root.append_child(template_node)
@@ -807,47 +801,23 @@ class TurboHTML:
             return context
 
         if self.fragment_context in ("td", "th"):
-            context = ParseContext(
-                len(self.html),
-                self.root,
-                debug_callback=self.debug if self.env_debug else None,
-            )
+            context = ParseContext(len(self.html), self.root, debug_callback=self.debug)
             context.transition_to_state(DocumentState.IN_CELL, self.root)
         elif self.fragment_context == "tr":
-            context = ParseContext(
-                len(self.html),
-                self.root,
-                debug_callback=self.debug if self.env_debug else None,
-            )
+            context = ParseContext(len(self.html), self.root, debug_callback=self.debug)
             context.transition_to_state(DocumentState.IN_ROW, self.root)
         elif self.fragment_context in ("thead", "tbody", "tfoot"):
-            context = ParseContext(
-                len(self.html),
-                self.root,
-                debug_callback=self.debug if self.env_debug else None,
-            )
+            context = ParseContext(len(self.html), self.root, debug_callback=self.debug)
             context.transition_to_state(DocumentState.IN_TABLE_BODY, self.root)
         elif self.fragment_context == "html":
-            context = ParseContext(
-                len(self.html),
-                self.root,
-                debug_callback=self.debug if self.env_debug else None,
-            )
+            context = ParseContext(len(self.html), self.root, debug_callback=self.debug)
             # Remain at fragment root; children appended directly (no <html> wrapper node in output)
             context.transition_to_state(DocumentState.INITIAL, self.root)
         elif self.fragment_context in RAWTEXT_ELEMENTS:
-            context = ParseContext(
-                len(self.html),
-                self.root,
-                debug_callback=self.debug if self.env_debug else None,
-            )
+            context = ParseContext(len(self.html), self.root, debug_callback=self.debug)
             context.transition_to_state(DocumentState.IN_BODY, self.root)
         else:
-            context = ParseContext(
-                len(self.html),
-                self.root,
-                debug_callback=self.debug if self.env_debug else None,
-            )
+            context = ParseContext(len(self.html), self.root, debug_callback=self.debug)
             context.transition_to_state(DocumentState.IN_BODY, self.root)
         # Table fragment: treat insertion mode as IN_TABLE for correct section handling
         if self.fragment_context == "table":
@@ -1008,11 +978,7 @@ class TurboHTML:
     def _parse_document(self) -> None:
         """Parse HTML as a full document (original logic)"""
         # Initialize context with html_node as current_parent
-        context = ParseContext(
-            len(self.html),
-            self.html_node,
-            debug_callback=self.debug if self.env_debug else None,
-        )
+        context = ParseContext(len(self.html), self.html_node, debug_callback=self.debug)
         self.tokenizer = HTMLTokenizer(self.html)
 
         # if self.env_debug:
