@@ -135,14 +135,14 @@ def _html_finalize_post_pass(parser: "TurboHTML", context):
 
 
 def _supp_doctype(parser, context, token, fragment_context):  # spec: ignore doctype in fragments
-    return getattr(token, "type", None) == "DOCTYPE"
+    return token.type == "DOCTYPE"
 
 
 def _supp_malformed_select_like(parser, context, token, fragment_context):
     # Skip malformed start tags that still contain a literal '<' inside a select-like context.
-    if getattr(token, "type", None) != "StartTag":
+    if token.type != "StartTag":
         return False
-    tag_name = getattr(token, "tag_name", "")
+    tag_name = token.tag_name
     if "<" not in tag_name:
         return False
     if not context.current_parent:
@@ -162,7 +162,7 @@ def _supp_colgroup_whitespace(parser, context, token, fragment_context):
     # stray text nodes that would later be pruned by tree-construction rules.
     if fragment_context != "colgroup":
         return False
-    if getattr(token, "type", None) != "Character":
+    if token.type != "Character":
         return False
     # Only apply at the fragment synthetic root to avoid interfering with nested contexts (shouldn't occur normally).
     return context.current_parent.tag_name == "document-fragment"
@@ -179,9 +179,9 @@ def _supp_select_disallowed(parser, context, token, fragment_context):
     """
     if fragment_context != "select":
         return False
-    if getattr(token, "type", None) != "StartTag":
+    if token.type != "StartTag":
         return False
-    return getattr(token, "tag_name", None) in {"input", "keygen", "textarea"}
+    return token.tag_name in {"input", "keygen", "textarea"}
 
 
 # Fragment specifications registry (includes suppression predicates)
