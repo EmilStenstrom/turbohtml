@@ -3252,7 +3252,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             and tag_name in ("td", "th")
         ):
             stack = context.open_elements._stack  # type: ignore[attr-defined]
-            # Find deepest currently open cell element
+            # Find deepest currently open cell element (works even if current_parent moved elsewhere)
             cell_index = -1
             for i in range(len(stack) - 1, -1, -1):
                 if stack[i].tag_name in ("td", "th"):
