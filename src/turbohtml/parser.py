@@ -1412,66 +1412,6 @@ class TurboHTML:
             )
             return
 
-        # Malformed table prelude collapse: accumulate leading table section/grouping
-        # tags before any actual table element, and when a <tr> appears emit only that <tr>.
-        # Do NOT apply inside a colgroup fragment context (interferes with foo<col> case 26) or
-        # when fragment context expects direct minimal children.
-        if (
-            tag_name in ("caption", "col", "colgroup", "thead", "tbody", "tfoot")
-            and self.fragment_context != "colgroup"
-        ):
-            # Structural handling: ignore isolated table prelude elements that appear before any <table>
-            # or row/cell in pure HTML context (no foreign/template). They are parse errors and dropped.
-            if (
-                context.current_context not in ("math", "svg")
-                and not self._is_in_template_content(context)
-                and not self.find_current_table(context)
-                and context.current_parent.tag_name not in ("table", "caption")
-            ):
-                # Instead of blanket ignore for <caption> when inside a phrasing container (<a>, <span>)
-                # emit the caption element directly so its character content is retained (conformance
-                # innerHTML expectations for <a><caption>... case).
-                if tag_name == "caption" and context.current_parent.tag_name in (
-                    "a",
-                    "span",
-                ):
-                    new_node = Node("caption", token.attributes)
-                    context.current_parent.append_child(new_node)
-                    context.enter_element(new_node)
-                    context.open_elements.push(new_node)
-                    return
-                self.debug(
-                    f"Ignoring standalone table prelude <{tag_name}> before table context"
-                )
-                return
-        if tag_name == "tr":
-            # Stray <tr> outside any <table>: emit bare <tr> when no open table exists and preceding
-            # siblings do not include a <table>.
-            if (
-                not self.find_current_table(context)
-                and context.current_parent.tag_name not in ("table", "caption")
-                and context.current_context not in ("math", "svg")
-                and not self._is_in_template_content(context)
-                and not context.current_parent.find_ancestor("select")
-            ):
-                # Structural guard: ensure we haven't already created a synthetic tr at this position.
-                # (If last element child is a tr with no table ancestor, treat this as normal flow.)
-                last_elem = None
-                for ch in reversed(context.current_parent.children):
-                    if ch.tag_name != "#text":
-                        last_elem = ch
-                        break
-                already_has_isolated_tr = (
-                    last_elem is not None
-                    and last_elem.tag_name == "tr"
-                    and not last_elem.find_ancestor("table")
-                )
-                if not already_has_isolated_tr:
-                    tr = Node("tr", token.attributes)
-                    context.current_parent.append_child(tr)
-                    context.enter_element(tr)
-                    context.open_elements.push(tr)
-                    return
 
         # Per HTML5 spec, before processing most start tags, reconstruct the active
         # formatting elements. However, in table insertion modes (IN_TABLE, IN_TABLE_BODY,
@@ -1559,6 +1499,12 @@ class TurboHTML:
                     context._deferred_block_reconstruct = (
                         missing_non_nobr  # transient attribute (not read elsewhere)
                     )
+
+        # Early start-tag preprocessing: give all handlers a chance to suppress/synthesize before dispatch.
+        # Handlers that don't implement the hook inherit the no-op base method (no branching/try needed).
+        for h in self.tag_handlers:
+            if h.early_start_preprocess(token, context):  # type: ignore[attr-defined]
+                return
 
         # Try tag handlers first
         for handler in self.tag_handlers:

@@ -152,6 +152,11 @@ class TagHandler:
     def handle_text(self, text: str, context: "ParseContext") -> bool:
         return False
 
+    # Early start-tag preprocessing hook. Called by parser before formatting reconstruction / handler dispatch.
+    # Handlers override to perform suppression or synthetic insertion. Return True to consume token.
+    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # pragma: no cover - default noop
+        return False
+
     # Comment handling stubs (allow parser to call uniformly without hasattr checks)
     def should_handle_comment(
         self, comment: str, context: "ParseContext"
@@ -3218,6 +3223,59 @@ class TableElementHandler(TagHandler):
 
 class TableTagHandler(TemplateAwareHandler, TableElementHandler):
     """Handles table-related elements"""
+
+    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        """Early table prelude suppression & stray <tr> recovery.
+
+        Invoked by parser before formatting reconstruction / handler dispatch via generic
+        TagHandler hook. Returns True if token is consumed (ignored or synthesized).
+        """
+        tag_name = token.tag_name
+        # Prelude suppression (caption/col/colgroup/thead/tbody/tfoot) outside any table
+        if (
+            tag_name in ("caption", "col", "colgroup", "thead", "tbody", "tfoot")
+            and self.parser.fragment_context != "colgroup"
+            and context.current_context not in ("math", "svg")
+            and not self._is_in_template_content(context)
+            and not self.parser.find_current_table(context)
+            and context.current_parent.tag_name not in ("table", "caption")
+        ):
+            if tag_name == "caption" and context.current_parent.tag_name in ("a", "span"):
+                new_node = Node("caption", token.attributes)
+                context.current_parent.append_child(new_node)
+                context.enter_element(new_node)
+                context.open_elements.push(new_node)
+                return True
+            self.debug(
+                f"Ignoring standalone table prelude <{tag_name}> before table context (early)"
+            )
+            return True
+        # Stray <tr> recovery
+        if tag_name == "tr":
+            if (
+                not self.parser.find_current_table(context)
+                and context.current_parent.tag_name not in ("table", "caption")
+                and context.current_context not in ("math", "svg")
+                and not self._is_in_template_content(context)
+                and not context.current_parent.find_ancestor("select")
+            ):
+                last_elem = None
+                for ch in reversed(context.current_parent.children):
+                    if ch.tag_name != "#text":
+                        last_elem = ch
+                        break
+                already_isolated = (
+                    last_elem is not None
+                    and last_elem.tag_name == "tr"
+                    and not last_elem.find_ancestor("table")
+                )
+                if not already_isolated:
+                    tr = Node("tr", token.attributes)
+                    context.current_parent.append_child(tr)
+                    context.enter_element(tr)
+                    context.open_elements.push(tr)
+                return True
+        return False
 
     def _should_handle_start_impl(self, tag_name: str, context: "ParseContext") -> bool:
         # Always handle col/colgroup here
