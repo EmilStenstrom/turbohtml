@@ -369,20 +369,6 @@ def parse_fragment(parser: "TurboHTML") -> None:  # pragma: no cover
                 except Exception:  # defensive: predicate failure should not abort parse
                     parser.debug(f"Suppression predicate error: {getattr(pred, '__name__', pred)}")
             if suppressed:
-                # If we suppressed a RAWTEXT/RCDATA start tag (e.g. <textarea>) the tokenizer will already
-                # have switched itself into RAWTEXT state (since it does that eagerly in _try_tag). The real
-                # HTML5 algorithm only switches the tokenizer AFTER the tree builder inserts the element.
-                # Because we ignored the start tag, we must roll the tokenizer back to DATA so that the
-                # following '<option>' (in the failing select fragment test) is tokenized as a StartTag
-                # instead of literal text. This keeps changes narrowly scoped without refactoring the
-                # tokenizer's eager RAWTEXT switch logic.
-                if (
-                    getattr(token, "type", None) == "StartTag"
-                    and getattr(token, "tag_name", None) in RAWTEXT_ELEMENTS
-                    and parser.tokenizer.state == "RAWTEXT"
-                ):
-                    parser.tokenizer.state = "DATA"
-                    parser.tokenizer.rawtext_tag = None
                 continue
         if token.type == "Comment":
             handle_comment(parser, context, token, fragment_context)

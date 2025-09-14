@@ -5414,13 +5414,17 @@ class RawtextTagHandler(SelectAwareHandler):
             self.debug("Closing paragraph before xmp")
             context.move_up_one_level()
 
-        # Create RAWTEXT element via unified insertion (push + enter)
+        # Create element first; only switch tokenizer if token actually requires rawtext handling
         self.parser.insert_element(token, context, mode="normal", enter=True)
-        # No post-insertion relocation needed; insertion point pre-adjustment ensures correct placement.
-        # Switch to RAWTEXT state and let tokenizer handle the content
-        self.debug(f"Switching to RAWTEXT content state for {tag_name}")
-        context.content_state = ContentState.RAWTEXT
-        self.parser.tokenizer.start_rawtext(tag_name)
+        if getattr(token, "needs_rawtext", False) and tag_name == "textarea":
+            self.debug("Deferred RAWTEXT activation for <textarea>")
+            context.content_state = ContentState.RAWTEXT
+            self.parser.tokenizer.start_rawtext(tag_name)
+        else:
+            # Eager rawtext elements already placed tokenizer in RAWTEXT state; mirror parser context.
+            if tag_name in RAWTEXT_ELEMENTS and tag_name != "textarea":
+                self.debug(f"Eager RAWTEXT activation for <{tag_name}> (context sync)")
+                context.content_state = ContentState.RAWTEXT
         return True
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:

@@ -36,6 +36,7 @@ class HTMLToken:
         attributes: Optional[Dict[str, str]] = None,
         is_self_closing: bool = False,
         is_last_token: bool = False,
+        needs_rawtext: bool = False,  # deferred rawtext activation flag
     ):
         self.type = type_  # 'DOCTYPE', 'StartTag', 'EndTag', 'Comment', 'Character'
         self.data = data
@@ -44,6 +45,11 @@ class HTMLToken:
         self.is_self_closing = is_self_closing
         self.is_last_token = is_last_token
         self.ignored_end_tag = False
+        # When True (for start tags of RAWTEXT/RCDATA elements) the tree builder
+        # will activate the tokenizer RAWTEXT state ONLY if it actually inserts
+        # the element. This defers state changes, removing need for rollback hacks
+        # when such start tags are suppressed (e.g. <textarea> inside select fragment).
+        self.needs_rawtext = needs_rawtext
 
     def __repr__(self):
         if self.type == "Character":
@@ -737,14 +743,19 @@ class HTMLTokenizer:
             # or leading escaped quote. Convert whole substring into text content.
             # No generic malformed tail special-casing: allow attribute parsing to capture unusual names
 
-            # Handle state transitions for start tags
+            # RAWTEXT handling: defer ONLY for <textarea> (needed for select fragment suppression);
+            # keep eager switching for other rawtext/rCDATA elements (script/style/title/xmp/noframes/plaintext)
+            deferred_rawtext = False
             if not is_end_tag and tag_name.lower() in RAWTEXT_ELEMENTS:
                 lowered = tag_name.lower()
-                self.debug(f"Switching to RAWTEXT mode for {tag_name}")
-                self.state = "RAWTEXT"
-                self.rawtext_tag = lowered
+                if lowered == "textarea":
+                    deferred_rawtext = True
+                else:
+                    self.debug(f"Switching to RAWTEXT mode for {tag_name}")
+                    self.state = "RAWTEXT"
+                    self.rawtext_tag = lowered
                 if lowered == "script":
-                    # Peek at attributes to evaluate type executability
+                    # Attribute type sniffing still needed (even if eager) for executability
                     _tmp_self_closing, tmp_attrs = (
                         self._parse_attributes_and_check_self_closing(attributes)
                     )
@@ -784,6 +795,7 @@ class HTMLTokenizer:
                     tag_name=tag_name,
                     attributes=attrs,
                     is_self_closing=is_self_closing,
+                    needs_rawtext=deferred_rawtext,
                 )
         # If we get here, we found a < that isn't part of a valid tag
         self.debug("No valid tag found, treating as character")
