@@ -587,54 +587,6 @@ class TurboHTML:
 
         collapse_formatting(self.root)
 
-        # Fragment empty-table wrapper suppression: In cell fragments where a <table></table>
-        # produced an empty tbody/tr/td scaffold (no real rows or cells authored), prune that
-        # synthetic structure so the fragment output matches expected minimal tree.
-        if self.fragment_context in ("td", "th", "tr", "tbody", "thead", "tfoot"):
-            def prune_empty_table(node: Node):
-                for ch in list(node.children):
-                    if ch.tag_name == "table":
-                        # Detect empty synthetic scaffold: table -> tbody? -> tr? -> td? with no further descendants
-                        tbl = ch
-                        def has_authored_structure(t: Node) -> bool:
-                            for c in t.children:
-                                if c.tag_name in ("tr", "td", "th", "caption", "colgroup", "col"):
-                                    return True
-                                if c.tag_name in ("tbody", "thead", "tfoot"):
-                                    for gc in c.children:
-                                        if gc.tag_name in ("tr", "td", "th"):
-                                            return True
-                            return False
-                        if not has_authored_structure(tbl):
-                            # Strip any tbody/tr/td descendants (keep table empty)
-                            tbl.children = [c for c in tbl.children if c.tag_name not in ("tbody", "thead", "tfoot")]
-                        else:
-                            # Synthetic single chain detection: tbody->tr->td where td has no element children.
-                            # Only prune if this chain was the only authored descendant (no other element siblings in the table)
-                            if (
-                                len(tbl.children) == 1
-                                and tbl.children[0].tag_name in ("tbody", "thead", "tfoot")
-                            ):
-                                sec = tbl.children[0]
-                                if (
-                                    len(sec.children) == 1
-                                    and sec.children[0].tag_name == "tr"
-                                    and len(sec.children[0].children) == 1
-                                    and sec.children[0].children[0].tag_name == "td"
-                                ):
-                                    cell = sec.children[0].children[0]
-                                    if not any(
-                                        (gc.tag_name != "#text")
-                                        or (
-                                            gc.tag_name == "#text"
-                                            and (gc.text_content or "").strip()
-                                        )
-                                        for gc in cell.children
-                                    ):
-                                        # Replace with truly empty table (drop wrapper chain)
-                                        tbl.children = []
-                    prune_empty_table(ch)
-            prune_empty_table(self.root)
 
         # Foreign (SVG/MathML) attribute ordering & normalization adjustments:
         #   * SVG: expected serialization orders some xml:* and definitionurl attributes: definitionurl first, then
