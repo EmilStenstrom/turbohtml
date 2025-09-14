@@ -156,15 +156,16 @@ def _supp_malformed_select_like(parser, context, token, fragment_context):
 
 
 def _supp_colgroup_whitespace(parser, context, token, fragment_context):
-    # Suppress stray character tokens (non-whitespace) before first colgroup child insertion.
+    # Broadened: suppress all character tokens (including whitespace) at the root level of a colgroup fragment.
+    # Spec fragment parsing for <colgroup>: character tokens in the colgroup context are generally ignored
+    # until proper child elements (<col>) appear. We suppress them unconditionally here to avoid creating
+    # stray text nodes that would later be pruned by tree-construction rules.
     if fragment_context != "colgroup":
         return False
     if getattr(token, "type", None) != "Character":
         return False
-    if context.current_parent.tag_name != "document-fragment":
-        return False
-    data = getattr(token, "data", "")
-    return bool(data.strip())
+    # Only apply at the fragment synthetic root to avoid interfering with nested contexts (shouldn't occur normally).
+    return context.current_parent.tag_name == "document-fragment"
 
 
 def _supp_select_disallowed(parser, context, token, fragment_context):
