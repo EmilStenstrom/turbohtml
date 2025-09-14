@@ -163,6 +163,119 @@ class TagHandler:
     ) -> bool:  # pragma: no cover - default
         return False
 
+
+class FramesetGuardHandler(TagHandler):
+    """Early frameset context guard.
+
+    Suppresses non-frameset flow start tags once a root <frameset> exists and the
+    insertion mode is IN_FRAMESET / AFTER_FRAMESET. Previously inline in parser.
+    We keep this as an early preprocessing handler so other handlers remain
+    oblivious to frameset suppression rules.
+    """
+
+    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+        from turbohtml.context import DocumentState as _DS
+        tag = token.tag_name
+        if self.parser._has_root_frameset() and context.document_state in (
+            _DS.IN_FRAMESET,
+            _DS.AFTER_FRAMESET,
+        ):
+            if tag not in ("frameset", "frame", "noframes", "html"):
+                self.debug(
+                    f"Ignoring <{tag}> start tag in root frameset document (early guard)"
+                )
+                return True
+        return False
+
+
+class BodyReentryHandler(TagHandler):
+    """Handles re-entering IN_BODY after AFTER_BODY / AFTER_HTML when a start tag appears.
+
+    Moves logic out of parser; ensures relocation of insertion point into deepest still-open
+    descendant of body (excluding body/html) before continuing normal dispatch.
+    """
+
+    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+        from turbohtml.context import DocumentState as _DS
+        tag = token.tag_name
+        if context.document_state in (_DS.AFTER_BODY, _DS.AFTER_HTML) and tag not in ("html", "body"):
+            if context.document_state == _DS.AFTER_HTML and tag == "head":
+                self.debug("Ignoring stray <head> after </html>")
+                return True
+            body_node = self.parser._get_body_node() or self.parser._ensure_body_node(context)
+            if body_node:
+                resume_parent = body_node
+                if context.open_elements._stack:  # type: ignore[attr-defined]
+                    for el in reversed(context.open_elements._stack):
+                        if el is body_node:
+                            break
+                        # verify el still attached under body
+                        cur = el
+                        attached = False
+                        while cur:
+                            if cur is body_node:
+                                attached = True
+                                break
+                            cur = cur.parent
+                        if attached:
+                            resume_parent = el
+                            break
+                context.move_to_element(resume_parent)
+                context.transition_to_state(_DS.IN_BODY, resume_parent)
+                self.debug(
+                    f"Reentered IN_BODY for <{tag}> after post-body state (handler)"
+                )
+        return False
+
+
+class BodyImplicitCreationHandler(TagHandler):
+    """Implicit body creation formerly inline in parser.
+
+    Creates <body> when leaving INITIAL/IN_HEAD via a non-head, non-html start tag outside template content.
+    Respects frameset conditions and frameset_ok flag.
+    """
+
+    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+        from turbohtml.context import DocumentState as _DS
+        from turbohtml.constants import HEAD_ELEMENTS as _HEAD
+        tag = token.tag_name
+        if (
+            not self.parser.fragment_context
+            and context.document_state in (_DS.INITIAL, _DS.IN_HEAD)
+            and tag not in _HEAD
+            and tag != "html"
+            and not self._is_in_template_content(context)
+        ):
+            if tag == "frameset":
+                return False  # allow frameset handler to create frameset instead
+            if self.parser._has_root_frameset():
+                return True  # suppress creating body in frameset document
+            benign_no_body = {
+                "frameset",
+                "frame",
+                "param",
+                "source",
+                "track",
+                "base",
+                "basefont",
+                "bgsound",
+                "link",
+                "meta",
+                "script",
+                "style",
+                "title",
+                "svg",
+                "math",
+            }
+            benign = tag in benign_no_body
+            if not (benign and context.frameset_ok):
+                self.debug("Implicitly creating body node (handler)")
+                if context.document_state != _DS.IN_FRAMESET:
+                    body = self.parser._ensure_body_node(context)
+                    if body:
+                        context.transition_to_state(_DS.IN_BODY, body)
+        return False
+
     def handle_comment(
         self, comment: str, context: "ParseContext"
     ) -> bool:  # pragma: no cover - default

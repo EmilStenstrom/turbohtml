@@ -20,6 +20,9 @@ from turbohtml.handlers import (
     ImageTagHandler,
     HtmlTagHandler,
     FramesetTagHandler,
+    BodyReentryHandler,
+    BodyImplicitCreationHandler,
+    FramesetGuardHandler,
     BodyElementHandler,
     BoundaryElementHandler,
     ButtonTagHandler,
@@ -79,6 +82,9 @@ class TurboHTML:
             TemplateTagHandler(self),
             TemplateContentFilterHandler(self),
             PlaintextHandler(self),
+            BodyImplicitCreationHandler(self),
+            FramesetGuardHandler(self),
+            BodyReentryHandler(self),
             FramesetTagHandler(self),
             ForeignTagHandler(self) if handle_foreign_elements else None,
             SelectTagHandler(self),
@@ -1134,107 +1140,6 @@ class TurboHTML:
         self, token: HTMLToken, tag_name: str, context: ParseContext, end_tag_idx: int
     ) -> None:
         """Handle all opening HTML tags."""
-        # Root frameset document guard: once a root <frameset> exists (even if AFTER_FRAMESET via </frameset>)
-        # ignore any further non-frameset flow content that would otherwise synthesize a <body> or append
-        # children under <html>. (Spec: frameset documents do not have a body element.) This suppresses
-        # unwanted body creation observed in tests6/tests18/tests19.
-        if self._has_root_frameset() and context.document_state in (
-            DocumentState.IN_FRAMESET,
-            DocumentState.AFTER_FRAMESET,
-        ):
-            if tag_name not in (
-                "frameset",
-                "frame",
-                "noframes",
-                "html",
-            ):  # allow attribute merge on later <html>
-                self.debug(f"Ignoring <{tag_name}> start tag in root frameset document")
-                return
-        # If we're after the body/html and encounter any start tag (other than duplicate structure),
-        # re-enter the body insertion mode per HTML5 spec parse error recovery.
-        if context.document_state in (
-            DocumentState.AFTER_BODY,
-            DocumentState.AFTER_HTML,
-        ) and tag_name not in ("html", "body"):
-            # Ignore stray <head> (and its contents) after </html> (tests expect it to be dropped entirely)
-            if (
-                context.document_state == DocumentState.AFTER_HTML
-                and tag_name == "head"
-            ):
-                self.debug("Ignoring stray <head> after </html>")
-                return
-            body_node = self._get_body_node() or self._ensure_body_node(context)
-            if body_node:
-                # For head elements (meta, title, etc.) appearing after body/html, tests expect them inside body.
-                # Attempt to resume at the deepest still-open descendant element (excluding body/html) so that
-                # previously open flow containers (e.g. unknown <bdy>) continue to receive content after a stray </body>.
-                resume_parent = body_node
-                # Scan open elements stack for deepest descendant of body that is not special (other than body itself)
-                if context.open_elements._stack:
-                    for el in reversed(context.open_elements._stack):
-                        if el is body_node:
-                            break  # stop once we reach body
-                        # Only resume inside elements that are still attached to body subtree
-                        cur = el
-                        attached = False
-                        while cur:
-                            if cur is body_node:
-                                attached = True
-                                break
-                            cur = cur.parent
-                        if attached:
-                            resume_parent = el
-                            break
-                context.move_to_element(resume_parent)
-                # Transition using resume_parent to keep insertion inside deepest open descendant (e.g. <bdy>)
-                context.transition_to_state(DocumentState.IN_BODY, resume_parent)
-                self.debug(
-                    f"Resumed IN_BODY for <{tag_name}> after post-body state (relocated head element if any)"
-                )
-
-        # Skip implicit body creation for fragments
-        if (
-            not self.fragment_context
-            and (
-                context.document_state == DocumentState.INITIAL
-                or context.document_state == DocumentState.IN_HEAD
-            )
-            and tag_name not in HEAD_ELEMENTS
-            and tag_name != "html"
-            and not self._is_in_template_content(context)
-        ):
-            if tag_name == "frameset":
-                # Do not implicitly create body when a root <frameset> appears – frameset documents omit body.
-                # Continue processing so FramesetTagHandler can create the frameset element.
-                pass
-            if self._has_root_frameset():
-                # Do not synthesize body if a root frameset is already present (frameset document)
-                return
-            # Extended benign set for delaying body creation while frameset still possible.
-            benign_no_body = {
-                "frameset",
-                "frame",
-                "param",
-                "source",
-                "track",
-                "base",
-                "basefont",
-                "bgsound",
-                "link",
-                "meta",
-                "script",
-                "style",
-                "title",
-                "svg",
-                "math",
-            }
-            benign = tag_name in benign_no_body
-            if not (benign and context.frameset_ok):
-                self.debug("Implicitly creating body node")
-                if context.document_state != DocumentState.IN_FRAMESET:
-                    body = self._ensure_body_node(context)
-                    if body:
-                        context.transition_to_state(DocumentState.IN_BODY, body)
 
         # Ignore stray <frame> tokens before establishing a root <frameset> ONLY while frameset_ok is still True.
         # Once frameset_ok is False (e.g., due to prior meaningful content or stray </frameset>), allow <frame>
