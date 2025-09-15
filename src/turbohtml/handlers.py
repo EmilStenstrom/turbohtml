@@ -5549,30 +5549,26 @@ class ListTagHandler(TagHandler):
         """Handle end tags for li"""
         self.debug("Handling end tag for li")
 
-        # Find the nearest li ancestor, but stop if we hit a ul/ol first
-        li_ancestor, stop_element = (
-            context.current_parent.find_ancestor_with_early_stop(
-                "li", ("ul", "ol"), self.parser.html_node
-            )
-        )
+        stack = context.open_elements._stack  # type: ignore[attr-defined]
+        li_index = -1
+        for i in range(len(stack) - 1, -1, -1):
+            if stack[i].tag_name == "li":
+                li_index = i
+                break
+            if stack[i].tag_name in {"ul", "ol"}:
+                break
 
-        if li_ancestor:
-            self.debug("Found matching li")
-            # Move to the list parent
-            if li_ancestor.parent and li_ancestor.parent.tag_name in ("ul", "ol"):
-                self.debug("Moving to list parent")
-                context.move_to_element(li_ancestor.parent)
-            else:
-                self.debug("No list parent found, moving to body")
-                body = self.parser._get_body_node()
-                context.move_to_element_with_fallback(body, self.parser.html_node)
-            return True
-        elif stop_element:
-            self.debug(f"Found {stop_element.tag_name} before li, ignoring end tag")
+        if li_index == -1:
+            self.debug("No li in scope; ignoring")
             return True
 
-        self.debug("No matching li found")
-        return False
+        while len(stack) > li_index:
+            popped = context.open_elements.pop()
+            if context.current_parent is popped:
+                parent = popped.parent or self.parser.html_node
+                context.move_to_element(parent)
+
+        return True
 
     def _handle_list_container_end(
         self, token: "HTMLToken", context: "ParseContext"
@@ -5631,44 +5627,55 @@ class HeadingTagHandler(SimpleElementHandler):
         return tag_name in HEADING_ELEMENTS
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
-        # Case 1: Normal matching end tag – only close if current element *is* the heading.
-        if context.current_parent.tag_name == token.tag_name:
-            context.move_up_one_level()
-            return True
+        tag_name = token.tag_name
+        stack = context.open_elements._stack  # type: ignore[attr-defined]
+        if not context.open_elements.has_element_in_scope(tag_name):
+            replacement = None
+            for el in reversed(stack):
+                if el.tag_name in HEADING_ELEMENTS:
+                    replacement = el.tag_name
+                    break
+            if replacement is None:
+                return True
+            tag_name = replacement
 
-        # Collect heading ancestors from nearest (deepest) to outermost
-        heading_ancestors = []
-        cur = context.current_parent
-        while cur and cur.tag_name not in ("html", "body", "#document", "document-fragment"):
-            if cur.tag_name in HEADING_ELEMENTS:
-                heading_ancestors.append(cur)
-            cur = cur.parent
+        implied = {
+            "dd",
+            "dt",
+            "li",
+            "option",
+            "optgroup",
+            "p",
+            "rb",
+            "rp",
+            "rt",
+            "rtc",
+        }
 
-        if not heading_ancestors:
-            return True  # No open heading to be affected – ignore stray closing
+        while stack and stack[-1].tag_name in implied:
+            popped = context.open_elements.pop()
+            if context.current_parent is popped:
+                parent = popped.parent or self.parser.root
+                context.move_to_element(parent)
 
-        nearest = heading_ancestors[0]
-        outer_ancestors = heading_ancestors[1:]
+        fallback = None
+        while stack:
+            popped = context.open_elements.pop()
+            if (
+                popped.tag_name in HEADING_ELEMENTS
+                and popped.tag_name != tag_name
+                and popped.parent is not None
+            ):
+                fallback = popped.parent
+            if context.current_parent is popped:
+                parent = popped.parent or self.parser.root
+                context.move_to_element(parent)
+            if popped.tag_name == tag_name:
+                break
 
-        # Heuristic derived from tests:
-        #  * If the stray end tag names an *outer* heading (not the nearest), ignore it (tests19:21 expects </h1> ignored while inside inner <h3>). 
-        #  * Otherwise (token matches nearest OR names a different-level heading with no deeper heading open), close the nearest heading so following text escapes (tests19:23).
-        target_outer = next((a for a in outer_ancestors if a.tag_name == token.tag_name), None)
-        if target_outer:
-            # Test 21 case: stray closing for an outer heading while inside an inner heading.
-            # We IGNORE the closing (do not pop any heading) but we reposition insertion point
-            # to that outer heading so following text becomes a direct child of it (expected tree).
-            context.move_to_element(target_outer)
-            return True
+        if fallback is not None:
+            context.move_to_element(fallback)
 
-        # Special case: if current_parent is a list/definition item inside the heading, move out of it first
-        if context.current_parent.tag_name in {"li", "dt", "dd"}:
-            if context.current_parent.parent:
-                context.move_to_element(context.current_parent.parent)
-
-        # Pop nearest heading by moving insertion point to its parent (do NOT forcibly clean descendants; tree already built)
-        if nearest.parent:
-            context.move_to_element(nearest.parent)
         return True
 
 
@@ -6239,6 +6246,12 @@ class AutoClosingTagHandler(TemplateAwareHandler):
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
         # Don't handle end tags inside template content that would affect document state
         if self._is_in_template_content(context):
+            return False
+
+        if tag_name in HEADING_ELEMENTS:
+            return False
+
+        if tag_name in {"li", "dt", "dd"}:
             return False
 
         # Handle end tags for block elements and elements that close when their parent closes
@@ -8286,6 +8299,16 @@ class HtmlTagHandler(TagHandler):
 class FramesetTagHandler(TagHandler):
     """Handles frameset, frame, and noframes elements"""
 
+    def _trim_body_leading_space(self) -> None:
+        body = self.parser._get_body_node()
+        if not body or not body.children:
+            return
+        first = body.children[0]
+        if first.tag_name == "#text" and first.text_content and first.text_content.startswith(" "):
+            first.text_content = first.text_content[1:]
+            if first.text_content == "":
+                body.remove_child(first)
+
     def early_end_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
         if context.document_state in (
             DocumentState.IN_FRAMESET,
@@ -8301,22 +8324,12 @@ class FramesetTagHandler(TagHandler):
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
         if tag_name not in ("frameset", "frame", "noframes"):
             return False
-        if context.current_context in ("svg", "math") and tag_name == "frameset":
-            # Determine if foreign root has preceding significant text; if so, treat as foreign
-            cur = context.current_parent
-            foreign_root = None
-            while cur:
-                if cur.tag_name.startswith("svg ") or cur.tag_name.startswith("math "):
-                    foreign_root = cur
-                cur = cur.parent
-            if foreign_root:
-                for ch in foreign_root.children:
-                    if (
-                        ch.tag_name == "#text"
-                        and ch.text_content
-                        and ch.text_content.strip()
-                    ):
-                        return False
+        if (
+            tag_name == "frameset"
+            and context.current_context in {"svg", "math"}
+            and self.parser.is_plain_svg_foreign(context)  # type: ignore[attr-defined]
+        ):
+            return False
         return True
 
     def handle_start(
@@ -8495,6 +8508,7 @@ class FramesetTagHandler(TagHandler):
                         self.debug(
                             "Ignoring root <frameset>; frameset_ok False and body has meaningful content"
                         )
+                        self._trim_body_leading_space()
                         return True
                     if not context.frameset_ok and not meaningful:
                         # Earlier relaxation caused false frameset takeovers; retain original spec-like guard: once frameset_ok is False we ignore.
