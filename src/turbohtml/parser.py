@@ -1409,17 +1409,10 @@ class TurboHTML:
         ):
             has_p = any(el.tag_name == "p" for el in context.open_elements._stack)
             if not has_p:
-                # Spec: If no <p> element in button scope, parse error; insert HTML element for 'p', then immediately close.
-                # (Strict spec) Do not suppress synthesis even if an empty trailing <p> already exists –
-                # the algorithm always inserts one when no <p> is in button scope.
                 context.current_parent.children[
                     -1
                 ] if context.current_parent.children else None
                 insertion_parent = context.current_parent
-                # If insertion parent is a foreign element (pure SVG/MathML node, not an integration point), per spec
-                # the stray </p> acts in the HTML insertion mode outside that foreign subtree. We therefore append the
-                # synthetic <p> to the nearest ancestor that is NOT a foreign (svg */math *) element. This matches
-                # test expectation where <svg></p><foo> yields sibling <p> and not nested <p> inside <svg>.
                 if insertion_parent.tag_name.startswith(
                     ("svg ", "math ")
                 ) and insertion_parent.tag_name not in (
@@ -1450,8 +1443,6 @@ class TurboHTML:
                     "Synthesized empty <p> for stray </p> (no open <p> in scope); placed at HTML insertion parent outside foreign subtree when applicable; not pushing on stack (immediate close)"
                 )
                 return
-        # Ignore </p> entirely while still constructing head (spec: in head insertion mode such
-        # an end tag is a parse error and is ignored; we must NOT synthesize body early).
         if tag_name == "p" and context.document_state in (
             DocumentState.IN_HEAD,
             DocumentState.AFTER_HEAD,
