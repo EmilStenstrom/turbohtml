@@ -4,6 +4,7 @@ from turbohtml.handlers import (
     DoctypeHandler,
     TemplateTagHandler,
     TemplateContentFilterHandler,
+    FragmentPreprocessHandler,
     ForeignTagHandler,
     FormattingElementHandler,
     FormTagHandler,
@@ -82,6 +83,7 @@ class TurboHTML:
             DoctypeHandler(self),
             TemplateTagHandler(self),
             TemplateContentFilterHandler(self),
+            FragmentPreprocessHandler(self),
             PlaintextHandler(self),
             FramesetOkHandler(self),
             BodyImplicitCreationHandler(self),
@@ -1144,51 +1146,6 @@ class TurboHTML:
         """Handle all opening HTML tags."""
 
         # (Moved) frameset_ok frame suppression and toggling handled by FramesetOkHandler.
-
-        # Fragment table context: implicit tbody for leading <tr> when no table element open.
-        # Additionally, in a table fragment context, table structure elements must be inserted as
-        # siblings at the fragment root even if inline/formatting elements (e.g. <a>) are currently
-        # open. This mirrors the table insertion mode where such elements are not foster-parented
-        # inside phrasing content. We relocate the insertion point to the fragment root before
-        # handling them so they become siblings instead of children of an open <a>.
-        if table_modes.fragment_table_insert(tag_name, token, context, self):
-            return
-
-        # Fragment context: <colgroup> only admits <col>; drop others (e.g., <a>)
-        if self.fragment_context == "colgroup":
-            if tag_name not in ("col",):
-                return
-            # Insert col into fragment root (no implicit colgroup wrapper; context element supplies it)
-            col = Node("col", token.attributes)
-            context.current_parent.append_child(col)
-            return
-
-        # Fragment context: table section wrappers (tbody, thead, tfoot) via helper
-        if table_modes.fragment_table_section_insert(tag_name, token, context, self):
-            return
-
-        # Fragment context: select – ignore disallowed interactive/form elements that should not appear
-        # and must not generate text (we only care about <option>/<optgroup> content for these tests).
-        if self.fragment_context == "select" and tag_name in (
-            "input",
-            "keygen",
-            "textarea",
-            "select",
-        ):
-            return
-
-        if (
-            self.fragment_context == "table"
-            and tag_name == "tr"
-            and context.current_parent.tag_name == "document-fragment"
-        ):
-            # In fragment parsing for table context, a lone <tr> should be a direct child (html5lib expectation).
-            tr = Node("tr", token.attributes)
-            context.current_parent.append_child(tr)
-            context.open_elements.push(tr)
-            context.move_to_element(tr)
-            context.transition_to_state(DocumentState.IN_ROW, tr)
-            return
 
 
         if context.content_state == ContentState.RAWTEXT:

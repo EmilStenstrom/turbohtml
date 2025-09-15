@@ -346,6 +346,57 @@ class FramesetOkHandler(TagHandler):
                     context.frameset_ok = False
         return False
 
+class FragmentPreprocessHandler(TagHandler):
+    """Handles fragment-only early start tag adjustments previously inline in parser._handle_start_tag.
+
+    Consolidates:
+      * fragment_table_insert (implicit tbody / root-level table section placement)
+      * fragment_table_section_insert helper
+      * <colgroup> fragment filtering (only allow <col>)
+      * select fragment suppression of disallowed form/interactive elements
+      * lone <tr> direct child of table fragment root
+    """
+
+    order = 19  # after frameset/body handlers, before table/select specific handlers rely on structure
+
+    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+        parser = self.parser
+        tag = token.tag_name
+        frag = parser.fragment_context
+        if not frag:
+            return False
+        # Table fragment structural insertion (implicit tbody / table section root placement)
+        from turbohtml import table_modes
+        if table_modes.fragment_table_insert(tag, token, context, parser):
+            return True
+        if table_modes.fragment_table_section_insert(tag, token, context, parser):
+            return True
+        # Colgroup fragment: only admit <col>
+        if frag == "colgroup":
+            if tag != "col":
+                return True  # suppress
+            # insert <col> directly at fragment root (mirror previous logic) then consume
+            col = Node("col", token.attributes)
+            context.current_parent.append_child(col)
+            return True
+        # Select fragment: ignore disallowed form/interactive elements
+        if frag == "select" and tag in ("input", "keygen", "textarea", "select"):
+            return True
+        # Table fragment lone <tr> at fragment root
+        if (
+            frag == "table"
+            and tag == "tr"
+            and context.current_parent.tag_name == "document-fragment"
+        ):
+            tr = Node("tr", token.attributes)
+            context.current_parent.append_child(tr)
+            context.open_elements.push(tr)
+            context.move_to_element(tr)
+            from turbohtml.context import DocumentState as _DS
+            context.transition_to_state(_DS.IN_ROW, tr)
+            return True
+        return False
+
     def handle_comment(
         self, comment: str, context: "ParseContext"
     ) -> bool:  # pragma: no cover - default
