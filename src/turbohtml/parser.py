@@ -1145,9 +1145,6 @@ class TurboHTML:
     ) -> None:
         """Handle all opening HTML tags."""
 
-        # (Moved) frameset_ok frame suppression and toggling handled by FramesetOkHandler.
-
-
         if context.content_state == ContentState.RAWTEXT:
             self.debug("In rawtext mode, ignoring start tag")
             return
