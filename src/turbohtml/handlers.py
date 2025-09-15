@@ -5,6 +5,7 @@ import os
 from turbohtml.constants import (
     AUTO_CLOSING_TAGS,
     BLOCK_ELEMENTS,
+    BOUNDARY_ELEMENTS,
     CLOSE_ON_PARENT_CLOSE,
     FORMATTING_ELEMENTS,
     HEAD_ELEMENTS,
@@ -13,14 +14,15 @@ from turbohtml.constants import (
     HTML_ELEMENTS,
     MATHML_ELEMENTS,
     RAWTEXT_ELEMENTS,
+    SPECIAL_CATEGORY_ELEMENTS,
     SVG_CASE_SENSITIVE_ELEMENTS,
     TABLE_ELEMENTS,
     VOID_ELEMENTS,
-    BOUNDARY_ELEMENTS,
 )
 from turbohtml.context import ParseContext, ContentState, DocumentState
 from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken
+from turbohtml import table_modes
 
 
 class ParserInterface(Protocol):
@@ -3254,6 +3256,61 @@ class ParagraphTagHandler(TagHandler):
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         self.debug(f"handling <EndTag: p>, context={context}")
 
+        stack = getattr(context.open_elements, "_stack", [])  # type: ignore[attr-defined]
+        has_open_p = any(el.tag_name == "p" for el in stack)
+        in_body_like_states = (
+            DocumentState.IN_BODY,
+            DocumentState.AFTER_BODY,
+            DocumentState.AFTER_HTML,
+            DocumentState.IN_TABLE,
+            DocumentState.IN_TABLE_BODY,
+            DocumentState.IN_ROW,
+            DocumentState.IN_CELL,
+        )
+        if not has_open_p and context.document_state in in_body_like_states:
+            insertion_parent = context.current_parent
+            if insertion_parent.tag_name.startswith(("svg ", "math ")) and insertion_parent.tag_name not in (
+                "svg foreignObject",
+                "svg desc",
+                "svg title",
+                "math annotation-xml",
+            ):
+                ancestor = insertion_parent.parent
+                while (
+                    ancestor
+                    and ancestor.tag_name.startswith(("svg ", "math "))
+                    and ancestor.tag_name
+                    not in (
+                        "svg foreignObject",
+                        "svg desc",
+                        "svg title",
+                        "math annotation-xml",
+                    )
+                ):
+                    ancestor = ancestor.parent
+                if ancestor is not None:
+                    insertion_parent = ancestor
+                    context.move_to_element(insertion_parent)
+            p_token = self._synth_token("p")
+            self.parser.insert_element(
+                p_token,
+                context,
+                mode="normal",
+                enter=False,
+                push_override=False,
+                parent=insertion_parent,
+            )
+            self.debug(
+                "Synthesized empty <p> for stray </p> (handler)"
+            )
+            return True
+        if context.document_state in (
+            DocumentState.IN_HEAD,
+            DocumentState.AFTER_HEAD,
+        ):
+            self.debug("Ignoring </p> in head insertion mode")
+            return True
+
         # Check if we're inside a button first - special button scope behavior
         button_ancestor = context.current_parent.find_ancestor("button")
         if button_ancestor:
@@ -6016,6 +6073,53 @@ class VoidElementHandler(SelectAwareHandler):
 
         return True
 
+    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+        return tag_name == "br"
+
+    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+        # Mirror spec quirk: </br> behaves like <br> start tag.
+        in_table_mode = context.document_state in (
+            DocumentState.IN_TABLE,
+            DocumentState.IN_TABLE_BODY,
+            DocumentState.IN_ROW,
+            DocumentState.IN_CAPTION,
+        )
+        inside_cell = any(
+            el.tag_name in ("td", "th") for el in context.open_elements._stack  # type: ignore[attr-defined]
+        )
+        if in_table_mode and not inside_cell:
+            table = self.parser.find_current_table(context)  # type: ignore[attr-defined]
+            if table and table.parent:
+                br = Node("br")
+                parent = table.parent
+                idx = parent.children.index(table)
+                parent.children.insert(idx, br)
+                br.parent = parent
+                return True
+
+        # Otherwise defer to the parser's normal start-tag handling so foreign
+        # content breakout logic mirrors <br> start tokens.
+        synth = HTMLToken("StartTag", tag_name="br", attributes={})
+        if context.current_parent.tag_name.startswith(("svg ", "math ")):
+            ancestor = context.current_parent.parent
+            while (
+                ancestor
+                and ancestor.tag_name.startswith(("svg ", "math "))
+                and ancestor.tag_name
+                not in (
+                    "svg foreignObject",
+                    "svg desc",
+                    "svg title",
+                    "math annotation-xml",
+                )
+            ):
+                ancestor = ancestor.parent
+            if ancestor is not None:
+                context.move_to_element(ancestor)
+        end_idx = getattr(getattr(self.parser, "tokenizer", None), "pos", context.index)
+        self.parser._handle_start_tag(synth, "br", context, end_idx)  # type: ignore[attr-defined]
+        return True
+
 
 class AutoClosingTagHandler(TemplateAwareHandler):
     """Handles auto-closing behavior for certain tags"""
@@ -8182,6 +8286,18 @@ class HtmlTagHandler(TagHandler):
 class FramesetTagHandler(TagHandler):
     """Handles frameset, frame, and noframes elements"""
 
+    def early_end_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+        if context.document_state in (
+            DocumentState.IN_FRAMESET,
+            DocumentState.AFTER_FRAMESET,
+        ):
+            if token.tag_name not in ("frameset", "noframes", "html"):
+                self.debug(
+                    f"Ignoring </{token.tag_name}> in frameset context (handler)"
+                )
+                return True
+        return False
+
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
         if tag_name not in ("frameset", "frame", "noframes"):
             return False
@@ -9294,6 +9410,69 @@ class MenuitemElementHandler(TagHandler):
         # No menuitem found, treat as stray end tag
         self.debug("No menuitem ancestor found, treating as stray end tag")
         return True
+
+
+class FallbackPlacementHandler(TagHandler):
+    """Handles residual start tags needing foster parenting or block relocation."""
+
+    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+        token = getattr(self.parser, "_last_token", None)
+        if not token or token.type != "StartTag":
+            return False
+        if table_modes.should_foster_parent(tag_name, token.attributes, context, self.parser):  # type: ignore[attr-defined]
+            return True
+        if tag_name in ("div", "section", "article"):
+            if self.parser._is_in_template_content(context):  # type: ignore[attr-defined]
+                return False
+            if context.current_context in ("math", "svg"):
+                return False
+            if context.current_parent.tag_name in SPECIAL_CATEGORY_ELEMENTS:
+                return True
+        return False
+
+    def handle_start(
+        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
+    ) -> bool:
+        tag_name = token.tag_name
+        if table_modes.should_foster_parent(tag_name, token.attributes, context, self.parser):  # type: ignore[attr-defined]
+            if tag_name == "p":
+                if table_modes.reenter_last_cell_for_p(context):
+                    self.debug(
+                        "Re-entered last cell before fostering paragraph"
+                    )
+                    return False
+            open_cell = table_modes.restore_insertion_open_cell(context)
+            if open_cell is not None:
+                self.debug(
+                    f"Skipped foster parenting <{tag_name}>; insertion point set to open cell <{open_cell.tag_name}>"
+                )
+                return False
+            self.debug(f"Foster parenting <{tag_name}> before current table")
+            self.parser._foster_parent_element(tag_name, token.attributes, context)  # type: ignore[attr-defined]
+            return True
+
+        if tag_name in ("div", "section", "article"):
+            if self.parser._is_in_template_content(context):  # type: ignore[attr-defined]
+                return False
+            if context.current_context in ("math", "svg"):
+                return False
+            if context.current_parent.tag_name in SPECIAL_CATEGORY_ELEMENTS:
+                stack = context.open_elements._stack  # type: ignore[attr-defined]
+                if stack:
+                    for candidate in reversed(stack[:-1]):
+                        if candidate.tag_name in ("html", "body"):
+                            continue
+                        if candidate.tag_name in SPECIAL_CATEGORY_ELEMENTS:
+                            continue
+                        if candidate.tag_name in BLOCK_ELEMENTS:
+                            continue
+                        if context.current_parent is not candidate:
+                            context.move_to_element(candidate)
+                            self.debug(
+                                f"Relocated block <{tag_name}> under phrasing ancestor <{candidate.tag_name}>"
+                            )
+                        break
+        return False
 
 
 class UnknownElementHandler(TagHandler):

@@ -31,6 +31,7 @@ from turbohtml.handlers import (
     PlaintextHandler,
     UnknownElementHandler,
     RubyElementHandler,
+    FallbackPlacementHandler,
 )
 from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
@@ -110,6 +111,7 @@ class TurboHTML:
             FormTagHandler(self),
             HeadingTagHandler(self),
             RubyElementHandler(self),
+            FallbackPlacementHandler(self),
             UnknownElementHandler(self),
         ]
         self.tag_handlers = [h for h in self.tag_handlers if h is not None]
@@ -1246,98 +1248,12 @@ class TurboHTML:
         # Default handling for unhandled tags
         self.debug(f"No handler found, using default handling for {tag_name}")
 
-        # Fragment special-cases: If parsing a fragment whose context element
-        # is a table-scoped container (e.g. colgroup → expecting lone <col>, tbody → expecting lone <tr>)
-        # and we see the first allowed child (col or tr) while still at fragment root, emit it directly
-        # without synthesizing intermediate table structure.
-        if (
-            self.fragment_context
-            and context.current_parent.tag_name == "document-fragment"
-        ):
-            if self.fragment_context == "colgroup" and tag_name == "col":
-                new_node = Node("col", token.attributes)
-                context.current_parent.append_child(new_node)
-                context.move_to_element(new_node)
-                context.open_elements.push(new_node)
-                return
-            if (
-                self.fragment_context in ("tbody", "thead", "tfoot")
-                and tag_name == "tr"
-            ):
-                new_node = Node("tr", token.attributes)
-                context.current_parent.append_child(new_node)
-                context.move_to_element(new_node)
-                context.open_elements.push(new_node)
-                return
-
-        # Check if we need table foster parenting (but not inside template content or integration points)
-        # Table foster parenting decision extracted to table_modes.should_foster_parent
-        if table_modes.should_foster_parent(tag_name, token.attributes, context, self):
-            # Salvage: if a table row is still open (tr on stack) but no cell (td/th) is open, yet the table's
-            # current row already contains a cell element, then a premature drift out of the cell occurred
-            # (e.g. foreign content closure moved insertion point). For flow content like <p> we should
-            # re-enter the last cell instead of foster-parenting. This aligns with the HTML5 algorithm which
-            # keeps the cell element open until its explicit end tag. Limit to paragraph start to avoid
-            # over-correcting other element types.
-            if tag_name == "p":
-                if table_modes.reenter_last_cell_for_p(context):
-                    self.debug(
-                        "Re-entered last open row cell for <p> start (cell missing from stack but row still open)"
-                    )
-
-            # Before fostering, check if a cell remains open on the open elements stack. If so, the
-            # Before fostering, check if a cell remains open on the open elements stack. If so, the
-            # insertion point drifted out of the cell incorrectly (e.g., foreign content breakout).
-            # Restore it so flow content like <p> is inserted inside the cell rather than foster parented.
-            open_cell = table_modes.restore_insertion_open_cell(context)
-            if open_cell is not None:
-                self.debug(
-                    f"Skipped foster parenting <{tag_name}>; insertion point set to open cell <{open_cell.tag_name}>"
-                )
-            else:
-                self.debug(f"Foster parenting {tag_name} out of table")
-                self._foster_parent_element(tag_name, token.attributes, context)
-                return
-
         new_node = Node(tag_name, token.attributes)
         # Do NOT prematurely unwind formatting elements when inserting a block-level element.
         # Current parent at this point may be a formatting element (e.g. <cite> inside <b>) and
         # per spec the block should become its child, not a sibling produced by popping the
         # formatting element. We therefore simply append without altering any formatting stack
         # beyond the normal open-elements push.
-        # Recovery refinement: If the current insertion point has drifted up to <body> (or another
-        # special element) while there remains an open phrasing element (e.g. <kbd>) lower on the
-        # open elements stack, and we're about to insert a non-table non-heading flow element like
-        # <div>, reposition to that deepest still-open phrasing ancestor so subsequent flow content
-        # becomes its child. This matches the in-body algorithm expectation that misnested end tags
-        # do not implicitly close remaining phrasing elements. We limit to cases where current_parent
-        # is a special category element (body/html/table containers) and the target tag is a generic
-        # container (div/section/article) to avoid altering correct placement for legitimate block
-        # insertions already inside the phrasing ancestor.
-        if tag_name in ("div", "section", "article"):
-            from turbohtml.constants import SPECIAL_CATEGORY_ELEMENTS, BLOCK_ELEMENTS
-
-            # Skip salvage repositioning inside template content or foreign (math/svg) contexts.
-            # Rationale: preventing block-level insertion from being relocated into isolated
-            # template content fragments or foreignObject subtrees where the phrasing ancestor
-            # relationship does not influence outer HTML tree construction.
-            if not self._is_in_template_content(
-                context
-            ) and context.current_context not in ("math", "svg"):
-                if context.current_parent.tag_name in SPECIAL_CATEGORY_ELEMENTS:
-                    stack = context.open_elements._stack
-                    if stack:
-                        for candidate in reversed(stack[:-1]):
-                            if candidate.tag_name in ("html", "body"):
-                                continue
-                            if candidate.tag_name in SPECIAL_CATEGORY_ELEMENTS:
-                                continue
-                            if candidate.tag_name in BLOCK_ELEMENTS:
-                                continue
-                            # Accept any non-special, non-block phrasing element (formatting or generic like <kbd>)
-                            if context.current_parent is not candidate:
-                                context.move_to_element(candidate)
-                            break
         context.current_parent.append_child(new_node)
         context.move_to_element(new_node)
         context.open_elements.push(new_node)
@@ -1369,109 +1285,6 @@ class TurboHTML:
                 body = self._ensure_body_node(context)
                 if body:
                     context.move_to_element(body)
-
-        # Legacy quirk: any </br> end tag (with or without attributes) must be treated
-        # as a <br> start tag token (parse error) per HTML spec. A <br> element is void
-        # so a closing tag is never legitimate. We synthesize a StartTag token and
-        # delegate to normal start tag handling, then ignore the original end tag.
-        if tag_name == "br":
-            # If we're in a table-related insertion mode but not inside an open cell, foster-parent the <br>
-            in_table_mode = context.document_state in (
-                DocumentState.IN_TABLE,
-                DocumentState.IN_TABLE_BODY,
-                DocumentState.IN_ROW,
-                DocumentState.IN_CAPTION,
-            )
-            inside_cell = any(
-                el.tag_name in ("td", "th") for el in context.open_elements._stack
-            )
-            if in_table_mode and not inside_cell:
-                table = self.find_current_table(context)
-                if table and table.parent:
-                    br = Node("br")
-                    parent = table.parent
-                    idx = parent.children.index(table)
-                    parent.children.insert(idx, br)
-                    br.parent = parent
-                    return
-            # Otherwise treat normally as a start tag
-            synth = HTMLToken("StartTag", tag_name="br", attributes={})
-            self._handle_start_tag(synth, "br", context, self.tokenizer.pos)
-            return
-
-        # Special-case </p>: if there is no open <p> element in scope, the spec inserts
-        # a synthetic <p> then immediately pops it (empty paragraph). We approximate
-        # button scope by simply checking for any open <p>; remaining edge cases (scope
-        # boundaries inside form/table contexts) are not required by current failing tests.
-        if tag_name == "p" and context.document_state in (
-            DocumentState.IN_BODY,
-            DocumentState.AFTER_BODY,
-            DocumentState.AFTER_HTML,
-            DocumentState.IN_TABLE,
-            DocumentState.IN_TABLE_BODY,
-            DocumentState.IN_ROW,
-            DocumentState.IN_CELL,
-        ):
-            has_p = any(el.tag_name == "p" for el in context.open_elements._stack)
-            if not has_p:
-                context.current_parent.children[
-                    -1
-                ] if context.current_parent.children else None
-                insertion_parent = context.current_parent
-                if insertion_parent.tag_name.startswith(
-                    ("svg ", "math ")
-                ) and insertion_parent.tag_name not in (
-                    "svg foreignObject",
-                    "svg desc",
-                    "svg title",
-                    "math annotation-xml",
-                ):
-                    ancestor = insertion_parent.parent
-                    while (
-                        ancestor
-                        and ancestor.tag_name.startswith(("svg ", "math "))
-                        and ancestor.tag_name
-                        not in (
-                            "svg foreignObject",
-                            "svg desc",
-                            "svg title",
-                            "math annotation-xml",
-                        )
-                    ):
-                        ancestor = ancestor.parent
-                    if ancestor is not None:
-                        insertion_parent = ancestor
-                        context.move_to_element(insertion_parent)
-                p_node = Node("p")
-                insertion_parent.append_child(p_node)
-                self.debug(
-                    "Synthesized empty <p> for stray </p> (no open <p> in scope); placed at HTML insertion parent outside foreign subtree when applicable; not pushing on stack (immediate close)"
-                )
-                return
-        if tag_name == "p" and context.document_state in (
-            DocumentState.IN_HEAD,
-            DocumentState.AFTER_HEAD,
-        ):
-            self.debug("Ignoring </p> in head insertion mode")
-            return
-
-        
-
-        
-
-        
-
-        # Frameset insertion modes: most end tags are ignored. Allow only </frameset> (handled by handler)
-        # and treat </html> as a signal to stay in frameset (tests expect frameset root persists).
-        if context.document_state in (
-            DocumentState.IN_FRAMESET,
-            DocumentState.AFTER_FRAMESET,
-        ):
-            if tag_name not in ("frameset", "noframes", "html"):
-                self.debug(f"Ignoring </{tag_name}> in frameset context")
-                return
-
-
 
         # Try tag handlers first
         for handler in self.tag_handlers:
