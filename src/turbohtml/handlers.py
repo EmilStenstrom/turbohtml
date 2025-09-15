@@ -3488,6 +3488,28 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             if table is None:
                 self.debug("Ignoring stray </table> with no open table (early end handler)")
                 return True
+        # Cell re-entry: if an end tag (not </td>/<th>) arrives while a td/th is still open on the stack but
+        # current_parent drifted outside any cell, reposition to deepest open cell before normal handling.
+        if token.tag_name not in ("td", "th") and not self._is_in_template_content(context):
+            deepest_cell = None
+            for el in reversed(context.open_elements._stack):  # type: ignore[attr-defined]
+                if el.tag_name in ("td", "th"):
+                    deepest_cell = el
+                    break
+            if (
+                deepest_cell is not None
+                and context.current_parent is not deepest_cell
+                and not (
+                    context.current_parent
+                    and context.current_parent.find_ancestor(
+                        lambda n: n.tag_name in ("td", "th")
+                    )
+                )
+            ):
+                context.move_to_element(deepest_cell)
+                self.debug(
+                    f"Repositioned to open cell <{deepest_cell.tag_name}> before handling </{token.tag_name}>"
+                )
         return False
 
     def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:
@@ -5073,6 +5095,19 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
 class FormTagHandler(TagHandler):
     """Handles form-related elements (form, input, button, etc.)"""
+
+    def early_end_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+        if token.tag_name == "form":
+            # Ignore premature </form> when no open form element is on the stack.
+            on_stack = None
+            for el in reversed(context.open_elements._stack):  # type: ignore[attr-defined]
+                if el.tag_name == "form":
+                    on_stack = el
+                    break
+            if on_stack is None:
+                self.debug("Ignoring premature </form> (not on open elements stack)")
+                return True
+        return False
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
         return tag_name in ("form", "input", "button", "textarea", "select", "label")

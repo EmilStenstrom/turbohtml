@@ -1455,46 +1455,11 @@ class TurboHTML:
             self.debug("Ignoring </p> in head insertion mode")
             return
 
-        # If a table cell (td/th) remains open on the stack but current_parent has drifted
-        # outside that cell (e.g., due to foreign content breakout or adoption adjustments),
-        # restore insertion point to the deepest such cell BEFORE further end-tag processing.
-        # This preserves proper placement of subsequent flow content (<p>, text) inside the cell
-        # instead of triggering foster parenting that moves it before the table (tests9/10 failures).
-        if tag_name not in ("td", "th") and not self._is_in_template_content(context):
-            deepest_cell = None
-            for el in reversed(context.open_elements._stack):
-                if el.tag_name in ("td", "th"):
-                    deepest_cell = el
-                    break
-            if (
-                deepest_cell is not None
-                and context.current_parent is not deepest_cell
-                and not (
-                    context.current_parent
-                    and context.current_parent.find_ancestor(
-                        lambda n: n.tag_name in ("td", "th")
-                    )
-                )
-            ):
-                context.move_to_element(deepest_cell)
-                self.debug(
-                    f"Insertion point set to open cell <{deepest_cell.tag_name}> prior to handling </{tag_name}>"
-                )
+        
 
         
 
-        # Ignore premature </form> when the form element is not on the open elements stack (already implicitly closed)
-        if tag_name == "form":
-            on_stack = None
-            for el in reversed(context.open_elements._stack):
-                if el.tag_name == "form":
-                    on_stack = el
-                    break
-            if on_stack is None:
-                self.debug(
-                    "Ignoring premature </form> (form not on open elements stack)"
-                )
-                return
+        
 
         # Frameset insertion modes: most end tags are ignored. Allow only </frameset> (handled by handler)
         # and treat </html> as a signal to stay in frameset (tests expect frameset root persists).
