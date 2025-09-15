@@ -1646,7 +1646,7 @@ class TextHandler(TagHandler):
         prev_index = table_parent.children.index(table) - 1
         if prev_index >= 0 and table_parent.children[prev_index].tag_name == "#text":
             prev_node = table_parent.children[prev_index]
-            self.parser._append_text_content(prev_node, text)
+            prev_node.text_content += text
             if prev_node.text_content == "":
                 table_parent.remove_child(prev_node)
         else:
@@ -1712,7 +1712,7 @@ class TextHandler(TagHandler):
             prev_node = context.current_parent.children[-1]
             self.debug(f"merging with last text node '{prev_node.text_content}'")
             if text:
-                self.parser._append_text_content(prev_node, text)
+                prev_node.text_content += text
             # Post-merge sanitization for normal content
             # Preserve U+FFFD replacement characters
             # Remove empty node if it became empty after sanitization
@@ -1732,7 +1732,7 @@ class TextHandler(TagHandler):
         """Handle normal text content"""
         # If last child is a text node, append to it
         if context.current_parent.last_child_is_text():
-            self.parser._append_text_content(context.current_parent.children[-1], text)
+            context.current_parent.children[-1].text_content += text
             return True
         self.parser.insert_text(
             text, context, parent=context.current_parent, merge=False
@@ -1747,7 +1747,7 @@ class TextHandler(TagHandler):
 
         # Append to existing text node if present
         if parent.children and parent.children[-1].tag_name == "#text":
-            self.parser._append_text_content(parent.children[-1], decoded_text)
+            parent.children[-1].text_content += decoded_text
             return True
 
         # Remove a leading newline if this is the first text node
@@ -4344,7 +4344,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 and target.children
                 and target.children[-1].tag_name == "#text"
             ):
-                self.parser._append_text_content(target.children[-1], text)
+                target.children[-1].text_content += text
             else:
                 self.parser.insert_text(text, context, parent=target, merge=True)
             return True
@@ -4488,7 +4488,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                                     pass
             # Append/merge text at target
             if target.children and target.children[-1].tag_name == "#text":
-                self.parser._append_text_content(target.children[-1], text)
+                target.children[-1].text_content += text
             else:
                 self.parser.insert_text(text, context, parent=target, merge=True)
             return True
@@ -4545,7 +4545,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 self.debug(
                     "Merging foster-parented text into previous sibling text node"
                 )
-                self.parser._append_text_content(prev_sibling, text)
+                prev_sibling.text_content += text
                 return True
             elif prev_sibling.tag_name in (
                 "div",
@@ -4571,7 +4571,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     ):
                         target = target.children[-1]
                     if target.children and target.children[-1].tag_name == "#text":
-                        self.parser._append_text_content(target.children[-1], text)
+                        target.children[-1].text_content += text
                     else:
                         self.parser.insert_text(
                             text, context, parent=target, merge=True
@@ -4582,9 +4582,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         prev_sibling.children
                         and prev_sibling.children[-1].tag_name == "#text"
                     ):
-                        self.parser._append_text_content(
-                            prev_sibling.children[-1], text
-                        )
+                        prev_sibling.children[-1].text_content += text
                     else:
                         self.parser.insert_text(
                             text, context, parent=prev_sibling, merge=True
@@ -4929,9 +4927,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 table_index > 0
                 and foster_parent.children[table_index - 1].tag_name == "#text"
             ):
-                self.parser._append_text_content(
-                    foster_parent.children[table_index - 1], text
-                )
+                foster_parent.children[table_index - 1].text_content += text
                 self.debug(
                     f"Merged with previous text node: {foster_parent.children[table_index - 1]}"
                 )
@@ -7795,9 +7791,7 @@ class ForeignTagHandler(TagHandler):
             context.current_parent.children
             and context.current_parent.children[-1].tag_name == "#text"
         ):
-            self.parser._append_text_content(
-                context.current_parent.children[-1], inner
-            )
+            context.current_parent.children[-1].text_content += inner
         else:
             self.parser.insert_text(
                 inner, context, parent=context.current_parent, merge=False
@@ -8178,9 +8172,7 @@ class HeadElementHandler(TagHandler):
             and context.current_parent.children[-1].tag_name == "#text"
         ):
             self.debug("Found previous text node, combining")
-            self.parser._append_text_content(
-                context.current_parent.children[-1], text
-            )
+            context.current_parent.children[-1].text_content += text
             self.debug(
                 f"Combined text: '{context.current_parent.children[-1].text_content}'"
             )

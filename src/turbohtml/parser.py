@@ -34,11 +34,7 @@ from turbohtml.handlers import (
     FallbackPlacementHandler,
 )
 from turbohtml.node import Node
-from turbohtml.tokenizer import (
-    HTMLToken,
-    HTMLTokenizer,
-    NUMERIC_ENTITY_INVALID_SENTINEL as _NE_SENTINEL,
-)
+from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
 from turbohtml import table_modes  # phase 1 extraction: table predicates
 from turbohtml.adoption import AdoptionAgencyAlgorithm
 from .fragment import parse_fragment
@@ -49,8 +45,6 @@ from .constants import (
     TABLE_ELEMENTS,
     RAWTEXT_ELEMENTS,
     VOID_ELEMENTS,
-    MATHML_ELEMENTS,
-    MATHML_CASE_SENSITIVE_ATTRIBUTES,
 )
 from typing import Optional
 
@@ -137,7 +131,7 @@ class TurboHTML:
 
         # Parse immediately upon construction
         self._parse()
-        self._finalize_tree()
+        self._post_process_tree()
 
     def __repr__(self) -> str:
         return f"<TurboHTML root={self.root}>"
@@ -357,7 +351,6 @@ class TurboHTML:
             attributes_override if attributes_override is not None else token.attributes
         )
         new_node = Node(tag_name, attrs, preserve_attr_case=preserve_attr_case)
-        self._normalize_mathml_attributes(new_node)
         if before and before.parent is target_parent:
             target_parent.insert_before(new_node, before)
         else:
@@ -398,57 +391,6 @@ class TurboHTML:
         n = Node("#text")
         n.text_content = text
         return n
-
-    def _should_preserve_replacement(self, node: Node) -> bool:
-        cur = node.parent
-        while cur:
-            tag = cur.tag_name
-            if tag == "plaintext":
-                return True
-            if tag in ("script", "style"):
-                return True
-            if tag.startswith("svg "):
-                return True
-            cur = cur.parent
-        return False
-
-    def _sanitize_text_node(self, node: Node) -> None:
-        if node.tag_name != "#text" or node.text_content is None:
-            return
-        text = node.text_content
-        if not text:
-            return
-        had_sentinel = _NE_SENTINEL in text
-        if had_sentinel:
-            text = text.replace(_NE_SENTINEL, "\ufffd")
-        if "\ufffd" in text and not had_sentinel and not self._should_preserve_replacement(node):
-            text = text.replace("\ufffd", "")
-        if text is not node.text_content:
-            node.text_content = text
-
-    def _append_text_content(self, node: Node, text: str) -> None:
-        if not text:
-            return
-        if node.tag_name != "#text":
-            raise ValueError("_append_text_content expects a text node")
-        existing = node.text_content or ""
-        node.text_content = existing + text
-        self._sanitize_text_node(node)
-
-    def _normalize_mathml_attributes(self, node: Node) -> None:
-        if not node.attributes:
-            return
-        parts = node.tag_name.split()
-        local_name = parts[-1] if parts else node.tag_name
-        is_mathml = node.tag_name.startswith("math ") or local_name in MATHML_ELEMENTS
-        if not is_mathml:
-            return
-        normalized = {}
-        for name, value in node.attributes.items():
-            lower = name.lower()
-            target = MATHML_CASE_SENSITIVE_ATTRIBUTES.get(lower, lower)
-            normalized[target] = value
-        node.attributes = normalized
 
     # --- Centralized text insertion helper ---
     def insert_text(
@@ -547,12 +489,11 @@ class TurboHTML:
                 and target_parent.children[prev_idx].tag_name == "#text"
             ):
                 prev_node = target_parent.children[prev_idx]
-                self._append_text_content(prev_node, text)
+                prev_node.text_content += text
                 return prev_node
             # No merge possible – create fresh node and insert
             new_node = self.create_text_node(text)
             target_parent.insert_before(new_node, before)
-            self._sanitize_text_node(new_node)
             return new_node
 
         # Append path (potential merge with last child)
@@ -562,14 +503,51 @@ class TurboHTML:
             and target_parent.children[-1].tag_name == "#text"
         ):
             last = target_parent.children[-1]
-            self._append_text_content(last, text)
+            last.text_content += text
             return last
 
         # Fresh append
         new_node = self.create_text_node(text)
         target_parent.append_child(new_node)
-        self._sanitize_text_node(new_node)
         return new_node
+
+    def _post_process_tree(self) -> None:
+        """Replace tokenizer sentinel with U+FFFD and strip non-preserved U+FFFD occurrences.
+
+            Preserve U+FFFD under: plaintext, script, style, svg subtrees. Strip elsewhere to
+        match current HTML parsing conformance expectations.
+        """
+        from turbohtml.tokenizer import NUMERIC_ENTITY_INVALID_SENTINEL as _NE_SENTINEL  # type: ignore
+
+        def preserve(node: Node) -> bool:
+            cur = node.parent
+            svg = False
+            while cur:
+                if cur.tag_name == "plaintext":
+                    return True
+                if cur.tag_name in ("script", "style"):
+                    return True
+                if cur.tag_name.startswith("svg "):
+                    svg = True
+                cur = cur.parent
+            return svg
+
+        if self.root is None:  # safety
+            return
+
+        def walk(node: Node):
+            if node.tag_name == "#text" and node.text_content:
+                had = _NE_SENTINEL in node.text_content
+                if had:
+                    node.text_content = node.text_content.replace(
+                        _NE_SENTINEL, "\ufffd"
+                    )
+                if "\ufffd" in node.text_content and not had and not preserve(node):
+                    node.text_content = node.text_content.replace("\ufffd", "")
+            for c in node.children:
+                walk(c)
+
+        walk(self.root)
 
         # MathML attribute case normalization (definitionURL, etc.) for nodes not processed by foreign handler
         from .constants import MATHML_CASE_SENSITIVE_ATTRIBUTES, MATHML_ELEMENTS
@@ -763,6 +741,21 @@ class TurboHTML:
                             n.parent = html
 
         # Frameset trailing comments: no buffering; any required reordering handled during <noframes> insertion.
+
+    def _create_initial_context(self):
+        """Create a minimal ParseContext for structural post-processing heuristics.
+
+        We only need a current_parent and access to open/active stacks where some
+        helpers expect them; provide lightweight empty instances. This avoids
+        reusing the heavy parsing context and keeps post-processing side-effect free.
+        """
+        from turbohtml.context import (
+            ParseContext,
+        )  # local import to avoid cycle at module load
+
+        body = self._get_body_node() or self.root
+        ctx = ParseContext(0, body, debug_callback=self.debug)
+        return ctx
 
     # DOM traversal helper methods
     def find_current_table(self, context: ParseContext) -> Optional["Node"]:
@@ -1098,11 +1091,10 @@ class TurboHTML:
                             html_node.children
                             and html_node.children[-1].tag_name == "#text"
                         ):
-                            self._append_text_content(html_node.children[-1], data)
+                            html_node.children[-1].text_content += data
                         else:
                             text_node = self.create_text_node(data)
                             html_node.append_child(text_node)
-                            self._sanitize_text_node(text_node)
                         # Skip normal text handling
                         continue
                 if (
@@ -1116,7 +1108,6 @@ class TurboHTML:
                     if data:
                         text_node = self.create_text_node(data)
                         context.current_parent.append_child(text_node)
-                        self._sanitize_text_node(text_node)
                 else:
                     if data:
                         for handler in self.tag_handlers:
@@ -1677,7 +1668,7 @@ class TurboHTML:
                     pending_text = child
                 else:
                     # Merge into pending
-                    self._append_text_content(pending_text, child.text_content)
+                    pending_text.text_content += child.text_content
             else:
                 if pending_text is not None:
                     merged.append(pending_text)
@@ -1692,137 +1683,6 @@ class TurboHTML:
         for child in node.children:
             if child.tag_name != "#text":
                 self._merge_adjacent_text_nodes(child)
-
-    def _collapse_duplicate_formatting(self, node: Node) -> None:
-        i = 0
-        while i < len(node.children) - 1:
-            first = node.children[i]
-            second = node.children[i + 1]
-            if (
-                first.tag_name in FORMATTING_ELEMENTS
-                and second.tag_name == first.tag_name
-                and first.attributes == second.attributes
-                and len(first.children) == 1
-                and first.children[0] is second
-                and not any(ch.tag_name == "#text" for ch in first.children)
-            ):
-                grandchildren = list(second.children)
-                for gc in grandchildren:
-                    second.remove_child(gc)
-                    first.append_child(gc)
-                node.remove_child(second)
-                continue
-            i += 1
-        for child in node.children:
-            if child.tag_name != "#text":
-                self._collapse_duplicate_formatting(child)
-
-    def _adjust_foreign_attrs(self, node: Node) -> None:
-        parts = node.tag_name.split()
-        local = parts[-1] if parts else node.tag_name
-        is_svg = node.tag_name.startswith("svg ") or local == "svg"
-        is_math = node.tag_name.startswith("math ") or local == "math"
-        if is_svg and node.attributes:
-            attrs = dict(node.attributes)
-            defn_val = attrs.pop("definitionurl", None)
-            xml_lang = attrs.pop("xml:lang", None)
-            xml_space = attrs.pop("xml:space", None)
-            xml_base = attrs.pop("xml:base", None)
-            other_xml = []
-            for key in list(attrs.keys()):
-                if key.startswith("xml:") and key not in (
-                    "xml:lang",
-                    "xml:space",
-                    "xml:base",
-                ):
-                    other_xml.append((key, attrs.pop(key)))
-            new_attrs = {}
-            if defn_val is not None:
-                new_attrs["definitionurl"] = defn_val
-            for key, value in node.attributes.items():
-                if not (
-                    key in ("definitionurl", "xml:lang", "xml:space", "xml:base")
-                    or key.startswith("xml:")
-                ):
-                    new_attrs[key] = value
-            if xml_lang is not None:
-                new_attrs["xml lang"] = xml_lang
-            if xml_space is not None:
-                new_attrs["xml space"] = xml_space
-            for key, value in other_xml:
-                new_attrs[key] = value
-            if xml_base is not None:
-                new_attrs["xml:base"] = xml_base
-            node.attributes = new_attrs
-        elif is_math and node.attributes:
-            attrs = dict(node.attributes)
-            if "definitionurl" in attrs and "definitionURL" not in attrs:
-                attrs["definitionURL"] = attrs.pop("definitionurl")
-            xlink_attrs = [
-                (key, value) for key, value in attrs.items() if key.startswith("xlink:")
-            ]
-            if xlink_attrs:
-                for key, _ in xlink_attrs:
-                    del attrs[key]
-                xlink_attrs.sort(key=lambda kv: kv[0].split(":", 1)[1])
-                rebuilt = {}
-                if "definitionURL" in attrs:
-                    rebuilt["definitionURL"] = attrs.pop("definitionURL")
-                for key, value in xlink_attrs:
-                    rebuilt[f"xlink {key.split(':', 1)[1]}"] = value
-                for key, value in attrs.items():
-                    rebuilt[key] = value
-                node.attributes = rebuilt
-        for child in node.children:
-            if child.tag_name != "#text":
-                self._adjust_foreign_attrs(child)
-
-    def _reorder_after_head_whitespace(self) -> None:
-        if self.fragment_context:
-            return
-        html = self.html_node
-        if not html or len(html.children) < 3:
-            return
-        head = html.children[0] if html.children and html.children[0].tag_name == "head" else None
-        body_index = None
-        for i, child in enumerate(html.children):
-            if child.tag_name == "body":
-                body_index = i
-                break
-        if not head or body_index is None or body_index + 1 >= len(html.children):
-            return
-        def is_whitespace_text(node: Node) -> bool:
-            return (
-                node.tag_name == "#text"
-                and node.text_content is not None
-                and node.text_content.strip() == ""
-            )
-        if not is_whitespace_text(html.children[body_index + 1]):
-            return
-        for mid in html.children[1:body_index]:
-            if not is_whitespace_text(mid):
-                return
-        ws_nodes = []
-        j = body_index + 1
-        while j < len(html.children) and is_whitespace_text(html.children[j]):
-            ws_nodes.append(html.children[j])
-            j += 1
-        for node in ws_nodes:
-            html.remove_child(node)
-        insert_at = 1
-        while insert_at < len(html.children) and is_whitespace_text(html.children[insert_at]):
-            insert_at += 1
-        for offset, node in enumerate(ws_nodes):
-            html.children.insert(insert_at + offset, node)
-            node.parent = html
-
-    def _finalize_tree(self) -> None:
-        if not self.root:
-            return
-        self._merge_adjacent_text_nodes(self.root)
-        self._collapse_duplicate_formatting(self.root)
-        self._adjust_foreign_attrs(self.root)
-        self._reorder_after_head_whitespace()
 
     def _post_text_inline_normalize(self, context: ParseContext) -> None:
         """After appending a text node, unwrap a redundant trailing formatting element if present.

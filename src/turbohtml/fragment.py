@@ -376,7 +376,6 @@ def handle_character(parser, context, token, fragment_context):
             return
         text_node = parser.create_text_node(data)
         context.current_parent.append_child(text_node)
-        parser._sanitize_text_node(text_node)
         return
     if not data:
         return
