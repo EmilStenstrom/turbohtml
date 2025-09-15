@@ -8646,6 +8646,31 @@ class BodyElementHandler(TagHandler):
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
         return tag_name == "body"
 
+    def early_end_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+        # Stray </body> handling migrated from parser:
+        #  * Ignore inside table-related insertion modes (do not reposition insertion point)
+        #  * In pre-body or post-body states (excluding IN_BODY) synthesize body if absent and mark AFTER_BODY
+        #  * Allow legitimate close in IN_BODY to proceed to handle_end
+        if token.tag_name != "body":
+            return False
+        state = context.document_state
+        if state == DocumentState.IN_BODY:
+            return False
+        if state in (
+            DocumentState.IN_TABLE,
+            DocumentState.IN_TABLE_BODY,
+            DocumentState.IN_ROW,
+            DocumentState.IN_CELL,
+            DocumentState.IN_CAPTION,
+        ):
+            self.debug("Ignoring stray </body> in table insertion mode")
+            return True
+        # Pre-body or already after states: ensure body exists then mark AFTER_BODY (idempotent)
+        body_node = self.parser._get_body_node() or self.parser._ensure_body_node(context)
+        if body_node and state not in (DocumentState.AFTER_BODY, DocumentState.AFTER_HTML):
+            context.transition_to_state(DocumentState.AFTER_BODY, context.current_parent)
+        return True
+
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         # Ignore stray </body> if we're not positioned at the body element
         if context.document_state not in (DocumentState.IN_FRAMESET,):

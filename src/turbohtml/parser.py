@@ -1472,39 +1472,6 @@ class TurboHTML:
                 return
 
 
-        # End tag </body> handling nuances:
-        #  * While in normal IN_BODY, allow BodyElementHandler to process (may transition to AFTER_BODY).
-        #  * While in table-related insertion modes (IN_TABLE/IN_TABLE_BODY/IN_ROW/IN_CELL/IN_CAPTION), a stray </body>
-        #    must be ignored – prematurely moving the insertion point to <body> would cause following character tokens
-        #    to be foster‑parented before the table instead of remaining inside the still‑open cell (tables01:10).
-        #  * After body (AFTER_BODY / AFTER_HTML), additional </body> tags are ignored (spec parse error) but we keep
-        #    the insertion point at the body so subsequent text still appends there (tests expect this behavior).
-        if tag_name == "body":
-            if context.document_state == DocumentState.IN_BODY:
-                pass  # Let handler perform the legitimate close.
-            elif context.document_state in (
-                DocumentState.IN_TABLE,
-                DocumentState.IN_TABLE_BODY,
-                DocumentState.IN_ROW,
-                DocumentState.IN_CELL,
-                DocumentState.IN_CAPTION,
-            ):
-                # Ignore stray </body> inside table-related modes (do NOT reposition current_parent)
-                self.debug("Ignoring stray </body> in table insertion mode")
-                return
-            else:
-                # Stray </body> in pre-body or post-body states: synthesize body (if absent), then mark AFTER_BODY
-                body_node = self._get_body_node() or self._ensure_body_node(context)
-                if body_node:
-                    # Do not move current_parent if we're still at html (keep for upcoming demotion); just mark state
-                    if context.document_state not in (
-                        DocumentState.AFTER_BODY,
-                        DocumentState.AFTER_HTML,
-                    ):
-                        context.transition_to_state(
-                            DocumentState.AFTER_BODY, context.current_parent
-                        )
-                return
 
         # Try tag handlers first
         for handler in self.tag_handlers:
