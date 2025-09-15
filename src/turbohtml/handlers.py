@@ -49,6 +49,11 @@ class TagHandler:
         prefixed_message = f"{class_name}: {message}"
         self.parser.debug(prefixed_message, indent=indent)
 
+    # Optional early end-tag preprocessing hook (similar to early_start_preprocess). Parser will
+    # invoke this before generic end tag dispatch. Return True to consume the end tag.
+    def early_end_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # pragma: no cover - default
+        return False
+
     def _is_in_template_content(self, context: "ParseContext") -> bool:
         """Check if we're inside actual template content (not just a user <content> tag)"""
         if (
@@ -3475,6 +3480,15 @@ class TableElementHandler(TagHandler):
 
 class TableTagHandler(TemplateAwareHandler, TableElementHandler):
     """Handles table-related elements"""
+
+    def early_end_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+        # Ignore stray </table> when no open <table> exists (moved from parser end-tag logic).
+        if token.tag_name == "table":
+            table = self.parser.find_current_table(context)
+            if table is None:
+                self.debug("Ignoring stray </table> with no open table (early end handler)")
+                return True
+        return False
 
     def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:
         """Early table prelude suppression & stray <tr> recovery.

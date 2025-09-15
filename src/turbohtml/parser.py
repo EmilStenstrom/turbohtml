@@ -36,7 +36,7 @@ from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
 from turbohtml import table_modes  # phase 1 extraction: table predicates
 from turbohtml.adoption import AdoptionAgencyAlgorithm
-from .fragment import parse_fragment  # moved from local scope in _parse_fragment
+from .fragment import parse_fragment
 
 from .constants import (
     HEAD_ELEMENTS,
@@ -1352,6 +1352,11 @@ class TurboHTML:
         self, token: HTMLToken, tag_name: str, context: ParseContext
     ) -> None:
         """Handle all closing HTML tags (spec-aligned, no auxiliary adoption flags)."""
+        # Early end-tag preprocessing (mirrors start-tag early hook). Allows handlers to suppress or
+        # synthesize behavior (e.g., stray </table> ignore) before generic parser logic.
+        for h in self.tag_handlers:
+            if h.early_end_preprocess(token, context):  # type: ignore[attr-defined]
+                return
         # Create body node if needed and not in frameset mode
         if (
             not context.current_parent
@@ -1476,15 +1481,7 @@ class TurboHTML:
                     f"Insertion point set to open cell <{deepest_cell.tag_name}> prior to handling </{tag_name}>"
                 )
 
-        # Detect stray </table> in contexts expecting tbody wrapper later
-        # Stray </table> with no open table: ignore (structural recovery)
-        if tag_name == "table" and not self.find_current_table(context):
-            # Stray </table> with no open table: ignore. A following <tr> will be handled by
-            # structural stray <tr> logic above without needing a persistent flag.
-            self.debug(
-                "Ignoring stray </table> with no open table (structural inference)"
-            )
-            return
+        
 
         # Ignore premature </form> when the form element is not on the open elements stack (already implicitly closed)
         if tag_name == "form":
