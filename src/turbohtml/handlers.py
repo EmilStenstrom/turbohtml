@@ -2908,7 +2908,7 @@ class ParagraphTagHandler(TagHandler):
         self.debug(f"handling {token}, context={context}")
         self.debug(f"Current parent: {context.current_parent}")
 
-        # Closed-table descendant relocation (moved from parser): if a <p> start tag appears while the
+        # Closed-table descendant relocation: if a <p> start tag appears while the
         # current insertion point is still inside a table subtree whose <table> element has already
         # been closed (table not present on the open elements stack), relocate insertion to <body> so
         # the paragraph becomes a sibling following the table instead of incorrectly nested within a
@@ -3482,7 +3482,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
     """Handles table-related elements"""
 
     def early_end_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
-        # Ignore stray </table> when no open <table> exists (moved from parser end-tag logic).
+        # Ignore stray </table> when no open <table> exists.
         if token.tag_name == "table":
             table = self.parser.find_current_table(context)
             if table is None:
@@ -3497,7 +3497,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         TagHandler hook. Returns True if token is consumed (ignored or synthesized).
         """
         tag_name = token.tag_name
-        # Orphan section suppression (moved from parser): ignore thead/tbody/tfoot that appear directly
+        # Orphan section suppression: ignore thead/tbody/tfoot that appear directly
         # inside an SVG integration point element (title/desc/foreignObject) when no HTML <table> is open.
         # These are parse errors that should not construct HTML table structure (svg.dat cases 2-4).
         if (
