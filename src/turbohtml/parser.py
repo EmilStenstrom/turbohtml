@@ -25,6 +25,7 @@ from turbohtml.handlers import (
     BodyImplicitCreationHandler,
     FramesetOkHandler,
     FramesetGuardHandler,
+    FramesetTakeoverHandler,
     BodyElementHandler,
     BoundaryElementHandler,
     ButtonTagHandler,
@@ -90,6 +91,7 @@ class TurboHTML:
             BodyImplicitCreationHandler(self),
             FramesetGuardHandler(self),
             BodyReentryHandler(self),
+            FramesetTakeoverHandler(self),
             FramesetTagHandler(self),
             SelectTagHandler(self),  # must precede table handling to suppress table tokens inside <select>
             TableTagHandler(self),

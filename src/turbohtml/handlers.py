@@ -8299,6 +8299,18 @@ class HtmlTagHandler(TagHandler):
 class FramesetTagHandler(TagHandler):
     """Handles frameset, frame, and noframes elements"""
 
+    _FRAMES_HTML_EMPTY_CONTAINERS = {
+        "div",
+        "span",
+        "article",
+        "section",
+        "aside",
+        "nav",
+        "header",
+        "footer",
+        "main",
+    }
+
     def _trim_body_leading_space(self) -> None:
         body = self.parser._get_body_node()
         if not body or not body.children:
@@ -8308,6 +8320,32 @@ class FramesetTagHandler(TagHandler):
             first.text_content = first.text_content[1:]
             if first.text_content == "":
                 body.remove_child(first)
+
+    def _frameset_body_has_meaningful_content(self, body: Node, allowed: set) -> bool:
+        for child in body.children:
+            if self._frameset_node_has_meaningful_content(child, allowed):
+                return True
+        return False
+
+    def _frameset_node_has_meaningful_content(self, node: Node, allowed: set) -> bool:
+        if node.tag_name == "#text":
+            return bool(node.text_content and node.text_content.strip())
+        if node.tag_name == "#comment":
+            return False
+        if node.tag_name in allowed:
+            return False
+        name = node.tag_name
+        if name in self._FRAMES_HTML_EMPTY_CONTAINERS:
+            return any(
+                self._frameset_node_has_meaningful_content(child, allowed)
+                for child in node.children
+            )
+        if " " not in name and not name.startswith("svg ") and not name.startswith("math "):
+            return True
+        return any(
+            self._frameset_node_has_meaningful_content(child, allowed)
+            for child in node.children
+        )
 
     def early_end_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
         if context.document_state in (
@@ -8344,11 +8382,6 @@ class FramesetTagHandler(TagHandler):
             if not context.current_parent.find_ancestor("frameset"):
                 body = self.parser._get_body_node()
                 if body:
-                    # Classify existing body content: determine if any meaningful (non-benign) content blocks
-                    # root <frameset> takeover per spec (any non-whitespace text or non-metadata element).
-                    # We treat legacy presentational head-compatible elements (basefont,bgsound), hidden inputs,
-                    # pure metadata (base,link,meta,script,style,title,param,source,track) and a single foreign root
-                    # (svg/math) with only ignorable descendants as benign.
                     allowed_tags = {
                         "base",
                         "basefont",
@@ -8368,139 +8401,7 @@ class FramesetTagHandler(TagHandler):
                         "svg svg",
                         "math math",
                     }
-                    meaningful = False
-                    body_children = list(body.children)
-                    if (
-                        len(body_children) == 2
-                        and body_children[0].tag_name in ("svg svg", "math math")
-                        and body_children[1].tag_name == "p"
-                    ):
-                        pnode = body_children[1]
-                        only_ws = True
-                        for c in pnode.children:
-                            if (
-                                c.tag_name == "#text"
-                                and c.text_content
-                                and c.text_content.strip()
-                            ):
-                                only_ws = False
-                                break
-                            if c.tag_name != "#text":
-                                only_ws = False
-                                break
-                        if only_ws:
-                            body_children = []  # treat as empty
-                    saw_first_text = False
-                    for ch in body_children:
-                        # Trim only the FIRST leading space of the FIRST whitespace-only text node so that
-                        # input " a " becomes "a " (tests19:78 expectation) – we preserve trailing space.
-                        if (
-                            not saw_first_text
-                            and ch.tag_name == "#text"
-                            and ch.text_content
-                            and ch.text_content.strip() == ""
-                        ):
-                            # Remove exactly one U+0020 if present
-                            if ch.text_content.startswith(" "):
-                                ch.text_content = ch.text_content[1:]
-                            saw_first_text = True
-                            if ch.text_content == "":
-                                continue
-                        elif ch.tag_name == "#text" and ch.text_content:
-                            saw_first_text = True
-                        if (
-                            ch.tag_name == "#text"
-                            and ch.text_content
-                            and ch.text_content.strip()
-                        ):
-                            stripped = "".join(
-                                c for c in ch.text_content if not c.isspace()
-                            )
-                            if stripped and any(
-                                real for real in stripped if real != "\ufffd"
-                            ):
-                                meaningful = True
-                                break
-                        if ch.tag_name not in ("#text",):
-                            if ch.tag_name in ("svg svg", "math math"):
-                                foreign_ok = True
-                                for fch in ch.children:
-                                    if (
-                                        fch.tag_name == "#text"
-                                        and fch.text_content
-                                        and fch.text_content.strip()
-                                    ):
-                                        stripped = "".join(
-                                            c
-                                            for c in fch.text_content
-                                            if not c.isspace()
-                                        )
-                                        if stripped and any(
-                                            cc for cc in stripped if cc != "\ufffd"
-                                        ):
-                                            foreign_ok = False
-                                            break
-                                    if fch.tag_name not in (
-                                        "#text",
-                                        "#comment",
-                                    ) and not (
-                                        fch.tag_name.startswith("svg ")
-                                        or fch.tag_name.startswith("math ")
-                                    ):
-                                        foreign_ok = False
-                                        break
-                                if not foreign_ok:
-                                    meaningful = True
-                                    break
-                                # Additionally treat an integration point subtree like <svg foreignObject><div> <frameset>
-                                # as ignorable when its descendants contain only whitespace text.
-                                # Recognize top-level svg foreignObject chain with only a single <div> whose
-                                # only descendant text is whitespace.
-                                if ch.tag_name == "svg svg" and ch.children:
-                                    only_child = ch.children[0]
-                                    if only_child.tag_name == "svg foreignObject":
-                                        # Inspect descendants for non-whitespace text or non-text nodes other than div wrappers
-                                        def has_meaningful(node):
-                                            for d in node.children:
-                                                if (
-                                                    d.tag_name == "#text"
-                                                    and d.text_content
-                                                    and d.text_content.strip()
-                                                ):
-                                                    return True
-                                                if d.tag_name not in (
-                                                    "#text",
-                                                    "#comment",
-                                                    "div",
-                                                ):
-                                                    return True
-                                                if has_meaningful(d):
-                                                    return True
-                                            return False
-
-                                        if has_meaningful(only_child) is False:
-                                            continue  # treat as ignorable
-                            elif ch.tag_name in ("p", "div", "marquee"):
-                                # Treat empty/whitespace-only p/div/marquee as ignorable
-                                has_meaning = False
-                                for gc in ch.children:
-                                    if (
-                                        gc.tag_name == "#text"
-                                        and gc.text_content
-                                        and gc.text_content.strip()
-                                    ):
-                                        has_meaning = True
-                                        break
-                                    if gc.tag_name != "#text":
-                                        has_meaning = True
-                                        break
-                                if has_meaning:
-                                    meaningful = True
-                                    break
-                                # whitespace-only block; ignore
-                            elif ch.tag_name not in allowed_tags:
-                                meaningful = True
-                                break
+                    meaningful = self._frameset_body_has_meaningful_content(body, allowed_tags)
                     if meaningful and context.frameset_ok:
                         self.debug("Ignoring <frameset>; body already meaningful")
                         return True
@@ -8772,6 +8673,55 @@ class BodyElementHandler(TagHandler):
         self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
         context.frameset_ok = False  # explicit body tag encountered (spec: frameset-ok flag set to not ok)
         return True
+
+class FramesetTakeoverHandler(TagHandler):
+    """Permit late root <frameset> to replace a benign provisional body subtree.
+
+    Handles pattern like <svg><p><frameset> where early foreign/flow tokens created a body
+    containing only ignorable content (whitespace, comments, benign foreign roots, or empty inline wrappers).
+    When frameset_ok is still True and a <frameset> start tag arrives, we purge benign body children
+    so the frameset becomes the sole root-level child (besides head) matching spec expectations.
+    """
+
+    _BENIGN_INLINE = {"span", "font", "b", "i", "u", "em", "strong"}
+
+    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+        if token.tag_name != "frameset":
+            return False
+        from turbohtml.context import DocumentState as _DS
+        if context.document_state not in (_DS.INITIAL, _DS.IN_HEAD, _DS.IN_BODY):
+            return False
+        if not context.frameset_ok:
+            return False
+        body = self.parser._get_body_node()  # type: ignore[attr-defined]
+        if not body:
+            return False
+
+        def benign(node: Node) -> bool:
+            if node.tag_name == "#comment":
+                return True
+            if node.tag_name == "#text":
+                return not (node.text_content and node.text_content.strip())
+            if node.tag_name in ("svg svg", "math math"):
+                return all(benign(c) for c in node.children)
+            if node.tag_name in self._BENIGN_INLINE:
+                return all(benign(c) for c in node.children)
+            if node.tag_name == "p":
+                # Empty or whitespace-only paragraph is benign; any meaningful text or non-text child breaks
+                return all(benign(c) for c in node.children)
+            return False
+
+        if body.children and not all(benign(ch) for ch in body.children):
+            return False
+        # Purge body children so upcoming frameset becomes root frameset child
+        while body.children:
+            body.remove_child(body.children[-1])
+        # If body now empty, detach it so frameset becomes direct child of html
+        if body.parent:
+            body.parent.remove_child(body)
+        if self.parser.html_node:
+            context.move_to_element(self.parser.html_node)
+        return False  # allow FramesetTagHandler to handle token
 
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
         return tag_name == "body"
