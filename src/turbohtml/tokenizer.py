@@ -1,15 +1,13 @@
 import re
 from typing import Dict, Iterator, Optional
-from .constants import RAWTEXT_ELEMENTS, HTML5_NUMERIC_REPLACEMENTS
+from .constants import (
+    RAWTEXT_ELEMENTS,
+    HTML5_NUMERIC_REPLACEMENTS,
+    NUMERIC_ENTITY_INVALID_SENTINEL,
+)
 import html  # Add to top of file
 
-# Sentinel used to mark U+FFFD characters originating from INVALID NUMERIC ENTITY references.
-# We later convert this sentinel to an actual U+FFFD after tree post-processing so that
-# sanitization which strips U+FFFD produced from raw NULL/control characters does not
-# also strip the ones required to appear in entities tests (entities01.dat).
-NUMERIC_ENTITY_INVALID_SENTINEL = (
-    "\uf000"  # Private Use Area codepoint unlikely to appear in tests
-)
+# NUMERIC_ENTITY_INVALID_SENTINEL imported from constants (see constants.NUMERIC_ENTITY_INVALID_SENTINEL)
 
 TAG_OPEN_RE = re.compile(r"<(!?)(/)?([^\s/>]+)([^>]*)>")
 # Attribute name: any run of characters excluding whitespace, '=', '/', '>' (allows '<', quotes, backticks, backslashes)

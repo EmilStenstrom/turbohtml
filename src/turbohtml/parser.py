@@ -519,7 +519,7 @@ class TurboHTML:
             Preserve U+FFFD under: plaintext, script, style, svg subtrees. Strip elsewhere to
         match current HTML parsing conformance expectations.
         """
-        from turbohtml.tokenizer import NUMERIC_ENTITY_INVALID_SENTINEL as _NE_SENTINEL  # type: ignore
+        # NUMERIC_ENTITY_INVALID_SENTINEL imported at module level from constants.
 
         def preserve(node: Node) -> bool:
             cur = node.parent
@@ -539,10 +539,11 @@ class TurboHTML:
 
         def walk(node: Node):
             if node.tag_name == "#text" and node.text_content:
-                had = _NE_SENTINEL in node.text_content
+                from .constants import NUMERIC_ENTITY_INVALID_SENTINEL  # local import to avoid circular at import time
+                had = NUMERIC_ENTITY_INVALID_SENTINEL in node.text_content
                 if had:
                     node.text_content = node.text_content.replace(
-                        _NE_SENTINEL, "\ufffd"
+                        NUMERIC_ENTITY_INVALID_SENTINEL, "\ufffd"
                     )
                 if "\ufffd" in node.text_content and not had and not preserve(node):
                     node.text_content = node.text_content.replace("\ufffd", "")

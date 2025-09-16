@@ -270,6 +270,14 @@ HEAD_ELEMENTS = [
     "title",
 ]
 
+# Sentinel used during tokenization to mark invalid numeric character references whose
+# resulting replacement character (U+FFFD) must be preserved (entities tests) and not
+# stripped by generic replacement-character sanitation. We perform a second-stage
+# conversion in parser tree post-processing, replacing occurrences of this sentinel with
+# actual U+FFFD while leaving other replacement characters subject to context-specific
+# stripping rules.
+NUMERIC_ENTITY_INVALID_SENTINEL = "\uf000"  # Private Use Area codepoint unlikely in input
+
 RAWTEXT_ELEMENTS = [
     "title",
     "textarea",
