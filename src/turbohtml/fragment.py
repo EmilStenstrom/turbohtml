@@ -428,7 +428,7 @@ def parse_fragment(parser: "TurboHTML") -> None:  # pragma: no cover
                         suppressed = True
                         break
                 except Exception:  # defensive: predicate failure should not abort parse
-                    parser.debug(f"Suppression predicate error: {getattr(pred, '__name__', pred)}")
+                    parser.debug(f"Suppression predicate error: {pred}")
             if suppressed:
                 continue
         if token.type == "Comment":

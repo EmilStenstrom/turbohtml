@@ -159,6 +159,10 @@ class TagHandler:
     def handle_text(self, text: str, context: "ParseContext") -> bool:
         return False
 
+    # Finalization hook (post-parse). Default no-op so parser can call without reflection.
+    def finalize(self, parser: "TurboHTML") -> None:  # type: ignore[name-defined]
+        return
+
     # Early start-tag preprocessing hook. Called by parser before formatting reconstruction / handler dispatch.
     # Handlers override to perform suppression or synthetic insertion. Return True to consume token.
     def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # pragma: no cover - default noop
@@ -3255,8 +3259,7 @@ class ParagraphTagHandler(TagHandler):
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         self.debug(f"handling <EndTag: p>, context={context}")
-
-        stack = getattr(context.open_elements, "_stack", [])  # type: ignore[attr-defined]
+        stack = context.open_elements._stack  # direct access (performance path, attribute always present)
         has_open_p = any(el.tag_name == "p" for el in stack)
         in_body_like_states = (
             DocumentState.IN_BODY,
@@ -5879,7 +5882,7 @@ class RawtextTagHandler(SelectAwareHandler):
 
         # Create element first; only switch tokenizer if token actually requires rawtext handling
         self.parser.insert_element(token, context, mode="normal", enter=True)
-        if getattr(token, "needs_rawtext", False) and tag_name == "textarea":
+        if token.needs_rawtext and tag_name == "textarea":
             self.debug("Deferred RAWTEXT activation for <textarea>")
             context.content_state = ContentState.RAWTEXT
             self.parser.tokenizer.start_rawtext(tag_name)
@@ -6123,7 +6126,7 @@ class VoidElementHandler(SelectAwareHandler):
                 ancestor = ancestor.parent
             if ancestor is not None:
                 context.move_to_element(ancestor)
-        end_idx = getattr(getattr(self.parser, "tokenizer", None), "pos", context.index)
+        end_idx = self.parser.tokenizer.pos if self.parser.tokenizer else context.index
         self.parser._handle_start_tag(synth, "br", context, end_idx)  # type: ignore[attr-defined]
         return True
 
@@ -9380,7 +9383,7 @@ class FallbackPlacementHandler(TagHandler):
     """Handles residual start tags needing foster parenting or block relocation."""
 
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
-        token = getattr(self.parser, "_last_token", None)
+        token = self.parser._last_token
         if not token or token.type != "StartTag":
             return False
         if table_modes.should_foster_parent(tag_name, token.attributes, context, self.parser):  # type: ignore[attr-defined]
@@ -9581,3 +9584,194 @@ class RubyElementHandler(TagHandler):
 
         self.debug(f"No matching {tag_name} found, ignoring end tag")
         return True
+
+class PostProcessHandler(TagHandler):
+    """Final tree normalization executed after parsing completes.
+
+    Moves prior parser._post_process_tree logic into a handler 'finalize' hook to
+    keep the parser slimmer. Runs after all other handlers.
+    """
+
+    def finalize(self, parser: "TurboHTML") -> None:  # type: ignore[name-defined]
+        root = parser.root
+        if root is None:
+            return
+        from .constants import (
+            NUMERIC_ENTITY_INVALID_SENTINEL,
+            MATHML_CASE_SENSITIVE_ATTRIBUTES,
+            MATHML_ELEMENTS,
+            FORMATTING_ELEMENTS,
+        )
+
+        def preserve(node: Node) -> bool:
+            cur = node.parent
+            svg = False
+            while cur:
+                tn = cur.tag_name
+                if tn == "plaintext" or tn in ("script", "style"):
+                    return True
+                if tn.startswith("svg "):
+                    svg = True
+                cur = cur.parent
+            return svg
+
+        def walk_replacement(node: Node):
+            if node.tag_name == "#text" and node.text_content:
+                text = node.text_content
+                had = NUMERIC_ENTITY_INVALID_SENTINEL in text
+                if had:
+                    text = text.replace(NUMERIC_ENTITY_INVALID_SENTINEL, "\ufffd")
+                if ("\ufffd" in text) and (not had) and (not preserve(node)):
+                    text = text.replace("\ufffd", "")
+                if text != node.text_content:
+                    node.text_content = text
+            for c in node.children:
+                walk_replacement(c)
+
+        walk_replacement(root)
+
+        def normalize_mathml(node: Node):
+            parts = node.tag_name.split()
+            local = parts[-1] if parts else node.tag_name
+            is_mathml = local in MATHML_ELEMENTS or node.tag_name.startswith("math ")
+            if is_mathml and node.attributes:
+                new_attrs = {}
+                for k, v in node.attributes.items():
+                    kl = k.lower()
+                    if kl in MATHML_CASE_SENSITIVE_ATTRIBUTES:
+                        new_attrs[MATHML_CASE_SENSITIVE_ATTRIBUTES[kl]] = v
+                    else:
+                        new_attrs[kl] = v
+                node.attributes = new_attrs
+            for ch in node.children:
+                if ch.tag_name != "#text":
+                    normalize_mathml(ch)
+
+        normalize_mathml(root)
+
+        def collapse_formatting(node: Node):
+            i = 0
+            while i < len(node.children) - 1:
+                a = node.children[i]
+                b = node.children[i + 1]
+                if (
+                    a.tag_name in FORMATTING_ELEMENTS
+                    and b.tag_name == a.tag_name
+                    and a.attributes == b.attributes
+                    and len(a.children) == 1
+                    and a.children[0] is b
+                    and not any(ch.tag_name == "#text" for ch in a.children)
+                ):
+                    grandchildren = list(b.children)
+                    for gc in grandchildren:
+                        b.remove_child(gc)
+                        a.append_child(gc)
+                    node.remove_child(b)
+                    continue
+                i += 1
+            for ch in node.children:
+                if ch.tag_name != "#text":
+                    collapse_formatting(ch)
+
+        collapse_formatting(root)
+
+        def adjust_foreign(node: Node):
+            parts = node.tag_name.split()
+            local = parts[-1] if parts else node.tag_name
+            is_svg = node.tag_name.startswith("svg ") or local == "svg"
+            is_math = node.tag_name.startswith("math ") or local == "math"
+            if is_svg and node.attributes:
+                attrs = dict(node.attributes)
+                defn_val = attrs.pop("definitionurl", None)
+                xml_lang = attrs.pop("xml:lang", None)
+                xml_space = attrs.pop("xml:space", None)
+                xml_base = attrs.pop("xml:base", None)
+                other_xml = []
+                for k in list(attrs.keys()):
+                    if k.startswith("xml:") and k not in ("xml:lang", "xml:space", "xml:base"):
+                        other_xml.append((k, attrs.pop(k)))
+                new_attrs = {}
+                if defn_val is not None:
+                    new_attrs["definitionurl"] = defn_val
+                for k, v in node.attributes.items():
+                    if not (k in ("definitionurl", "xml:lang", "xml:space", "xml:base") or k.startswith("xml:")):
+                        new_attrs[k] = v
+                if xml_lang is not None:
+                    new_attrs["xml lang"] = xml_lang
+                if xml_space is not None:
+                    new_attrs["xml space"] = xml_space
+                for k, v in other_xml:
+                    new_attrs[k] = v
+                if xml_base is not None:
+                    new_attrs["xml:base"] = xml_base
+                node.attributes = new_attrs
+            elif is_math and node.attributes:
+                attrs = dict(node.attributes)
+                if "definitionurl" in attrs and "definitionURL" not in attrs:
+                    attrs["definitionURL"] = attrs.pop("definitionurl")
+                xlink_attrs = [(k, v) for k, v in attrs.items() if k.startswith("xlink:")]
+                if xlink_attrs:
+                    for k, _ in xlink_attrs:
+                        del attrs[k]
+                    xlink_attrs.sort(key=lambda kv: kv[0].split(":", 1)[1])
+                    rebuilt = {}
+                    if "definitionURL" in attrs:
+                        rebuilt["definitionURL"] = attrs.pop("definitionURL")
+                    for k, v in xlink_attrs:
+                        rebuilt[f"xlink {k.split(':', 1)[1]}"] = v
+                    for k, v in attrs.items():
+                        rebuilt[k] = v
+                    node.attributes = rebuilt
+            for ch in node.children:
+                if ch.tag_name != "#text":
+                    adjust_foreign(ch)
+
+        adjust_foreign(root)
+
+        html = parser.html_node if not parser.fragment_context else None
+        if html and len(html.children) >= 3 and html.children and html.children[0].tag_name == "head":
+            body_index = None
+            for i, ch in enumerate(html.children):
+                if ch.tag_name == "body":
+                    body_index = i
+                    break
+            if body_index is not None and body_index + 1 < len(html.children):
+                after = html.children[body_index + 1]
+                if (
+                    after.tag_name == "#text"
+                    and after.text_content is not None
+                    and after.text_content.strip() == ""
+                ):
+                    between_ok = True
+                    for mid in html.children[1:body_index]:
+                        if not (
+                            mid.tag_name == "#text"
+                            and mid.text_content is not None
+                            and mid.text_content.strip() == ""
+                        ):
+                            between_ok = False
+                            break
+                    if between_ok:
+                        ws_nodes = []
+                        j = body_index + 1
+                        while (
+                            j < len(html.children)
+                            and html.children[j].tag_name == "#text"
+                            and html.children[j].text_content is not None
+                            and html.children[j].text_content.strip() == ""
+                        ):
+                            ws_nodes.append(html.children[j])
+                            j += 1
+                        for n in ws_nodes:
+                            html.remove_child(n)
+                        insert_at = 1
+                        while (
+                            insert_at < len(html.children)
+                            and html.children[insert_at].tag_name == "#text"
+                            and html.children[insert_at].text_content is not None
+                            and html.children[insert_at].text_content.strip() == ""
+                        ):
+                            insert_at += 1
+                        for offset, n in enumerate(ws_nodes):
+                            html.children.insert(insert_at + offset, n)
+                            n.parent = html

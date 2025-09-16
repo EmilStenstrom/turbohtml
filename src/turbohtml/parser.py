@@ -33,6 +33,7 @@ from turbohtml.handlers import (
     UnknownElementHandler,
     RubyElementHandler,
     FallbackPlacementHandler,
+    PostProcessHandler,
 )
 from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
@@ -115,6 +116,7 @@ class TurboHTML:
             RubyElementHandler(self),
             FallbackPlacementHandler(self),
             UnknownElementHandler(self),
+            PostProcessHandler(self),
         ]
         self.tag_handlers = [h for h in self.tag_handlers if h is not None]
 
@@ -133,7 +135,9 @@ class TurboHTML:
 
         # Parse immediately upon construction
         self._parse()
-        self._post_process_tree()
+        # Post-parse finalization: allow handlers to perform tree normalization
+        for handler in self.tag_handlers:
+            handler.finalize(self)
 
     def __repr__(self) -> str:
         return f"<TurboHTML root={self.root}>"
@@ -514,236 +518,8 @@ class TurboHTML:
         return new_node
 
     def _post_process_tree(self) -> None:
-        """Replace tokenizer sentinel with U+FFFD and strip non-preserved U+FFFD occurrences.
-
-            Preserve U+FFFD under: plaintext, script, style, svg subtrees. Strip elsewhere to
-        match current HTML parsing conformance expectations.
-        """
-        # NUMERIC_ENTITY_INVALID_SENTINEL imported at module level from constants.
-
-        def preserve(node: Node) -> bool:
-            cur = node.parent
-            svg = False
-            while cur:
-                if cur.tag_name == "plaintext":
-                    return True
-                if cur.tag_name in ("script", "style"):
-                    return True
-                if cur.tag_name.startswith("svg "):
-                    svg = True
-                cur = cur.parent
-            return svg
-
-        if self.root is None:  # safety
-            return
-
-        def walk(node: Node):
-            if node.tag_name == "#text" and node.text_content:
-                from .constants import NUMERIC_ENTITY_INVALID_SENTINEL  # local import to avoid circular at import time
-                had = NUMERIC_ENTITY_INVALID_SENTINEL in node.text_content
-                if had:
-                    node.text_content = node.text_content.replace(
-                        NUMERIC_ENTITY_INVALID_SENTINEL, "\ufffd"
-                    )
-                if "\ufffd" in node.text_content and not had and not preserve(node):
-                    node.text_content = node.text_content.replace("\ufffd", "")
-            for c in node.children:
-                walk(c)
-
-        walk(self.root)
-
-        # MathML attribute case normalization (definitionURL, etc.) for nodes not processed by foreign handler
-        from .constants import MATHML_CASE_SENSITIVE_ATTRIBUTES, MATHML_ELEMENTS
-
-        def normalize_mathml(node: Node):
-            parts = node.tag_name.split()
-            local = parts[-1] if parts else node.tag_name
-            is_mathml = local in MATHML_ELEMENTS or node.tag_name.startswith("math ")
-            if is_mathml and node.attributes:
-                new_attrs = {}
-                for k, v in node.attributes.items():
-                    kl = k.lower()
-                    if kl in MATHML_CASE_SENSITIVE_ATTRIBUTES:
-                        new_attrs[MATHML_CASE_SENSITIVE_ATTRIBUTES[kl]] = v
-                    else:
-                        new_attrs[kl] = v
-                node.attributes = new_attrs
-            for ch in node.children:
-                if ch.tag_name != "#text":
-                    normalize_mathml(ch)
-
-        normalize_mathml(self.root)
-
-        # Collapse adjacent duplicate formatting wrappers created via adoption cloning (<b><b>...)
-        def collapse_formatting(node: Node):
-            i = 0
-            while i < len(node.children) - 1:
-                a = node.children[i]
-                b = node.children[i + 1]
-                if (
-                    a.tag_name in FORMATTING_ELEMENTS
-                    and b.tag_name == a.tag_name
-                    and a.attributes == b.attributes
-                    and len(a.children) == 1
-                    and a.children[0] is b
-                    and not any(ch.tag_name == "#text" for ch in a.children)
-                ):
-                    # promote b's children
-                    grandchildren = list(b.children)
-                    for gc in grandchildren:
-                        b.remove_child(gc)
-                        a.append_child(gc)
-                    node.remove_child(b)
-                    continue  # re-check at same index
-                i += 1
-            for ch in node.children:
-                if ch.tag_name != "#text":
-                    collapse_formatting(ch)
-
-        collapse_formatting(self.root)
-
-
-        # Foreign (SVG/MathML) attribute ordering & normalization adjustments:
-        #   * SVG: expected serialization orders some xml:* and definitionurl attributes: definitionurl first, then
-        #           xml lang, xml space, any other xml:* (excluding xml:base), and xml:base last; unknown xml:* kept.
-        #           xml:lang / xml:space displayed without colon after xml ("xml lang"). xml:base retains colon.
-        #   * MathML: ensure definitionURL casing and represent xlink:* attributes as "xlink <local>" (space separator)
-        #             ordered by local name after definitionURL and other non-xlink attributes.
-        def _adjust_foreign_attrs(node: Node):
-            parts = node.tag_name.split()
-            local = parts[-1] if parts else node.tag_name
-            is_svg = node.tag_name.startswith("svg ") or local == "svg"
-            is_math = node.tag_name.startswith("math ") or local == "math"
-            if is_svg and node.attributes:
-                attrs = dict(node.attributes)  # copy
-                defn_val = attrs.pop("definitionurl", None)
-                xml_lang = attrs.pop("xml:lang", None)
-                xml_space = attrs.pop("xml:space", None)
-                xml_base = attrs.pop("xml:base", None)
-                # Other xml:* attributes retain colon form and order (exclude converted ones and xml:base handled separately)
-                other_xml = []
-                for k in list(attrs.keys()):
-                    if k.startswith("xml:") and k not in (
-                        "xml:lang",
-                        "xml:space",
-                        "xml:base",
-                    ):
-                        other_xml.append((k, attrs.pop(k)))
-                new_attrs = {}
-                if defn_val is not None:
-                    new_attrs["definitionurl"] = defn_val
-                # For child SVG elements ensure non-xml (e.g. xlink:*) precede xml lang/space
-                for k, v in node.attributes.items():
-                    if not (
-                        k in ("definitionurl", "xml:lang", "xml:space", "xml:base")
-                        or k.startswith("xml:")
-                    ):
-                        new_attrs[k] = v
-                if xml_lang is not None:
-                    new_attrs["xml lang"] = xml_lang
-                if xml_space is not None:
-                    new_attrs["xml space"] = xml_space
-                for k, v in other_xml:
-                    new_attrs[k] = v
-                if xml_base is not None:
-                    new_attrs["xml:base"] = xml_base
-                node.attributes = new_attrs
-            elif is_math and node.attributes:
-                attrs = dict(node.attributes)
-                # Promote/normalize definitionurl -> definitionURL
-                if "definitionurl" in attrs and "definitionURL" not in attrs:
-                    attrs["definitionURL"] = attrs.pop("definitionurl")
-                # Collect xlink:* attributes
-                xlink_attrs = [
-                    (k, v) for k, v in attrs.items() if k.startswith("xlink:")
-                ]
-                if xlink_attrs:
-                    for k, _ in xlink_attrs:
-                        del attrs[k]
-                    # Sort xlink locals alphabetically
-                    xlink_attrs.sort(key=lambda kv: kv[0].split(":", 1)[1])
-                    rebuilt = {}
-                    if "definitionURL" in attrs:
-                        rebuilt["definitionURL"] = attrs.pop("definitionURL")
-                    # Place xlink attributes before remaining math attributes
-                    for k, v in xlink_attrs:
-                        rebuilt[f"xlink {k.split(':', 1)[1]}"] = v
-                    for k, v in attrs.items():
-                        rebuilt[k] = v
-                    node.attributes = rebuilt
-            for ch in node.children:
-                if ch.tag_name != "#text":
-                    _adjust_foreign_attrs(ch)
-
-        _adjust_foreign_attrs(self.root)
-
-        # Reorder AFTER_HEAD whitespace that (due to earlier implicit body creation) ended up
-        # after the <body> element instead of between <head> and <body>. Spec: whitespace
-        # character tokens in the AFTER_HEAD insertion mode are inserted before creating the
-        # body element. If our construction produced <head><body><text ws> reorder to
-        # <head><text ws><body>. Only perform when the text node is pure whitespace and no
-        # other intervening element/content exists that would make reordering unsafe.
-        html = self.html_node if not self.fragment_context else None
-        if html and len(html.children) >= 3:
-            # Pattern: head, body, whitespace-text (optionally more whitespace-only text siblings)
-            head = (
-                html.children[0]
-                if html.children and html.children[0].tag_name == "head"
-                else None
-            )
-            # Find first body element index
-            body_index = None
-            for i, ch in enumerate(html.children):
-                if ch.tag_name == "body":
-                    body_index = i
-                    break
-            if head and body_index is not None and body_index + 1 < len(html.children):
-                after = html.children[body_index + 1]
-                if (
-                    after.tag_name == "#text"
-                    and after.text_content is not None
-                    and after.text_content.strip() == ""
-                ):
-                    # Ensure there is no earlier whitespace text already between head and body
-                    between_ok = True
-                    for mid in html.children[1:body_index]:
-                        if not (
-                            mid.tag_name == "#text"
-                            and mid.text_content is not None
-                            and mid.text_content.strip() == ""
-                        ):
-                            between_ok = False
-                            break
-                    if between_ok:
-                        # Move the whitespace text node so it sits right after head (index after any existing
-                        # whitespace already there, preserving relative order of multiple whitespace nodes)
-                        ws_nodes = []
-                        j = body_index + 1
-                        while (
-                            j < len(html.children)
-                            and html.children[j].tag_name == "#text"
-                            and html.children[j].text_content is not None
-                            and html.children[j].text_content.strip() == ""
-                        ):
-                            ws_nodes.append(html.children[j])
-                            j += 1
-                        # Remove collected whitespace nodes
-                        for n in ws_nodes:
-                            html.remove_child(n)
-                        # Determine insertion index (after head and any existing whitespace directly after head)
-                        insert_at = 1
-                        while (
-                            insert_at < len(html.children)
-                            and html.children[insert_at].tag_name == "#text"
-                            and html.children[insert_at].text_content is not None
-                            and html.children[insert_at].text_content.strip() == ""
-                        ):
-                            insert_at += 1
-                        for offset, n in enumerate(ws_nodes):
-                            html.children.insert(insert_at + offset, n)
-                            n.parent = html
-
-        # Frameset trailing comments: no buffering; any required reordering handled during <noframes> insertion.
+        # Deprecated: post-processing now handled by PostProcessHandler.finalize().
+        return
 
     def _create_initial_context(self):
         """Create a minimal ParseContext for structural post-processing heuristics.
@@ -776,15 +552,6 @@ class TurboHTML:
                 return current
             current = current.parent
         return None
-
-    def has_form_ancestor(self, context: ParseContext) -> bool:
-        """Check if there's a form element in the ancestry."""
-        current = context.current_parent
-        while current:
-            if current.tag_name == "form":
-                return True
-            current = current.parent
-        return False
 
     # Main Parsing Methods
     def _parse(self) -> None:
@@ -1261,7 +1028,7 @@ class TurboHTML:
         context.move_to_element(new_node)
         context.open_elements.push(new_node)
         # Execute deferred reconstruction inside the newly created block if flagged.
-        if getattr(context, "_deferred_block_reconstruct", False):
+        if context._deferred_block_reconstruct:
             # Clear flag before running to avoid repeat on nested blocks
             context._deferred_block_reconstruct = False
             self.reconstruct_active_formatting_elements(context)
