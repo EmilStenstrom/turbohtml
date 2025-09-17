@@ -9345,6 +9345,20 @@ class PlaintextHandler(SelectAwareHandler):
                     context.enter_element(a_node)
         return True
 
+    # Text handling while in PLAINTEXT mode (all subsequent tokens)
+    def should_handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        if not text:
+            return False
+        return context.content_state == ContentState.PLAINTEXT
+
+    def handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        # Tokenizer already transformed disallowed code points into U+FFFD; just append literally.
+        node = self.parser.create_text_node(text)
+        context.current_parent.append_child(node)
+        if context.frameset_ok and any((not c.isspace()) and c != "\ufffd" for c in text):
+            context.frameset_ok = False
+        return True
+
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
         # Handle all end tags in PLAINTEXT mode
         if context.content_state == ContentState.PLAINTEXT:

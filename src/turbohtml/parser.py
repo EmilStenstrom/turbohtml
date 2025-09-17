@@ -842,21 +842,15 @@ class TurboHTML:
                     and data.startswith("\n")
                 ):
                     data = data[1:]
-                # Fast path: in PLAINTEXT mode all characters (including '<' and '&') are literal children
-                if context.content_state == ContentState.PLAINTEXT:
-                    if data:
-                        text_node = self.create_text_node(data)
-                        context.current_parent.append_child(text_node)
-                else:
-                    if data:
-                        for handler in self.tag_handlers:
-                            if handler.should_handle_text(data, context):
-                                self.debug(
-                                    f"{handler.__class__.__name__}: handling {token}, context={context}"
-                                )
-                                if handler.handle_text(data, context):
-                                    break
-                    # Normalization now delegated to TextNormalizationHandler; no direct call here.
+                if data:
+                    for handler in self.tag_handlers:
+                        if handler.should_handle_text(data, context):
+                            self.debug(
+                                f"{handler.__class__.__name__}: handling {token}, context={context}"
+                            )
+                            if handler.handle_text(data, context):
+                                break
+                # Normalization handled by TextNormalizationHandler.
 
         # Structural synthesis and normalization moved to StructureSynthesisHandler.finalize()
 
