@@ -266,6 +266,57 @@ class BodyImplicitCreationHandler(TagHandler):
         return False
 
 
+class CommentPlacementHandler(TagHandler):
+    """Handles post-body comment placement previously embedded in parser._handle_comment.
+
+    Responsibilities:
+      * AFTER_BODY: place comment as sibling of <body> under <html> (after body)
+      * Stray </body> + immediate comment after premature IN_BODY reentry: relocate comment after <body>
+      * Stray </body> + whitespace-only character + comment: same relocation (webkit01 case)
+
+    This keeps parser._handle_comment lean and avoids coupling to previous-token heuristics there.
+    """
+
+    def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        from turbohtml.context import DocumentState as _DS
+        # Only intercept when in or just re-entered from post-body situations
+        if context.document_state == _DS.AFTER_BODY:
+            return True
+        if context.document_state == _DS.IN_BODY and self.parser._prev_token is not None:
+            prev = self.parser._prev_token
+            if prev.type == "EndTag" and prev.tag_name == "body":
+                return True
+            if prev.type == "Character" and hasattr(prev, "data") and prev.data.strip() == "":
+                # Look further back: ensure prior non-whitespace was a body end tag
+                # (we only keep one prev token; if whitespace is prev we can't see </body> directly, so fall back to body existence)
+                # Conservative: require that open_elements has body but no html end yet (document_state IN_BODY suffices)
+                return True
+        return False
+
+    def handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        from turbohtml.context import DocumentState as _DS
+        html_node = self.parser.html_node
+        body_node = self.parser._get_body_node()
+        if not html_node:
+            return False
+        # Ensure html node attached
+        if html_node not in self.parser.root.children:
+            self.parser.root.append_child(html_node)
+        # Find insertion index: after body if body exists, else append
+        if body_node and body_node.parent is html_node:
+            # Insert after body (append if body last)
+            if html_node.children and html_node.children[-1] is body_node:
+                html_node.append_child(self.parser._create_comment_node(comment))  # type: ignore[attr-defined]
+            else:
+                idx = html_node.children.index(body_node) + 1
+                node = self.parser._create_comment_node(comment)  # type: ignore[attr-defined]
+                html_node.insert_child_at(idx, node)
+        else:
+            html_node.append_child(self.parser._create_comment_node(comment))  # type: ignore[attr-defined]
+        # Do not change state (parser already transitions for other tokens)
+        return True
+
+
 class FramesetPreludeHandler(TagHandler):
     """Consolidated frameset prelude handler.
 

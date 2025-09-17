@@ -33,13 +33,13 @@ from turbohtml.handlers import (
     RubyElementHandler,
     FallbackPlacementHandler,
     PostProcessHandler,
+    CommentPlacementHandler,
 )
-from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
 from turbohtml import table_modes  # phase 1 extraction: table predicates
 from turbohtml.adoption import AdoptionAgencyAlgorithm
 from .fragment import parse_fragment
-
+from turbohtml.node import Node
 from .constants import (
     HEAD_ELEMENTS,
     FORMATTING_ELEMENTS,
@@ -94,6 +94,7 @@ class TurboHTML:
             FramesetTagHandler(self),
             SelectTagHandler(self),  # must precede table handling to suppress table tokens inside <select>
             TableTagHandler(self),
+            CommentPlacementHandler(self),
             ForeignTagHandler(self) if handle_foreign_elements else None,
             ParagraphTagHandler(self),
             AutoClosingTagHandler(self),
@@ -1399,50 +1400,18 @@ class TurboHTML:
             )
             return
 
-        # Special recovery: if immediately following a stray </body> end tag we may already have re-entered IN_BODY
-        # (BodyReentryHandler) before processing this comment. Spec expects AFTER_BODY placement under <html> as a
-        # sibling after the body element, NOT inside body. Detect via previous token pointer to avoid adding sticky state.
-        if (
-            self._prev_token is not None
-            and self._prev_token.type == "EndTag"
-            and self._prev_token.tag_name == "body"
-            and context.document_state == DocumentState.IN_BODY
-        ):
-            html_node = self.html_node
-            body_node = self._get_body_node()
-            if html_node and body_node and body_node.parent is html_node:
-                # Insert after body
-                if html_node.children and html_node.children[-1] is body_node:
-                    html_node.append_child(comment_node)
-                else:
-                    idx = html_node.children.index(body_node) + 1
-                    html_node.insert_child_at(idx, comment_node)
-                return
-
-        # Secondary recovery: if body ended earlier but we re-entered IN_BODY due to whitespace-only character tokens
-        # (webkit01:26 pattern), and current_parent is body while the last non-whitespace sibling after body closure
-        # should be a comment at html level, relocate.
-        if (
-            context.document_state == DocumentState.IN_BODY
-            and context.current_parent.tag_name == "body"
-            and self._prev_token is not None
-            and self._prev_token.type == "Character"
-            and (self._prev_token.data.strip() == "" if hasattr(self._prev_token, "data") else False)
-        ):
-            html_node = self.html_node
-            body_node = self._get_body_node()
-            if html_node and body_node and body_node.parent is html_node:
-                # Ensure we haven't already appended another element after body
-                if html_node.children and html_node.children[-1] is body_node:
-                    html_node.append_child(comment_node)
-                    return
-
         # All other comments go in current parent
         self.debug(f"Adding comment to current parent: {context.current_parent}")
         context.current_parent.append_child(comment_node)
         self.debug(
             f"Current parent children: {[c.tag_name for c in context.current_parent.children]}"
         )
+
+    # Utility for handlers to create a comment node (keeps single construction style)
+    def _create_comment_node(self, text: str) -> Node:  # type: ignore[name-defined]
+        node = Node("#comment")
+        node.text_content = text
+        return node
 
     def _handle_doctype(self, token: HTMLToken) -> None:
         """
