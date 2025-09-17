@@ -48,6 +48,7 @@ class TurboHTML:
         # Initialize tag handlers in deterministic order
         self.tag_handlers = [
             DoctypeHandler(self),
+            RawtextStartTagIgnoreHandler(self),
             TemplateTagHandler(self),
             TemplateContentFilterHandler(self),
             FragmentPreprocessHandler(self),
@@ -814,9 +815,7 @@ class TurboHTML:
     ) -> None:
         """Handle all opening HTML tags."""
 
-        if context.content_state == ContentState.RAWTEXT:
-            self.debug("In rawtext mode, ignoring start tag")
-            return
+        # RAWTEXT start tag suppression handled by RawtextStartTagIgnoreHandler early_start_preprocess
 
         # Rawtext elements (style/script) encountered while in table insertion mode should
         # become children of the current table element (before any row groups) rather than

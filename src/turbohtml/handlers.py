@@ -684,6 +684,23 @@ class FragmentPreprocessHandler(TagHandler):
         return False
 
 
+class RawtextStartTagIgnoreHandler(TagHandler):
+    """Consumes any start tag while in RAWTEXT content state.
+
+    Previously an early inline check in parser._handle_start_tag returned immediately when
+    context.content_state == RAWTEXT. Moving it here keeps the parser lean and aligns with
+    other early suppression behaviors.
+    """
+
+    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+        from turbohtml.context import ContentState as _CS
+        if context.content_state == _CS.RAWTEXT:
+            # Mirror previous debug (optional) via parser.debug for trace parity
+            self.debug(f"Ignoring <{token.tag_name}> start tag in RAWTEXT")
+            return True
+        return False
+
+
 class TemplateAwareHandler(TagHandler):
     """Mixin for handlers that need to skip template content"""
 
