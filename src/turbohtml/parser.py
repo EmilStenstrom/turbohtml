@@ -80,6 +80,7 @@ class TurboHTML:
             BoundaryElementHandler(self),
             FormattingElementHandler(self),
             ImageTagHandler(self),
+            RawtextTextHandler(self),
             TextHandler(self),
             TextNormalizationHandler(self),
             FormTagHandler(self),

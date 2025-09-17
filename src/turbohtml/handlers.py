@@ -428,6 +428,35 @@ class ListingNewlineHandler(TagHandler):
                     break
         return True
 
+class RawtextTextHandler(TagHandler):
+    """Handles character tokens while in RAWTEXT content state (script/style text phase).
+
+    Extracted from TextHandler to reduce branching there. Responsibilities:
+      * Suppress stray unterminated end-tag fragments at EOF ("</script" without '>')
+      * Append remaining text verbatim (replacement character stripping already done upstream)
+    Ordering: must precede TextHandler so it claims RAWTEXT text first.
+    """
+
+    def should_handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        from turbohtml.context import ContentState as _CS
+        return context.content_state == _CS.RAWTEXT and bool(text)
+
+    def handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        cur = context.current_parent
+        if cur and cur.tag_name in ("script", "style"):
+            lower = text.lower()
+            marker = f"</{cur.tag_name}"
+            if (
+                lower.startswith(marker)
+                and ">" not in text
+                and lower[len(marker):].strip() == ""
+            ):
+                return True  # Drop unterminated end-tag fragment
+        # Normal append
+        # Use parser.insert_text to unify merging semantics (no foster, strip replacement already handled by tokenizer)
+        self.parser.insert_text(text, context, merge=True, strip_replacement=False)
+        return True
+
 
 class TextNormalizationHandler(TagHandler):
     """Invokes parser._post_text_inline_normalize after text handling.
@@ -1648,24 +1677,7 @@ class TextHandler(TagHandler):
             context.move_to_element(prev_parent if prev_parent else body)
             return True
 
-        # RAWTEXT
-        if context.content_state == ContentState.RAWTEXT:
-            # Suppress stray unterminated end tag fragments at EOF inside RAWTEXT (e.g. </SCRIPT )
-            # Structural condition: token text begins with </current_rawtext_element (case-insensitive),
-            # contains no '>' (unterminated), and rest is optional whitespace. The expected tree omits the
-            # rawtext element to end (implicit EOF or later recovery) without a literal text node.
-            cur = context.current_parent
-            if cur and cur.tag_name in ("script", "style"):
-                lower = text.lower()
-                marker = f"</{cur.tag_name}"
-                if (
-                    lower.startswith(marker)
-                    and ">" not in text
-                    and lower[len(marker) :].strip() == ""
-                ):
-                    return True  # Drop fragment
-            self._append_text(text, context)
-            return True
+        # RAWTEXT handled earlier by RawtextTextHandler
 
         # Special case: body ends with a table and current parent is body but last open cell lost due to stray end tags
         if (
