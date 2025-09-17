@@ -87,6 +87,7 @@ class TurboHTML:
             RubyElementHandler(self),
             FallbackPlacementHandler(self),
             UnknownElementHandler(self),
+            GenericEndTagHandler(self),
             StructureSynthesisHandler(self),
             PostProcessHandler(self),
         ]
@@ -911,68 +912,7 @@ class TurboHTML:
                 cursor = cursor.parent
             # No match below boundary: ignore
             return
-        # Default end tag handling - close matching element if found (re-enabled)
-        self._handle_default_end_tag(tag_name, context)
-
-    def _handle_default_end_tag(self, tag_name: str, context: "ParseContext") -> None:
-        """Generic "any other end tag" algorithm from the IN BODY insertion mode.
-
-        Implements the spec steps:
-          1. Let i be the current node.
-          2. If i's tag name equals the token's tag name, go to step 6.
-          3. If i is a special element, ignore the token (abort).
-          4. Set i to the previous entry in the stack of open elements and return to step 2.
-          5. (Impossible here: if we fell off the stack the tag is ignored.)
-          6. Generate implied end tags (we approximate: pop until target reached; formatting/phrasing
-             elements like <b> that are not implied remain and will be popped if above target).
-          7. If current node's tag name != target, parse error.
-          8. Pop elements until the target element has been popped.
-        The approximation skips a dedicated implied-end-tags list because the remaining failing cases only
-        require correct handling of misnested formatting vs block boundaries. This remains deterministic and
-        spec-aligned for the involved element categories.
-        """
-        if not context.current_parent:
-            return
-
-        # Elements handled elsewhere (special cases) are skipped here
-        if tag_name in ("html", "head", "body"):
-            return
-
-        from turbohtml.constants import SPECIAL_CATEGORY_ELEMENTS
-
-        stack = context.open_elements._stack
-        if not stack:
-            return
-        # Step 1/2: walk i upward until match or special element encountered
-        i_index = len(stack) - 1
-        found_index = -1
-        while i_index >= 0:
-            node = stack[i_index]
-            if node.tag_name == tag_name:
-                found_index = i_index
-                break
-            if node.tag_name in SPECIAL_CATEGORY_ELEMENTS:
-                # Step 3: encountered special element before finding target → ignore
-                self.debug(
-                    f"Default end tag: encountered special ancestor <{node.tag_name}> before <{tag_name}>; ignoring"
-                )
-                return
-            i_index -= 1
-        if found_index == -1:
-            # Tag not open → ignore
-            self.debug(f"Default end tag: </{tag_name}> not found on stack; ignoring")
-            return
-        # Step 6-8: pop until target popped
-        while stack:
-            popped = stack.pop()
-            # Adjust current_parent if we just popped it
-            if context.current_parent is popped:
-                parent = popped.parent or self.root
-                context.move_to_element_with_fallback(parent, popped)
-            if popped.tag_name == tag_name:
-                break
-        # After pops, current_parent already at correct insertion point
-        return
+    # Generic end tag handling now performed by GenericEndTagHandler; nothing further here.
 
 
     # Special Node Handling Methods

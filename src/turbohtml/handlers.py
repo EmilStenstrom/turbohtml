@@ -826,6 +826,58 @@ class SpecialElementHandler(TagHandler):
                     context.transition_to_state(_DS.IN_BODY, body)
         return False
 
+class GenericEndTagHandler(TagHandler):
+    """Fallback generic end tag algorithm (formerly parser._handle_default_end_tag).
+
+    Runs late after specific end-tag handlers. Mirrors the simplified IN BODY 'any other end tag'
+    handling used previously. Skips html/head/body and does nothing inside template content (bounded
+    closure already handled earlier in parser._handle_end_tag)."""
+
+    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        # Skip special structure tags (handled elsewhere) and skip when inside template content
+        if tag_name in ("html", "head", "body"):
+            return False
+        # Let parser template-content branch manage bounded closure; we only act outside it
+        return True
+
+    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+        if not context.current_parent:
+            return True
+        from turbohtml.constants import SPECIAL_CATEGORY_ELEMENTS
+        stack = context.open_elements._stack
+        if not stack:
+            return True
+        target = token.tag_name
+        if target in ("html", "head", "body"):
+            return True
+        # Walk upward looking for match; abort if special element encountered first
+        i_index = len(stack) - 1
+        found_index = -1
+        while i_index >= 0:
+            node = stack[i_index]
+            if node.tag_name == target:
+                found_index = i_index
+                break
+            if node.tag_name in SPECIAL_CATEGORY_ELEMENTS:
+                # Encountered special before finding target -> ignore token
+                self.debug(
+                    f"GenericEndTagHandler: special ancestor <{node.tag_name}> before </{target}>; ignoring"
+                )
+                return True
+            i_index -= 1
+        if found_index == -1:
+            self.debug(f"GenericEndTagHandler: </{target}> not open; ignoring")
+            return True
+        # Pop until target popped
+        while stack:
+            popped = stack.pop()
+            if context.current_parent is popped:
+                parent = popped.parent or self.parser.root  # type: ignore[attr-defined]
+                context.move_to_element_with_fallback(parent, popped)
+            if popped.tag_name == target:
+                break
+        return True
+
 
 class TemplateAwareHandler(TagHandler):
     """Mixin for handlers that need to skip template content"""
