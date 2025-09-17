@@ -749,19 +749,6 @@ class TurboHTML:
     ) -> None:
         """Handle all opening HTML tags."""
 
-        # RAWTEXT start tag suppression handled by RawtextStartTagIgnoreHandler early_start_preprocess
-
-        # Rawtext elements (style/script) encountered while in table insertion mode should
-        # become children of the current table element (before any row groups) rather than
-        # being foster parented outside. Handle this directly here prior to generic handlers.
-        if (
-            tag_name in ("style", "script")
-            and context.document_state == DocumentState.IN_TABLE
-            and not in_template_content(context)
-        ):
-            # Let normal table handling place script/style (may end up inside row if appropriate)
-            pass
-
         # Early start-tag preprocessing: give all handlers a chance to suppress/synthesize before dispatch.
         # Handlers that don't implement the hook inherit the no-op base method (no branching/try needed).
         for h in self.tag_handlers:
