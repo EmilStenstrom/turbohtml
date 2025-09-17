@@ -34,6 +34,7 @@ from turbohtml.handlers import (
     FallbackPlacementHandler,
     PostProcessHandler,
     CommentPlacementHandler,
+    PostBodyCharacterHandler,
 )
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
 from turbohtml import table_modes  # phase 1 extraction: table predicates
@@ -95,6 +96,7 @@ class TurboHTML:
             SelectTagHandler(self),  # must precede table handling to suppress table tokens inside <select>
             TableTagHandler(self),
             CommentPlacementHandler(self),
+            PostBodyCharacterHandler(self),
             ForeignTagHandler(self) if handle_foreign_elements else None,
             ParagraphTagHandler(self),
             AutoClosingTagHandler(self),
@@ -831,19 +833,6 @@ class TurboHTML:
             elif token.type == "Character":
                 # Listing/pre-like initial newline suppression (only implemented for <listing> here)
                 data = token.data
-                # Spec recovery: In AFTER_BODY / AFTER_HTML insertion modes, a non-whitespace character token
-                # is a parse error; the tokenizer reprocesses it in the IN_BODY insertion mode. We emulate this
-                # by transitioning back to IN_BODY (ensuring body exists) before normal text handling so that
-                # subsequent comments (and this text) become body descendants (frameset comment ordering rule).
-                if (
-                    context.document_state
-                    in (DocumentState.AFTER_BODY, DocumentState.AFTER_HTML)
-                    and data.strip() != ""
-                ):
-                    body = self._get_body_node() or self._ensure_body_node(context)
-                    if body:
-                        context.move_to_element(body)
-                        context.transition_to_state(DocumentState.IN_BODY, body)
                 # AFTER_HEAD: whitespace-only character tokens must be inserted at the html element
                 # (parse error if body already started) without creating the body. Only non-whitespace
                 # text forces implicit body creation. This preserves ordering for tests expecting the

@@ -317,6 +317,32 @@ class CommentPlacementHandler(TagHandler):
         return True
 
 
+class PostBodyCharacterHandler(TagHandler):
+    """Handles re-entering IN_BODY for the first non-whitespace character after </body> or </html>.
+
+    Moves logic out of parser main loop: when in AFTER_BODY or AFTER_HTML and encountering
+    a non-whitespace character, transition to IN_BODY and ensure body exists before normal
+    text handling proceeds (mirrors spec token reprocessing step).
+    """
+
+    def should_handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        from turbohtml.context import DocumentState as _DS
+        return (
+            context.document_state in (_DS.AFTER_BODY, _DS.AFTER_HTML)
+            and text.strip() != ""
+        )
+
+    def handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        from turbohtml.context import DocumentState as _DS
+        body = self.parser._get_body_node() or self.parser._ensure_body_node(context)
+        if body:
+            context.move_to_element(body)
+            context.transition_to_state(_DS.IN_BODY, body)
+        # Do not consume the text itself; allow normal TextHandler to process it next cycle.
+        # We insert nothing here, just adjust state. Returning False lets downstream handlers run.
+        return False
+
+
 class FramesetPreludeHandler(TagHandler):
     """Consolidated frameset prelude handler.
 
