@@ -49,6 +49,7 @@ class TurboHTML:
         self.tag_handlers = [
             DoctypeHandler(self),
             RawtextStartTagIgnoreHandler(self),
+            FormattingReconstructionPreludeHandler(self),
             TemplateTagHandler(self),
             TemplateContentFilterHandler(self),
             FragmentPreprocessHandler(self),
@@ -827,76 +828,6 @@ class TurboHTML:
         ):
             # Let normal table handling place script/style (may end up inside row if appropriate)
             pass
-
-        # Per HTML5 spec, before processing most start tags, reconstruct the active
-        # formatting elements. However, in table insertion modes (IN_TABLE, IN_TABLE_BODY,
-        # IN_ROW) and when not inside a cell/caption, reconstructing would wrongly insert
-        # formatting elements as children of <table>/<tbody>/<tr>. Skip reconstruction in
-        # those cases; formatting will be handled via foster parenting and adoption agency.
-        if not self._is_in_template_content(context):
-            in_table_modes = context.document_state in (
-                DocumentState.IN_TABLE,
-                DocumentState.IN_TABLE_BODY,
-                DocumentState.IN_ROW,
-            )
-            in_cell_or_caption = bool(
-                context.current_parent.find_ancestor(
-                    lambda n: n.tag_name in ("td", "th", "caption")
-                )
-            )
-            if in_table_modes and not in_cell_or_caption:
-                if context.current_parent.tag_name in (
-                    "table",
-                    "tbody",
-                    "thead",
-                    "tfoot",
-                    "tr",
-                ):
-                    pass
-                else:
-                    self.reconstruct_active_formatting_elements(context)
-            else:
-                blockish = (
-                    "div",
-                    "section",
-                    "article",
-                    "p",
-                    "ul",
-                    "ol",
-                    "li",
-                    "table",
-                    "tr",
-                    "td",
-                    "th",
-                    "body",
-                    "html",
-                    "h1",
-                    "h2",
-                    "h3",
-                    "h4",
-                    "h5",
-                    "h6",
-                )
-                if tag_name not in blockish:
-                    self.reconstruct_active_formatting_elements(context)
-                else:
-                    missing_non_nobr = False
-                    if (
-                        context.active_formatting_elements
-                        and context.active_formatting_elements._stack
-                    ):
-                        for entry in context.active_formatting_elements._stack:
-                            if entry.element is None:
-                                continue
-                            if (
-                                not context.open_elements.contains(entry.element)
-                                and entry.element.tag_name != "nobr"
-                            ):
-                                missing_non_nobr = True
-                                break
-                    context._deferred_block_reconstruct = (
-                        missing_non_nobr  # transient attribute (not read elsewhere)
-                    )
 
         # Early start-tag preprocessing: give all handlers a chance to suppress/synthesize before dispatch.
         # Handlers that don't implement the hook inherit the no-op base method (no branching/try needed).

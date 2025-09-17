@@ -701,6 +701,68 @@ class RawtextStartTagIgnoreHandler(TagHandler):
         return False
 
 
+class FormattingReconstructionPreludeHandler(TagHandler):
+    """Performs pre-start-tag formatting element reconstruction or defers it.
+
+    Extracted from parser._handle_start_tag to keep the parser lean. Mirrors the HTML5 spec
+    "reconstruct the active formatting elements" algorithm invocation conditions while avoiding
+    speculative reconstruction in table insertion modes where it would incorrectly nest formatting
+    elements under table structures.
+
+    Semantics preserved:
+      * Skip entirely inside template content (handled separately)
+      * In table insertion modes (IN_TABLE / IN_TABLE_BODY / IN_ROW) only reconstruct when the
+        current insertion point is inside a cell/caption; otherwise defer until appropriate
+      * Outside those table modes, reconstruct immediately for non-blockish tags; for blockish tags
+        compute whether a deferred reconstruction is required (missing non-nobr active formatting
+        entry still needing reconstruction) and set transient context._deferred_block_reconstruct
+        so the parser's default block insertion path can perform reconstruction inside the new block.
+    """
+
+    # Tags treated as block boundaries for deferred reconstruction logic
+    _BLOCKISH = {
+        "div","section","article","p","ul","ol","li","table","tr","td","th","body","html",
+        "h1","h2","h3","h4","h5","h6"
+    }
+
+    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+        from turbohtml.context import DocumentState as _DS
+        # Never act inside template content fragments
+        if self.parser._is_in_template_content(context):  # type: ignore[attr-defined]
+            return False
+        tag_name = token.tag_name
+        # Table-related insertion modes: suppress reconstruction unless actually in a cell/caption
+        in_table_modes = context.document_state in (
+            _DS.IN_TABLE, _DS.IN_TABLE_BODY, _DS.IN_ROW
+        )
+        in_cell_or_caption = bool(
+            context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
+        )
+        if in_table_modes and not in_cell_or_caption:
+            # Allow deferred reconstruction flag to be cleared if previously set (fresh context)
+            return False
+
+        # Non-table or inside cell/caption
+        if tag_name not in self._BLOCKISH:
+            # Immediate reconstruction for non-block formatting interruptions
+            self.parser.reconstruct_active_formatting_elements(context)  # type: ignore[attr-defined]
+            return False
+
+        # Blockish tag: determine if we should defer reconstruction inside the soon-to-be-created block
+        missing_non_nobr = False
+        afe = context.active_formatting_elements
+        if afe and getattr(afe, "_stack", None):  # narrow guard; no reflection of methods
+            for entry in afe._stack:  # type: ignore[attr-defined]
+                if entry.element is None:
+                    continue
+                if (not context.open_elements.contains(entry.element)) and entry.element.tag_name != "nobr":
+                    missing_non_nobr = True
+                    break
+        # Set transient flag (consumed by parser default block insertion path)
+        context._deferred_block_reconstruct = missing_non_nobr  # type: ignore[attr-defined]
+        return False
+
+
 class TemplateAwareHandler(TagHandler):
     """Mixin for handlers that need to skip template content"""
 
