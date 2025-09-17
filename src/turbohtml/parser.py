@@ -956,58 +956,6 @@ class TurboHTML:
                 self._merge_adjacent_text_nodes(child)
 
 
-    def _foster_parent_element(
-        self, tag_name: str, attributes: dict, context: "ParseContext"
-    ):
-        """Foster parent an element outside of table context"""
-        # Find the table - check if we're in table context
-        table = None
-        if context.document_state == DocumentState.IN_TABLE:
-            # We're in table context, so find the table from the open elements stack
-            table = self.find_current_table(context)
-
-        if not table or not table.parent:
-            # No table found, use default handling
-            new_node = Node(tag_name, attributes)
-            context.current_parent.append_child(new_node)
-            context.move_to_element(new_node)
-            context.open_elements.push(new_node)
-            return
-
-        # Insert the element before the table
-        foster_parent = table.parent
-        table_index = foster_parent.children.index(table)
-        # If current_parent is an existing foster-parented block immediately before the table,
-        # and that block is allowed to contain this element, nest inside it instead of creating
-        # a new sibling. This matches expected behavior where successive foster-parented
-        # start tags become children (e.g., <table><div><div> becomes nested divs).
-        if table_index > 0:
-            prev_sibling = foster_parent.children[table_index - 1]
-            # Only nest if previous sibling is a block-like container and current insertion
-            # point is that previous sibling (we just foster parented into it)
-            if prev_sibling is context.current_parent and prev_sibling.tag_name in (
-                "div",
-                "p",
-                "section",
-                "article",
-                "blockquote",
-                "li",
-            ):
-                self.debug(
-                    f"Nesting {tag_name} inside existing foster-parented {prev_sibling.tag_name}"
-                )
-                new_node = Node(tag_name, attributes)
-                prev_sibling.append_child(new_node)
-                context.move_to_element(new_node)
-                context.open_elements.push(new_node)
-                return
-
-        new_node = Node(tag_name, attributes)
-        foster_parent.children.insert(table_index, new_node)
-        new_node.parent = foster_parent  # Set parent relationship
-        context.move_to_element(new_node)
-        context.open_elements.push(new_node)  # Add to stack
-        self.debug(f"Foster parented {tag_name} before table")
 
     def _is_in_template_content(self, context: "ParseContext") -> bool:
         """Check if we're inside actual template content (not just a user <content> tag)"""

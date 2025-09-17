@@ -3743,9 +3743,7 @@ class ParagraphTagHandler(TagHandler):
                             self.debug(
                                 "Foster parent <p> after foreign subtree directly preceding open table"
                             )
-                            self.parser._foster_parent_element(
-                                token.tag_name, token.attributes, context
-                            )
+                            foster_parent_element(token.tag_name, token.attributes, context, self.parser)  # type: ignore[attr-defined]
                             return True
                 # Do not foster parent when inside SVG/MathML integration points
                 in_svg_ip = context.current_parent.tag_name in (
@@ -3770,9 +3768,7 @@ class ParagraphTagHandler(TagHandler):
                     )
                 else:
                     self.debug("Foster parenting paragraph out of table")
-                    self.parser._foster_parent_element(
-                        token.tag_name, token.attributes, context
-                    )
+                    foster_parent_element(token.tag_name, token.attributes, context, self.parser)  # type: ignore[attr-defined]
                 return True
 
         p_ancestor = context.current_parent.find_ancestor("p")
@@ -9939,17 +9935,56 @@ class FallbackPlacementHandler(TagHandler):
                 return True
         return False
 
-    def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+
+# --- Foster parenting primitive (extracted from parser._foster_parent_element) ---
+def foster_parent_element(tag_name: str, attributes: dict, context: "ParseContext", parser: "TurboHTML") -> None:  # type: ignore[name-defined]
+    """Foster parent an element outside of table context.
+
+    Mirrors previous parser._foster_parent_element behavior but lives in handlers module
+    so table/paragraph fallback logic can call it without retaining the method on parser.
+    """
+    table = None
+    if context.document_state == DocumentState.IN_TABLE:
+        table = parser.find_current_table(context)  # type: ignore[attr-defined]
+    if not table or not table.parent:
+        new_node = Node(tag_name, attributes)
+        context.current_parent.append_child(new_node)
+        context.move_to_element(new_node)
+        context.open_elements.push(new_node)
+        return
+    foster_parent = table.parent
+    table_index = foster_parent.children.index(table)
+    if table_index > 0:
+        prev_sibling = foster_parent.children[table_index - 1]
+        if prev_sibling is context.current_parent and prev_sibling.tag_name in (
+            "div",
+            "p",
+            "section",
+            "article",
+            "blockquote",
+            "li",
+        ):
+            new_node = Node(tag_name, attributes)
+            prev_sibling.append_child(new_node)
+            context.move_to_element(new_node)
+            context.open_elements.push(new_node)
+            return
+    new_node = Node(tag_name, attributes)
+    foster_parent.children.insert(table_index, new_node)
+    new_node.parent = foster_parent
+    context.move_to_element(new_node)
+    context.open_elements.push(new_node)
+
+    
+class FallbackPlacementHandler(FallbackPlacementHandler):  # type: ignore[misc]
+    """Augment FallbackPlacementHandler with handle_start (split after utility extraction)."""
+
+    def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:  # type: ignore[override]
         tag_name = token.tag_name
         if table_modes.should_foster_parent(tag_name, token.attributes, context, self.parser):  # type: ignore[attr-defined]
-            if tag_name == "p":
-                if table_modes.reenter_last_cell_for_p(context):
-                    self.debug(
-                        "Re-entered last cell before fostering paragraph"
-                    )
-                    return False
+            if tag_name == "p" and table_modes.reenter_last_cell_for_p(context):
+                self.debug("Re-entered last cell before fostering paragraph")
+                return False
             open_cell = table_modes.restore_insertion_open_cell(context)
             if open_cell is not None:
                 self.debug(
@@ -9957,7 +9992,7 @@ class FallbackPlacementHandler(TagHandler):
                 )
                 return False
             self.debug(f"Foster parenting <{tag_name}> before current table")
-            self.parser._foster_parent_element(tag_name, token.attributes, context)  # type: ignore[attr-defined]
+            foster_parent_element(tag_name, token.attributes, context, self.parser)  # type: ignore[attr-defined]
             return True
 
         if tag_name in ("div", "section", "article"):
