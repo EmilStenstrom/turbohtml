@@ -317,6 +317,134 @@ class CommentPlacementHandler(TagHandler):
         return True
 
 
+class InitialCommentHandler(TagHandler):
+    """Place comments encountered in INITIAL insertion mode.
+
+    Mirrors former parser._handle_comment logic:
+      * If <html> already attached, insert inside <html> before first non-comment/non-text element
+      * Otherwise append at document root.
+    """
+
+    def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        from turbohtml.context import DocumentState as _DS
+        return context.document_state == _DS.INITIAL
+
+    def handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        html = self.parser.html_node
+        node = self.parser._create_comment_node(comment)  # type: ignore[attr-defined]
+        if html and html in self.parser.root.children:
+            insert_idx = 0
+            for i, ch in enumerate(html.children):
+                if ch.tag_name not in ("#comment", "#text"):
+                    insert_idx = i
+                    break
+                insert_idx = i + 1
+            html.insert_child_at(insert_idx, node)
+        else:
+            self.parser.root.append_child(node)
+        return True
+
+
+class AfterHeadCommentHandler(TagHandler):
+    """Place comments in AFTER_HEAD state before <body> if present, else append to <html>."""
+
+    def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        from turbohtml.context import DocumentState as _DS
+        return context.document_state == _DS.AFTER_HEAD
+
+    def handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        html = self.parser.html_node
+        if not html:
+            return False
+        node = self.parser._create_comment_node(comment)  # type: ignore[attr-defined]
+        body = self.parser._get_body_node()
+        if body and body.parent is html:
+            html.insert_before(node, body)
+        else:
+            html.append_child(node)
+        return True
+
+
+class AfterHtmlCommentHandler(TagHandler):
+    """Place comments while in AFTER_HTML state.
+
+    Behavior replicated from removed parser logic:
+      * Prefer appending to <body> when there is a preceding non-whitespace text node with no following comments.
+      * Otherwise append at document root.
+    """
+
+    def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        from turbohtml.context import DocumentState as _DS
+        return context.document_state == _DS.AFTER_HTML
+
+    def handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        body = self.parser._get_body_node()
+        root = self.parser.root
+        node = self.parser._create_comment_node(comment)  # type: ignore[attr-defined]
+        if body:
+            text_nodes = [ch for ch in body.children if ch.tag_name == "#text" and ch.text_content is not None]
+            placed = False
+            if text_nodes:
+                last_text = text_nodes[-1]
+                if any(c for c in last_text.text_content if not c.isspace()):
+                    idx_last = body.children.index(last_text)
+                    comments_after = [ch for ch in body.children[idx_last + 1 :] if ch.tag_name == "#comment"]
+                    if not comments_after:
+                        body.append_child(node)
+                        placed = True
+            if not placed:
+                root.append_child(node)
+        else:
+            root.append_child(node)
+        return True
+
+
+class AfterFramesetCommentHandler(TagHandler):
+    """Handle comments in AFTER_FRAMESET state.
+
+    Matches earlier behavior:
+      * Before explicit </html>: append inside <html> if present else root.
+      * After explicit </html>: always append at root.
+    """
+
+    def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        from turbohtml.context import DocumentState as _DS
+        return context.document_state == _DS.AFTER_FRAMESET
+
+    def handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        html = self.parser.html_node
+        node = self.parser._create_comment_node(comment)  # type: ignore[attr-defined]
+        # context.html_end_explicit used previously; guard via getattr (cold path, not perf critical)
+        html_end_explicit = getattr(context, "html_end_explicit", False)
+        if not html_end_explicit and html and html in self.parser.root.children:
+            html.append_child(node)
+        else:
+            self.parser.root.append_child(node)
+        return True
+
+
+class InBodyHtmlParentCommentHandler(TagHandler):
+    """Handle comments in IN_BODY when current_parent is <html> (insert before <head> if present)."""
+
+    def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        from turbohtml.context import DocumentState as _DS
+        return context.document_state == _DS.IN_BODY and context.current_parent and context.current_parent.tag_name == "html"
+
+    def handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        html = context.current_parent
+        node = self.parser._create_comment_node(comment)  # type: ignore[attr-defined]
+        head = None
+        for ch in html.children:
+            if ch.tag_name == "head":
+                head = ch
+                break
+        if head:
+            html.insert_before(node, head)
+        else:
+            html.append_child(node)
+        return True
+
+
 class PostBodyCharacterHandler(TagHandler):
     """Handles re-entering IN_BODY for the first non-whitespace character after </body> or </html>.
 

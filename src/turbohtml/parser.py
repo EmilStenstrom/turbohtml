@@ -63,6 +63,11 @@ class TurboHTML:
             FramesetTagHandler(self),
             SelectTagHandler(self),  # must precede table handling to suppress table tokens inside <select>
             TableTagHandler(self),
+            InitialCommentHandler(self),
+            AfterHeadCommentHandler(self),
+            AfterHtmlCommentHandler(self),
+            AfterFramesetCommentHandler(self),
+            InBodyHtmlParentCommentHandler(self),
             CommentPlacementHandler(self),
             PostBodyCharacterHandler(self),
             AfterHeadWhitespaceHandler(self),
@@ -894,151 +899,17 @@ class TurboHTML:
         """
         Create and append a comment node with proper placement based on parser state.
         """
-        # First check if any handler wants to process this comment (e.g., CDATA in foreign elements)
+        # Delegate to specialized handlers first (CDATA, post-body, etc.)
         for handler in self.tag_handlers:
-            if handler.should_handle_comment(text, context) and handler.handle_comment(
-                text, context
-            ):
-                self.debug(f"Comment '{text}' handled by {handler.__class__.__name__}")
+            if handler.should_handle_comment(text, context) and handler.handle_comment(text, context):
+                if self.env_debug:
+                    self.debug(f"Comment '{text}' handled by {handler.__class__.__name__}")
                 return
-
-        # Default comment handling
-        comment_node = Node("#comment")
-        comment_node.text_content = text
-        self.debug(
-            f"Handling comment '{text}' in document_state {context.document_state}"
-        )
-        self.debug(f"Current parent: {context.current_parent}")
-
-        # Handle comment placement based on parser state
-        if context.document_state == DocumentState.INITIAL:
-            # In INITIAL state, check if html_node is already in tree
-            if self.html_node in self.root.children:
-                # HTML node exists, comment should go inside it
-                self.debug("Adding comment to html in initial state")
-                # Find the position to insert - before the first non-comment element (like head)
-                insert_index = 0
-                for i, child in enumerate(self.html_node.children):
-                    if child.tag_name not in ("#comment", "#text"):
-                        insert_index = i
-                        break
-                    else:
-                        insert_index = i + 1
-                self.html_node.insert_child_at(insert_index, comment_node)
-                self.debug(f"Inserted comment at index {insert_index}")
-            else:
-                # HTML node doesn't exist yet, comment goes at document level
-                self.debug("Adding comment to root in initial state")
-                self.root.append_child(comment_node)
-            self.debug(
-                f"Root children after comment: {[c.tag_name for c in self.root.children]}"
-            )
-            return
-
-        # Comments after </head> should go in html node after head but before body
-        if context.document_state == DocumentState.AFTER_HEAD:
-            self.debug("Adding comment to html in after head state")
-            # Find body element and insert comment before it
-            body_node = None
-            for child in self.html_node.children:
-                if child.tag_name == "body":
-                    body_node = child
-                    break
-
-            if body_node:
-                self.html_node.insert_before(comment_node, body_node)
-                self.debug("Inserted comment before body")
-            else:
-                # If no body found, just append
-                self.html_node.append_child(comment_node)
-                self.debug("No body found, appended comment to html")
-            return
-
-        # Comments after </html> (AFTER_HTML) should appear as direct child of html (one level, not indented under body)
-        if context.document_state == DocumentState.AFTER_HTML:
-            # If we've seen stray non-whitespace characters after </html> we will have transitioned back to
-            # IN_BODY already (spec reprocessing). When still formally in AFTER_HTML (no such re-entry), keep
-            # comment at document level. Only relocate the FIRST comment that directly follows a non-whitespace
-            # stray character token into the body. Subsequent comments, or comments after only whitespace stray
-            # text, remain at document level (matches html5lib expectations for tests 23–27 patterns).
-            body = self._get_body_node()
-            placed = False
-            if body:
-                # Find the last non-whitespace text node in body (if any)
-                text_nodes = [
-                    ch
-                    for ch in body.children
-                    if ch.tag_name == "#text" and ch.text_content is not None
-                ]
-                if text_nodes:
-                    last_text = text_nodes[-1]
-                    has_non_ws = any(
-                        t for t in last_text.text_content if not t.isspace()
-                    )
-                    # Count existing comments appended after that last text node
-                    idx_last_text = body.children.index(last_text)
-                    comments_after = [
-                        ch
-                        for ch in body.children[idx_last_text + 1 :]
-                        if ch.tag_name == "#comment"
-                    ]
-                    if has_non_ws and not comments_after:
-                        body.append_child(comment_node)
-                        placed = True
-            if not placed:
-                self.root.append_child(comment_node)
-            return
-
-        # Frameset documents AFTER_FRAMESET ordering (no parser flags):
-        # We distinguish three structural phases using only context flag and tree shape:
-        #   1. Before explicit </html> (context.frameset_html_end_before_noframes False): comments still inside <html>.
-        #   2. After </html> but before a root-level <noframes>: comments are appended as root siblings (temporarily
-        #      preceding any later <noframes>); when a <noframes> appears we will relocate these comments after it.
-        #   3. After first post-</html> <noframes>: subsequent comments remain root siblings after existing nodes.
-        if context.document_state == DocumentState.AFTER_FRAMESET:
-            # Before explicit </html>: comments still inside html; after: root-level.
-            if not context.html_end_explicit:  # type: ignore[attr-defined]
-                if self.html_node and self.html_node in self.root.children:
-                    self.html_node.append_child(comment_node)
-                else:
-                    self.root.append_child(comment_node)
-            else:
-                self.root.append_child(comment_node)
-            return
-
-        # Comments in IN_BODY state should go as children of html, positioned before head
-        if (
-            context.document_state == DocumentState.IN_BODY
-            and context.current_parent.tag_name == "html"
-        ):
-            # If we're in body state but current parent is html, place comment before head
-            self.debug("Adding comment to html in body state")
-            # Find head element and insert comment before it
-            head_node = None
-            for child in context.current_parent.children:
-                if child.tag_name == "head":
-                    head_node = child
-                    break
-
-            if head_node:
-                context.current_parent.insert_before(comment_node, head_node)
-                self.debug("Inserted comment before head")
-            else:
-                # If no head found, just append
-                context.current_parent.append_child(comment_node)
-                self.debug("No head found, appended comment")
-
-            self.debug(
-                f"Current parent children: {[c.tag_name for c in context.current_parent.children]}"
-            )
-            return
-
-        # All other comments go in current parent
-        self.debug(f"Adding comment to current parent: {context.current_parent}")
-        context.current_parent.append_child(comment_node)
-        self.debug(
-            f"Current parent children: {[c.tag_name for c in context.current_parent.children]}"
-        )
+        # Minimal fallback: append inside current insertion parent (or root if missing)
+        parent = context.current_parent or self.root
+        node = Node("#comment")
+        node.text_content = text
+        parent.append_child(node)
 
     # Utility for handlers to create a comment node (keeps single construction style)
     def _create_comment_node(self, text: str) -> Node:  # type: ignore[name-defined]
@@ -1046,13 +917,7 @@ class TurboHTML:
         node.text_content = text
         return node
 
-    def _handle_doctype(self, token: HTMLToken) -> None:
-        """
-        Handle DOCTYPE declarations by appending them to the root's children.
-        """
-        doctype_node = Node("!doctype")
-        doctype_node.text_content = token.data  # Store the DOCTYPE content
-        self.root.append_child(doctype_node)
+    # _handle_doctype removed (handled entirely by DoctypeHandler)
 
     # Constants imported at module level for direct use
 
@@ -1170,27 +1035,25 @@ class TurboHTML:
 
     def _is_in_integration_point(self, context: "ParseContext") -> bool:
         """Check if we're inside an SVG or MathML integration point where HTML rules apply"""
-        # Check current parent and ancestors for integration points
+        # Duplicated helper now provided on multiple handlers; retained only for table_modes dependency.
+        # Delegate to ForeignTagHandler instance if present, else simple structural scan (cold path).
+        foreign_helper = None
+        for h in self.tag_handlers:
+            if h.__class__.__name__ == "ForeignTagHandler":  # stable handler name
+                foreign_helper = h
+                break
+        if foreign_helper and hasattr(foreign_helper, "_is_in_integration_point"):
+            return foreign_helper._is_in_integration_point(context)  # type: ignore[attr-defined]
         current = context.current_parent
         while current:
-            # SVG integration points: foreignObject, desc, title
             if current.tag_name in ("svg foreignObject", "svg desc", "svg title"):
                 return True
-
-            # MathML integration points: annotation-xml with specific encoding
-            if (
-                current.tag_name == "math annotation-xml"
-                and current.attributes
-                and any(
-                    attr.name.lower() == "encoding"
-                    and attr.value.lower() in ("text/html", "application/xhtml+xml")
-                    for attr in current.attributes
-                )
+            if current.tag_name == "math annotation-xml" and current.attributes and any(
+                attr.name.lower() == "encoding" and attr.value.lower() in ("text/html", "application/xhtml+xml")
+                for attr in current.attributes
             ):
                 return True
-
             current = current.parent
-
         return False
 
     def reconstruct_active_formatting_elements(self, context: "ParseContext") -> None:
