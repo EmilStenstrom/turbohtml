@@ -1207,25 +1207,6 @@ class TurboHTML:
                 body = self._ensure_body_node(context)
                 if body:
                     context.transition_to_state(DocumentState.IN_BODY, body)
-        # Special demotion: late metadata (<meta>, <title>) appearing after body/html should become body children.
-        # When in AFTER_BODY or AFTER_HTML insertion modes, suppress special head handling so these tags are
-        # treated as normal start tags under body (tests15 cases 3 and 5 expectations).
-        if tag_name in ("meta", "title") and context.document_state in (
-            DocumentState.AFTER_BODY,
-            DocumentState.AFTER_HTML,
-        ):
-            # Ensure body exists and set insertion point to it, BUT keep state as AFTER_BODY/AFTER_HTML until
-            # generic start tag handling runs so HeadElementHandler suppress predicate returns False.
-            if (
-                self._has_root_frameset()
-            ):  # frameset documents drop late metadata entirely
-                context.index = end_tag_idx
-                return True
-            body = self._get_body_node() or self._ensure_body_node(context)
-            if body:
-                context.move_to_element(body)
-            context.index = end_tag_idx
-            return False
         context.index = end_tag_idx
         return False
 
