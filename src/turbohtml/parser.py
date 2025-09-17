@@ -256,12 +256,6 @@ class TurboHTML:
         """Transition context to any document state, optionally with a new parent node"""
         context.transition_to_state(new_state, new_parent)
 
-    def ensure_body_context(self, context: ParseContext) -> None:
-        """Ensure context is in body context, transitioning if needed"""
-        if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
-            body = self._ensure_body_node(context)
-            context.transition_to_state(DocumentState.IN_BODY, body)
-
     # --- Standardized element insertion helpers ---
     def insert_element(
         self,
@@ -303,13 +297,6 @@ class TurboHTML:
             raise ValueError(f"insert_element: unknown mode '{mode}'")
         target_parent = parent or context.current_parent
         tag_name = tag_name_override or token.tag_name
-        if (
-            not tag_name and self.env_debug
-        ):  # Unexpected – surface loudly during migration
-            self.debug(
-                f"insert_element: EMPTY tag name for token={token} parent={target_parent.tag_name} open={[e.tag_name for e in context.open_elements._stack]}",
-                indent=2,
-            )
         # Guard: transient mode only allowed inside template content subtrees (content under a template)
         if mode == "transient":
             cur = context.current_parent
@@ -491,20 +478,6 @@ class TurboHTML:
         target_parent.append_child(new_node)
         return new_node
 
-    def _create_initial_context(self):
-        """Create a minimal ParseContext for structural post-processing heuristics.
-
-        We only need a current_parent and access to open/active stacks where some
-        helpers expect them; provide lightweight empty instances. This avoids
-        reusing the heavy parsing context and keeps post-processing side-effect free.
-        """
-        from turbohtml.context import (
-            ParseContext,
-        )  # local import to avoid cycle at module load
-
-        body = self._get_body_node() or self.root
-        ctx = ParseContext(0, body, debug_callback=self.debug)
-        return ctx
 
     # DOM traversal helper methods
     def find_current_table(self, context: ParseContext) -> Optional["Node"]:
