@@ -954,22 +954,6 @@ class TurboHTML:
                 self.debug("No body found, appended comment to html")
             return
 
-        # Comments after </body> should go in html node
-        if context.document_state == DocumentState.AFTER_BODY:
-            # Expected tree (tests1:33, tests19:20, webkit01:26): comment appears as a direct child of <html>
-            # AFTER the <head> but BEFORE the <body> subtree (i.e. preceding body in sibling order). Ensure that.
-            if self.html_node not in self.root.children:
-                self.root.append_child(self.html_node)
-            body = self._get_body_node()
-            inserted = False
-            if body and body.parent is self.html_node:
-                # Insert comment immediately before body element
-                self.html_node.insert_before(comment_node, body)
-                inserted = True
-            if not inserted:
-                # Fallback: append to html (no body found)
-                self.html_node.append_child(comment_node)
-            return
         # Comments after </html> (AFTER_HTML) should appear as direct child of html (one level, not indented under body)
         if context.document_state == DocumentState.AFTER_HTML:
             # If we've seen stray non-whitespace characters after </html> we will have transitioned back to
