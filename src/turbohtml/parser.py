@@ -49,6 +49,7 @@ class TurboHTML:
         self.tag_handlers = [
             DoctypeHandler(self),
             RawtextStartTagIgnoreHandler(self),
+            SpecialElementHandler(self),
             FormattingReconstructionPreludeHandler(self),
             TemplateTagHandler(self),
             TemplateContentFilterHandler(self),
@@ -776,14 +777,7 @@ class TurboHTML:
             self._ensure_html_node()
 
             if token.type == "StartTag":
-                # Handle special elements and state transitions first
-                if self._handle_special_element(
-                    token, token.tag_name, context, self.tokenizer.pos
-                ):
-                    context.index = self.tokenizer.pos
-                    continue
-
-                # Then handle the actual tag
+                # Dispatch to handlers (SpecialElementHandler now covers previous special-element logic)
                 self._handle_start_tag(
                     token, token.tag_name, context, self.tokenizer.pos
                 )
@@ -980,74 +974,6 @@ class TurboHTML:
         # After pops, current_parent already at correct insertion point
         return
 
-    def _handle_special_element(
-        self, token: HTMLToken, tag_name: str, context: ParseContext, end_tag_idx: int
-    ) -> bool:
-        """Handle html, head, body and frameset tags."""
-        # Inside template content, do not perform special html/head/body/frameset handling.
-        # Let the TemplateContentFilterHandler decide how to treat these tokens.
-        if self._is_in_template_content(context):
-            context.index = end_tag_idx
-            return False
-        # Template transparent depth bookkeeping not used (frameset templates stay transparent)
-        if tag_name == "html":
-            # Merge attributes: do not overwrite existing ones per spec
-            for k, v in token.attributes.items():
-                if k not in self.html_node.attributes:
-                    self.html_node.attributes[k] = v
-            context.move_to_element(self.html_node)
-            # In a frameset document (root frameset present), suppress any implicit body creation side-effects.
-            if self._has_root_frameset():
-                context.index = end_tag_idx
-                return True
-
-            # Don't immediately switch to IN_BODY - let the normal flow handle that
-            # The HTML tag should not automatically transition states
-            return True
-        elif tag_name == "head":
-            # Don't create duplicate head elements
-            head = self._ensure_head_node()
-            context.transition_to_state(DocumentState.IN_HEAD, head)
-
-            # If we're not in frameset mode, ensure we have a body
-            if context.document_state != DocumentState.IN_FRAMESET:
-                body = self._ensure_body_node(context)
-            return True
-        elif tag_name == "body" and context.document_state != DocumentState.IN_FRAMESET:
-            # Only honor early <body> if frameset no longer permitted (frameset_ok False) or we already created body
-            if context.frameset_ok and context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
-                context.frameset_ok = False
-            # Regardless of current state (even already IN_BODY via implicit creation), a literal <body>
-            # start tag token commits the document to non-frameset; record explicit_body unconditionally.
-            context.explicit_body = True  # type: ignore[attr-defined]
-            body = self._ensure_body_node(context)
-            if body:
-                # Merge body attributes without overwriting existing values (spec: first wins)
-                for k, v in token.attributes.items():
-                    if k not in body.attributes:
-                        body.attributes[k] = v
-                context.transition_to_state(DocumentState.IN_BODY, body)
-            return True
-        elif tag_name == "frameset" and context.document_state == DocumentState.INITIAL:
-            # Let the frameset handler handle this
-            return False
-        elif (
-            tag_name not in HEAD_ELEMENTS
-            and context.document_state != DocumentState.IN_FRAMESET
-        ):
-            # Handle implicit head/body transitions (but not in frameset mode)
-            if context.document_state == DocumentState.INITIAL:
-                self.debug("Implicitly closing head and switching to body")
-                body = self._ensure_body_node(context)
-                if body:
-                    context.transition_to_state(DocumentState.IN_BODY, body)
-            elif context.current_parent == self._get_head_node():
-                self.debug("Closing head and switching to body")
-                body = self._ensure_body_node(context)
-                if body:
-                    context.transition_to_state(DocumentState.IN_BODY, body)
-        context.index = end_tag_idx
-        return False
 
     # Special Node Handling Methods
     def _handle_comment(self, text: str, context: ParseContext) -> None:

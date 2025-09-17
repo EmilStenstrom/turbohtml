@@ -762,6 +762,70 @@ class FormattingReconstructionPreludeHandler(TagHandler):
         context._deferred_block_reconstruct = missing_non_nobr  # type: ignore[attr-defined]
         return False
 
+class SpecialElementHandler(TagHandler):
+    """Handles special root structure elements: html, head, body (and implicit head/body transitions).
+
+    Extracted from parser._handle_special_element to shrink parser. Implemented as an
+    early_start_preprocess hook so it runs before generic start-tag dispatch while still
+    permitting frameset handler participation (we return False for a root <frameset> so the
+    frameset-specific handler can run).
+    """
+
+    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+        from turbohtml.context import DocumentState as _DS
+        from turbohtml.constants import HEAD_ELEMENTS as _HEAD
+        tag = token.tag_name
+        parser = self.parser
+        # Skip inside template content; template content handler governs structure there
+        if parser._is_in_template_content(context):  # type: ignore[attr-defined]
+            return False
+        # <html>
+        if tag == "html":
+            # Merge attributes (first wins)
+            for k, v in token.attributes.items():
+                if k not in parser.html_node.attributes:
+                    parser.html_node.attributes[k] = v
+            context.move_to_element(parser.html_node)
+            if parser._has_root_frameset():
+                return True
+            return True
+        # <head>
+        if tag == "head":
+            head = parser._ensure_head_node()
+            context.transition_to_state(_DS.IN_HEAD, head)
+            if context.document_state != _DS.IN_FRAMESET:
+                _ = parser._ensure_body_node(context)
+            return True
+        # <body>
+        if tag == "body" and context.document_state != _DS.IN_FRAMESET:
+            if context.frameset_ok and context.document_state in (_DS.INITIAL, _DS.IN_HEAD):
+                context.frameset_ok = False
+            context.explicit_body = True  # type: ignore[attr-defined]
+            body = parser._ensure_body_node(context)
+            if body:
+                for k, v in token.attributes.items():
+                    if k not in body.attributes:
+                        body.attributes[k] = v
+                context.transition_to_state(_DS.IN_BODY, body)
+            return True
+        # Defer <frameset> (handled by Frameset handlers) when in INITIAL
+        if tag == "frameset" and context.document_state == _DS.INITIAL:
+            return False
+        # Implicit head/body transitions: any non-head element outside frameset mode while still in INITIAL/IN_HEAD
+        if (
+            tag not in _HEAD
+            and context.document_state != _DS.IN_FRAMESET
+        ):
+            if context.document_state == _DS.INITIAL:
+                body = parser._ensure_body_node(context)
+                if body:
+                    context.transition_to_state(_DS.IN_BODY, body)
+            elif context.current_parent == parser._get_head_node():
+                body = parser._ensure_body_node(context)
+                if body:
+                    context.transition_to_state(_DS.IN_BODY, body)
+        return False
+
 
 class TemplateAwareHandler(TagHandler):
     """Mixin for handlers that need to skip template content"""
