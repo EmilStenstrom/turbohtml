@@ -165,48 +165,46 @@ class TurboHTML:
         if self.html_node not in self.root.children:
             self.root.append_child(self.html_node)
 
-    def _get_head_node(self) -> Optional[Node]:
-        """Get head node from tree, if it exists"""
-        if self.fragment_context:
-            return None
-        return next(
-            (child for child in self.html_node.children if child.tag_name == "head"),
-            None,
-        )
+    # Head access helpers removed – handlers synthesize/locate head directly when necessary.
 
-    def _get_body_node(self) -> Optional[Node]:
-        """Get body node from tree, if it exists"""
-        if self.fragment_context:
+    # Minimal shims reintroduced: several handlers still rely on `_get_head_node` / `_ensure_head_node`.
+    # Keep behavior lean: lookup only; ensure creates a head as first non-comment child if absent.
+    def _get_head_node(self) -> Optional[Node]:  # lightweight lookup for handlers
+        if self.fragment_context or not self.html_node:
             return None
-        return next(
-            (child for child in self.html_node.children if child.tag_name == "body"),
-            None,
-        )
+        for ch in self.html_node.children:
+            if ch.tag_name == "head":
+                return ch
+        return None
 
-    def _ensure_head_node(self) -> Node:
-        """Get or create head node"""
+    def _ensure_head_node(self) -> Optional[Node]:  # minimal creation used by legacy handlers
         if self.fragment_context:
             return None
         head = self._get_head_node()
-        if not head:
-            head = Node("head")
-            # Insert head after any existing comments but before body or other structural elements
-            insert_index = 0
-            for i, child in enumerate(self.html_node.children):
-                if child.tag_name == "body":
-                    # Insert before body
-                    insert_index = i
-                    break
-                elif child.tag_name not in ("#comment", "#text"):
-                    # Insert before other non-comment, non-text elements
-                    insert_index = i
-                    break
-                else:
-                    # Keep going - comments should come before head
-                    insert_index = i + 1
-
+        if head:
+            return head
+        head = Node("head")
+        # Insert before first non-comment/text (or append)
+        insert_index = len(self.html_node.children)
+        for i, child in enumerate(self.html_node.children):
+            if child.tag_name not in ("#comment", "#text") and child.tag_name != "head":
+                insert_index = i
+                break
+        if insert_index == len(self.html_node.children):
+            self.html_node.append_child(head)
+        else:
             self.html_node.insert_child_at(insert_index, head)
         return head
+
+    def _get_body_node(self) -> Optional[Node]:  # retained minimal body lookup for handlers
+        if self.fragment_context:
+            return None
+        if not self.html_node:
+            return None
+        for child in self.html_node.children:
+            if child.tag_name == "body":
+                return child
+        return None
 
     def _has_root_frameset(self) -> bool:
         """Return True if a top-level <frameset> child exists under <html>."""
@@ -428,27 +426,6 @@ class TurboHTML:
             return None
 
         # Foster parenting path delegates early (kept separate to avoid duplicating logic)
-        if foster:
-            # Reuse existing TextHandler foster logic (always present) for consistency.
-            self.text_handler._foster_parent_text(text, context)
-            return None  # Foster logic handles insertion; no direct node reference guaranteed
-
-        # Replacement character policy: mirror TextHandler._append_text — strip outside
-        # plain SVG foreign subtrees when strip_replacement is True.
-        if (
-            strip_replacement
-            and "\ufffd" in text
-            and not self.is_plain_svg_foreign(context)
-        ):  # type: ignore[arg-type]
-            text = text.replace("\ufffd", "")
-            if text == "":
-                return None
-
-        # frameset_ok toggling (meaningful = non‑whitespace, non‑replacement)
-        if context.frameset_ok and any(
-            (not c.isspace()) and c != "\ufffd" for c in text
-        ):
-            context.frameset_ok = False
 
         # Decide insertion strategy
         if before is not None and before.parent is target_parent:
@@ -750,7 +727,17 @@ class TurboHTML:
                 continue
 
             if token.type == "Comment":
-                self._handle_comment(token.data, context)
+                # Delegate comment handling directly to handlers (parser no longer owns placement logic)
+                handled = False
+                for handler in self.tag_handlers:
+                    if handler.should_handle_comment(token.data, context) and handler.handle_comment(token.data, context):  # type: ignore[attr-defined]
+                        handled = True
+                        break
+                if not handled:
+                    parent = context.current_parent or self.root
+                    node = Node("#comment")
+                    node.text_content = token.data
+                    parent.append_child(node)
                 continue
 
             # Ensure html node is in tree before processing any non-DOCTYPE/Comment token
@@ -895,21 +882,7 @@ class TurboHTML:
 
 
     # Special Node Handling Methods
-    def _handle_comment(self, text: str, context: ParseContext) -> None:
-        """
-        Create and append a comment node with proper placement based on parser state.
-        """
-        # Delegate to specialized handlers first (CDATA, post-body, etc.)
-        for handler in self.tag_handlers:
-            if handler.should_handle_comment(text, context) and handler.handle_comment(text, context):
-                if self.env_debug:
-                    self.debug(f"Comment '{text}' handled by {handler.__class__.__name__}")
-                return
-        # Minimal fallback: append inside current insertion parent (or root if missing)
-        parent = context.current_parent or self.root
-        node = Node("#comment")
-        node.text_content = text
-        parent.append_child(node)
+    # _handle_comment removed: comment placement fully handled by comment handlers + inline fallback
 
     # Utility for handlers to create a comment node (keeps single construction style)
     def _create_comment_node(self, text: str) -> Node:  # type: ignore[name-defined]
