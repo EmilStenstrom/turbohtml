@@ -24,6 +24,69 @@ from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken
 from turbohtml import table_modes
 
+# --- Lightweight structural utilities (extracted from parser) ---
+def get_head(parser: "ParserInterface") -> Optional["Node"]:
+    html_node = getattr(parser, "html_node", None)
+    if not html_node or getattr(parser, "fragment_context", None):
+        return None
+    for ch in html_node.children:
+        if ch.tag_name == "head":
+            return ch
+    return None
+
+def ensure_head(parser: "ParserInterface") -> Optional["Node"]:
+    """Return existing <head> or create/insert one under <html>.
+
+    Replicates old parser._ensure_head_node so handlers no longer depend on
+    private parser helpers. Safe in fragment mode (returns None). New head is
+    inserted before the first non-comment/text child to preserve ordering.
+    """
+    html_node = getattr(parser, "html_node", None)
+    if not html_node or getattr(parser, "fragment_context", None):
+        return None
+    existing = get_head(parser)
+    if existing:
+        return existing
+    head = Node("head")
+    insert_index = len(html_node.children)
+    for i, child in enumerate(html_node.children):
+        if child.tag_name not in ("#comment", "#text") and child.tag_name != "head":
+            insert_index = i
+            break
+    if insert_index == len(html_node.children):
+        html_node.append_child(head)
+    else:
+        html_node.insert_child_at(insert_index, head)
+    return head
+
+# --- Template / integration point utilities (migrated from parser) ---
+def in_template_content(context: "ParseContext") -> bool:
+    p = context.current_parent
+    if not p:
+        return False
+    if p.tag_name == "content" and p.parent and p.parent.tag_name == "template":
+        return True
+    cur = p.parent
+    while cur:
+        if cur.tag_name == "content" and cur.parent and cur.parent.tag_name == "template":
+            return True
+        cur = cur.parent
+    return False
+
+def in_integration_point(context: "ParseContext") -> bool:
+    # Lightweight structural check; handlers needing more nuance can override.
+    cur = context.current_parent
+    while cur:
+        if cur.tag_name in ("svg foreignObject", "svg desc", "svg title"):
+            return True
+        if cur.tag_name == "math annotation-xml" and cur.attributes and any(
+            attr.name.lower() == "encoding" and attr.value.lower() in ("text/html", "application/xhtml+xml")
+            for attr in cur.attributes
+        ):
+            return True
+        cur = cur.parent
+    return False
+
 
 class ParserInterface(Protocol):
     """Interface that handlers expect from parser"""
@@ -58,19 +121,7 @@ class TagHandler:
 
     def _is_in_template_content(self, context: "ParseContext") -> bool:
         """Check if we're inside actual template content (not just a user <content> tag)"""
-        if (
-            context.current_parent
-            and context.current_parent.tag_name == "content"
-            and context.current_parent.parent
-            and context.current_parent.parent.tag_name == "template"
-        ):
-            return True
-
-        return context.current_parent and context.current_parent.has_ancestor_matching(
-            lambda n: (
-                n.tag_name == "content" and n.parent and n.parent.tag_name == "template"
-            )
-        )
+        return in_template_content(context)
 
     def _create_element(self, token: "HTMLToken") -> "Node":
         """Create a new element node from a token"""
@@ -515,7 +566,7 @@ class StructureSynthesisHandler(TagHandler):
         # Use parser internal helpers; they manage creation order.
         if not parser._has_root_frameset():
             parser._ensure_html_node()
-            parser._ensure_head_node()
+            ensure_head(parser)
             body = parser._get_body_node() or parser._ensure_body_node(
                 ParseContext(len(parser.html), parser.html_node, debug_callback=parser.debug)
             )
@@ -885,7 +936,7 @@ class FormattingReconstructionPreludeHandler(TagHandler):
     def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
         from turbohtml.context import DocumentState as _DS
         # Never act inside template content fragments
-        if self.parser._is_in_template_content(context):  # type: ignore[attr-defined]
+        if in_template_content(context):  # type: ignore[name-defined]
             return False
         tag_name = token.tag_name
         # Table-related insertion modes: suppress reconstruction unless actually in a cell/caption
@@ -934,7 +985,7 @@ class SpecialElementHandler(TagHandler):
         tag = token.tag_name
         parser = self.parser
         # Skip inside template content; template content handler governs structure there
-        if parser._is_in_template_content(context):  # type: ignore[attr-defined]
+        if in_template_content(context):  # type: ignore[name-defined]
             return False
         # <html>
         if tag == "html":
@@ -948,7 +999,7 @@ class SpecialElementHandler(TagHandler):
             return True
         # <head>
         if tag == "head":
-            head = parser._ensure_head_node()
+            head = ensure_head(parser)
             context.transition_to_state(_DS.IN_HEAD, head)
             if context.document_state != _DS.IN_FRAMESET:
                 _ = parser._ensure_body_node(context)
@@ -977,7 +1028,7 @@ class SpecialElementHandler(TagHandler):
                 body = parser._ensure_body_node(context)
                 if body:
                     context.transition_to_state(_DS.IN_BODY, body)
-            elif context.current_parent == parser._get_head_node():
+            elif context.current_parent == get_head(parser):
                 body = parser._ensure_body_node(context)
                 if body:
                     context.transition_to_state(_DS.IN_BODY, body)
@@ -2040,7 +2091,7 @@ class TextHandler(TagHandler):
             if first_non_space_index is not None:
                 # If we were already IN_HEAD (not INITIAL) and there is a leading HTML space prefix, keep it in head
                 if not was_initial and first_non_space_index > 0:
-                    head = self.parser._ensure_head_node()
+                    head = ensure_head(self.parser)
                     context.move_to_element(head)
                     self._append_text(text[:first_non_space_index], context)
                 body = self.parser._ensure_body_node(context)
@@ -2053,7 +2104,7 @@ class TextHandler(TagHandler):
             # All pure HTML space (or empty) in head gets appended to head; in INITIAL it's ignored entirely
             if context.document_state == DocumentState.IN_HEAD:
                 # text here consists only of HTML space characters
-                head = self.parser._ensure_head_node()
+                head = ensure_head(self.parser)
                 context.move_to_element(head)
                 self._append_text(text, context)
                 return True
@@ -8589,7 +8640,7 @@ class HeadElementHandler(TagHandler):
                 context.current_parent
             ):
                 # Head elements appearing before body content should go to head
-                head = self.parser._ensure_head_node()
+                head = ensure_head(self.parser)
                 if head:
                     self.parser.insert_element(
                         token,
@@ -8643,7 +8694,7 @@ class HeadElementHandler(TagHandler):
                 DocumentState.IN_HEAD,
                 DocumentState.AFTER_HEAD,
             ):
-                head = self.parser._ensure_head_node()
+                head = ensure_head(self.parser)
                 self.parser.transition_to_state(context, DocumentState.IN_HEAD, head)
                 self.debug("Switched to head state")
             elif context.document_state == DocumentState.AFTER_HEAD:
@@ -8651,7 +8702,7 @@ class HeadElementHandler(TagHandler):
                 self.debug(
                     "Head element appearing after </head>, foster parenting to head"
                 )
-                head = self.parser._ensure_head_node()
+                head = ensure_head(self.parser)
                 if head:
                     context.move_to_element(head)
 
@@ -8724,7 +8775,7 @@ class HeadElementHandler(TagHandler):
                 self.debug("Added template to body")
         elif context.document_state == DocumentState.INITIAL:
             # Template at document start should go to head
-            head = self.parser._ensure_head_node()
+            head = ensure_head(self.parser)
             self.parser.transition_to_state(context, DocumentState.IN_HEAD, head)
             self.debug("Switched to head state for template at document start")
             context.current_parent.append_child(template_node)
@@ -9122,7 +9173,7 @@ class FramesetTagHandler(TagHandler):
                 and not context.current_parent.find_ancestor("frameset")
                 and not self.parser._has_root_frameset()
             ):  # type: ignore[attr-defined]
-                head = self.parser._ensure_head_node()  # type: ignore[attr-defined]
+                head = ensure_head(self.parser)  # type: ignore[attr-defined]
                 parent = head if head else parent
                 if context.document_state == DocumentState.INITIAL:
                     self.parser.transition_to_state(
@@ -9927,7 +9978,7 @@ class FallbackPlacementHandler(TagHandler):
         if table_modes.should_foster_parent(tag_name, token.attributes, context, self.parser):  # type: ignore[attr-defined]
             return True
         if tag_name in ("div", "section", "article"):
-            if self.parser._is_in_template_content(context):  # type: ignore[attr-defined]
+            if in_template_content(context):  # type: ignore[attr-defined]
                 return False
             if context.current_context in ("math", "svg"):
                 return False
@@ -9996,7 +10047,7 @@ class FallbackPlacementHandler(FallbackPlacementHandler):  # type: ignore[misc]
             return True
 
         if tag_name in ("div", "section", "article"):
-            if self.parser._is_in_template_content(context):  # type: ignore[attr-defined]
+            if in_template_content(context):  # type: ignore[attr-defined]
                 return False
             if context.current_context in ("math", "svg"):
                 return False

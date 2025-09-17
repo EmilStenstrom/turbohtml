@@ -167,34 +167,6 @@ class TurboHTML:
 
     # Head access helpers removed – handlers synthesize/locate head directly when necessary.
 
-    # Minimal shims reintroduced: several handlers still rely on `_get_head_node` / `_ensure_head_node`.
-    # Keep behavior lean: lookup only; ensure creates a head as first non-comment child if absent.
-    def _get_head_node(self) -> Optional[Node]:  # lightweight lookup for handlers
-        if self.fragment_context or not self.html_node:
-            return None
-        for ch in self.html_node.children:
-            if ch.tag_name == "head":
-                return ch
-        return None
-
-    def _ensure_head_node(self) -> Optional[Node]:  # minimal creation used by legacy handlers
-        if self.fragment_context:
-            return None
-        head = self._get_head_node()
-        if head:
-            return head
-        head = Node("head")
-        # Insert before first non-comment/text (or append)
-        insert_index = len(self.html_node.children)
-        for i, child in enumerate(self.html_node.children):
-            if child.tag_name not in ("#comment", "#text") and child.tag_name != "head":
-                insert_index = i
-                break
-        if insert_index == len(self.html_node.children):
-            self.html_node.append_child(head)
-        else:
-            self.html_node.insert_child_at(insert_index, head)
-        return head
 
     def _get_body_node(self) -> Optional[Node]:  # retained minimal body lookup for handlers
         if self.fragment_context:
@@ -406,7 +378,7 @@ class TurboHTML:
         # open <option>. Limited to normal HTML (not template content, not foreign math/svg, not RAWTEXT).
         if (
             target_parent is not None
-            and not self._is_in_template_content(context)
+            and not in_template_content(context)
             and context.content_state != ContentState.RAWTEXT
             and context.current_context not in ("math", "svg")
             and any(not c.isspace() for c in text)
@@ -785,7 +757,7 @@ class TurboHTML:
         if (
             tag_name in ("style", "script")
             and context.document_state == DocumentState.IN_TABLE
-            and not self._is_in_template_content(context)
+            and not in_template_content(context)
         ):
             # Let normal table handling place script/style (may end up inside row if appropriate)
             pass
@@ -854,7 +826,7 @@ class TurboHTML:
                     return
 
         # In template content, perform a bounded default closure for simple end tags
-        if self._is_in_template_content(context):
+        if in_template_content(context):
             # Find the nearest template content boundary
             boundary = None
             node = context.current_parent
@@ -878,7 +850,6 @@ class TurboHTML:
                 cursor = cursor.parent
             # No match below boundary: ignore
             return
-    # Generic end tag handling now performed by GenericEndTagHandler; nothing further here.
 
 
     # Special Node Handling Methods
@@ -930,52 +901,6 @@ class TurboHTML:
 
 
 
-    def _is_in_template_content(self, context: "ParseContext") -> bool:
-        """Check if we're inside actual template content (not just a user <content> tag)"""
-        # Check if current parent is content node
-        if (
-            context.current_parent
-            and context.current_parent.tag_name == "content"
-            and context.current_parent.parent
-            and context.current_parent.parent.tag_name == "template"
-        ):
-            return True
-
-        # Check if any ancestor is template content
-        current = context.current_parent
-        while current:
-            if (
-                current.tag_name == "content"
-                and current.parent
-                and current.parent.tag_name == "template"
-            ):
-                return True
-            current = current.parent
-
-        return False
-
-    def _is_in_integration_point(self, context: "ParseContext") -> bool:
-        """Check if we're inside an SVG or MathML integration point where HTML rules apply"""
-        # Duplicated helper now provided on multiple handlers; retained only for table_modes dependency.
-        # Delegate to ForeignTagHandler instance if present, else simple structural scan (cold path).
-        foreign_helper = None
-        for h in self.tag_handlers:
-            if h.__class__.__name__ == "ForeignTagHandler":  # stable handler name
-                foreign_helper = h
-                break
-        if foreign_helper and hasattr(foreign_helper, "_is_in_integration_point"):
-            return foreign_helper._is_in_integration_point(context)  # type: ignore[attr-defined]
-        current = context.current_parent
-        while current:
-            if current.tag_name in ("svg foreignObject", "svg desc", "svg title"):
-                return True
-            if current.tag_name == "math annotation-xml" and current.attributes and any(
-                attr.name.lower() == "encoding" and attr.value.lower() in ("text/html", "application/xhtml+xml")
-                for attr in current.attributes
-            ):
-                return True
-            current = current.parent
-        return False
 
     def reconstruct_active_formatting_elements(self, context: "ParseContext") -> None:
         """

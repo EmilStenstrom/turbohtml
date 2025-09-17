@@ -63,6 +63,32 @@ def find_open_cell(context: ParseContext):
     return None
 
 
+def _in_template_content(context: ParseContext) -> bool:
+    p = context.current_parent
+    if not p:
+        return False
+    if p.tag_name == "content" and p.parent and p.parent.tag_name == "template":
+        return True
+    cur = p.parent
+    while cur:
+        if cur.tag_name == "content" and cur.parent and cur.parent.tag_name == "template":
+            return True
+        cur = cur.parent
+    return False
+
+def _in_integration_point(context: ParseContext) -> bool:
+    cur = context.current_parent
+    while cur:
+        if cur.tag_name in ("svg foreignObject", "svg desc", "svg title"):
+            return True
+        if cur.tag_name == "math annotation-xml" and cur.attributes and any(
+            attr.name.lower() == "encoding" and attr.value.lower() in ("text/html", "application/xhtml+xml")
+            for attr in cur.attributes
+        ):
+            return True
+        cur = cur.parent
+    return False
+
 def should_foster_parent(tag_name: str, attrs: dict, context: ParseContext, parser) -> bool:
     """Mirror the existing foster parenting compound condition.
 
@@ -76,7 +102,7 @@ def should_foster_parent(tag_name: str, attrs: dict, context: ParseContext, pars
     if tag_name in HEAD_ELEMENTS_CANON:
         return False
     # Template or integration points short-circuit
-    if parser._is_in_template_content(context) or parser._is_in_integration_point(context):
+    if _in_template_content(context) or _in_integration_point(context):
         return False
     # Inside an existing cell forbids fostering
     if context.current_parent.tag_name in TABLE_CELL_TAGS:
