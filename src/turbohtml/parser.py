@@ -522,10 +522,6 @@ class TurboHTML:
         target_parent.append_child(new_node)
         return new_node
 
-    def _post_process_tree(self) -> None:
-        # Deprecated: post-processing now handled by PostProcessHandler.finalize().
-        return
-
     def _create_initial_context(self):
         """Create a minimal ParseContext for structural post-processing heuristics.
 
