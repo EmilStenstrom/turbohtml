@@ -175,28 +175,6 @@ class TagHandler:
         return False
 
 
-class FramesetGuardHandler(TagHandler):
-    """Early frameset context guard.
-
-    Suppresses non-frameset flow start tags once a root <frameset> exists and the
-    insertion mode is IN_FRAMESET / AFTER_FRAMESET. Previously inline in parser.
-    We keep this as an early preprocessing handler so other handlers remain
-    oblivious to frameset suppression rules.
-    """
-
-    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
-        from turbohtml.context import DocumentState as _DS
-        tag = token.tag_name
-        if self.parser._has_root_frameset() and context.document_state in (
-            _DS.IN_FRAMESET,
-            _DS.AFTER_FRAMESET,
-        ):
-            if tag not in ("frameset", "frame", "noframes", "html"):
-                self.debug(
-                    f"Ignoring <{tag}> start tag in root frameset document (early guard)"
-                )
-                return True
-        return False
 
 
 class BodyReentryHandler(TagHandler):
@@ -288,74 +266,121 @@ class BodyImplicitCreationHandler(TagHandler):
         return False
 
 
-class FramesetOkHandler(TagHandler):
-    """Manages frameset_ok toggling and early <frame> suppression before root frameset is established.
+class FramesetPreludeHandler(TagHandler):
+    """Consolidated frameset prelude handler.
 
-    Consolidates the parser's inline logic so the parser no longer branches on frameset_ok.
+    Merges early behaviors of FramesetOkHandler (frameset_ok management & <frame> suppression),
+    FramesetGuardHandler (suppress non-frameset content once in frameset modes), and
+    FramesetTakeoverHandler (late benign-body purge before root <frameset> takeover).
+
+    Ordering expectations (when registered early):
+      * Runs before most structural handlers so suppression prevents downstream work.
+      * BodyImplicitCreationHandler still precedes frameset takeover for non-frameset tags.
     """
+
+    _BENIGN_INLINE = {"span", "font", "b", "i", "u", "em", "strong"}
+
+    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+        """Phase 1: frameset_ok management & stray <frame> suppression.
+
+        Adjusted vs original:
+          * Deduplicated stray <frame> check.
+          * Treat an initial solitary <div> (before any non-benign content is emitted) as benign so a
+            subsequent root <frameset> can still take over (tests19.dat:79 expectation <div> discarded).
+          * Benign predicate kept narrow & state-free – only structural inspection of existing (optional) body subtree.
+        """
+        tag = token.tag_name
+        # Suppress stray <frame> before any root <frameset>
+        if tag == "frame" and not self.parser._has_root_frameset() and context.frameset_ok:
+            return True
+        if not context.frameset_ok:
+            return False
+        benign = {
+            "frameset","frame","noframes","param","source","track","base","basefont","bgsound","link","meta","script","style","title","svg","math"
+        }
+        # Hidden input is also benign (doesn't commit to body parsing per spec nuance)
+        if tag == "input" and (token.attributes.get("type", "") or "").lower() == "hidden":
+            benign = benign | {"input"}
+        # Special-case: allow a single leading <div> (empty so far) to remain benign so a following
+        # <frameset> can still replace the body. Only applies before any root frameset and before any other
+        # non-benign content (frameset_ok still True) while still in INITIAL/IN_HEAD.
+        if tag == "div" and context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
+            benign = benign | {"div"}
+        def _foreign_root_wrapper_benign() -> bool:
+            body = self.parser._get_body_node()
+            if not body or len(body.children) != 1:
+                return False
+            root = body.children[0]
+            if root.tag_name not in ("svg svg", "math math"):
+                return False
+            stack = [root]
+            while stack:
+                n = stack.pop()
+                for ch in n.children:
+                    if (ch.tag_name == "#text" and ch.text_content and ch.text_content.strip()):
+                        return False
+                    if ch.tag_name not in ("#text", "#comment") and not (ch.tag_name.startswith("svg ") or ch.tag_name.startswith("math ")):
+                        if ch.tag_name not in ("div", "span"):
+                            return False
+                    stack.append(ch)
+            return True
+        if tag not in benign and not _foreign_root_wrapper_benign():
+            if tag != "p":  # solitary empty <p> remains benign
+                context.frameset_ok = False
+        return False
+
+
+class FramesetLateHandler(TagHandler):
+    """Late frameset takeover + guard phase (runs after body implicit creation & reentry).
+
+    Preserves original ordering semantics of FramesetTakeoverHandler (after body creation) and
+    FramesetGuardHandler (after potential body reentry) to avoid early suppression differences.
+    """
+
+    _BENIGN_INLINE = {"span", "font", "b", "i", "u", "em", "strong"}
 
     def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
         from turbohtml.context import DocumentState as _DS
         tag = token.tag_name
-        # Suppress stray <frame> before a root <frameset> only while frameset_ok is True.
-        if tag == "frame" and not self.parser._has_root_frameset() and context.frameset_ok:
-            return True
-        if context.frameset_ok:
-            benign = {
-                "frameset",
-                "frame",
-                "noframes",
-                "param",
-                "source",
-                "track",
-                "base",
-                "basefont",
-                "bgsound",
-                "link",
-                "meta",
-                "script",
-                "style",
-                "title",
-                "svg",
-                "math",
-            }
-            if (
-                tag == "input"
-                and (token.attributes.get("type", "") or "").lower() == "hidden"
-            ):
-                benign = benign | {"input"}
-            def _foreign_root_wrapper_benign() -> bool:
-                body = self.parser._get_body_node()
-                if not body or len(body.children) != 1:
+        # Takeover only when encountering frameset and frameset_ok still True
+        if tag == "frameset" and context.frameset_ok and context.document_state in (
+            _DS.INITIAL, _DS.IN_HEAD, _DS.IN_BODY, _DS.AFTER_HEAD
+        ):
+            body = self.parser._get_body_node()  # type: ignore[attr-defined]
+            if body:
+                def benign(node: Node) -> bool:
+                    if node.tag_name == "#comment":
+                        return True
+                    if node.tag_name == "#text":
+                        return not (node.text_content and node.text_content.strip())
+                    if node.tag_name in ("svg svg", "math math"):
+                        return all(benign(c) for c in node.children)
+                    if node.tag_name in self._BENIGN_INLINE:
+                        return all(benign(c) for c in node.children)
+                    if node.tag_name == "div":  # treat solitary empty div as benign for takeover
+                        return all(benign(c) for c in node.children)
+                    if node.tag_name == "p":
+                        return all(benign(c) for c in node.children)
                     return False
-                root = body.children[0]
-                if root.tag_name not in ("svg svg", "math math"):
-                    return False
-                stack = [root]
-                while stack:
-                    n = stack.pop()
-                    for ch in n.children:
-                        if (
-                            ch.tag_name == "#text"
-                            and ch.text_content
-                            and ch.text_content.strip()
-                        ):
-                            return False
-                        if ch.tag_name not in ("#text", "#comment") and not (
-                            ch.tag_name.startswith("svg ")
-                            or ch.tag_name.startswith("math ")
-                        ):
-                            if ch.tag_name not in ("div", "span"):
-                                return False
-                        stack.append(ch)
+                if body.children and all(benign(ch) for ch in body.children):
+                    while body.children:
+                        body.remove_child(body.children[-1])
+                    if body.parent:
+                        body.parent.remove_child(body)
+                    if self.parser.html_node:
+                        context.move_to_element(self.parser.html_node)
+        # Guard (only after root frameset established)
+        if self.parser._has_root_frameset() and context.document_state in (
+            _DS.IN_FRAMESET, _DS.AFTER_FRAMESET
+        ):
+            if tag not in ("frameset", "frame", "noframes", "html"):
+                self.debug(
+                    f"Ignoring <{tag}> start tag in root frameset document (late guard)"
+                )
                 return True
-            benign_dynamic = _foreign_root_wrapper_benign()
-            if tag not in benign and not benign_dynamic:
-                if tag == "p":
-                    pass  # solitary empty <p> kept benign
-                else:
-                    context.frameset_ok = False
         return False
+
+
 
 class FragmentPreprocessHandler(TagHandler):
     """Handles fragment-only early start tag adjustments previously inline in parser._handle_start_tag.
@@ -5156,19 +5181,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 class FormTagHandler(TagHandler):
     """Handles form-related elements (form, input, button, etc.)"""
 
-    def early_end_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
-        if token.tag_name == "form":
-            # Ignore premature </form> when no open form element is on the stack.
-            on_stack = None
-            for el in reversed(context.open_elements._stack):  # type: ignore[attr-defined]
-                if el.tag_name == "form":
-                    on_stack = el
-                    break
-            if on_stack is None:
-                self.debug("Ignoring premature </form> (not on open elements stack)")
-                return True
-        return False
-
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
         return tag_name in ("form", "input", "button", "textarea", "select", "label")
 
@@ -5250,8 +5262,19 @@ class FormTagHandler(TagHandler):
         return tag_name == "form"
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
-        # Spec-like: if no form element in open elements stack (outside template), ignore.
+        # Premature </form> suppression (migrated from early_end_preprocess): ignore when no open form.
         stack = context.open_elements._stack  # type: ignore[attr-defined]
+        has_form = False
+        for el in reversed(stack):
+            if el.tag_name == "template":
+                break
+            if el.tag_name == "form":
+                has_form = True
+                break
+        if not has_form:
+            self.debug("Ignoring premature </form> (not on open elements stack)")
+            token.ignored_end_tag = True
+            return True
         # Find deepest form element outside template
         form_el = None
         for node in reversed(stack):
@@ -5260,10 +5283,7 @@ class FormTagHandler(TagHandler):
             if node.tag_name == "form":
                 form_el = node
                 break
-        if not form_el:
-            self.debug("Ignoring </form>; no open form element outside template")
-            token.ignored_end_tag = True
-            return True
+        # (If no form_el found we would have returned above.)
         # If we're in table-related insertion mode and the form element is an ancestor above the table tree,
         # ignore premature </form> so it remains open (spec form pointer not popped in this malformed context).
         if context.document_state in (
@@ -7847,12 +7867,9 @@ class HeadElementHandler(TagHandler):
                 ):
                     return False
                 anc = anc.parent
-        # Late meta/title after body/html should not be treated as head elements (demoted to body)
-        if tag_name in ("meta", "title") and context.document_state in (
-            DocumentState.AFTER_BODY,
-            DocumentState.AFTER_HTML,
-        ):
-            return False
+        # Late meta/title after body/html: still handle here so we can explicitly place them into body (spec parse error recovery)
+        if tag_name in ("meta", "title") and context.document_state in (DocumentState.AFTER_BODY, DocumentState.AFTER_HTML):
+            return True
         return tag_name in HEAD_ELEMENTS
 
     def handle_start(
@@ -7874,6 +7891,42 @@ class HeadElementHandler(TagHandler):
                 self.debug(
                     f"Current parent's children: {[c.tag_name for c in context.current_parent.children]}"
                 )
+
+        # Demotion heuristic (spec-aligned recovery w.r.t. project expectations): if a metadata element
+        # (meta/title) immediately follows a stray </body> end tag before any actual <body> element has
+        # been started, tests expect it to appear inside a synthesized body rather than re-populating
+        # <head>. We detect this via the parser's previous token pointer instead of adding a persistent
+        # flag (avoid extra parse state). This only triggers when no <body> element exists yet so later
+        # legitimate metadata (after a real body) still follows standard AFTER_BODY handling.
+        if (
+            tag_name in ("meta", "title")
+            and self.parser._prev_token is not None
+            and self.parser._prev_token.type == "EndTag"
+            and self.parser._prev_token.tag_name == "body"
+            and not self.parser._get_body_node()
+        ):
+            body = self.parser._ensure_body_node(context)
+            if body:
+                self.debug(
+                    f"<#{tag_name}> immediately after stray </body>: placing into synthesized body"
+                )
+                new_node = self.parser.insert_element(
+                    token,
+                    context,
+                    mode="normal",
+                    enter=tag_name not in VOID_ELEMENTS,
+                    parent=body,
+                    tag_name_override=tag_name,
+                    push_override=False,
+                )
+                if context.document_state != DocumentState.IN_BODY:
+                    self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
+                if tag_name == "title":
+                    # Switch to RAWTEXT so following character tokens become title text children (not siblings)
+                    context.content_state = ContentState.RAWTEXT
+                    # Ensure we remain inside the title element for its text; open_elements push already done.
+                    context.move_to_element(new_node)
+                return True
 
         # Special handling for template elements
         if tag_name == "template":
@@ -7999,23 +8052,12 @@ class HeadElementHandler(TagHandler):
                 DocumentState.AFTER_BODY,
                 DocumentState.AFTER_HTML,
             ):
-                body = self.parser._get_body_node() or self.parser._ensure_body_node(
-                    context
-                )
+                body = self.parser._get_body_node() or self.parser._ensure_body_node(context)
                 if body:
-                    self.parser.insert_element(
-                        token,
-                        context,
-                        mode="normal",
-                        enter=tag_name not in VOID_ELEMENTS,
-                        parent=body,
-                        tag_name_override=tag_name,
-                        push_override=False,
-                    )
+                    self.debug(f"Late <{tag_name}> after body/html: placing into body")
+                    self.parser.insert_element(token, context, mode="normal", enter=tag_name not in VOID_ELEMENTS, parent=body, tag_name_override=tag_name, push_override=False)
                     if context.document_state != DocumentState.IN_BODY:
-                        self.parser.transition_to_state(
-                            context, DocumentState.IN_BODY, body
-                        )
+                        self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
                     if tag_name not in VOID_ELEMENTS and tag_name in RAWTEXT_ELEMENTS:
                         context.content_state = ContentState.RAWTEXT
                     return True
@@ -8405,6 +8447,7 @@ class FramesetTagHandler(TagHandler):
                         "math math",
                     }
                     meaningful = self._frameset_body_has_meaningful_content(body, allowed_tags)
+                    explicit_body = getattr(context, "explicit_body", False)
                     if meaningful and context.frameset_ok:
                         self.debug("Ignoring <frameset>; body already meaningful")
                         return True
@@ -8414,10 +8457,26 @@ class FramesetTagHandler(TagHandler):
                         )
                         self._trim_body_leading_space()
                         return True
+                    # Conditional override: if frameset_ok is already False BUT body still has no meaningful
+                    # content AND every child is an empty benign container (div/span/section/article/etc.),
+                    # permit takeover (pattern: <div><frameset>). Do NOT override for void/replaced content
+                    # (br/img/input/wbr) – those should commit to a body per tests (e.g. <br><frameset> expects body).
                     if not context.frameset_ok and not meaningful:
-                        # Earlier relaxation caused false frameset takeovers; retain original spec-like guard: once frameset_ok is False we ignore.
-                        self.debug("Ignoring root <frameset>; frameset_ok already False")
-                        return True
+                        benign_containers = self._FRAMES_HTML_EMPTY_CONTAINERS
+                        def _only_empty_containers(node: Node) -> bool:
+                            for ch in node.children:
+                                if ch.tag_name == "#text" and ch.text_content and ch.text_content.strip():
+                                    return False
+                                if ch.tag_name == "#comment":
+                                    continue
+                                if ch.tag_name not in benign_containers:
+                                    return False
+                                if ch.children and not _only_empty_containers(ch):
+                                    return False
+                            return True
+                        if explicit_body or not _only_empty_containers(body):
+                            self.debug("Ignoring root <frameset>; frameset_ok False after non-container content")
+                            return True
                 self.debug("Creating root frameset")
                 body = self.parser._get_body_node()
                 if body and body.parent:
@@ -8677,117 +8736,6 @@ class BodyElementHandler(TagHandler):
         context.frameset_ok = False  # explicit body tag encountered (spec: frameset-ok flag set to not ok)
         return True
 
-class FramesetTakeoverHandler(TagHandler):
-    """Permit late root <frameset> to replace a benign provisional body subtree.
-
-    Handles pattern like <svg><p><frameset> where early foreign/flow tokens created a body
-    containing only ignorable content (whitespace, comments, benign foreign roots, or empty inline wrappers).
-    When frameset_ok is still True and a <frameset> start tag arrives, we purge benign body children
-    so the frameset becomes the sole root-level child (besides head) matching spec expectations.
-    """
-
-    _BENIGN_INLINE = {"span", "font", "b", "i", "u", "em", "strong"}
-
-    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
-        if token.tag_name != "frameset":
-            return False
-        from turbohtml.context import DocumentState as _DS
-        if context.document_state not in (_DS.INITIAL, _DS.IN_HEAD, _DS.IN_BODY):
-            return False
-        if not context.frameset_ok:
-            return False
-        body = self.parser._get_body_node()  # type: ignore[attr-defined]
-        if not body:
-            return False
-
-        def benign(node: Node) -> bool:
-            if node.tag_name == "#comment":
-                return True
-            if node.tag_name == "#text":
-                return not (node.text_content and node.text_content.strip())
-            if node.tag_name in ("svg svg", "math math"):
-                return all(benign(c) for c in node.children)
-            if node.tag_name in self._BENIGN_INLINE:
-                return all(benign(c) for c in node.children)
-            if node.tag_name == "p":
-                # Empty or whitespace-only paragraph is benign; any meaningful text or non-text child breaks
-                return all(benign(c) for c in node.children)
-            return False
-
-        if body.children and not all(benign(ch) for ch in body.children):
-            return False
-        # Purge body children so upcoming frameset becomes root frameset child
-        while body.children:
-            body.remove_child(body.children[-1])
-        # If body now empty, detach it so frameset becomes direct child of html
-        if body.parent:
-            body.parent.remove_child(body)
-        if self.parser.html_node:
-            context.move_to_element(self.parser.html_node)
-        return False  # allow FramesetTagHandler to handle token
-
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
-        return tag_name == "body"
-
-    def early_end_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
-        # Stray </body> handling migrated from parser:
-        #  * Ignore inside table-related insertion modes (do not reposition insertion point)
-        #  * In pre-body or post-body states (excluding IN_BODY) synthesize body if absent and mark AFTER_BODY
-        #  * Allow legitimate close in IN_BODY to proceed to handle_end
-        if token.tag_name != "body":
-            return False
-        state = context.document_state
-        if state == DocumentState.IN_BODY:
-            return False
-        if state in (
-            DocumentState.IN_TABLE,
-            DocumentState.IN_TABLE_BODY,
-            DocumentState.IN_ROW,
-            DocumentState.IN_CELL,
-            DocumentState.IN_CAPTION,
-        ):
-            self.debug("Ignoring stray </body> in table insertion mode")
-            return True
-        # Pre-body or already after states: ensure body exists then mark AFTER_BODY (idempotent)
-        body_node = self.parser._get_body_node() or self.parser._ensure_body_node(context)
-        if body_node and state not in (DocumentState.AFTER_BODY, DocumentState.AFTER_HTML):
-            context.transition_to_state(DocumentState.AFTER_BODY, context.current_parent)
-        return True
-
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
-        # Ignore stray </body> if we're not positioned at the body element
-        if context.document_state not in (DocumentState.IN_FRAMESET,):
-            body = self.parser._ensure_body_node(context)
-            if body:
-                # Not at body element: treat as parse error but still transition to AFTER_BODY so
-                # subsequent comments land outside <body>. Preserve the open elements stack (do NOT
-                # pop) so any still-open descendants (e.g. unknown <bdy>) remain candidates for
-                # resuming insertion if later flow content appears (webkit01.dat regression guard).
-                if context.current_parent is not body:
-                    if self.parser.html_node:
-                        context.move_to_element(self.parser.html_node)
-                    else:
-                        context.move_to_element(self.parser.root)
-                    self.parser.transition_to_state(
-                        context, DocumentState.AFTER_BODY, context.current_parent
-                    )
-                    return True
-
-                if self.parser.fragment_context == "html":
-                    # Fragment 'html' context: treat first </body> as a no-op close (stay inside body),
-                    # ignore subsequent ones structurally by checking current state.
-                    # If we're already not in IN_BODY (e.g. AFTER_BODY via stray handling), just ignore.
-                    if context.document_state == DocumentState.IN_BODY:
-                        context.move_to_element(body)
-                    return True
-                # Normal body closure path
-                if self.parser.html_node:
-                    context.move_to_element(self.parser.html_node)
-                else:
-                    context.move_to_element(body)
-                self.parser.transition_to_state(context, DocumentState.AFTER_BODY)
-            return True
-        return False
 
 
 class BoundaryElementHandler(TagHandler):

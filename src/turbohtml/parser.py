@@ -23,9 +23,8 @@ from turbohtml.handlers import (
     FramesetTagHandler,
     BodyReentryHandler,
     BodyImplicitCreationHandler,
-    FramesetOkHandler,
-    FramesetGuardHandler,
-    FramesetTakeoverHandler,
+    FramesetPreludeHandler,
+    FramesetLateHandler,
     BodyElementHandler,
     BoundaryElementHandler,
     ButtonTagHandler,
@@ -88,11 +87,10 @@ class TurboHTML:
             TemplateContentFilterHandler(self),
             FragmentPreprocessHandler(self),
             PlaintextHandler(self),
-            FramesetOkHandler(self),
+            FramesetPreludeHandler(self),
             BodyImplicitCreationHandler(self),
-            FramesetGuardHandler(self),
             BodyReentryHandler(self),
-            FramesetTakeoverHandler(self),
+            FramesetLateHandler(self),
             FramesetTagHandler(self),
             SelectTagHandler(self),  # must precede table handling to suppress table tokens inside <select>
             TableTagHandler(self),
@@ -1188,12 +1186,11 @@ class TurboHTML:
             return True
         elif tag_name == "body" and context.document_state != DocumentState.IN_FRAMESET:
             # Only honor early <body> if frameset no longer permitted (frameset_ok False) or we already created body
-            if context.frameset_ok and context.document_state in (
-                DocumentState.INITIAL,
-                DocumentState.IN_HEAD,
-            ):
-                # Explicit body tag commits to non-frameset document; flip frameset_ok off and continue to normal handling
+            if context.frameset_ok and context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
                 context.frameset_ok = False
+            # Regardless of current state (even already IN_BODY via implicit creation), a literal <body>
+            # start tag token commits the document to non-frameset; record explicit_body unconditionally.
+            context.explicit_body = True  # type: ignore[attr-defined]
             body = self._ensure_body_node(context)
             if body:
                 # Merge body attributes without overwriting existing values (spec: first wins)
@@ -1309,20 +1306,19 @@ class TurboHTML:
 
         # Comments after </body> should go in html node
         if context.document_state == DocumentState.AFTER_BODY:
-            # If </body> seen but </html> not yet processed, comment should remain inside html AFTER body
-            # Comments after body but before html close: spec places them inside <html>.
-            any(
-                ch.tag_name == "#comment"
-                for ch in self.root.children
-                if ch is not comment_node
-            )
+            # Expected tree (tests1:33, tests19:20, webkit01:26): comment appears as a direct child of <html>
+            # AFTER the <head> but BEFORE the <body> subtree (i.e. preceding body in sibling order). Ensure that.
             if self.html_node not in self.root.children:
                 self.root.append_child(self.html_node)
             body = self._get_body_node()
+            inserted = False
             if body and body.parent is self.html_node:
+                # Insert comment immediately before body element
+                self.html_node.insert_before(comment_node, body)
+                inserted = True
+            if not inserted:
+                # Fallback: append to html (no body found)
                 self.html_node.append_child(comment_node)
-            else:
-                self.root.append_child(comment_node)
             return
         # Comments after </html> (AFTER_HTML) should appear as direct child of html (one level, not indented under body)
         if context.document_state == DocumentState.AFTER_HTML:
@@ -1402,6 +1398,44 @@ class TurboHTML:
                 f"Current parent children: {[c.tag_name for c in context.current_parent.children]}"
             )
             return
+
+        # Special recovery: if immediately following a stray </body> end tag we may already have re-entered IN_BODY
+        # (BodyReentryHandler) before processing this comment. Spec expects AFTER_BODY placement under <html> as a
+        # sibling after the body element, NOT inside body. Detect via previous token pointer to avoid adding sticky state.
+        if (
+            self._prev_token is not None
+            and self._prev_token.type == "EndTag"
+            and self._prev_token.tag_name == "body"
+            and context.document_state == DocumentState.IN_BODY
+        ):
+            html_node = self.html_node
+            body_node = self._get_body_node()
+            if html_node and body_node and body_node.parent is html_node:
+                # Insert after body
+                if html_node.children and html_node.children[-1] is body_node:
+                    html_node.append_child(comment_node)
+                else:
+                    idx = html_node.children.index(body_node) + 1
+                    html_node.insert_child_at(idx, comment_node)
+                return
+
+        # Secondary recovery: if body ended earlier but we re-entered IN_BODY due to whitespace-only character tokens
+        # (webkit01:26 pattern), and current_parent is body while the last non-whitespace sibling after body closure
+        # should be a comment at html level, relocate.
+        if (
+            context.document_state == DocumentState.IN_BODY
+            and context.current_parent.tag_name == "body"
+            and self._prev_token is not None
+            and self._prev_token.type == "Character"
+            and (self._prev_token.data.strip() == "" if hasattr(self._prev_token, "data") else False)
+        ):
+            html_node = self.html_node
+            body_node = self._get_body_node()
+            if html_node and body_node and body_node.parent is html_node:
+                # Ensure we haven't already appended another element after body
+                if html_node.children and html_node.children[-1] is body_node:
+                    html_node.append_child(comment_node)
+                    return
 
         # All other comments go in current parent
         self.debug(f"Adding comment to current parent: {context.current_parent}")
