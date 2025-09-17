@@ -343,6 +343,32 @@ class PostBodyCharacterHandler(TagHandler):
         return False
 
 
+class AfterHeadWhitespaceHandler(TagHandler):
+    """Handles whitespace-only character tokens in AFTER_HEAD insertion mode.
+
+    The parser previously inserted/merged whitespace text directly under <html> (not inside head/body)
+    without forcing body creation. This preserves ordering for frameset and meta tests.
+    """
+
+    def should_handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        from turbohtml.context import DocumentState as _DS
+        return (
+            context.document_state == _DS.AFTER_HEAD and text and text.strip() == ""
+        )
+
+    def handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        html = self.parser.html_node
+        if not html or html not in self.parser.root.children:
+            return False  # fallback to normal text handling if html missing
+        # Merge with last #text under html or append new
+        if html.children and html.children[-1].tag_name == "#text":
+            html.children[-1].text_content += text
+        else:
+            node = self.parser.create_text_node(text)
+            html.append_child(node)
+        return True
+
+
 class FramesetPreludeHandler(TagHandler):
     """Consolidated frameset prelude handler.
 

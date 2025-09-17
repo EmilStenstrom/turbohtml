@@ -35,6 +35,7 @@ from turbohtml.handlers import (
     PostProcessHandler,
     CommentPlacementHandler,
     PostBodyCharacterHandler,
+    AfterHeadWhitespaceHandler,
 )
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
 from turbohtml import table_modes  # phase 1 extraction: table predicates
@@ -97,6 +98,7 @@ class TurboHTML:
             TableTagHandler(self),
             CommentPlacementHandler(self),
             PostBodyCharacterHandler(self),
+            AfterHeadWhitespaceHandler(self),
             ForeignTagHandler(self) if handle_foreign_elements else None,
             ParagraphTagHandler(self),
             AutoClosingTagHandler(self),
@@ -833,28 +835,7 @@ class TurboHTML:
             elif token.type == "Character":
                 # Listing/pre-like initial newline suppression (only implemented for <listing> here)
                 data = token.data
-                # AFTER_HEAD: whitespace-only character tokens must be inserted at the html element
-                # (parse error if body already started) without creating the body. Only non-whitespace
-                # text forces implicit body creation. This preserves ordering for tests expecting the
-                # newline/space node before <body> (frameset whitespace relocation rule).
-                if (
-                    context.document_state == DocumentState.AFTER_HEAD
-                    and data
-                    and data.strip() == ""
-                ):
-                    html_node = self.html_node
-                    if html_node and html_node in self.root.children:
-                        # Append or merge with preceding text under html (not inside head/body)
-                        if (
-                            html_node.children
-                            and html_node.children[-1].tag_name == "#text"
-                        ):
-                            html_node.children[-1].text_content += data
-                        else:
-                            text_node = self.create_text_node(data)
-                            html_node.append_child(text_node)
-                        # Skip normal text handling
-                        continue
+                # AFTER_HEAD whitespace-only handling moved to AfterHeadWhitespaceHandler
                 if (
                     context.current_parent.tag_name == "listing"
                     and not context.current_parent.children
