@@ -1,5 +1,5 @@
 from turbohtml.context import ParseContext, DocumentState, ContentState
-from turbohtml.handlers import (
+from .handlers import (
     AutoClosingTagHandler,
     DoctypeHandler,
     TemplateTagHandler,
@@ -38,6 +38,7 @@ from turbohtml.handlers import (
     AfterHeadWhitespaceHandler,
     StructureSynthesisHandler,
     TextNormalizationHandler,
+    ListingNewlineHandler,
 )
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
 from turbohtml import table_modes  # phase 1 extraction: table predicates
@@ -90,6 +91,7 @@ class TurboHTML:
             TemplateTagHandler(self),
             TemplateContentFilterHandler(self),
             FragmentPreprocessHandler(self),
+            ListingNewlineHandler(self),
             PlaintextHandler(self),
             FramesetPreludeHandler(self),
             BodyImplicitCreationHandler(self),
@@ -833,15 +835,7 @@ class TurboHTML:
                 context.index = self.tokenizer.pos
 
             elif token.type == "Character":
-                # Listing/pre-like initial newline suppression (only implemented for <listing> here)
                 data = token.data
-                # AFTER_HEAD whitespace-only handling moved to AfterHeadWhitespaceHandler
-                if (
-                    context.current_parent.tag_name == "listing"
-                    and not context.current_parent.children
-                    and data.startswith("\n")
-                ):
-                    data = data[1:]
                 if data:
                     for handler in self.tag_handlers:
                         if handler.should_handle_text(data, context):

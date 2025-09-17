@@ -397,6 +397,38 @@ class StructureSynthesisHandler(TagHandler):
         parser._merge_adjacent_text_nodes(parser.root)
 
 
+class ListingNewlineHandler(TagHandler):
+    """Suppress a single leading newline in an empty <listing> element.
+
+    Extracted from parser character-token loop. If the current parent is a <listing> with
+    no children yet and incoming text begins with '\n', drop that newline and re-dispatch
+    the remainder through subsequent handlers.
+    """
+
+    def should_handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        return (
+            bool(text)
+            and text.startswith("\n")
+            and context.current_parent.tag_name == "listing"
+            and not context.current_parent.children
+        )
+
+    def handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        remainder = text[1:]
+        if not remainder:
+            return True
+        started = False
+        for h in self.parser.tag_handlers:  # type: ignore[attr-defined]
+            if not started:
+                if h is self:
+                    started = True
+                continue
+            if h.should_handle_text(remainder, context):
+                if h.handle_text(remainder, context):
+                    break
+        return True
+
+
 class TextNormalizationHandler(TagHandler):
     """Invokes parser._post_text_inline_normalize after text handling.
 
