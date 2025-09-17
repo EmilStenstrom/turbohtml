@@ -37,6 +37,7 @@ from turbohtml.handlers import (
     PostBodyCharacterHandler,
     AfterHeadWhitespaceHandler,
     StructureSynthesisHandler,
+    TextNormalizationHandler,
 )
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
 from turbohtml import table_modes  # phase 1 extraction: table predicates
@@ -115,6 +116,7 @@ class TurboHTML:
             FormattingElementHandler(self),
             ImageTagHandler(self),
             TextHandler(self),
+            TextNormalizationHandler(self),
             FormTagHandler(self),
             HeadingTagHandler(self),
             RubyElementHandler(self),
@@ -853,13 +855,8 @@ class TurboHTML:
                                     f"{handler.__class__.__name__}: handling {token}, context={context}"
                                 )
                                 if handler.handle_text(data, context):
-                                    # After inserting text inside a block, perform a targeted inline normalization
-                                    # for redundant trailing formatting clones that could not be unwrapped during
-                                    # the adoption phase because they were empty at that time (avoid duplicating emptied wrappers).
-                                    self._post_text_inline_normalize(context)
                                     break
-                    # Even if no handler consumed (or additional handlers appended text differently), run normalization
-                    self._post_text_inline_normalize(context)
+                    # Normalization now delegated to TextNormalizationHandler; no direct call here.
 
         # Structural synthesis and normalization moved to StructureSynthesisHandler.finalize()
 
@@ -1391,74 +1388,6 @@ class TurboHTML:
             if child.tag_name != "#text":
                 self._merge_adjacent_text_nodes(child)
 
-    def _post_text_inline_normalize(self, context: ParseContext) -> None:
-        """After appending a text node, unwrap a redundant trailing formatting element if present.
-
-        Example scenario:
-            <p><b><i>A</i></b><i>B</i>  -> becomes <p><b><i>A</i></b>B
-
-        Adoption unwrapping runs only after end-tag driven adoption cycles; if the trailing <i>/<em>/<b>
-        wrapper was empty during those cycles (text arrives later), the earlier normalization misses it.
-        This lightweight check runs after text insertion, examining the current block parent's last two
-        element children. It is intentionally narrow to avoid regressions:
-          - Parent must be a block-ish container (p, div, section, article, body)
-          - Pattern: first=<X> (any element), second=<f> where f in (i, em, b)
-          - second has only text node children (now non-empty) and no attributes
-          - first subtree already contains at least one descendant element with the same tag as second
-            having some (possibly whitespace-trimmed) text descendant
-        If matched, move text children of second after it, then remove second element.
-        """
-        insertion_parent = context.current_parent
-        if not insertion_parent:
-            return
-        # Climb to nearest block container from current parent (which may be a formatting element)
-        parent = insertion_parent
-        block_tags = ("p", "div", "section", "article", "body")
-        while parent and parent.tag_name not in block_tags:
-            parent = parent.parent
-        if not parent:
-            return
-        # Need at least two element children (ignoring text) within that block
-        elems = [ch for ch in parent.children if ch.tag_name != "#text"]
-        if len(elems) < 2:
-            return
-        second = elems[-1]
-        first = elems[-2]
-        # Only consider when the just-modified element is the trailing formatting element
-        # Only target i/em (avoid modifying trailing <b> which may be semantically required)
-        if second is not insertion_parent or second.tag_name not in ("i", "em"):
-            return
-        if second.attributes or not second.children:
-            return
-        if not all(ch.tag_name == "#text" for ch in second.children):
-            return
-        # Check if first subtree already has same formatting tag AND subtree has any text descendant (anywhere)
-        has_same_fmt = False
-        for d in self.adoption_agency._iter_descendants(first):
-            if d.tag_name == second.tag_name:
-                has_same_fmt = True
-                break
-        if not has_same_fmt:
-            return
-        has_any_text = any(
-            (dd.tag_name == "#text" and dd.text_content and dd.text_content.strip())
-            for dd in self.adoption_agency._iter_descendants(first)
-        )
-        if not has_any_text:
-            return
-        # Unwrap: move text children of second into parent after second, then remove second
-        insert_index = parent.children.index(second) + 1
-        texts = list(second.children)
-        for t in texts:
-            second.remove_child(t)
-            parent.children.insert(insert_index, t)
-            t.parent = parent
-            insert_index += 1
-        parent.remove_child(second)
-        if self.env_debug:
-            self.debug(
-                f"Post-text inline normalize: unwrapped trailing <{second.tag_name}> into text"
-            )
 
     def _foster_parent_element(
         self, tag_name: str, attributes: dict, context: "ParseContext"
