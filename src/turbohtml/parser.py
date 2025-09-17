@@ -36,6 +36,7 @@ from turbohtml.handlers import (
     CommentPlacementHandler,
     PostBodyCharacterHandler,
     AfterHeadWhitespaceHandler,
+    StructureSynthesisHandler,
 )
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
 from turbohtml import table_modes  # phase 1 extraction: table predicates
@@ -119,6 +120,7 @@ class TurboHTML:
             RubyElementHandler(self),
             FallbackPlacementHandler(self),
             UnknownElementHandler(self),
+            StructureSynthesisHandler(self),
             PostProcessHandler(self),
         ]
         self.tag_handlers = [h for h in self.tag_handlers if h is not None]
@@ -863,22 +865,7 @@ class TurboHTML:
                     # Even if no handler consumed (or additional handlers appended text differently), run normalization
                     self._post_text_inline_normalize(context)
 
-        # After tokens: synthesize missing structure unless frameset document
-        if (
-            context.document_state != DocumentState.IN_FRAMESET
-            and not self._has_root_frameset()
-        ):
-            # Ensure HTML node is in the tree
-            self._ensure_html_node()
-            # Ensure head exists first
-            self._ensure_head_node()
-            # Then ensure body exists
-            body = self._ensure_body_node(context)
-            if body:
-                context.transition_to_state(DocumentState.IN_BODY)
-
-        # Normalize tree: merge adjacent text nodes (can result from foster parenting / reconstruction)
-        self._merge_adjacent_text_nodes(self.root)
+        # Structural synthesis and normalization moved to StructureSynthesisHandler.finalize()
 
     # Tag Handling Methods
     def _handle_start_tag(

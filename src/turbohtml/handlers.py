@@ -369,6 +369,34 @@ class AfterHeadWhitespaceHandler(TagHandler):
         return True
 
 
+class StructureSynthesisHandler(TagHandler):
+    """Finalization handler ensuring minimal document structure and performing normalization.
+
+    Responsibilities formerly in parser tail:
+      * Ensure html node appended
+      * Ensure head (before body) and body exist (unless frameset document)
+      * Transition state to IN_BODY if body synthesized
+      * Merge adjacent text nodes (normalization)
+    """
+
+    def finalize(self, parser: "TurboHTML") -> None:  # type: ignore[name-defined]
+        # Skip structure synthesis for fragment parsing
+        if parser.fragment_context:
+            return
+        # html/head/body synthesis (unless root frameset)
+        # Use parser internal helpers; they manage creation order.
+        if not parser._has_root_frameset():
+            parser._ensure_html_node()
+            parser._ensure_head_node()
+            body = parser._get_body_node() or parser._ensure_body_node(
+                ParseContext(len(parser.html), parser.html_node, debug_callback=parser.debug)
+            )
+            # We do not mutate the original parse context's state here; final state is not used post-finalize.
+            _ = body
+        # Merge adjacent text nodes
+        parser._merge_adjacent_text_nodes(parser.root)
+
+
 class FramesetPreludeHandler(TagHandler):
     """Consolidated frameset prelude handler.
 
