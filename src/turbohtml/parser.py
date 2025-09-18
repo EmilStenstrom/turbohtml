@@ -1,18 +1,17 @@
+from __future__ import annotations
+
+from typing import Optional
+
 from turbohtml.context import ParseContext, DocumentState, ContentState
-from .handlers import *
+from .handlers import *  # noqa: F401,F403  (intentional: handler registration side-effects)
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
-from turbohtml import table_modes  # phase 1 extraction: table predicates
 from turbohtml.adoption import AdoptionAgencyAlgorithm
 from .fragment import parse_fragment
 from turbohtml.node import Node
 from .constants import (
-    HEAD_ELEMENTS,
-    FORMATTING_ELEMENTS,
-    TABLE_ELEMENTS,
     RAWTEXT_ELEMENTS,
     VOID_ELEMENTS,
 )
-from typing import Optional
 from .formatting import reconstruct_active_formatting_elements as _reconstruct_fmt
 
 
@@ -180,13 +179,14 @@ class TurboHTML:
         return None
 
     def _has_root_frameset(self) -> bool:
-        """Return True if a top-level <frameset> child exists under <html>."""
-        if self.html_node is None:  # fragment mode
-            return False
-        for child in self.html_node.children:
-            if child.tag_name == "frameset":
-                return True
-        return False
+        """Return True if <html> (when present) has a direct <frameset> child.
+
+        Micro-optimized with a generator expression; no behavior change.
+        """
+        return bool(
+            self.html_node
+            and any(ch.tag_name == "frameset" for ch in self.html_node.children)
+        )
 
     def _ensure_body_node(self, context: ParseContext) -> Optional[Node]:
         """Get or create body node if not in frameset mode"""
@@ -241,13 +241,12 @@ class TurboHTML:
         mode: str = "normal",  # 'normal' | 'transient' | 'void'
         enter: bool = True,
         treat_as_void: bool = False,  # force void semantics (ignored if mode == 'void')
-        parent: Node = None,
-        before: Node | None = None,
-        tag_name_override: str = None,
-        attributes_override: dict = None,
+        parent: Optional[Node] = None,
+        before: Optional[Node] = None,
+        tag_name_override: Optional[str] = None,
+        attributes_override: Optional[dict] = None,
         preserve_attr_case: bool = False,
-        push_override: bool
-        | None = None,  # None => default semantics, True/False force push behavior for normal mode
+        push_override: Optional[bool] = None,  # None => default semantics; True/False force push
     ) -> Node:
         """Create and insert an element for a start tag token and (optionally) update stacks.
 
@@ -341,42 +340,22 @@ class TurboHTML:
         text: str,
         context: ParseContext,
         *,
-        parent: Node | None = None,
-        before: Node | None = None,
+        parent: Optional[Node] = None,
+        before: Optional[Node] = None,
         merge: bool = True,
-        foster: bool = False,
-        strip_replacement: bool = True,
-    ) -> Node | None:
-        """Insert character data into the tree with standardized merging / sanitation.
+        foster: bool = False,  # retained for API compatibility (no-op)
+        strip_replacement: bool = True,  # retained for API compatibility (no-op)
+    ) -> Optional[Node]:
+        """Insert character data with standardized sibling merging.
 
-        This concentrates the low‑level mechanics that are repeated across handlers
-        while deliberately excluding higher‑level heuristics (body promotion, template
-        boundary routing, adoption‑driven reconstruction triggers, PRE first‑newline
-        suppression, malformed <code> duplication, etc.). Those remain in the handlers
-        so that this helper stays a predictable primitive and *never* drives parser
-        state transitions or stack mutations.
-
-        Responsibilities:
-          * Optional foster parenting hand‑off (delegates to TextHandler logic)
-          * Context‑sensitive U+FFFD stripping (mirrors TextHandler._append_text)
-          * frameset_ok invalidation when meaningful characters appear
-          * Merge with previous sibling text node (when merge=True and inserting
-            at end of parent)
-          * Insertion before an existing node when 'before' is supplied (attempting
-            merge with the immediate previous sibling only)
-
-        Returns the Node that now holds the text content, or None when the text
-        is fully suppressed (e.g. becomes empty after stripping replacement chars).
+        Notes:
+          * "foster" & "strip_replacement" are legacy parameters kept for handlers; they
+            have no effect here (sanitization & fostering decisions happen earlier).
         """
         if text == "":  # Fast path noop
             return None
 
-        # Determine insertion parent
         target_parent = parent or context.current_parent
-        # Option text recovery: if an <option> element is still open on the stack but the current
-        # insertion point has drifted outside it (e.g. nested select handling closed outer select
-        # and repositioned to its parent), route non‑whitespace character data back into the deepest
-        # open <option>. Limited to normal HTML (not template content, not foreign math/svg, not RAWTEXT).
         if (
             target_parent is not None
             and not in_template_content(context)
@@ -395,14 +374,10 @@ class TurboHTML:
                 and not target_parent.find_ancestor(lambda n: n is deepest_option)
             ):
                 target_parent = deepest_option
-        if target_parent is None:  # Defensive; should not happen in normal flow
+        if target_parent is None:
             return None
 
-        # Foster parenting path delegates early (kept separate to avoid duplicating logic)
-
-        # Decide insertion strategy
         if before is not None and before.parent is target_parent:
-            # Insert before specific child; attempt merge with preceding sibling if text node
             idx = target_parent.children.index(before)
             prev_idx = idx - 1
             if (
@@ -413,12 +388,10 @@ class TurboHTML:
                 prev_node = target_parent.children[prev_idx]
                 prev_node.text_content += text
                 return prev_node
-            # No merge possible – create fresh node and insert
             new_node = self.create_text_node(text)
             target_parent.insert_before(new_node, before)
             return new_node
 
-        # Append path (potential merge with last child)
         if (
             merge
             and target_parent.children
@@ -428,7 +401,6 @@ class TurboHTML:
             last.text_content += text
             return last
 
-        # Fresh append
         new_node = self.create_text_node(text)
         target_parent.append_child(new_node)
         return new_node
@@ -863,8 +835,8 @@ class TurboHTML:
         """
         if not node.children:
             return
-        merged = []
-        pending_text = None
+        merged: list[Node] = []
+        pending_text: Optional[Node] = None
         for child in node.children:
             if child.tag_name == "#text":
                 if pending_text is None:
