@@ -23,6 +23,7 @@ from turbohtml.context import ParseContext, ContentState, DocumentState
 from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken
 from turbohtml import table_modes
+from .formatting import reconstruct_active_formatting_elements as _reconstruct_fmt
 
 # --- Lightweight structural utilities (extracted from parser) ---
 def get_head(parser: "ParserInterface") -> Optional["Node"]:
@@ -953,7 +954,7 @@ class FormattingReconstructionPreludeHandler(TagHandler):
         # Non-table or inside cell/caption
         if tag_name not in self._BLOCKISH:
             # Immediate reconstruction for non-block formatting interruptions
-            self.parser.reconstruct_active_formatting_elements(context)  # type: ignore[attr-defined]
+            _reconstruct_fmt(self.parser, context)
             return False
 
         # Blockish tag: determine if we should defer reconstruction inside the soon-to-be-created block
@@ -1734,7 +1735,7 @@ class TextHandler(TagHandler):
                 and not self._is_in_template_content(context)
             ):
                 self.debug("Post-adoption one-shot reconstruction before character insertion")
-                self.parser.reconstruct_active_formatting_elements(context)
+                _reconstruct_fmt(self.parser, context)
             # Clear flag unconditionally (one-shot semantics)
             context.post_adoption_reconstruct_pending = False
         integration_point_tags = {
@@ -1985,7 +1986,7 @@ class TextHandler(TagHandler):
                         need_reconstruct_after_table = True
                 if need_reconstruct_after_table:
                     self.debug("Reconstructing after table for trailing body text")
-                    self.parser.reconstruct_active_formatting_elements(context)
+                    _reconstruct_fmt(self.parser, context)
                     self._append_text(text, context)
                     body_node = (
                         self.parser._ensure_body_node(context) or context.current_parent
@@ -2021,7 +2022,7 @@ class TextHandler(TagHandler):
                             need_reconstruct = True
                             break
                 if need_reconstruct:
-                    self.parser.reconstruct_active_formatting_elements(context)
+                    _reconstruct_fmt(self.parser, context)
                     # After reconstruction current_parent points at last reconstructed formatting element;
                     # append text there so it becomes a descendant (matches expected adoption trees).
                     self._append_text(text, context)
@@ -2182,7 +2183,7 @@ class TextHandler(TagHandler):
                     ):
                         restore_target = context.current_parent.parent
                         context.move_to_element(restore_target)
-                    self.parser.reconstruct_active_formatting_elements(context)
+                    _reconstruct_fmt(self.parser, context)
                     self._append_text(text, context)
                     if restore_target is not None:
                         context.move_to_element(restore_target)
@@ -2298,7 +2299,7 @@ class TextHandler(TagHandler):
                 # Temporarily set insertion point to foster_block and reconstruct
                 cur_parent = context.current_parent
                 context.move_to_element(foster_block)
-                self.parser.reconstruct_active_formatting_elements(context)  # type: ignore[attr-defined]
+                _reconstruct_fmt(self.parser, context)  # type: ignore[attr-defined]
                 context.move_to_element(cur_parent)
 
         # Create text node and insert it before the table (merging with last sibling if text)
@@ -2524,7 +2525,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 # We therefore trigger reconstruction explicitly so only genuinely missing entries are cloned before
                 # inserting the replacement <a>. This is narrowly scoped to the duplicate <a> case to avoid broad
                 # changes to start-tag reconstruction semantics.
-                self.parser.reconstruct_active_formatting_elements(context)
+                _reconstruct_fmt(self.parser, context)
 
         if self._is_in_template_content(context):
             tableish = {
@@ -2575,7 +2576,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 "Duplicate <nobr> in scope; running adoption agency before creating new one"
             )
             self.parser.adoption_agency.run_algorithm("nobr", context, 1)
-            self.parser.reconstruct_active_formatting_elements(context)
+            _reconstruct_fmt(self.parser, context)
             self.debug("AFTER adoption simple-case for duplicate <nobr>: stacks:")
             self.debug(
                 f"    Open stack: {[e.tag_name for e in context.open_elements._stack]}"
@@ -3898,7 +3899,7 @@ class ParagraphTagHandler(TagHandler):
                     c.tag_name in FORMATTING_ELEMENTS for c in new_node.children
                 )
                 if (not any_still_open) and (not has_fmt_child):
-                    self.parser.reconstruct_active_formatting_elements(context)
+                    _reconstruct_fmt(self.parser, context)
 
         # Note: Active formatting elements will be reconstructed as needed
         # when content is encountered that requires them (per HTML5 spec)
@@ -4077,7 +4078,7 @@ class ParagraphTagHandler(TagHandler):
 
             # In integration points, reconstruct immediately so following text is wrapped
             if in_svg_ip or in_math_ip:
-                self.parser.reconstruct_active_formatting_elements(context)
+                _reconstruct_fmt(self.parser, context)
             return True
 
         p_ancestor = context.current_parent.find_ancestor("p")
@@ -4112,7 +4113,7 @@ class ParagraphTagHandler(TagHandler):
                     new_stack.append(el)
                 context.open_elements._stack = new_stack
             if in_svg_ip or in_math_ip:
-                self.parser.reconstruct_active_formatting_elements(context)
+                _reconstruct_fmt(self.parser, context)
             return True
 
         # HTML5 spec: If no p element is in scope, check for special contexts
@@ -4947,7 +4948,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 for entry in context.active_formatting_elements._stack
                 if entry.element is not None
             ):
-                self.parser.reconstruct_active_formatting_elements(context)
+                _reconstruct_fmt(self.parser, context)
                 # After reconstruction current_parent points at the deepest reconstructed formatting element.
                 # Move insertion point back to the cell so targeting logic below can choose appropriately.
                 context.move_to_element(current_cell)
@@ -5091,7 +5092,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     f"Reconstructing active formatting elements inside foster-parented <{context.current_parent.tag_name}> before text"
                 )
                 block_elem = context.current_parent
-                self.parser.reconstruct_active_formatting_elements(context)
+                _reconstruct_fmt(self.parser, context)
                 # After reconstruction the current_parent points at the innermost reconstructed formatting element.
                 # Move back to the block so our descent logic below deterministically picks the rightmost formatting chain.
                 context.move_to_element(block_elem)
@@ -5118,7 +5119,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 a_entry = context.active_formatting_elements.find("a") if context.active_formatting_elements else None
                 if a_entry and not any(ch.tag_name == "a" for ch in context.current_parent.children):
                     pre_ids = {id(ch) for ch in context.current_parent.children}
-                    self.parser.reconstruct_active_formatting_elements(context)
+                    _reconstruct_fmt(self.parser, context)
                     new_a = [ch for ch in context.current_parent.children if ch.tag_name == 'a' and id(ch) not in pre_ids]
                     if new_a:
                         self.debug('[anchor-cont][reconstruct] late reconstruction produced <a>')
@@ -5330,7 +5331,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         ):
             # Capture children count to detect newly reconstructed wrappers later
             pre_children = list(foster_parent.children)
-            self.parser.reconstruct_active_formatting_elements(context)
+            _reconstruct_fmt(self.parser, context)
             # Keep current_parent at reconstructed innermost formatting element (do not move back)
             # If reconstruction appended a formatting element AFTER the table that we intend to use
             # for wrapping this foster-parented text (common trailing digit/text segment),
@@ -6854,7 +6855,7 @@ class AutoClosingTagHandler(TemplateAwareHandler):
                     self.debug(
                         "Reconstructing active formatting elements before block insertion (missing entries)"
                     )
-                    self.parser.reconstruct_active_formatting_elements(context)
+                    _reconstruct_fmt(self.parser, context)
                 else:
                     self.debug(
                         "Skipping reconstruction: all active formatting elements already open"
@@ -9907,7 +9908,7 @@ class MenuitemElementHandler(TagHandler):
         if context.current_parent.find_ancestor("select"):
             self.debug("Ignoring menuitem inside select")
             return True
-        self.parser.reconstruct_active_formatting_elements(context)
+        _reconstruct_fmt(self.parser, context)
 
         parent_before = context.current_parent
         # If previous sibling is <li> under body, treat menuitem as child of that li (list nesting rule)

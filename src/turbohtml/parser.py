@@ -13,6 +13,7 @@ from .constants import (
     VOID_ELEMENTS,
 )
 from typing import Optional
+from .formatting import reconstruct_active_formatting_elements as _reconstruct_fmt
 
 
 class TurboHTML:
@@ -778,7 +779,7 @@ class TurboHTML:
         if context._deferred_block_reconstruct:
             # Clear flag before running to avoid repeat on nested blocks
             context._deferred_block_reconstruct = False
-            self.reconstruct_active_formatting_elements(context)
+            _reconstruct_fmt(self, context)
         # <listing> initial newline suppression handled structurally on character insertion
 
     def _handle_end_tag(
@@ -889,100 +890,3 @@ class TurboHTML:
 
 
 
-    def reconstruct_active_formatting_elements(self, context: "ParseContext") -> None:
-        """
-        Reconstruct active formatting elements inside the current parent.
-
-        This implements the "reconstruct the active formatting elements"
-        algorithm from the HTML5 specification. When a block element
-        interrupts formatting elements, those formatting elements must
-        be reconstructed inside the new block.
-        """
-        if context.active_formatting_elements.is_empty():
-            return
-
-        # Step 1: If there are no entries, return (already handled)
-        afe_list = list(context.active_formatting_elements)
-        if not afe_list:
-            return
-
-        # Step 2: If the last entry's element is already on the open elements stack, return
-        # (Optimization: we detect earliest needing reconstruction below)
-
-        # Forward scan (legacy implementation used by current handler logic): find earliest entry whose
-        # element is missing from the open elements stack, then reconstruct from that point forward.
-        index_to_reconstruct_from = None
-        for i, entry in enumerate(afe_list):
-            if entry.element is None:
-                continue
-            if not context.open_elements.contains(entry.element):
-                index_to_reconstruct_from = i
-                break
-        if index_to_reconstruct_from is None:
-            return
-
-        afe_list = list(context.active_formatting_elements)
-        if index_to_reconstruct_from is None:
-            return
-
-        for entry in afe_list[index_to_reconstruct_from:]:
-            if entry.element is None:
-                continue
-            if context.open_elements.contains(entry.element):
-                continue
-            # Suppress redundant sibling <nobr> reconstruction at block/body level: when the current
-            # insertion parent is a block container whose last child is already a <nobr>, skip cloning
-            # another stale <nobr> here. This prevents creation of an empty peer wrapper immediately
-            # before an incoming block element while leaving other formatting reconstruction unaffected.
-            if (
-                entry.element.tag_name == "nobr"
-                and context.current_parent.tag_name
-                in ("body", "div", "section", "article", "p")
-                and context.current_parent.children
-                and context.current_parent.children[-1].tag_name == "nobr"
-            ):
-                continue
-            # NOTE: Intentionally do NOT suppress duplicate <b> cloning here; per spec each missing
-            # formatting element entry must be reconstructed, producing nested <b> wrappers when
-            # multiple <b> elements were active at the time a block element interrupted them.
-            # Reuse existing current_parent if same tag and attribute set and still empty (prevents redundant wrapper)
-            if (
-                entry.element.tag_name
-                == "nobr"  # Only reuse for <nobr>; other tags (e.g., <b>, <i>) must clone to preserve nesting depth
-                and context.current_parent
-                and context.current_parent.tag_name == entry.element.tag_name
-                and context.current_parent.attributes == entry.element.attributes
-                and not any(
-                    ch.tag_name == "#text" for ch in context.current_parent.children
-                )
-            ):
-                # Point active formatting entry at existing element instead of cloning a new one
-                entry.element = context.current_parent
-                context.open_elements.push(context.current_parent)
-                if self.env_debug:
-                    self.debug(
-                        f"Reconstructed (reused) formatting element {context.current_parent.tag_name} (no clone)"
-                    )
-                continue
-            clone = Node(entry.element.tag_name, entry.element.attributes.copy())
-            if context.document_state in (
-                DocumentState.IN_TABLE,
-                DocumentState.IN_TABLE_BODY,
-                DocumentState.IN_ROW,
-            ):
-                first_table_idx = None
-                for idx, child in enumerate(context.current_parent.children):
-                    if child.tag_name == "table":
-                        first_table_idx = idx
-                        break
-                if first_table_idx is not None:
-                    context.current_parent.children.insert(first_table_idx, clone)
-                    clone.parent = context.current_parent
-                else:
-                    context.current_parent.append_child(clone)
-            else:
-                context.current_parent.append_child(clone)
-            context.open_elements.push(clone)
-            entry.element = clone
-            context.move_to_element(clone)
-            self.debug(f"Reconstructed formatting element {clone.tag_name}")
