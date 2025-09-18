@@ -437,14 +437,19 @@ class TurboHTML:
         parse_fragment(self)
 
     def _create_fragment_context(self) -> "ParseContext":
-        """Create parsing context for fragment parsing"""
-        from turbohtml.context import DocumentState
+        """Create parsing context for fragment parsing (branch-reduced version).
 
-        # Create context based on the fragment context element
-        if self.fragment_context == "template":
-            # Special fragment parsing for templates: create a template/content container
-            context = ParseContext(len(self.html), self.root, debug_callback=self.debug)
-            context.transition_to_state(DocumentState.IN_BODY, self.root)
+        Behavior preserved; logic condensed to a small dispatch map to reduce repetitive
+        ParseContext construction and multiple similar state transitions.
+        """
+        from turbohtml.context import DocumentState as _DS
+
+        fc = self.fragment_context
+        context = ParseContext(len(self.html), self.root, debug_callback=self.debug)
+
+        if fc == "template":
+            # Special template: synthesize template/content container then treat as IN_BODY inside content.
+            context.transition_to_state(_DS.IN_BODY, self.root)
             template_node = Node("template")
             self.root.append_child(template_node)
             content_node = Node("content")
@@ -452,38 +457,36 @@ class TurboHTML:
             context.move_to_element(content_node)
             return context
 
-        if self.fragment_context in ("td", "th"):
-            context = ParseContext(len(self.html), self.root, debug_callback=self.debug)
-            context.transition_to_state(DocumentState.IN_CELL, self.root)
-        elif self.fragment_context == "tr":
-            context = ParseContext(len(self.html), self.root, debug_callback=self.debug)
-            context.transition_to_state(DocumentState.IN_ROW, self.root)
-        elif self.fragment_context in ("thead", "tbody", "tfoot"):
-            context = ParseContext(len(self.html), self.root, debug_callback=self.debug)
-            context.transition_to_state(DocumentState.IN_TABLE_BODY, self.root)
-        elif self.fragment_context == "html":
-            context = ParseContext(len(self.html), self.root, debug_callback=self.debug)
-            # Remain at fragment root; children appended directly (no <html> wrapper node in output)
-            context.transition_to_state(DocumentState.INITIAL, self.root)
-        elif self.fragment_context in RAWTEXT_ELEMENTS:
-            context = ParseContext(len(self.html), self.root, debug_callback=self.debug)
-            context.transition_to_state(DocumentState.IN_BODY, self.root)
+        # Map fragment context to initial DocumentState (default IN_BODY)
+        state_map = {
+            "td": _DS.IN_CELL,
+            "th": _DS.IN_CELL,
+            "tr": _DS.IN_ROW,
+            "thead": _DS.IN_TABLE_BODY,
+            "tbody": _DS.IN_TABLE_BODY,
+            "tfoot": _DS.IN_TABLE_BODY,
+            "html": _DS.INITIAL,
+        }
+        target_state = None
+        if fc in state_map:
+            target_state = state_map[fc]
+        elif fc in RAWTEXT_ELEMENTS:
+            target_state = _DS.IN_BODY
         else:
-            context = ParseContext(len(self.html), self.root, debug_callback=self.debug)
-            context.transition_to_state(DocumentState.IN_BODY, self.root)
-        # Table fragment: treat insertion mode as IN_TABLE for correct section handling
-        if self.fragment_context == "table":
-            context.transition_to_state(DocumentState.IN_TABLE, self.root)
+            target_state = _DS.IN_BODY
+        context.transition_to_state(target_state, self.root)
 
-        # Set foreign context if fragment context is within a foreign element
-        if self.fragment_context:
-            if self.fragment_context in ("math", "svg"):
-                # Simple foreign context (e.g., fragment_context="math")
-                context.current_context = self.fragment_context
-                self.debug(f"Set foreign context to {self.fragment_context}")
-            elif " " in self.fragment_context:
-                # Namespaced foreign element (e.g., fragment_context="math ms")
-                namespace_elem = self.fragment_context.split(" ")[0]
+        # Table fragment: adjust to IN_TABLE for section handling
+        if fc == "table":
+            context.transition_to_state(_DS.IN_TABLE, self.root)
+
+        # Foreign context detection (math/svg + namespaced)
+        if fc:
+            if fc in ("math", "svg"):
+                context.current_context = fc
+                self.debug(f"Set foreign context to {fc}")
+            elif " " in fc:  # namespaced
+                namespace_elem = fc.split(" ")[0]
                 if namespace_elem in ("math", "svg"):
                     context.current_context = namespace_elem
                     self.debug(f"Set foreign context to {namespace_elem}")
@@ -495,6 +498,10 @@ class TurboHTML:
     ) -> bool:
         """Check if a start tag should be ignored in fragment parsing context"""
         # HTML5 Fragment parsing rules
+
+        def _at_fragment_root() -> bool:
+            cp = context.current_parent
+            return cp is self.root or (cp and cp.tag_name == "document-fragment")
 
         # In non-document fragment contexts, ignore document structure elements
         # (except allow <frameset> when fragment_context == 'html' so frameset handler can run).
@@ -553,38 +560,19 @@ class TurboHTML:
         # allow subsequent identical tags to be processed normally so that nested structure
         # (e.g. a <table><td> inside a td fragment) is constructed.
         if self.fragment_context in ("td", "th") and tag_name in ("td", "th"):
-            # Only ignore if we're still at the fragment root insertion point so nested table
-            # structures can create their own cells.
-            at_fragment_root = context.current_parent is self.root or (
-                context.current_parent and context.current_parent.tag_name == "document-fragment"
-            )
-            if not context.fragment_context_ignored and at_fragment_root:
+            if not context.fragment_context_ignored and _at_fragment_root():
                 context.fragment_context_ignored = True
                 return True
-        elif self.fragment_context in ("thead", "tbody", "tfoot") and tag_name in (
-            "thead",
-            "tbody",
-            "tfoot",
-        ):
-            at_fragment_root = context.current_parent is self.root or (
-                context.current_parent and context.current_parent.tag_name == "document-fragment"
-            )
-            if not context.fragment_context_ignored and at_fragment_root:
+        elif self.fragment_context in ("thead", "tbody", "tfoot") and tag_name in ("thead", "tbody", "tfoot"):
+            if not context.fragment_context_ignored and _at_fragment_root():
                 context.fragment_context_ignored = True
                 return True
         elif self.fragment_context == "tr" and tag_name == "tr":
-            at_fragment_root = context.current_parent is self.root or (
-                context.current_parent and context.current_parent.tag_name == "document-fragment"
-            )
-            if not context.fragment_context_ignored and at_fragment_root:
+            if not context.fragment_context_ignored and _at_fragment_root():
                 context.fragment_context_ignored = True
                 return True
         elif self.fragment_context in ("td", "th") and tag_name == "tr":
-            # Leading <tr> before any cell in td/th fragment (test expectation: drop it)
-            at_fragment_root = context.current_parent is self.root or (
-                context.current_parent and context.current_parent.tag_name == "document-fragment"
-            )
-            if not context.fragment_context_ignored and at_fragment_root:
+            if not context.fragment_context_ignored and _at_fragment_root():  # leading <tr> before any cell
                 context.fragment_context_ignored = True
                 return True
 
@@ -826,38 +814,41 @@ class TurboHTML:
     # Constants imported at module level for direct use
 
     def _merge_adjacent_text_nodes(self, node: Node) -> None:
-        """Recursively merge adjacent text node children for cleaner DOM output.
+        """Iteratively merge adjacent sibling text nodes across the tree.
 
-        This is a post-processing normalization to align with HTML parsing conformance outputs
-            where successive character insertions that are contiguous end up in a single
-            text node. It is intentionally conservative: only merges direct siblings
-            that are both '#text'.
+        Keeps semantics of previous recursive version while eliminating recursion depth
+        risk for extremely deep trees (unlikely but cheap to guard against). Only merges
+        direct siblings where both are '#text'.
         """
-        if not node.children:
-            return
-        merged: list[Node] = []
-        pending_text: Optional[Node] = None
-        for child in node.children:
-            if child.tag_name == "#text":
-                if pending_text is None:
-                    pending_text = child
+        stack = [node]
+        while stack:
+            cur = stack.pop()
+            if not cur.children:
+                continue
+            merged: list[Node] = []
+            pending_text: Optional[Node] = None
+            changed = False
+            for ch in cur.children:
+                if ch.tag_name == "#text":
+                    if pending_text is None:
+                        pending_text = ch
+                        merged.append(ch)
+                    else:
+                        pending_text.text_content += ch.text_content
+                        changed = True
                 else:
-                    # Merge into pending
-                    pending_text.text_content += child.text_content
-            else:
-                if pending_text is not None:
-                    merged.append(pending_text)
                     pending_text = None
-                merged.append(child)
-        if pending_text is not None:
-            merged.append(pending_text)
-        # Only replace if changed
-        if len(merged) != len(node.children):
-            node.children = merged
-        # Recurse
-        for child in node.children:
-            if child.tag_name != "#text":
-                self._merge_adjacent_text_nodes(child)
+                    merged.append(ch)
+            if changed:
+                cur.children = merged
+            # Push non-text children for processing
+            for ch in reversed(cur.children):  # reversed to process in original order depth-first
+                if ch.tag_name != "#text":
+                    stack.append(ch)
+
+
+
+
 
 
 
