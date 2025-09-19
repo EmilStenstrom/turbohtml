@@ -18,8 +18,9 @@ from .formatting import reconstruct_active_formatting_elements as _reconstruct_f
 class TurboHTML:
     """
     Main parser interface.
-    - Instantiation with an HTML string automatically triggers parsing.
-    - Provides a root Node that represents the DOM tree.
+    Instantiation with an HTML string immediately parses into an in‑memory tree
+    rooted at `self.root`. Public surface is intentionally small; most spec logic
+    lives in handlers and predicate helpers for determinism and testability.
     """
 
     def __init__(
@@ -104,9 +105,8 @@ class TurboHTML:
                 self.text_handler = handler
                 break
 
-        # Track token history for minimal contextual inferences (e.g. permitting a nested
-        # <form> after an ignored premature </form> in table insertion modes). We keep only
-        # the immediately previous token to avoid persistent parse-state flags.
+        # Track a tiny token history window for context-sensitive decisions without
+        # proliferating boolean state. Only previous + current are retained.
         self._prev_token = None  # The token processed in the prior loop iteration
         self._last_token = (
             None  # The token currently being processed (internal convenience)
@@ -158,8 +158,8 @@ class TurboHTML:
             self.html_node.append_child(head)
 
     def _ensure_html_node(self) -> None:
-        """Ensure html node is in the tree if it isn't already"""
-        # Skip for fragment parsing
+        """Materialize <html> into the root if not already present (document mode only)."""
+        # Skip for fragment parsing (fragment root is a synthetic document-fragment)
         if self.fragment_context:
             return
         if self.html_node not in self.root.children:
@@ -168,7 +168,7 @@ class TurboHTML:
     # Head access helpers removed – handlers synthesize/locate head directly when necessary.
 
 
-    def _get_body_node(self) -> Optional[Node]:  # retained minimal body lookup for handlers
+    def _get_body_node(self) -> Optional[Node]:  # minimal body lookup for handlers
         if self.fragment_context:
             return None
         if not self.html_node:
@@ -189,7 +189,7 @@ class TurboHTML:
         )
 
     def _ensure_body_node(self, context: ParseContext) -> Optional[Node]:
-        """Get or create body node if not in frameset mode"""
+        """Return existing <body> or create one (unless frameset/fragment constraints block it)."""
         if self.fragment_context:
             # Special case: html fragment context should create document structure
             if self.fragment_context == "html":
@@ -248,25 +248,15 @@ class TurboHTML:
         preserve_attr_case: bool = False,
         push_override: Optional[bool] = None,  # None => default semantics; True/False force push
     ) -> Node:
-        """Create and insert an element for a start tag token and (optionally) update stacks.
+        """Insert a start tag's element with controlled stack / current_parent semantics.
 
         Modes:
-          * normal    – Standard spec behavior: push non-void elements onto the open elements stack. 'enter' controls
-                        whether the insertion point (current_parent) is moved to the new element (ignored for voids).
-          * transient – Insert element, optionally enter it, but NEVER push it on the open elements stack. Used for
-                        simplified / synthetic wrappers (e.g. table-ish constructs inside template content) that
-                        should act as current insertion point without participating in scope/adoption algorithms.
-          * void      – Force void semantics: element is inserted and never pushed nor entered regardless of tag.
+          normal    – Standard spec path: push (unless forced void) then optionally enter.
+          transient – Insert but never push (synthetic wrappers inside template content).
+          void      – Insert and never push/enter (independent of actual tag classification).
 
-        treat_as_void forces void classification within 'normal' or 'transient' modes (e.g. for caption/thead like
-        wrappers we don't want on the stack). If mode=='void' this flag is ignored.
-
-        Invariants preserved:
-          * current_parent is only set to the new element if (mode in {normal, transient}) AND enter True AND element
-            is not (actually or forced) void.
-          * Elements on the open elements stack are always non-void and created in normal mode.
-
-        Returns the newly created Node.
+        treat_as_void can force void behavior under normal/transient modes. All invariants
+        mirror HTML tree construction: no scoped side effects hidden here.
         """
         if mode not in ("normal", "transient", "void"):
             raise ValueError(f"insert_element: unknown mode '{mode}'")
@@ -346,11 +336,10 @@ class TurboHTML:
         foster: bool = False,  # retained for API compatibility (no-op)
         strip_replacement: bool = True,  # retained for API compatibility (no-op)
     ) -> Optional[Node]:
-        """Insert character data with standardized sibling merging.
+        """Insert character data performing standard merge with preceding text node.
 
-        Notes:
-          * "foster" & "strip_replacement" are legacy parameters kept for handlers; they
-            have no effect here (sanitization & fostering decisions happen earlier).
+        Legacy params 'foster' & 'strip_replacement' are kept for handler API stability.
+        Fostering / replacement char elision happens earlier in specialized handlers.
         """
         if text == "":  # Fast path noop
             return None
@@ -425,9 +414,7 @@ class TurboHTML:
 
     # Main Parsing Methods
     def _parse(self) -> None:
-        """
-        Main parsing loop using ParseContext and HTMLTokenizer.
-        """
+        """Entry point selecting document vs fragment strategy."""
         if self.fragment_context:
             self._parse_fragment()
         else:
@@ -437,11 +424,7 @@ class TurboHTML:
         parse_fragment(self)
 
     def _create_fragment_context(self) -> "ParseContext":
-        """Create parsing context for fragment parsing (branch-reduced version).
-
-        Behavior preserved; logic condensed to a small dispatch map to reduce repetitive
-        ParseContext construction and multiple similar state transitions.
-        """
+        """Initialize a fragment ParseContext with state derived from the context element."""
         from turbohtml.context import DocumentState as _DS
 
         fc = self.fragment_context
@@ -493,27 +476,28 @@ class TurboHTML:
 
         return context
 
-    def _should_ignore_fragment_start_tag(
-        self, tag_name: str, context: "ParseContext"
-    ) -> bool:
-        """Check if a start tag should be ignored in fragment parsing context"""
-        # HTML5 Fragment parsing rules
+    def _should_ignore_fragment_start_tag(self, tag_name: str, context: "ParseContext") -> bool:
+        """Return True if a start tag is ignored under fragment rules.
+
+        Structural table/document suppression has migrated to fragment predicates.
+        This residual path handles:
+          * Redundant document wrappers (html/head/body/frameset) in non-html fragments.
+          * First redundant context element tokens (legacy one-shot suppression).
+          * Spec-less fragment contexts (fallback for stray table structure).
+        """
 
         def _at_fragment_root() -> bool:
             cp = context.current_parent
             return cp is self.root or (cp and cp.tag_name == "document-fragment")
 
-        # In non-document fragment contexts, ignore document structure elements
-        # (except allow <frameset> when fragment_context == 'html' so frameset handler can run).
+        # Ignore document structure elements outside an html fragment (frameset kept so frameset handler can run)
         if (
             tag_name == "html"
             or (tag_name == "head" and self.fragment_context != "html")
             or (tag_name == "frameset" and self.fragment_context != "html")
         ):
             return True
-        # Ignore <body> start tag in fragment parsing if a body element already exists in the fragment root.
-        # Structural inference: if any child of fragment root (or its descendants) is a <body>, further <body>
-        # tags should not be ignored (we allow flow content). We only skip the first redundant <body>.
+        # Ignore only the first <body>; subsequent bodies merge attributes/content per tests.
         if tag_name == "body":
             existing_body = None
             root = self.root
@@ -529,8 +513,7 @@ class TurboHTML:
         if context.current_context in ("math", "svg"):
             return False
 
-        # Special-case (html fragment only): once we enter frameset insertion modes, ignore any
-        # non-frameset elements (only frame/frameset/noframes permitted).
+        # Once in frameset modes inside an html fragment, only frame/frameset/noframes allowed.
         if self.fragment_context == "html":
             if context.document_state in (
                 DocumentState.IN_FRAMESET,
@@ -549,7 +532,7 @@ class TurboHTML:
         if self.fragment_context == "table" and tag_name == "table":
             return True
 
-        # Context-matching first tag suppression for table-related contexts
+        # Context-matching first tag suppression (legacy one-shot) for table-related contexts
         if self.fragment_context in ("td", "th") and tag_name in ("td", "th"):
             if not context.fragment_context_ignored and _at_fragment_root():
                 context.fragment_context_ignored = True
@@ -567,8 +550,7 @@ class TurboHTML:
                 context.fragment_context_ignored = True
                 return True
 
-        # Non-table fragment fallback: if no fragment spec exists (foreign or unknown context), mimic
-        # original legacy suppression for stray table-structural tags so their content flows upward.
+        # Fallback: for contexts without a FragmentSpec, preserve legacy suppression of stray table structure.
         if self.fragment_context not in (
             "table","tr","td","th","thead","tbody","tfoot"
         ):
@@ -596,7 +578,7 @@ class TurboHTML:
         context.current_parent.append_child(comment_node)
 
     def _parse_document(self) -> None:
-        """Parse HTML as a full document (original logic)"""
+        """Parse a full HTML document (token loop delegating to handlers)."""
         # Initialize context with html_node as current_parent
         context = ParseContext(len(self.html), self.html_node, debug_callback=self.debug)
         self.tokenizer = HTMLTokenizer(self.html)
@@ -622,10 +604,7 @@ class TurboHTML:
                 context.index = self.tokenizer.pos
                 continue
 
-            # Contextual malformed tag suppression: if a start tag token has a raw '<' in its tag name
-            # (tokenizer tolerated malformed name) and the current insertion point is within a select/option/
-            # optgroup subtree, drop it. Outside select-related subtrees we preserve literal malformed names
-            # to match expected tree output for generic malformed constructs.
+            # Contextual malformed tag suppression: drop malformed start tags containing '<' inside select subtree.
             if (
                 token.type == "StartTag"
                 and "<" in token.tag_name
@@ -657,7 +636,6 @@ class TurboHTML:
             self._ensure_html_node()
 
             if token.type == "StartTag":
-                # Dispatch to handlers (SpecialElementHandler now covers previous special-element logic)
                 self._handle_start_tag(
                     token, token.tag_name, context, self.tokenizer.pos
                 )
@@ -682,7 +660,6 @@ class TurboHTML:
                                 break
                 # Normalization handled by TextNormalizationHandler.
 
-        # Structural synthesis and normalization moved to StructureSynthesisHandler.finalize()
 
     # Tag Handling Methods
     def _handle_start_tag(
@@ -690,13 +667,10 @@ class TurboHTML:
     ) -> None:
         """Handle all opening HTML tags."""
 
-        # Early start-tag preprocessing: give all handlers a chance to suppress/synthesize before dispatch.
-        # Handlers that don't implement the hook inherit the no-op base method (no branching/try needed).
         for h in self.tag_handlers:
             if h.early_start_preprocess(token, context):  # type: ignore[attr-defined]
                 return
 
-        # Try tag handlers first
         for handler in self.tag_handlers:
             if handler.should_handle_start(tag_name, context):
                 if handler.handle_start(token, context, not token.is_last_token):
@@ -707,11 +681,7 @@ class TurboHTML:
         self.debug(f"No handler found, using default handling for {tag_name}")
 
         new_node = Node(tag_name, token.attributes)
-        # Do NOT prematurely unwind formatting elements when inserting a block-level element.
-        # Current parent at this point may be a formatting element (e.g. <cite> inside <b>) and
-        # per spec the block should become its child, not a sibling produced by popping the
-        # formatting element. We therefore simply append without altering any formatting stack
-        # beyond the normal open-elements push.
+        # Keep formatting elements on stack: block inside formatting becomes its child (spec behavior).
         context.current_parent.append_child(new_node)
         context.move_to_element(new_node)
         context.open_elements.push(new_node)
@@ -726,8 +696,7 @@ class TurboHTML:
         self, token: HTMLToken, tag_name: str, context: ParseContext
     ) -> None:
         """Handle all closing HTML tags (spec-aligned, no auxiliary adoption flags)."""
-        # Early end-tag preprocessing (mirrors start-tag early hook). Allows handlers to suppress or
-        # synthesize behavior (e.g., stray </table> ignore) before generic parser logic.
+        # Early end-tag preprocessing (mirrors start tag path).
         for h in self.tag_handlers:
             if h.early_end_preprocess(token, context):  # type: ignore[attr-defined]
                 return
@@ -753,7 +722,7 @@ class TurboHTML:
                         context.move_to_element(self.root)
                     return
 
-        # In template content, perform a bounded default closure for simple end tags
+        # Template content bounded default closure for simple end tags
         if in_template_content(context):
             # Find the nearest template content boundary
             boundary = None
@@ -794,12 +763,7 @@ class TurboHTML:
     # Constants imported at module level for direct use
 
     def _merge_adjacent_text_nodes(self, node: Node) -> None:
-        """Iteratively merge adjacent sibling text nodes across the tree.
-
-        Keeps semantics of previous recursive version while eliminating recursion depth
-        risk for extremely deep trees (unlikely but cheap to guard against). Only merges
-        direct siblings where both are '#text'.
-        """
+        """Iteratively merge adjacent sibling text nodes (non-recursive)."""
         stack = [node]
         while stack:
             cur = stack.pop()
@@ -825,11 +789,3 @@ class TurboHTML:
             for ch in reversed(cur.children):  # reversed to process in original order depth-first
                 if ch.tag_name != "#text":
                     stack.append(ch)
-
-
-
-
-
-
-
-
