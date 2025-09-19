@@ -192,6 +192,26 @@ def _supp_fragment_nonhtml_structure(parser, context, token, fragment_context):
         return True
     return False
 
+def _supp_fragment_legacy_context(parser, context, token, fragment_context):
+    """Aggregate remaining legacy suppression logic previously in parser._should_ignore_fragment_start_tag.
+
+    Responsibilities migrated:
+      * Single initial context element suppression for tbody/thead/tfoot/tr/td/th (now covered elsewhere but kept idempotent)
+      * Nested <table> start tag suppression inside a table fragment
+      * Frameset-mode restrictions inside html fragment (non structural tokens dropped after frameset)
+    """
+    if token.type != "StartTag":
+        return False
+    tn = token.tag_name
+    # Table fragment: ignore nested <table>
+    if fragment_context == "table" and tn == "table":
+        return True
+    # Additional frameset restrictions (html fragment only)
+    if fragment_context == "html" and context.document_state in (DocumentState.IN_FRAMESET, DocumentState.AFTER_FRAMESET):
+        if tn not in {"frameset", "frame", "noframes"}:
+            return True
+    return False
+
 # Fragment specifications registry (includes suppression predicates)
 FRAGMENT_SPECS: Dict[str, FragmentSpec] = {
     "template": FragmentSpec(
@@ -201,7 +221,7 @@ FRAGMENT_SPECS: Dict[str, FragmentSpec] = {
     ),
     "html": FragmentSpec(
         name="html",
-        suppression_predicates=[_supp_doctype],
+        suppression_predicates=[_supp_doctype, _supp_fragment_legacy_context],
         post_pass_hooks=[_html_finalize_post_pass],
     ),
     "select": FragmentSpec(
@@ -220,7 +240,7 @@ FRAGMENT_SPECS: Dict[str, FragmentSpec] = {
     ),
     "td": FragmentSpec(name="td", suppression_predicates=[_supp_doctype, _supp_duplicate_cell_or_initial_row]),
     "th": FragmentSpec(name="th", suppression_predicates=[_supp_doctype, _supp_duplicate_cell_or_initial_row]),
-    "tr": FragmentSpec(name="tr", suppression_predicates=[_supp_doctype]),
+    "tr": FragmentSpec(name="tr", suppression_predicates=[_supp_doctype, _supp_duplicate_section_wrapper]),
     "title": FragmentSpec(name="title", suppression_predicates=[_supp_doctype], treat_all_as_text=True),
     "textarea": FragmentSpec(name="textarea", suppression_predicates=[_supp_doctype], treat_all_as_text=True),
     "style": FragmentSpec(name="style", suppression_predicates=[_supp_doctype], treat_all_as_text=True),
@@ -231,7 +251,7 @@ FRAGMENT_SPECS: Dict[str, FragmentSpec] = {
     "noframes": FragmentSpec(name="noframes", suppression_predicates=[_supp_doctype], treat_all_as_text=True),
     "table": FragmentSpec(
         name="table",
-        suppression_predicates=[_supp_doctype],
+        suppression_predicates=[_supp_doctype, _supp_fragment_legacy_context],
         pre_token_hooks=[],
     ),
     "tbody": FragmentSpec(
@@ -404,11 +424,21 @@ def handle_start_tag(parser, context, token, fragment_context, spec):
             if body and context.document_state != DocumentState.IN_BODY:
                 context.move_to_element(body)
                 context.transition_to_state(DocumentState.IN_BODY, body)
-    if parser._should_ignore_fragment_start_tag(token.tag_name, context):
-        parser.debug(
-            f"Fragment: Ignoring {token.tag_name} start tag in {fragment_context} context"
-        )
-        return
+    # Fallback suppression for fragment contexts without a FragmentSpec (legacy parser behavior):
+    if spec is None:
+        tn = token.tag_name
+        # Suppress document structural wrappers (except body handled below) and table scaffolding
+        if tn in {"html", "head", "frameset"}:
+            parser.debug(f"Fragment(fallback): suppressing <{tn}> in context {fragment_context}")
+            return
+        if tn == "body":
+            has_body = any(ch.tag_name == "body" for ch in parser.root.children)
+            if not has_body:
+                parser.debug("Fragment(fallback): suppressing initial <body>")
+                return
+        if tn in {"caption", "colgroup", "tbody", "thead", "tfoot", "tr", "td", "th"}:
+            parser.debug(f"Fragment(fallback): suppressing stray table structure <{tn}>")
+            return
     parser._handle_start_tag(token, token.tag_name, context, parser.tokenizer.pos)
     context.index = parser.tokenizer.pos
 

@@ -99,6 +99,7 @@ class TurboHTML:
             DefaultElementInsertionHandler(self),
             UnknownElementHandler(self),
             TemplateContentBoundedEndHandler(self),
+            AnchorTableNormalizationHandler(self),
             GenericEndTagHandler(self),
             StructureSynthesisHandler(self),
             PostProcessHandler(self),
@@ -480,92 +481,6 @@ class TurboHTML:
                     self.debug(f"Set foreign context to {namespace_elem}")
 
         return context
-
-    def _should_ignore_fragment_start_tag(self, tag_name: str, context: "ParseContext") -> bool:
-        """Return True if a start tag is ignored under fragment rules.
-
-        Structural table/document suppression has migrated to fragment predicates.
-        This residual path handles:
-          * Redundant document wrappers (html/head/body/frameset) in non-html fragments.
-          * First redundant context element tokens (legacy one-shot suppression).
-          * Spec-less fragment contexts (fallback for stray table structure).
-        """
-
-        def _at_fragment_root() -> bool:
-            cp = context.current_parent
-            return cp is self.root or (cp and cp.tag_name == "document-fragment")
-
-        # Ignore document structure elements outside an html fragment (frameset kept so frameset handler can run)
-        if (
-            tag_name == "html"
-            or (tag_name == "head" and self.fragment_context != "html")
-            or (tag_name == "frameset" and self.fragment_context != "html")
-        ):
-            return True
-        # Ignore only the first <body>; subsequent bodies merge attributes/content per tests.
-        if tag_name == "body":
-            existing_body = None
-            root = self.root
-            for ch in root.children:
-                if ch.tag_name == "body":
-                    existing_body = ch
-                    break
-            if not existing_body:
-                return True
-            return False
-
-        # In foreign contexts (MathML/SVG), let the foreign handlers manage everything
-        if context.current_context in ("math", "svg"):
-            return False
-
-        # Once in frameset modes inside an html fragment, only frame/frameset/noframes allowed.
-        if self.fragment_context == "html":
-            if context.document_state in (
-                DocumentState.IN_FRAMESET,
-                DocumentState.AFTER_FRAMESET,
-            ) and tag_name not in ("frameset", "frame", "noframes"):
-                return True
-        # Select fragment: suppress disallowed interactive inputs
-        if self.fragment_context == "select" and tag_name in (
-            "input",
-            "keygen",
-            "textarea",
-        ):
-            return True
-
-        # Table fragment: ignore nested <table> start tags
-        if self.fragment_context == "table" and tag_name == "table":
-            return True
-
-        # Context-matching first tag suppression (legacy one-shot) for table-related contexts
-        if self.fragment_context in ("td", "th") and tag_name in ("td", "th"):
-            if not context.fragment_context_ignored and _at_fragment_root():
-                context.fragment_context_ignored = True
-                return True
-        elif self.fragment_context in ("thead", "tbody", "tfoot") and tag_name in ("thead", "tbody", "tfoot"):
-            if not context.fragment_context_ignored and _at_fragment_root():
-                context.fragment_context_ignored = True
-                return True
-        elif self.fragment_context == "tr" and tag_name == "tr":
-            if not context.fragment_context_ignored and _at_fragment_root():
-                context.fragment_context_ignored = True
-                return True
-        elif self.fragment_context in ("td", "th") and tag_name == "tr":
-            if not context.fragment_context_ignored and _at_fragment_root():
-                context.fragment_context_ignored = True
-                return True
-
-        # Fallback: for contexts without a FragmentSpec, preserve legacy suppression of stray table structure.
-        if self.fragment_context not in (
-            "table","tr","td","th","thead","tbody","tfoot"
-        ):
-            from turbohtml.fragment import FRAGMENT_SPECS as _FRAG_SPECS  # localized import
-            if self.fragment_context not in _FRAG_SPECS and tag_name in (
-                "caption","colgroup","tbody","thead","tfoot","tr","td","th"
-            ):
-                return True
-
-        return False
 
     def _handle_fragment_comment(self, text: str, context: "ParseContext") -> None:
         """Handle comments in fragment parsing"""
