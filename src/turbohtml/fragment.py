@@ -14,7 +14,6 @@ from typing import Callable, List, Dict
 
 from .context import DocumentState, ContentState
 from .node import Node
-from .constants import RAWTEXT_ELEMENTS
 from .tokenizer import HTMLTokenizer, HTMLToken
 
 @dataclass
@@ -168,47 +167,30 @@ def _supp_duplicate_cell_or_initial_row(parser, context, token, fragment_context
     return False
 
 def _supp_fragment_nonhtml_structure(parser, context, token, fragment_context):
-        """Suppress document / table structural start tags in non-structural fragment contexts.
+    """Suppress document/table structural start tags in non-structural fragment contexts.
 
-        This gradually migrates logic currently duplicated inside
-        parser._should_ignore_fragment_start_tag() into predicate form so the
-        fragment loop can make suppression decisions uniformly.
-
-        Scope (intentionally narrow for first pass):
-            * Applies only when fragment_context is NOT one of html, table, tbody,
-                thead, tfoot, tr, td, th (those contexts need their own nuanced rules)
-            * Suppresses StartTag tokens whose tag name is in the set of document-
-                level structural elements {'html','head','body','frameset'} except we
-                allow <frameset> only inside an html fragment (handled elsewhere)
-            * Suppresses StartTag tokens that are table structural wrappers when the
-                fragment context is a non-table phrasing/flow context (e.g. innerHTML
-                of a <span> containing stray <td>).</n+
-        We do NOT (in this initial predicate) replicate the nuanced first-match
-        ignoring of a context-matching table section or cell: that remains in the
-        parser logic until subsequent safe migration steps. The predicate is kept
-        simple to avoid regressions; further expansion will be gated by passing
-        the full test suite after each incremental move.
-        """
-        if token.type != "StartTag":
-                return False
-        tn = token.tag_name
-        # Skip if fragment context itself is structural or html
-        if fragment_context in {"html", "table", "tbody", "thead", "tfoot", "tr", "td", "th"}:
-                return False
-        # Document-level structural suppression (nuanced <body>):
-        if tn in {"html", "head", "frameset"}:
-            return True
-        if tn == "body":
-            # Suppress only the *first* body (mirror original parser logic); subsequent <body> allowed so
-            # attributes/content can merge under existing body element as tests expect.
-            has_body = any(ch.tag_name == "body" for ch in parser.root.children)
-            if not has_body:
-                return True
-            return False
-        # Table structural wrappers (non-table fragment contexts)
-        if tn in {"caption", "colgroup", "tbody", "thead", "tfoot", "tr", "td", "th"}:
+    Scope:
+      * Applies only when fragment_context is NOT one of html, table, tbody, thead, tfoot, tr, td, th
+      * Suppresses StartTag tokens for document-level structural elements {'html','head','body','frameset'}
+        (first <body> only; subsequent bodies allowed for attribute merge semantics)
+      * Suppresses StartTag tokens that are table structural wrappers when the fragment context is a
+        non-table phrasing/flow context (e.g. innerHTML of a <span> containing stray <td>)
+    """
+    if token.type != "StartTag":
+        return False
+    tn = token.tag_name
+    if fragment_context in {"html", "table", "tbody", "thead", "tfoot", "tr", "td", "th"}:
+        return False
+    if tn in {"html", "head", "frameset"}:
+        return True
+    if tn == "body":
+        has_body = any(ch.tag_name == "body" for ch in parser.root.children)
+        if not has_body:
             return True
         return False
+    if tn in {"caption", "colgroup", "tbody", "thead", "tfoot", "tr", "td", "th"}:
+        return True
+    return False
 
 # Fragment specifications registry (includes suppression predicates)
 FRAGMENT_SPECS: Dict[str, FragmentSpec] = {
@@ -386,8 +368,6 @@ def handle_comment(parser, context, token, fragment_context):
 def handle_start_tag(parser, context, token, fragment_context, spec):
     if spec and token.tag_name in spec.ignored_start_tags:
         return
-    if fragment_context == "template" and token.tag_name == "template":
-        return
     # Guarantee html_node exists before delegating to handlers that may reference it.
     # Document parsing calls _ensure_html_node() before non-DOCTYPE/Comment tokens; replicate minimal
     # requirement here to avoid attribute errors in early_start_preprocess hooks during fragment parsing.
@@ -396,8 +376,8 @@ def handle_start_tag(parser, context, token, fragment_context, spec):
     if fragment_context == "html":
         tn = token.tag_name
         if tn == "head":
-            # Ensure head exists (body may also be synthesized by _ensure_body_node, acceptable parity with previous behavior)
-            body_candidate = parser._ensure_body_node(context)  # may create both head/body
+            # Ensure head/body exist (acceptable parity with previous behavior)
+            parser._ensure_body_node(context)  # may create both head/body
             head = next((c for c in parser.root.children if c.tag_name == "head"), None)
             if head:
                 context.move_to_element(head)
@@ -495,9 +475,16 @@ def parse_fragment(parser: "TurboHTML") -> None:  # pragma: no cover
     # contexts was removed after introducing regressions (innerHTML pass rate drop). Any required
     # implied section or row alignment now handled via pre‑token hooks and normal insertion logic
     # without seeding non‑DOM ancestors.
-    synthetic_stack = []  # retained for pruning logic compatibility (now always empty)
 
-    if spec and spec.treat_all_as_text:
+    # Cache spec attributes locally (minor attribute lookup reduction in hot loop)
+    pre_hooks = spec.pre_token_hooks if spec and spec.pre_token_hooks else ()
+    suppression_preds = (
+        spec.suppression_predicates if spec and spec.suppression_predicates else ()
+    )
+    post_hooks = spec.post_pass_hooks if spec and spec.post_pass_hooks else ()
+    treat_all_as_text = spec.treat_all_as_text if spec else False
+
+    if treat_all_as_text:
         parser.tokenizer._pending_tokens.append(
             HTMLToken("Character", data=parser.html)
         )
@@ -506,12 +493,12 @@ def parse_fragment(parser: "TurboHTML") -> None:  # pragma: no cover
         parser._prev_token = parser._last_token
         parser._last_token = token
         parser.debug(f"_parse_fragment: {token}, context: {context}", indent=0)
-        if spec and spec.pre_token_hooks:
-            for hook in spec.pre_token_hooks:
+        if pre_hooks:
+            for hook in pre_hooks:
                 hook(parser, context, token)
-        if spec and spec.suppression_predicates:
+        if suppression_preds:
             suppressed = False
-            for pred in spec.suppression_predicates:
+            for pred in suppression_preds:
                 try:
                     if pred(parser, context, token, fragment_context):
                         suppressed = True
@@ -532,8 +519,8 @@ def parse_fragment(parser: "TurboHTML") -> None:  # pragma: no cover
         if token.type == "Character":
             handle_character(parser, context, token, fragment_context)
             continue
-    if spec and spec.post_pass_hooks:
-        for hook in spec.post_pass_hooks:
+    if post_hooks:
+        for hook in post_hooks:
             hook(parser, context)
 
     # Synthetic stack pruning no-op (bootstrap disabled).
