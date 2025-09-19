@@ -327,11 +327,6 @@ class MalformedSelectStartTagFilterHandler(TagHandler):
         return True
 
 
-
-## Removed MathMLLeafEnterHandler (superseded by targeted logic inside ForeignTagHandler)
-        return False
-
-
 class BodyImplicitCreationHandler(TagHandler):
     """Implicit body creation formerly inline in parser.
 
