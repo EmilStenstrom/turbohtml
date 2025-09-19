@@ -1271,6 +1271,42 @@ class GenericEndTagHandler(TagHandler):
         return True
 
 
+class TemplateContentBoundedEndHandler(TagHandler):
+    """Handles simple end tags inside template content boundary.
+
+    Mirrors parser._handle_end_tag's inline logic: when inside a <template>'s content subtree,
+    walk from current_parent up toward the content boundary to find a matching open element.
+    If found, move insertion point to its parent (effectively exiting it). If not, ignore.
+    We do not touch open_elements stack here beyond moving current_parent because template
+    content hosting uses normal element push/pop semantics already; the bounded search prevents
+    closing across the synthetic content boundary.
+    """
+
+    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        # Activate only when inside template content subtree.
+        return in_template_content(context)
+
+    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+        boundary = None
+        node = context.current_parent
+        while node:
+            if (
+                node.tag_name == "content"
+                and node.parent
+                and node.parent.tag_name == "template"
+            ):
+                boundary = node
+                break
+            node = node.parent
+        cursor = context.current_parent
+        while cursor and cursor is not boundary:
+            if cursor.tag_name == token.tag_name:
+                if cursor.parent:
+                    context.move_to_element_with_fallback(cursor.parent, cursor)
+                return True
+            cursor = cursor.parent
+        return True  # Ignore unmatched below boundary
+
 class TemplateAwareHandler(TagHandler):
     """Mixin for handlers that need to skip template content"""
 

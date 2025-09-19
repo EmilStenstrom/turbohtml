@@ -97,6 +97,7 @@ class TurboHTML:
             FallbackPlacementHandler(self),
             DefaultElementInsertionHandler(self),
             UnknownElementHandler(self),
+            TemplateContentBoundedEndHandler(self),
             GenericEndTagHandler(self),
             StructureSynthesisHandler(self),
             PostProcessHandler(self),
@@ -709,45 +710,12 @@ class TurboHTML:
                         context.move_to_element(self.root)
                     return
 
-        # Template content bounded default closure for simple end tags
-        if in_template_content(context):
-            # Find the nearest template content boundary
-            boundary = None
-            node = context.current_parent
-            while node:
-                if (
-                    node.tag_name == "content"
-                    and node.parent
-                    and node.parent.tag_name == "template"
-                ):
-                    boundary = node
-                    break
-                node = node.parent
-            # Walk up from current_parent until boundary to find matching tag
-            cursor = context.current_parent
-            while cursor and cursor is not boundary:
-                if cursor.tag_name == tag_name:
-                    # Move out of the matching element
-                    if cursor.parent:
-                        context.move_to_element(cursor.parent)
-                    return
-                cursor = cursor.parent
-            # No match below boundary: ignore
-            return
-
-
-    # Special Node Handling Methods
-    # _handle_comment removed: comment placement fully handled by comment handlers + inline fallback
 
     # Utility for handlers to create a comment node (keeps single construction style)
     def _create_comment_node(self, text: str) -> Node:  # type: ignore[name-defined]
         node = Node("#comment")
         node.text_content = text
         return node
-
-    # _handle_doctype removed (handled entirely by DoctypeHandler)
-
-    # Constants imported at module level for direct use
 
     def _merge_adjacent_text_nodes(self, node: Node) -> None:
         """Iteratively merge adjacent sibling text nodes (non-recursive)."""
