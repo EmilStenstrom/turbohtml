@@ -66,6 +66,7 @@ class TurboHTML:
             FramesetTagHandler(self),
             SelectTagHandler(self),  # must precede table handling to suppress table tokens inside <select>
             TableTagHandler(self),
+            NullParentRecoveryEndHandler(self),  # ensures current_parent before end tag handling
             InitialCommentHandler(self),
             AfterHeadCommentHandler(self),
             AfterHtmlCommentHandler(self),
@@ -593,17 +594,6 @@ class TurboHTML:
             if h.early_end_preprocess(token, context):  # type: ignore[attr-defined]
                 return
         # Create body node if needed and not in frameset mode
-        if (
-            not context.current_parent
-            and context.document_state != DocumentState.IN_FRAMESET
-        ):
-            if self.fragment_context:
-                # In fragment mode, restore current_parent to fragment root
-                context.move_to_element(self.root)
-            else:
-                body = self._ensure_body_node(context)
-                if body:
-                    context.move_to_element(body)
 
         # Try tag handlers first
         for handler in self.tag_handlers:

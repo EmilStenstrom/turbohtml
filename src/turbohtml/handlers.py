@@ -1241,6 +1241,39 @@ class SpecialElementHandler(TagHandler):
                     context.transition_to_state(_DS.IN_BODY, body)
         return False
 
+
+class NullParentRecoveryEndHandler(TagHandler):
+    """Recover from a None current_parent before end tag handling.
+
+    The parser previously inlined a fallback in `_handle_end_tag` that:
+      * If `context.current_parent` is None and not in frameset mode, ensured a <body> (document)
+        or reset the insertion point to the fragment root (fragment parsing) before dispatching
+        end tag handlers.
+
+    We move that logic here to keep the parser core free of structural conditional code.
+    This handler runs early in the end-tag phase; if it performs recovery it simply
+    re-establishes `current_parent` and returns False so normal end-tag handlers proceed.
+    """
+
+    def early_end_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+        from turbohtml.context import DocumentState as _DS
+        if context.current_parent is not None:
+            return False
+        if context.document_state == _DS.IN_FRAMESET:
+            return False
+        # Fragment mode: move to fragment root
+        if getattr(self.parser, "fragment_context", None):
+            context.move_to_element(self.parser.root)
+            self.debug("Restored insertion point to fragment root for end tag recovery")
+            return False
+        # Document mode: ensure <body> exists and move there
+        body = self.parser._ensure_body_node(context)  # type: ignore[attr-defined]
+        if body:
+            context.move_to_element(body)
+            self.debug("Synthesized/moved to <body> for end tag recovery")
+        return False
+
+
 class GenericEndTagHandler(TagHandler):
     """Fallback generic end tag algorithm (formerly parser._handle_default_end_tag).
 
