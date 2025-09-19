@@ -138,13 +138,84 @@ def _supp_duplicate_section_wrapper(parser, context, token, fragment_context):
         return True
     return False
 
+def _supp_duplicate_cell_or_initial_row(parser, context, token, fragment_context):
+    """Suppress first context-matching cell tag (td/th) or initial stray <tr> in td/th fragment.
+
+    Mirrors legacy parser._should_ignore_fragment_start_tag behavior:
+      * In a td or th fragment, ignore the very first td/th start tag encountered at the
+        synthetic fragment root (we are conceptually already inside that cell).
+      * In a td or th fragment, if a leading <tr> appears before any cell has been accepted,
+        suppress it (legacy ignored this as context alignment artifact).
+    After one suppression, subsequent cells or rows are allowed.
+    """
+    if token.type != "StartTag":
+        return False
+    tn = token.tag_name
+    if fragment_context not in {"td", "th"}:
+        return False
+    # Determine if at fragment root
+    cp = context.current_parent
+    at_root = cp is parser.root or (cp and cp.tag_name == "document-fragment")
+    if not at_root:
+        return False
+    # Use context.fragment_context_ignored flag consistent with parser logic
+    if not context.fragment_context_ignored and tn in {"td", "th"}:
+        context.fragment_context_ignored = True
+        return True
+    if not context.fragment_context_ignored and tn == "tr":
+        context.fragment_context_ignored = True
+        return True
+    return False
+
+def _supp_fragment_nonhtml_structure(parser, context, token, fragment_context):
+        """Suppress document / table structural start tags in non-structural fragment contexts.
+
+        This gradually migrates logic currently duplicated inside
+        parser._should_ignore_fragment_start_tag() into predicate form so the
+        fragment loop can make suppression decisions uniformly.
+
+        Scope (intentionally narrow for first pass):
+            * Applies only when fragment_context is NOT one of html, table, tbody,
+                thead, tfoot, tr, td, th (those contexts need their own nuanced rules)
+            * Suppresses StartTag tokens whose tag name is in the set of document-
+                level structural elements {'html','head','body','frameset'} except we
+                allow <frameset> only inside an html fragment (handled elsewhere)
+            * Suppresses StartTag tokens that are table structural wrappers when the
+                fragment context is a non-table phrasing/flow context (e.g. innerHTML
+                of a <span> containing stray <td>).</n+
+        We do NOT (in this initial predicate) replicate the nuanced first-match
+        ignoring of a context-matching table section or cell: that remains in the
+        parser logic until subsequent safe migration steps. The predicate is kept
+        simple to avoid regressions; further expansion will be gated by passing
+        the full test suite after each incremental move.
+        """
+        if token.type != "StartTag":
+                return False
+        tn = token.tag_name
+        # Skip if fragment context itself is structural or html
+        if fragment_context in {"html", "table", "tbody", "thead", "tfoot", "tr", "td", "th"}:
+                return False
+        # Document-level structural suppression (nuanced <body>):
+        if tn in {"html", "head", "frameset"}:
+            return True
+        if tn == "body":
+            # Suppress only the *first* body (mirror original parser logic); subsequent <body> allowed so
+            # attributes/content can merge under existing body element as tests expect.
+            has_body = any(ch.tag_name == "body" for ch in parser.root.children)
+            if not has_body:
+                return True
+            return False
+        # Table structural wrappers (non-table fragment contexts)
+        if tn in {"caption", "colgroup", "tbody", "thead", "tfoot", "tr", "td", "th"}:
+            return True
+        return False
 
 # Fragment specifications registry (includes suppression predicates)
 FRAGMENT_SPECS: Dict[str, FragmentSpec] = {
     "template": FragmentSpec(
         name="template",
         ignored_start_tags={"template"},
-        suppression_predicates=[_supp_doctype],
+        suppression_predicates=[_supp_doctype, _supp_fragment_nonhtml_structure],
     ),
     "html": FragmentSpec(
         name="html",
@@ -158,14 +229,15 @@ FRAGMENT_SPECS: Dict[str, FragmentSpec] = {
             _supp_doctype,
             _supp_malformed_select_like,
             _supp_select_disallowed,
+            _supp_fragment_nonhtml_structure,
         ],
     ),
     "colgroup": FragmentSpec(
         name="colgroup",
-        suppression_predicates=[_supp_doctype, _supp_colgroup_whitespace],
+        suppression_predicates=[_supp_doctype, _supp_colgroup_whitespace, _supp_fragment_nonhtml_structure],
     ),
-    "td": FragmentSpec(name="td", suppression_predicates=[_supp_doctype]),
-    "th": FragmentSpec(name="th", suppression_predicates=[_supp_doctype]),
+    "td": FragmentSpec(name="td", suppression_predicates=[_supp_doctype, _supp_duplicate_cell_or_initial_row]),
+    "th": FragmentSpec(name="th", suppression_predicates=[_supp_doctype, _supp_duplicate_cell_or_initial_row]),
     "tr": FragmentSpec(name="tr", suppression_predicates=[_supp_doctype]),
     "title": FragmentSpec(name="title", suppression_predicates=[_supp_doctype], treat_all_as_text=True),
     "textarea": FragmentSpec(name="textarea", suppression_predicates=[_supp_doctype], treat_all_as_text=True),
@@ -316,6 +388,11 @@ def handle_start_tag(parser, context, token, fragment_context, spec):
         return
     if fragment_context == "template" and token.tag_name == "template":
         return
+    # Guarantee html_node exists before delegating to handlers that may reference it.
+    # Document parsing calls _ensure_html_node() before non-DOCTYPE/Comment tokens; replicate minimal
+    # requirement here to avoid attribute errors in early_start_preprocess hooks during fragment parsing.
+    if parser.html_node is None:
+        parser._ensure_html_node()
     if fragment_context == "html":
         tn = token.tag_name
         if tn == "head":
@@ -365,6 +442,11 @@ def handle_end_tag(parser, context, token, fragment_context):
 
 def handle_character(parser, context, token, fragment_context):
     data = token.data
+    # Defensive: in certain foreign / minimal fragments before first element insertion the
+    # current_parent can still be None (synthetic root not yet established). Drop characters
+    # until a proper parent exists. This mirrors earlier guard that lived in experimental code.
+    if context.current_parent is None:
+        return
     if (
         context.current_parent.tag_name == "listing"
         and not context.current_parent.children
@@ -402,6 +484,13 @@ def parse_fragment(parser: "TurboHTML") -> None:  # pragma: no cover
     parser.tokenizer = HTMLTokenizer(parser.html)
     spec = FRAGMENT_SPECS.get(fragment_context)
 
+    # Some handlers assume parser.html_node exists (mirrors document parsing path). For non-html
+    # fragments we still synthesize it lazily ONLY if required; create a minimal <html> so that
+    # attribute propagation logic in early_start_preprocess doesn't hit None. This does not affect
+    # fragment output because html_node is not attached to parser.root children for non-html contexts.
+    if fragment_context != "html" and parser.html_node is None:
+        html_node = Node("html")
+        parser.html_node = html_node
     # NOTE: Earlier experimental synthetic stack seeding (table/tbody/tr) for td/th/tr fragment
     # contexts was removed after introducing regressions (innerHTML pass rate drop). Any required
     # implied section or row alignment now handled via pre‑token hooks and normal insertion logic

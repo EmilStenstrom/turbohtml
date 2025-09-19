@@ -515,35 +515,29 @@ class TurboHTML:
         # Structural inference: if any child of fragment root (or its descendants) is a <body>, further <body>
         # tags should not be ignored (we allow flow content). We only skip the first redundant <body>.
         if tag_name == "body":
-            # Walk fragment root children to detect existing body
             existing_body = None
-            # Contexts always operate relative to parser root
             root = self.root
-            # Direct children scan (fragment root holds parsed subtree)
             for ch in root.children:
                 if ch.tag_name == "body":
                     existing_body = ch
                     break
             if not existing_body:
-                return True  # Suppress first <body> in fragment context
+                return True
             return False
 
         # In foreign contexts (MathML/SVG), let the foreign handlers manage everything
-        # Fragment parsing is less relevant in foreign contexts
         if context.current_context in ("math", "svg"):
             return False
 
         # Special-case (html fragment only): once we enter frameset insertion modes, ignore any
-        # non-frameset elements (only frame/frameset/noframes permitted). This mirrors document
-        # parsing frameset insertion mode while suppressing stray flow content provided in the
-        # fragment source after a root <frameset>.
+        # non-frameset elements (only frame/frameset/noframes permitted).
         if self.fragment_context == "html":
             if context.document_state in (
                 DocumentState.IN_FRAMESET,
                 DocumentState.AFTER_FRAMESET,
             ) and tag_name not in ("frameset", "frame", "noframes"):
                 return True
-        # Select fragment: suppress disallowed interactive inputs (treated as parse errors, dropped)
+        # Select fragment: suppress disallowed interactive inputs
         if self.fragment_context == "select" and tag_name in (
             "input",
             "keygen",
@@ -551,14 +545,11 @@ class TurboHTML:
         ):
             return True
 
-        # Table fragment: ignore nested <table> start tags; treat its internal rows/sections directly
+        # Table fragment: ignore nested <table> start tags
         if self.fragment_context == "table" and tag_name == "table":
             return True
 
-        # Ignore the first start tag token whose name matches the fragment context element
-        # for table-related contexts (sections, row, cell). After the first ignore we must
-        # allow subsequent identical tags to be processed normally so that nested structure
-        # (e.g. a <table><td> inside a td fragment) is constructed.
+        # Context-matching first tag suppression for table-related contexts
         if self.fragment_context in ("td", "th") and tag_name in ("td", "th"):
             if not context.fragment_context_ignored and _at_fragment_root():
                 context.fragment_context_ignored = True
@@ -572,31 +563,20 @@ class TurboHTML:
                 context.fragment_context_ignored = True
                 return True
         elif self.fragment_context in ("td", "th") and tag_name == "tr":
-            if not context.fragment_context_ignored and _at_fragment_root():  # leading <tr> before any cell
+            if not context.fragment_context_ignored and _at_fragment_root():
                 context.fragment_context_ignored = True
                 return True
 
-        # Non-table fragments: ignore stray table-structural tags so their contents flow to parent (prevents
-        # spurious table construction inside phrasing contexts like <span> fragment when encountering <td><span>).
+        # Non-table fragment fallback: if no fragment spec exists (foreign or unknown context), mimic
+        # original legacy suppression for stray table-structural tags so their content flows upward.
         if self.fragment_context not in (
-            "table",
-            "tr",
-            "td",
-            "th",
-            "thead",
-            "tbody",
-            "tfoot",
-        ) and tag_name in (
-            "caption",
-            "colgroup",
-            "tbody",
-            "thead",
-            "tfoot",
-            "tr",
-            "td",
-            "th",
+            "table","tr","td","th","thead","tbody","tfoot"
         ):
-            return True
+            from turbohtml.fragment import FRAGMENT_SPECS as _FRAG_SPECS  # localized import
+            if self.fragment_context not in _FRAG_SPECS and tag_name in (
+                "caption","colgroup","tbody","thead","tfoot","tr","td","th"
+            ):
+                return True
 
         return False
 
