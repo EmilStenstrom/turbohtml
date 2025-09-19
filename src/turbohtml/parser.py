@@ -50,6 +50,7 @@ class TurboHTML:
         self.tag_handlers = [
             DoctypeHandler(self),
             RawtextStartTagIgnoreHandler(self),
+            MalformedSelectStartTagFilterHandler(self),
             SpecialElementHandler(self),
             EarlyMathMLLeafFragmentEnterHandler(self),
             FormattingReconstructionPreludeHandler(self),
@@ -608,19 +609,7 @@ class TurboHTML:
                 context.index = self.tokenizer.pos
                 continue
 
-            # Contextual malformed tag suppression: drop malformed start tags containing '<' inside select subtree.
-            if (
-                token.type == "StartTag"
-                and "<" in token.tag_name
-                and context.current_parent
-                and (
-                    context.current_parent.tag_name in ("select", "option", "optgroup")
-                    or context.current_parent.find_ancestor(
-                        lambda n: n.tag_name in ("select", "option", "optgroup")
-                    )
-                )
-            ):
-                continue
+            # (Former malformed start-tag suppression moved to MalformedSelectStartTagFilterHandler)
 
             if token.type == "Comment":
                 # Delegate comment handling directly to handlers (parser no longer owns placement logic)
