@@ -51,6 +51,7 @@ class TurboHTML:
             DoctypeHandler(self),
             RawtextStartTagIgnoreHandler(self),
             SpecialElementHandler(self),
+            EarlyMathMLLeafFragmentEnterHandler(self),
             FormattingReconstructionPreludeHandler(self),
             TemplateTagHandler(self),
             TemplateContentFilterHandler(self),
@@ -84,6 +85,7 @@ class TurboHTML:
             VoidElementHandler(self),
             RawtextTagHandler(self),
             BoundaryElementHandler(self),
+            TableCellRecoveryHandler(self),  # may be removed soon
             FormattingElementHandler(self),
             ImageTagHandler(self),
             RawtextTextHandler(self),
@@ -93,6 +95,7 @@ class TurboHTML:
             HeadingTagHandler(self),
             RubyElementHandler(self),
             FallbackPlacementHandler(self),
+            DefaultElementInsertionHandler(self),
             UnknownElementHandler(self),
             GenericEndTagHandler(self),
             StructureSynthesisHandler(self),
@@ -622,7 +625,9 @@ class TurboHTML:
                 # Delegate comment handling directly to handlers (parser no longer owns placement logic)
                 handled = False
                 for handler in self.tag_handlers:
-                    if handler.should_handle_comment(token.data, context) and handler.handle_comment(token.data, context):  # type: ignore[attr-defined]
+                    should = getattr(handler, "should_handle_comment", None)
+                    handle = getattr(handler, "handle_comment", None)
+                    if should and handle and should(token.data, context) and handle(token.data, context):
                         handled = True
                         break
                 if not handled:
@@ -673,37 +678,6 @@ class TurboHTML:
                 if handler.handle_start(token, context, not token.is_last_token):
                     # <listing> initial newline suppression handled structurally during character token stage
                     return
-
-        # Default handling for unhandled tags
-        self.debug(f"No handler found, using default handling for {tag_name}")
-
-        new_node = Node(tag_name, token.attributes)
-        # Keep formatting elements on stack: block inside formatting becomes its child (spec behavior).
-        context.current_parent.append_child(new_node)
-        context.move_to_element(new_node)
-        context.open_elements.push(new_node)
-        # Perform formatting reconstruction inside newly created block if needed (deferred path without flag)
-        from turbohtml.context import DocumentState as _DS  # localized to avoid top-level churn
-        BLOCKISH = {"div","section","article","p","ul","ol","li","table","tr","td","th","body","html","h1","h2","h3","h4","h5","h6"}
-        if (
-            tag_name in BLOCKISH
-            and not in_template_content(context)  # type: ignore[name-defined]
-        ):
-            in_table_modes = context.document_state in (_DS.IN_TABLE, _DS.IN_TABLE_BODY, _DS.IN_ROW)
-            if not in_table_modes or context.current_parent.find_ancestor(lambda n: n.tag_name in ("td","th","caption")):
-                # Detect missing non-nobr formatting elements (mirrors previous deferred logic)
-                afe = context.active_formatting_elements
-                missing = False
-                if afe and getattr(afe, "_stack", None):  # type: ignore[attr-defined]
-                    for entry in afe._stack:  # type: ignore[attr-defined]
-                        if entry.element is None:
-                            continue
-                        if (not context.open_elements.contains(entry.element)) and entry.element.tag_name != "nobr":
-                            missing = True
-                            break
-                if missing:
-                    _reconstruct_fmt(self, context)
-        # <listing> initial newline suppression handled structurally on character insertion
 
     def _handle_end_tag(
         self, token: HTMLToken, tag_name: str, context: ParseContext
