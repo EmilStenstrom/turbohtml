@@ -71,8 +71,6 @@ class ParseContext:
         # identical tags nested inside the fragment should be processed normally. We keep
         # a simple boolean rather than counting since only the first occurrence is ignored.
         self.fragment_context_ignored = False
-        # Formatting reconstruction deferral flag (always present; parser sets True transiently)
-        self._deferred_block_reconstruct = False
 
     # --- Properties / helpers ---
     @property

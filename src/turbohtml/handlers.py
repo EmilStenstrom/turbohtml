@@ -936,39 +936,18 @@ class FormattingReconstructionPreludeHandler(TagHandler):
 
     def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
         from turbohtml.context import DocumentState as _DS
-        # Never act inside template content fragments
         if in_template_content(context):  # type: ignore[name-defined]
             return False
         tag_name = token.tag_name
-        # Table-related insertion modes: suppress reconstruction unless actually in a cell/caption
-        in_table_modes = context.document_state in (
-            _DS.IN_TABLE, _DS.IN_TABLE_BODY, _DS.IN_ROW
-        )
+        in_table_modes = context.document_state in (_DS.IN_TABLE, _DS.IN_TABLE_BODY, _DS.IN_ROW)
         in_cell_or_caption = bool(
             context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
         )
         if in_table_modes and not in_cell_or_caption:
-            # Allow deferred reconstruction flag to be cleared if previously set (fresh context)
             return False
-
-        # Non-table or inside cell/caption
+        # For non-blockish tags reconstruct immediately; blockish handled post element creation in parser
         if tag_name not in self._BLOCKISH:
-            # Immediate reconstruction for non-block formatting interruptions
             _reconstruct_fmt(self.parser, context)
-            return False
-
-        # Blockish tag: determine if we should defer reconstruction inside the soon-to-be-created block
-        missing_non_nobr = False
-        afe = context.active_formatting_elements
-        if afe and getattr(afe, "_stack", None):  # narrow guard; no reflection of methods
-            for entry in afe._stack:  # type: ignore[attr-defined]
-                if entry.element is None:
-                    continue
-                if (not context.open_elements.contains(entry.element)) and entry.element.tag_name != "nobr":
-                    missing_non_nobr = True
-                    break
-        # Set transient flag (consumed by parser default block insertion path)
-        context._deferred_block_reconstruct = missing_non_nobr  # type: ignore[attr-defined]
         return False
 
 class SpecialElementHandler(TagHandler):

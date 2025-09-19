@@ -658,10 +658,7 @@ class TurboHTML:
                             )
                             if handler.handle_text(data, context):
                                 break
-                # Normalization handled by TextNormalizationHandler.
 
-
-    # Tag Handling Methods
     def _handle_start_tag(
         self, token: HTMLToken, tag_name: str, context: ParseContext, end_tag_idx: int
     ) -> None:
@@ -685,11 +682,27 @@ class TurboHTML:
         context.current_parent.append_child(new_node)
         context.move_to_element(new_node)
         context.open_elements.push(new_node)
-        # Execute deferred reconstruction inside the newly created block if flagged.
-        if context._deferred_block_reconstruct:
-            # Clear flag before running to avoid repeat on nested blocks
-            context._deferred_block_reconstruct = False
-            _reconstruct_fmt(self, context)
+        # Perform formatting reconstruction inside newly created block if needed (deferred path without flag)
+        from turbohtml.context import DocumentState as _DS  # localized to avoid top-level churn
+        BLOCKISH = {"div","section","article","p","ul","ol","li","table","tr","td","th","body","html","h1","h2","h3","h4","h5","h6"}
+        if (
+            tag_name in BLOCKISH
+            and not in_template_content(context)  # type: ignore[name-defined]
+        ):
+            in_table_modes = context.document_state in (_DS.IN_TABLE, _DS.IN_TABLE_BODY, _DS.IN_ROW)
+            if not in_table_modes or context.current_parent.find_ancestor(lambda n: n.tag_name in ("td","th","caption")):
+                # Detect missing non-nobr formatting elements (mirrors previous deferred logic)
+                afe = context.active_formatting_elements
+                missing = False
+                if afe and getattr(afe, "_stack", None):  # type: ignore[attr-defined]
+                    for entry in afe._stack:  # type: ignore[attr-defined]
+                        if entry.element is None:
+                            continue
+                        if (not context.open_elements.contains(entry.element)) and entry.element.tag_name != "nobr":
+                            missing = True
+                            break
+                if missing:
+                    _reconstruct_fmt(self, context)
         # <listing> initial newline suppression handled structurally on character insertion
 
     def _handle_end_tag(
