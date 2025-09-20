@@ -699,7 +699,7 @@ class AdoptionAgencyAlgorithm:
 
         # Step 15: Create a clone of the formatting element
         # Anchor/table structural special-case: if the furthest_block is a table-structural element
-    # directly parented by the formatting <a>, the expected tree in malformed anchor/table mixes
+        # directly parented by the formatting <a>, the expected tree in malformed anchor/table mixes
         # does NOT introduce an <a> clone inside that structural element (e.g. no <table><a><tbody>).
         # Instead, the original <a> continues wrapping the table chain unchanged while the duplicate
         # start tag later inserts a new <a> at the current insertion point. To approximate that, we
@@ -721,7 +721,15 @@ class AdoptionAgencyAlgorithm:
         if context.open_elements.contains(furthest_block):
             fb_index2 = context.open_elements.index_of(furthest_block)
             context.open_elements._stack.insert(fb_index2 + 1, fe_clone)
-        context.move_to_element(fe_clone)
+        # In the complex case the end tag for the formatting element has been processed.
+        # The clone (fe_clone) remains open in the DOM to wrap the previously collected
+        # contents, but subsequent character data for the original end tag token should
+        # NOT continue inside that clone (tests1.dat: <b><button>foo</b>bar expects
+        # "bar" as a sibling of the nested <b>, not a child). Moving the insertion
+        # point back to the furthest_block ensures following text lands after the
+        # clone while still keeping the clone on the open elements stack for any
+        # further structural adoption iterations.
+        context.move_to_element(furthest_block)
         stack_tags = [e.tag_name for e in context.open_elements._stack]
         afe_tags = [e.element.tag_name for e in context.active_formatting_elements if e.element]
         self.parser.debug(f"[adoption] post-step19 fe_clone=<{fe_clone.tag_name}> parent=<{fe_clone.parent.tag_name if fe_clone.parent else 'None'}> stack={stack_tags} afe={afe_tags}")
