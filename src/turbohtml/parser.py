@@ -100,7 +100,6 @@ class TurboHTML:
             DefaultElementInsertionHandler(self),
             UnknownElementHandler(self),
             TemplateContentBoundedEndHandler(self),
-            AnchorTableNormalizationHandler(self),
             GenericEndTagHandler(self),
             StructureSynthesisHandler(self),
             PostProcessHandler(self),

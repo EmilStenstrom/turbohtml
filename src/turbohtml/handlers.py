@@ -90,92 +90,61 @@ def in_integration_point(context: "ParseContext") -> bool:
 
 
 class ParserInterface(Protocol):
-    """Interface that handlers expect from parser"""
+    """Interface that handlers expect from parser."""
 
     def debug(self, message: str, indent: int = 4) -> None: ...
-
     root: "Node"
 
-
 class TagHandler:
-    """Base class for tag-specific handling logic"""
+    """Base class for tag-specific handling logic (full feature set)."""
 
-    def __init__(self, parser: ParserInterface):
+    def __init__(self, parser: ParserInterface):  # type: ignore[name-defined]
         self.parser = parser
 
     def _synth_token(self, tag_name: str) -> HTMLToken:
-        """Create a synthetic StartTag token with empty attributes.
-        HTMLToken signature: (type_, data='', tag_name='', attributes=None, is_self_closing=False, is_last_token=False)
-        We pass type_='StartTag' and tag_name; data unused for start tags."""
         return HTMLToken("StartTag", tag_name, tag_name, {}, False, False)
 
     def debug(self, message: str, indent: int = 4) -> None:
-        """Delegate debug to parser with class name prefix"""
         class_name = self.__class__.__name__
-        prefixed_message = f"{class_name}: {message}"
-        self.parser.debug(prefixed_message, indent=indent)
+        self.parser.debug(f"{class_name}: {message}", indent=indent)
 
-    # Optional early end-tag preprocessing hook (similar to early_start_preprocess). Parser will
-    # invoke this before generic end tag dispatch. Return True to consume the end tag.
-    def early_end_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # pragma: no cover - default
+    # Hooks (early)
+    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # pragma: no cover
+        return False
+    def early_end_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # pragma: no cover
         return False
 
+    # Helper predicates
     def _is_in_template_content(self, context: "ParseContext") -> bool:
-        """Check if we're inside actual template content (not just a user <content> tag)"""
-        return in_template_content(context)
+        return in_template_content(context)  # type: ignore[name-defined]
 
     def _create_element(self, token: "HTMLToken") -> "Node":
-        """Create a new element node from a token"""
         return Node(token.tag_name, token.attributes)
 
-    def _create_and_append_element(
-        self, token: "HTMLToken", context: "ParseContext"
-    ) -> "Node":
-        """Create a new element and append it to current parent"""
+    def _create_and_append_element(self, token: "HTMLToken", context: "ParseContext") -> "Node":
         return self.parser.insert_element(token, context, mode="normal", enter=True)
 
     def _is_in_select(self, context: "ParseContext") -> bool:
-        """Check if we're inside a select element"""
         return context.current_parent.is_inside_tag("select")
 
     def _is_in_table_cell(self, context: "ParseContext") -> bool:
-        """Check if we're inside a table cell (td or th)"""
-        return (
-            context.current_parent.find_first_ancestor_in_tags(["td", "th"]) is not None
-        )
+        return context.current_parent.find_first_ancestor_in_tags(["td", "th"]) is not None
 
-    def _move_to_parent_of_ancestor(
-        self, context: "ParseContext", ancestor: "Node"
-    ) -> None:
-        """Move current_parent to the parent of the given ancestor"""
+    def _move_to_parent_of_ancestor(self, context: "ParseContext", ancestor: "Node") -> None:
         context.move_to_ancestor_parent(ancestor)
 
     def _should_foster_parent_in_table(self, context: "ParseContext") -> bool:
-        """Check if element should be foster parented due to table context"""
-        return (
-            context.document_state == DocumentState.IN_TABLE
-            and not self._is_in_cell_or_caption(context)
-        )
+        return context.document_state == DocumentState.IN_TABLE and not self._is_in_cell_or_caption(context)
 
-    def _foster_parent_before_table(
-        self, token: "HTMLToken", context: "ParseContext"
-    ) -> "Node":
-        """Foster parent an element before the current table"""
+    def _foster_parent_before_table(self, token: "HTMLToken", context: "ParseContext") -> "Node":
         table = self.parser.find_current_table(context)
         if table and table.parent:
-            table.parent.children.index(table)
             return self.parser.insert_element(
-                token,
-                context,
-                mode="normal",
-                enter=True,
-                parent=table.parent,
-                before=table,
+                token, context, mode="normal", enter=True, parent=table.parent, before=table
             )
-        return None
+        return None  # type: ignore[return-value]
 
     def _is_in_table_context(self, context: "ParseContext") -> bool:
-        """Check if we're in any table-related context"""
         return context.document_state in (
             DocumentState.IN_TABLE,
             DocumentState.IN_TABLE_BODY,
@@ -184,41 +153,25 @@ class TagHandler:
         )
 
     def _is_in_cell_or_caption(self, context: "ParseContext") -> bool:
-        """Check if we're inside a table cell (td/th) or caption"""
         return bool(
-            context.current_parent.find_ancestor(
-                lambda n: n.tag_name in ("td", "th", "caption")
-            )
+            context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
         )
 
+    # Default no-op behavior for dispatch predicates / handlers
     def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
         return False
-
-    def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+    def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
         return False
-
     def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
         return False
-
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         return False
-
     def should_handle_text(self, text: str, context: "ParseContext") -> bool:
         return False
-
     def handle_text(self, text: str, context: "ParseContext") -> bool:
         return False
-
-    # Finalization hook (post-parse). Default no-op so parser can call without reflection.
     def finalize(self, parser: "TurboHTML") -> None:  # type: ignore[name-defined]
         return
-
-    # Early start-tag preprocessing hook. Called by parser before formatting reconstruction / handler dispatch.
-    # Handlers override to perform suppression or synthetic insertion. Return True to consume token.
-    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # pragma: no cover - default noop
-        return False
 
 
 class BodyReentryHandler(TagHandler):
@@ -1364,29 +1317,6 @@ class TemplateContentBoundedEndHandler(TagHandler):
         return True  # Ignore unmatched below boundary
 
 
-class AnchorTableNormalizationHandler(TagHandler):
-    """Normalize pathological anchor sequences around table structures in malformed inputs.
-
-    Targeted to address legacy tree expectations in tests where multiple <a> start tags and table
-    section elements interleave without proper implicit closures. We perform a light cleanup:
-      * Collapse consecutive sibling <a> elements with no intervening non-empty text by hoisting
-        their children into the first and removing the redundant wrappers.
-      * If a text node directly follows a table subtree where an <a> formatting element was recently
-        closed via adoption (no active <a> but last closed anchor is immediate previous sibling),
-        wrap that text in a new <a> only if the expected structure keeps anchor continuity. (We do
-        NOT create speculative anchors; only merge existing empties.)
-
-    Safety constraints:
-      * Runs only in fragment/document IN_BODY-like contexts (not inside foreign or template content).
-      * Does not alter the open elements stack; purely DOM sibling surgery, preserving ordering.
-    """
-
-    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
-        # Disabled normalization: preserving adjacent <a> siblings is required for legacy
-        # test expectations (tests1.dat anchor/table cases). Leaving this handler as a
-        # no-op maintains ordering while keeping registration intact (avoids reordering
-        # side-effects from removing it entirely).
-        return False
 
 class TemplateAwareHandler(TagHandler):
     """Mixin for handlers that need to skip template content"""
@@ -2805,79 +2735,18 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 if 0 <= cur_index < tbl_index
                 else ("after" if cur_index > tbl_index else "unknown")
             )
-            self.debug(
-                f"fmt-start-debug: current_parent={context.current_parent.tag_name} relative-to-table index={cur_index}->{tbl_index} ({rel}) open={[e.tag_name for e in context.open_elements._stack]}"
-            )
+            # Removed verbose fmt-start-debug logging (non-spec diagnostic)
 
         if tag_name == "a":
             existing = context.active_formatting_elements.find("a")
-            if existing and existing.element:
-                # Determine if we're in (or under) a table context where legacy expected trees retain
-                # nested <a> wrappers instead of triggering immediate adoption (tests1.dat:30,77). We
-                # suppress duplicate-anchor adoption when the insertion point is inside a cell/caption
-                # or any table insertion mode so that subsequent <a> start tags produce nested anchors
-                # (the adoption agency would otherwise close the earlier one per spec). This keeps the
-                # behavior deterministic without speculative lookahead while matching historical output.
-                from turbohtml.context import DocumentState as _DS
-                in_table_modes = context.document_state in (_DS.IN_TABLE, _DS.IN_TABLE_BODY, _DS.IN_ROW, _DS.IN_CAPTION)
-                inside_cell_or_caption = bool(
-                    context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
-                ) if context.current_parent else False
-                if context.open_elements.contains(existing.element):
-                    if in_table_modes or inside_cell_or_caption:
-                        self.debug(
-                            "Duplicate <a>: active & open inside table context; suppressing adoption to preserve nested anchors"
-                        )
-                    else:
-                        self.debug("Duplicate <a>: active & open; running adoption before new <a>")
-                        self.parser.adoption_agency.run_until_stable("a", context, max_runs=8)
-                        lingering = context.active_formatting_elements.find("a")
-                        if lingering and lingering.element:
-                            # Remove lingering entry (spec step) prior to reconstruction
-                            if context.open_elements.contains(lingering.element):
-                                context.open_elements.remove_element(lingering.element)
-                            context.active_formatting_elements.remove(lingering.element)
-                        # Reconstruct other formatting elements so the new <a> nests correctly
-                        _reconstruct_fmt(self.parser, context)
-                else:
-                    self.debug("Existing <a> not on stack; treating incoming <a> as fresh (no adoption)")
-
-        # Post-table anchor split: if we're about to insert a non-table formatting element (b/em/strong/i/u)
-        # outside table insertion modes and there is an open <a> whose subtree already contains a <table>
-        # that is no longer the current insertion ancestor, run a single adoption pass for 'a' to close it.
-        # This produces sibling <a> elements matching legacy expected trees in malformed anchor+table tests.
-        if tag_name in ("b","em","strong","i","u"):
-            from turbohtml.context import DocumentState as _DS
-            if context.document_state not in (_DS.IN_TABLE, _DS.IN_TABLE_BODY, _DS.IN_ROW, _DS.IN_CAPTION):
-                # Find nearest open <a> on stack
-                open_anchor = None
-                for el in reversed(context.open_elements._stack):  # type: ignore[attr-defined]
-                    if el.tag_name == "a":
-                        open_anchor = el
-                        break
-                if open_anchor is not None:
-                    # Detect table descendant
-                    has_table_desc = False
-                    stack = [open_anchor]
-                    while stack and not has_table_desc:
-                        cur = stack.pop()
-                        for ch in cur.children:
-                            if ch.tag_name == "table":
-                                has_table_desc = True
-                                break
-                            stack.append(ch)
-                    if has_table_desc:
-                        # Ensure current insertion point is not still inside that table
-                        cur = context.current_parent
-                        inside_table = False
-                        while cur:
-                            if cur.tag_name == "table":
-                                inside_table = True
-                                break
-                            cur = cur.parent
-                        if not inside_table:
-                            self.debug("Post-table anchor split: closing open <a> before new formatting element")
-                            self.parser.adoption_agency.run_until_stable("a", context, max_runs=1)
+            if existing and existing.element and context.open_elements.contains(existing.element):
+                # Spec: run adoption before inserting new <a>
+                self.parser.adoption_agency.run_until_stable("a", context, max_runs=1)
+                lingering = context.active_formatting_elements.find("a")
+                if lingering and lingering.element and context.open_elements.contains(lingering.element):
+                    context.open_elements.remove_element(lingering.element)
+                    context.active_formatting_elements.remove(lingering.element)
+                _reconstruct_fmt(self.parser, context)
 
         if self._is_in_template_content(context):
             tableish = {
