@@ -400,9 +400,12 @@ class AdoptionAgencyAlgorithm:
 
     Spec wording: "Let furthestBlock be the topmost node in the stack of open elements that is lower
     in the stack than formattingElement, and is an element in the special category." Here the stack's
-    0 index is closest to root; thus "topmost" below the formatting element means the first qualifying
-    element encountered when scanning the sub-slice (closest to root, NOT deepest). We previously picked
-    the deepest which collapses multi-iteration adoption layering (adoption01:4,13). Restore first match.
+    0 index is closest to root; "topmost" below formattingElement in spec terms refers to the element
+    highest in tree order among those below it, which corresponds to the *deepest* (largest index) matching
+    special element in our open elements stack representation (since newer descendants are pushed later).
+    Selecting the deepest enables multi-iteration adoption layering required for complex mis-nesting cases
+    (anchors wrapping table structures). Earlier implementation chose the first match (closest to root),
+    prematurely terminating layering and blocking correct split behavior.
         """
         idx = context.open_elements.index_of(formatting_element)
         if idx == -1:
@@ -410,8 +413,6 @@ class AdoptionAgencyAlgorithm:
         subseq = context.open_elements._stack[idx + 1 :]
         if not subseq:
             return None
-        # (Anchor deepest-block experimental selection removed; always pick first special per spec wording.)
-        # Default (non-anchor or feature disabled): first special element below formatting element
         for node in subseq:
             if formatting_element.tag_name == 'a':
                 self.parser.debug(f"[adoption][scan] below_fmt_candidate=<{node.tag_name}> special={'yes' if node.tag_name in SPECIAL_CATEGORY_ELEMENTS else 'no'}")
