@@ -412,59 +412,6 @@ class TurboHTML:
     def _parse_fragment(self) -> None:
         parse_fragment(self)
 
-    def _create_fragment_context(self) -> "ParseContext":
-        """Initialize a fragment ParseContext with state derived from the context element."""
-        from turbohtml.context import DocumentState as _DS
-
-        fc = self.fragment_context
-        context = ParseContext(len(self.html), self.root, debug_callback=self.debug)
-
-        if fc == "template":
-            # Special template: synthesize template/content container then treat as IN_BODY inside content.
-            context.transition_to_state(_DS.IN_BODY, self.root)
-            template_node = Node("template")
-            self.root.append_child(template_node)
-            content_node = Node("content")
-            template_node.append_child(content_node)
-            context.move_to_element(content_node)
-            return context
-
-        # Map fragment context to initial DocumentState (default IN_BODY)
-        state_map = {
-            "td": _DS.IN_CELL,
-            "th": _DS.IN_CELL,
-            "tr": _DS.IN_ROW,
-            "thead": _DS.IN_TABLE_BODY,
-            "tbody": _DS.IN_TABLE_BODY,
-            "tfoot": _DS.IN_TABLE_BODY,
-            "html": _DS.INITIAL,
-        }
-        target_state = None
-        if fc in state_map:
-            target_state = state_map[fc]
-        elif fc in RAWTEXT_ELEMENTS:
-            target_state = _DS.IN_BODY
-        else:
-            target_state = _DS.IN_BODY
-        context.transition_to_state(target_state, self.root)
-
-        # Table fragment: adjust to IN_TABLE for section handling
-        if fc == "table":
-            context.transition_to_state(_DS.IN_TABLE, self.root)
-
-        # Foreign context detection (math/svg + namespaced)
-        if fc:
-            if fc in ("math", "svg"):
-                context.current_context = fc
-                self.debug(f"Set foreign context to {fc}")
-            elif " " in fc:  # namespaced
-                namespace_elem = fc.split(" ")[0]
-                if namespace_elem in ("math", "svg"):
-                    context.current_context = namespace_elem
-                    self.debug(f"Set foreign context to {namespace_elem}")
-
-        return context
-
     def _handle_fragment_comment(self, text: str, context: "ParseContext") -> None:
         """Handle comments in fragment parsing"""
         from turbohtml.context import DocumentState

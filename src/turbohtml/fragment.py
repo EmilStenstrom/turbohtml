@@ -12,7 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, List, Dict
 
-from .context import DocumentState, ContentState
+from .context import DocumentState, ContentState, ParseContext
+from .constants import RAWTEXT_ELEMENTS
 from .node import Node
 from .tokenizer import HTMLTokenizer, HTMLToken
 
@@ -490,7 +491,8 @@ def handle_character(parser, context, token, fragment_context):
 def parse_fragment(parser: "TurboHTML") -> None:  # pragma: no cover
     fragment_context = parser.fragment_context
     parser.debug(f"Parsing fragment in context: {fragment_context}")
-    context = parser._create_fragment_context()
+    # Use externalized helper (parser retains wrapper for compatibility)
+    context = create_fragment_context(parser)
     parser.tokenizer = HTMLTokenizer(parser.html)
     spec = FRAGMENT_SPECS.get(fragment_context)
 
@@ -554,3 +556,61 @@ def parse_fragment(parser: "TurboHTML") -> None:  # pragma: no cover
             hook(parser, context)
 
     # Synthetic stack pruning no-op (bootstrap disabled).
+
+
+def create_fragment_context(parser: "TurboHTML") -> "ParseContext":
+    """Initialize a fragment ParseContext with state derived from the context element.
+
+    Extraction of former TurboHTML._create_fragment_context (no behavior change).
+    Lives here with other fragment helpers for cohesion and to keep the parser
+    focused on dispatch + high-level orchestration.
+    """
+    from turbohtml.context import DocumentState as _DS
+
+    fc = parser.fragment_context
+    context = ParseContext(len(parser.html), parser.root, debug_callback=parser.debug)
+
+    if fc == "template":
+        # Special template: synthesize template/content container then treat as IN_BODY inside content.
+        context.transition_to_state(_DS.IN_BODY, parser.root)
+        template_node = Node("template")
+        parser.root.append_child(template_node)
+        content_node = Node("content")
+        template_node.append_child(content_node)
+        context.move_to_element(content_node)
+        return context
+
+    # Map fragment context to initial DocumentState (default IN_BODY)
+    state_map = {
+        "td": _DS.IN_CELL,
+        "th": _DS.IN_CELL,
+        "tr": _DS.IN_ROW,
+        "thead": _DS.IN_TABLE_BODY,
+        "tbody": _DS.IN_TABLE_BODY,
+        "tfoot": _DS.IN_TABLE_BODY,
+        "html": _DS.INITIAL,
+    }
+    if fc in state_map:
+        target_state = state_map[fc]
+    elif fc in RAWTEXT_ELEMENTS:
+        target_state = _DS.IN_BODY
+    else:
+        target_state = _DS.IN_BODY
+    context.transition_to_state(target_state, parser.root)
+
+    # Table fragment: adjust to IN_TABLE for section handling
+    if fc == "table":
+        context.transition_to_state(_DS.IN_TABLE, parser.root)
+
+    # Foreign context detection (math/svg + namespaced)
+    if fc:
+        if fc in ("math", "svg"):
+            context.current_context = fc
+            parser.debug(f"Set foreign context to {fc}")
+        elif " " in fc:  # namespaced
+            namespace_elem = fc.split(" ")[0]
+            if namespace_elem in ("math", "svg"):
+                context.current_context = namespace_elem
+                parser.debug(f"Set foreign context to {namespace_elem}")
+
+    return context
