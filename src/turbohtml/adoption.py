@@ -430,7 +430,9 @@ class AdoptionAgencyAlgorithm:
         context,
     ) -> bool:
         """Simple case: pop formatting element and remove its active entry."""
-        self.parser.debug(f"[adoption] simple-case for <{formatting_element.tag_name}>")
+        self.parser.debug(
+            f"[adoption] simple-case for <{formatting_element.tag_name}> stack_before={[e.tag_name for e in context.open_elements._stack]} afe_before={[e.element.tag_name for e in context.active_formatting_elements if e.element]}"
+        )
         # Simple-case: pop elements above formatting element (ignored) then pop formatting element itself.
         stack = context.open_elements._stack
         if formatting_element in stack:
@@ -451,6 +453,15 @@ class AdoptionAgencyAlgorithm:
             context.move_to_element(parent)
         elif parent is not None:
             context.move_to_element(parent)
+        # Flag one-shot reconstruction so that if following token is a character token
+        # we rebuild any stale active formatting elements (mirrors complex-case behavior).
+        context.post_adoption_reconstruct_pending = True
+        insertion_parent_name = context.current_parent.tag_name if context.current_parent else 'None'
+        stack_after = [e.tag_name for e in context.open_elements._stack]
+        afe_after = [e.element.tag_name for e in context.active_formatting_elements if e.element]
+        self.parser.debug(
+            f"[adoption] simple-case after pop insertion_parent={insertion_parent_name} stack_after={stack_after} afe_after={afe_after}"
+        )
         return True
 
     def _get_body_or_root(self, context):
@@ -706,6 +717,13 @@ class AdoptionAgencyAlgorithm:
         # perform an early exit here: remove the formatting entry from the active list (so we made
         # progress and will not loop infinitely) but keep the original element on the open stack.
         # Removed anchor/table special-case relocation skip; rely on uniform placement logic.
+        # Capture whether furthest_block had any (non-whitespace) text descendants BEFORE we extract
+        # its children into the fe_clone. This helps decide a better insertion point after step19.
+        had_text_descendant = False
+        for ch in furthest_block.children:
+            if ch.tag_name == "#text" and ch.text_content and ch.text_content.strip():
+                had_text_descendant = True
+                break
         fe_clone = Node(formatting_element.tag_name, formatting_element.attributes.copy())
         # Step 16: Move all children of furthest_block into fe_clone
         for ch in list(furthest_block.children):
@@ -722,14 +740,18 @@ class AdoptionAgencyAlgorithm:
             fb_index2 = context.open_elements.index_of(furthest_block)
             context.open_elements._stack.insert(fb_index2 + 1, fe_clone)
         # In the complex case the end tag for the formatting element has been processed.
-        # The clone (fe_clone) remains open in the DOM to wrap the previously collected
-        # contents, but subsequent character data for the original end tag token should
-        # NOT continue inside that clone (tests1.dat: <b><button>foo</b>bar expects
-        # "bar" as a sibling of the nested <b>, not a child). Moving the insertion
-        # point back to the furthest_block ensures following text lands after the
-        # clone while still keeping the clone on the open elements stack for any
-        # further structural adoption iterations.
-        context.move_to_element(furthest_block)
+        # Existing heuristic always moved insertion point to furthest_block so following
+        # text landed OUTSIDE the freshly created fe_clone. However, in some malformed
+        # sequences (e.g. tricky font/i runs) the expected tree wants the next text
+        # outside the entire formatting scope only when the furthest block already
+        # contained text (so the formatting wrapper should not absorb new text). If the
+        # furthest block had no text before cloning (pure structural container), keeping
+        # insertion at furthest_block is still correct. When it had text, we move to the
+        # parent so that subsequent text does not re-enter the formatting wrapper scope.
+        if had_text_descendant and furthest_block.parent is not None:
+            context.move_to_element(furthest_block.parent)
+        else:
+            context.move_to_element(furthest_block)
         stack_tags = [e.tag_name for e in context.open_elements._stack]
         afe_tags = [e.element.tag_name for e in context.active_formatting_elements if e.element]
         self.parser.debug(f"[adoption] post-step19 fe_clone=<{fe_clone.tag_name}> parent=<{fe_clone.parent.tag_name if fe_clone.parent else 'None'}> stack={stack_tags} afe={afe_tags}")

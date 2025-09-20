@@ -4396,6 +4396,9 @@ class ParagraphTagHandler(TagHandler):
                         continue
                     new_stack.append(el)
                 context.open_elements._stack = new_stack
+                # Trigger one-shot reconstruction for next character token so detached formatting wrappers
+                # are recreated before subsequent inline text (mirrors spec reconstruction after paragraph boundary).
+                context.post_adoption_reconstruct_pending = True
             if in_svg_ip or in_math_ip:
                 _reconstruct_fmt(self.parser, context)
             return True
@@ -10381,6 +10384,24 @@ class FallbackPlacementHandler(FallbackPlacementHandler):  # type: ignore[misc]
             self.debug(f"Foster parenting <{tag_name}> before current table")
             foster_parent_element(tag_name, token.attributes, context, self.parser)  # type: ignore[attr-defined]
             return True
+
+        # Additional deterministic fostering: inline formatting elements immediately before a table when
+        # not inside a cell/caption. Mirrors outcomes expected in tricky01 table cases where <font>
+        # should become a sibling before <table>, not wrap whitespace that later migrates into a cell.
+        if context.document_state == DocumentState.IN_TABLE and tag_name in {"font","b","i","u","em","strong","span"}:
+            # Only when current_parent is the table element itself (or its direct ancestor not a cell)
+            table = self.parser.find_current_table(context)
+            if table and context.current_parent is table:
+                # Foster parent the formatting element before the table's position in its parent.
+                if table.parent:
+                    self.debug(f"Foster parenting formatting <{tag_name}> before <table> (formatting/table prelude)")
+                    foster_parent_element(tag_name, token.attributes, context, self.parser)  # type: ignore[attr-defined]
+                    return True
+            # Also handle case where insertion point drifted to body while still IN_TABLE state and table open.
+            if table and context.current_parent is table.parent and table.parent.tag_name not in ("td","th","caption"):
+                self.debug(f"Foster parenting formatting <{tag_name}> adjacent to ancestor before <table>")
+                foster_parent_element(tag_name, token.attributes, context, self.parser)  # type: ignore[attr-defined]
+                return True
 
         if tag_name in ("div", "section", "article"):
             if in_template_content(context):  # type: ignore[attr-defined]
