@@ -428,37 +428,3 @@ class Node:
                 return True
             current = current.parent
         return False
-
-    def find_ancestor_safe(
-        self, predicate: Callable[["Node"], bool], max_depth: int = 100
-    ) -> Optional["Node"]:
-        """Find ancestor matching predicate with cycle detection"""
-        seen = set()
-        current = self.parent
-        depth = 0
-        while current and current not in seen and depth < max_depth:
-            seen.add(current)
-            if predicate(current):
-                return current
-            current = current.parent
-            depth += 1
-        return None
-
-    def find_ancestor_with_early_stop(
-        self,
-        target_tag: str,
-        stop_tags: Union[list, tuple, str],
-        stop_at: Optional["Node"] = None,
-    ) -> tuple[Optional["Node"], Optional["Node"]]:
-        """Find ancestor with target tag, but stop early if hitting stop tags"""
-        if isinstance(stop_tags, str):
-            stop_tags = [stop_tags]
-
-        current = self.parent
-        while current and current != stop_at:
-            if current.tag_name == target_tag:
-                return current, None  # Found target, no early stop
-            if current.tag_name in stop_tags:
-                return None, current  # Early stop found
-            current = current.parent
-        return None, None  # Nothing found
