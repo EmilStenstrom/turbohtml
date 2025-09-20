@@ -731,6 +731,70 @@ class TextNormalizationHandler(TagHandler):
         return True
 
 
+class OptionTextRedirectHandler(TagHandler):
+    """Redirect non-whitespace character data into the deepest open <option> element.
+
+    This extracts the small redirection branch previously living in parser.insert_text so that
+    the parser core no longer contains any content‑mode or open‑element inspection logic.
+
+    Conditions (mirrors removed logic):
+      * We are not inside template content.
+      * Current content_state is not RAWTEXT.
+      * We are not in a foreign (math/svg) context.
+      * Incoming text has at least one non-whitespace character.
+      * There exists an <option> element on the open elements stack (deepest wins).
+      * The current insertion parent is not already that <option> (or a descendant of it).
+
+    If all hold we adjust the insertion point for this character token only by performing the
+    text insertion directly into the <option>. We purposely do not mutate context.current_parent
+    (avoids side effects for subsequent tokens); we just perform the redirected insertion and
+    signal handling complete.
+    """
+
+    def should_handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        from turbohtml.context import ContentState as _CS
+        if not text:
+            return False
+        if context.content_state == _CS.RAWTEXT:
+            return False
+        if context.current_context in ("math", "svg"):
+            return False
+        if in_template_content(context):  # type: ignore[name-defined]
+            return False
+        if not any(not c.isspace() for c in text):
+            return False
+        # Find deepest <option> in open elements stack
+        deepest_option = None
+        stack = getattr(context.open_elements, "_stack", [])  # type: ignore[attr-defined]
+        for el in reversed(stack):
+            if el.tag_name == "option":
+                deepest_option = el
+                break
+        if not deepest_option:
+            return False
+        # If the current_parent is already the option or inside it, no redirection needed
+        cur = context.current_parent
+        while cur:
+            if cur is deepest_option:
+                return False
+            cur = cur.parent
+        # Otherwise we will handle this text
+        self._target_option = deepest_option  # type: ignore[attr-defined]
+        return True
+
+    def handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+        target = getattr(self, "_target_option", None)  # type: ignore[attr-defined]
+        if not target:
+            return False
+        # Perform merging semantics consistent with parser.insert_text (subset).
+        if target.children and target.children[-1].tag_name == "#text":
+            target.children[-1].text_content += text
+        else:
+            node = self.parser.create_text_node(text)
+            target.append_child(node)
+        return True
+
+
 class FramesetPreludeHandler(TagHandler):
     """Consolidated frameset prelude handler.
 
@@ -1315,7 +1379,6 @@ class TemplateContentBoundedEndHandler(TagHandler):
                 return True
             cursor = cursor.parent
         return True  # Ignore unmatched below boundary
-
 
 
 class TemplateAwareHandler(TagHandler):

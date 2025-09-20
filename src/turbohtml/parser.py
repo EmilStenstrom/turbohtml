@@ -91,6 +91,7 @@ class TurboHTML:
             FormattingElementHandler(self),
             ImageTagHandler(self),
             RawtextTextHandler(self),
+            OptionTextRedirectHandler(self),
             TextHandler(self),
             TextNormalizationHandler(self),
             FormTagHandler(self),
@@ -351,24 +352,6 @@ class TurboHTML:
             return None
 
         target_parent = parent or context.current_parent
-        if (
-            target_parent is not None
-            and not in_template_content(context)
-            and context.content_state != ContentState.RAWTEXT
-            and context.current_context not in ("math", "svg")
-            and any(not c.isspace() for c in text)
-        ):
-            deepest_option = None
-            for el in reversed(context.open_elements._stack):
-                if el.tag_name == "option":
-                    deepest_option = el
-                    break
-            if (
-                deepest_option is not None
-                and target_parent is not deepest_option
-                and not target_parent.find_ancestor(lambda n: n is deepest_option)
-            ):
-                target_parent = deepest_option
         if target_parent is None:
             return None
 
