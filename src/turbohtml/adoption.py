@@ -453,8 +453,8 @@ class AdoptionAgencyAlgorithm:
             context.move_to_element(parent)
         elif parent is not None:
             context.move_to_element(parent)
-        # Flag one-shot reconstruction so that if following token is a character token
-        # we rebuild any stale active formatting elements (mirrors complex-case behavior).
+        # Re-trigger one-shot reconstruction for simple-case: empirical suite requires immediate
+        # reconstruction after popping formatting element to wrap following text (paragraph pass gain).
         context.post_adoption_reconstruct_pending = True
         insertion_parent_name = context.current_parent.tag_name if context.current_parent else 'None'
         stack_after = [e.tag_name for e in context.open_elements._stack]
@@ -780,25 +780,6 @@ class AdoptionAgencyAlgorithm:
         restrict Step14 to only: redundancy check, detach, then insert-after-formatting-element or append.
         """
         # If already correct parent & correct slot (just after formatting_element if applicable) skip.
-        # Anchor/table mis-nesting: If the formatting element is an ancestor of furthest_block and the
-        # chosen common_ancestor is the formatting_element's parent, relocating the furthest_block under
-        # common_ancestor would extract it out of the formatting element, diverging from expected trees
-        # where the table subtree remains inside the outer <a>. Guard
-        # against this by short‑circuiting relocation in that specific structural pattern.
-        # Anchor+table guard: retain structural subtree under <a> (current stable baseline); previous placeholder
-        # experiment removed (no pass gains). Keeping logic minimal until a spec-faithful multi-iteration approach
-        # is implemented.
-        anchor_table_structurals = {'table','tbody','thead','tfoot','tr','td','th'}
-        if (
-            formatting_element.tag_name == 'a'
-            and furthest_block.parent is not None
-            and furthest_block.parent is formatting_element
-            and common_ancestor is formatting_element.parent
-        ):
-            target = last_node if last_node is not None else furthest_block
-            if target.tag_name in anchor_table_structurals or furthest_block.tag_name in anchor_table_structurals:
-                self.parser.debug('[adoption][step14] anchor+table guard: retaining table structural under <a>')
-                return
         if last_node.parent is common_ancestor:
             if (
                 formatting_element.parent is common_ancestor
