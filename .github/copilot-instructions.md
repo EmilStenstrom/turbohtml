@@ -1,7 +1,17 @@
-## TurboHTML – Contributor Quick Guide
+## TurboHTML – Agent instructions
+
+# Decision & Clarification Policy (Overrides)
+
+- Default to acting. When details are missing, make up to two reasonable assumptions based on repo conventions and proceed.
+- Ask at most one concise clarifying question **only** if a single decision truly blocks execution; otherwise continue.
+- Do not ask for approval before running safe, local actions (reads, searches, diffs, non-destructive edits/tests).
+- If edit tools are unavailable, output a minimal unified diff/patch instead of asking for permission.
+- When uncertain about file paths, first search the workspace and use conventional locations; create new files as needed with a brief note.
+- Replace “propose a follow-up” with “propose **and execute** the best alternative by default; ask only for destructive/irreversible choices.”
+- Keep preambles to a single declarative sentence (“I’m scanning the repo and then drafting a minimal fix.”) — no approval requests.
 
 ### Core Purpose
-HTML5 parser targeting full html5 spec compliance with handler modularity, speed (2–5× lxml), and lean memory (30–50% below BeautifulSoup).
+TurboHTML is a HTML5 parser targeting full html5 spec compliance with handler modularity, speed (2–5× lxml), and lean memory (30–50% below BeautifulSoup).
 
 ### Architecture Snapshot
 - Tokenizer (`tokenizer.py`): Spec state machines (incl. RAWTEXT). No exception-driven flow.
