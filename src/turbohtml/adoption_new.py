@@ -39,17 +39,8 @@ class NewAdoptionAgency:
         # Allow execution either for end tag processing OR for a duplicate <a> start tag segmentation
         # signaled by FormattingElementHandler (context.duplicate_anchor_adoption_recent). This restores
         # spec behavior where a new <a> start tag triggers the adoption agency for any active <a>.
-        processing_end = getattr(context, 'processing_end_tag', False)
-        if not processing_end:
-            # Allow start-tag driven segmentation for anchors when a handler explicitly flagged it.
-            if tag_name == 'a' and getattr(context, 'anchor_start_tag_segmentation', False):
-                # Clear flag so we don't re-enter repeatedly.
-                try:
-                    delattr(context, 'anchor_start_tag_segmentation')  # type: ignore[attr-defined]
-                except Exception:  # pragma: no cover
-                    pass
-            else:
-                return False
+        if not getattr(context, 'processing_end_tag', False):
+            return False
         if tag_name not in FORMATTING_ELEMENTS:
             return False
         if not any(

@@ -460,11 +460,14 @@ class AdoptionAgencyAlgorithm:
         elif parent is not None:
             context.move_to_element(parent)
         # Conditional reconstruction: request only if there exists a stale active formatting entry (element not on open stack).
-        for entry_chk in context.active_formatting_elements:
-            elc = entry_chk.element
-            if elc and not context.open_elements.contains(elc):
-                context.post_adoption_reconstruct_pending = True
-                break
+        if formatting_element.tag_name == 'a':
+            context.post_adoption_reconstruct_pending = True
+        else:
+            for entry_chk in context.active_formatting_elements:
+                elc = entry_chk.element
+                if elc and not context.open_elements.contains(elc):
+                    context.post_adoption_reconstruct_pending = True
+                    break
         insertion_parent_name = context.current_parent.tag_name if context.current_parent else 'None'
         stack_after = [e.tag_name for e in context.open_elements._stack]
         afe_after = [e.element.tag_name for e in context.active_formatting_elements if e.element]

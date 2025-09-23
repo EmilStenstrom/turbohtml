@@ -11,5 +11,3 @@ paths should spawn fresh parser instances after flipping flags.
 # Enable rewritten adoption agency implementation (phase 1: <a><b><i> only)
 NEW_ADOPTION = True  # re-enabled to test updated adoption simple-case parent reset
 
-# Enable unified insertion + foster parenting module
-NEW_INSERTION_API = False

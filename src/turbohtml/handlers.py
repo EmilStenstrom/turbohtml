@@ -261,7 +261,8 @@ class AnchorPreSegmentationHandler(TagHandler):
     tags to preserve earlier table anchor continuity behavior (tests1.dat:78).
     """
     _DISALLOWED = {
-        'div','address','article','section','nav','header','footer','aside','h1','h2','h3','h4','h5','h6','p','ul','ol','li','dl','dt','dd','form','pre','blockquote','hr','fieldset','figure','figcaption','main'
+        'div','address','article','section','nav','header','footer','aside','center','title',
+        'h1','h2','h3','h4','h5','h6','p','ul','ol','li','dl','dt','dd','form','pre','blockquote','hr','fieldset','figure','figcaption','main'
     }
     _TABLEISH_EXEMPT = {'table','tbody','thead','tfoot','tr','td','th','caption'}
 
@@ -284,9 +285,22 @@ class AnchorPreSegmentationHandler(TagHandler):
         if not context.open_elements.contains(anchor_el):
             return False
         if context.current_parent is not anchor_el:
-            # Do not segment when anchor isn't the direct insertion parent – standard end tag adoption
-            # will handle closure at the correct structural boundary.
-            return False
+            # Allow segmentation if anchor_el is an ancestor (still open) and no other formatting
+            # element of the same tag intervenes between anchor_el and current_parent on open stack.
+            stack = context.open_elements._stack
+            if anchor_el not in stack:
+                return False
+            # Verify anchor_el appears below current_parent in stack ordering (ancestor relationship).
+            try:
+                idx_anchor = stack.index(anchor_el)
+                idx_parent = stack.index(context.current_parent)
+                if idx_anchor < idx_parent:
+                    # Anchor is ancestor; proceed.
+                    pass
+                else:
+                    return False
+            except ValueError:
+                return False
         # Perform a single adoption run for <a>. Prefer new algorithm when enabled; fallback to legacy.
         try:
             from turbohtml.flags import NEW_ADOPTION
@@ -294,14 +308,14 @@ class AnchorPreSegmentationHandler(TagHandler):
             NEW_ADOPTION = False  # type: ignore
         ran = False
         if NEW_ADOPTION and getattr(self.parser, 'new_adoption_agency', None):
+            # Do not spoof end-tag processing; rely on legacy adoption for start-tag segmentation simplicity.
             ran = self.parser.new_adoption_agency.maybe_run('a', context)  # type: ignore[attr-defined]
         if not ran:
             self.parser.adoption_agency.run_until_stable('a', context, max_runs=1)
         # Force reconstruction so newly inserted block does not incorrectly nest inside stale wrappers.
         context.post_adoption_reconstruct_pending = True
-        # Signal to new adoption agency (if it was not invoked) that this segmentation was start-tag driven.
-        context.anchor_start_tag_segmentation = True  # type: ignore[attr-defined]
         return False
+        
 
 
 class EarlyMathMLLeafFragmentEnterHandler(TagHandler):
@@ -3024,10 +3038,15 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
             if existing_a and existing_a.element and context.open_elements.contains(existing_a.element):
                 # Duplicate <a>: rely on end-tag adoption without special flags (legacy suppression removed)
                 ran = False
-                if NEW_ADOPTION and getattr(self.parser, "new_adoption_agency", None):
-                    context.anchor_forced_segmentation = True  # type: ignore[attr-defined]
+                if NEW_ADOPTION and getattr(self.parser, 'new_adoption_agency', None):
                     ran = self.parser.new_adoption_agency.maybe_run('a', context)  # type: ignore[attr-defined]
-                    context.anchor_forced_segmentation = False  # type: ignore[attr-defined]
+                if not ran:
+                    prev_flag = getattr(context, 'processing_end_tag', False)
+                    context.processing_end_tag = True  # type: ignore[attr-defined]
+                    try:
+                        self.parser.adoption_agency.run_until_stable('a', context, max_runs=1)
+                    finally:
+                        context.processing_end_tag = prev_flag
                 if not ran:  # fallback legacy adoption
                     self.parser.adoption_agency.run_until_stable("a", context, max_runs=1)
                 # Restore reconstruction so following inline wrappers/nobr rebuild (regression fix for adoption01/tests22)
