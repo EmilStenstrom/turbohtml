@@ -58,8 +58,8 @@ def reconstruct_if_needed(parser, context, *, force: bool = False) -> bool:
         el = getattr(entry, 'element', None)
         if el is None:
             continue
-        if el.tag_name == 'nobr':
-            continue
+        # Spec: 'nobr' participates in reconstruction; only special parse error when another nobr exists in scope.
+        # We approximate by allowing reconstruction; duplicate handling (Noah's Ark clause) already limits overgrowth.
         if el not in open_stack:
             _reconstruct_fmt(parser, context)
             return True
