@@ -80,6 +80,16 @@ class ParseContext:
         self.last_template_text_index = -1
         # Anchor element to re-enter after structural element (e.g., table) handling if still open.
         self.resume_anchor_after_structure = None
+        # Anchor reconstruction / suppression coordination flags (previously accessed via getattr)
+        self.suppress_anchor_reconstruct_until = None  # e.g. 'address' -> suppress until address inserted then reconstruct inside it
+        self.defer_anchor_reconstruct_for_address = False  # one-shot flag to defer reconstruction until after <address> element insertion
+        self.processing_end_tag = False  # True only during end-tag handler dispatch to gate adoption agency anchor segmentation
+        self.skip_stale_reconstruct_once = False  # one-shot skip for stale reconstruction after certain adoption outcomes
+        self._text_already_inserted_index = None  # template/text duplicate guard (set by OptionTextRedirectHandler/TextHandler)
+        self.anchor_last_reconstruct_index = None  # tokenizer position of last anchor reconstruction (duplicate suppression)
+        self.anchor_suppress_once_done = False  # gate for one-shot anchor duplicate suppression
+        self.explicit_body = False  # whether a literal <body> start tag appeared (affects comment placement)
+        self.last_template_text_sig = None  # signature tuple (parent_id, index) of last template text append for duplication guard
 
     # --- Properties / helpers ---
     @property

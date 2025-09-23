@@ -359,7 +359,7 @@ class TurboHTML:
         # a template 'content' subtree with identical text, skip second merge to avoid FooFoo. We rely on
         # context.last_template_text_index tracking in TextHandler; here we add a secondary safeguard.
         if self.env_debug and target_parent and target_parent.tag_name == 'content':
-            self.debug(f"[insert_text] parent=content text='{text}' idx={getattr(context,'index',None)}")
+            self.debug(f"[insert_text] parent=content text='{text}' idx={context.index}")
         # Robust duplication suppression for template content: if last child is identical text AND
         # tokenizer index (when available) is unchanged since that node was appended, skip.
         if target_parent.tag_name == 'content' and target_parent.children:
@@ -476,12 +476,9 @@ class TurboHTML:
             # (Former malformed start-tag suppression moved to MalformedSelectStartTagFilterHandler)
 
             if token.type == "Comment":
-                # Delegate comment handling directly to handlers (parser no longer owns placement logic)
                 handled = False
                 for handler in self.tag_handlers:
-                    should = getattr(handler, "should_handle_comment", None)
-                    handle = getattr(handler, "handle_comment", None)
-                    if should and handle and should(token.data, context) and handle(token.data, context):
+                    if handler.should_handle_comment(token.data, context) and handler.handle_comment(token.data, context):
                         handled = True
                         break
                 if not handled:

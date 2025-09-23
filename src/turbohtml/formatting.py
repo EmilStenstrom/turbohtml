@@ -63,7 +63,7 @@ def reconstruct_active_formatting_elements(parser: "TurboHTML", context: "ParseC
         ):
             entry.element = context.current_parent
             context.open_elements.push(context.current_parent)
-            if getattr(parser, "env_debug", False):
+            if parser.env_debug:
                 parser.debug(
                     f"Reconstructed (reused) formatting element {context.current_parent.tag_name} (empty reuse)"
                 )
@@ -96,5 +96,5 @@ def reconstruct_active_formatting_elements(parser: "TurboHTML", context: "ParseC
                 context.anchor_suppress_once_done = False  # reset one-shot gate when a new anchor appears
             except Exception:
                 pass
-        if getattr(parser, "env_debug", False):
+        if parser.env_debug:
             parser.debug(f"Reconstructed formatting element {clone.tag_name}")

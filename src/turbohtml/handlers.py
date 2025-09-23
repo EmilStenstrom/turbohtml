@@ -38,8 +38,9 @@ def reconstruct_if_needed(parser, context, *, force: bool = False) -> bool:
     if force:
         _reconstruct_fmt(parser, context)
         return True
-    afe = getattr(context, 'active_formatting_elements', None)
-    if not afe or not getattr(afe, '_stack', None):  # type: ignore[attr-defined]
+    afe = context.active_formatting_elements
+    # Direct access: ActiveFormattingElements always defines _stack
+    if not afe or not afe._stack:
         return False
     # Template content skip
     cur = context.current_parent
@@ -53,9 +54,9 @@ def reconstruct_if_needed(parser, context, *, force: bool = False) -> bool:
         in_cell_or_caption = bool(context.current_parent.find_ancestor(lambda n: n.tag_name in ('td','th','caption')))
         if not in_cell_or_caption:
             return False
-    open_stack = getattr(context.open_elements, '_stack', [])  # type: ignore[attr-defined]
-    for entry in afe._stack:  # type: ignore[attr-defined]
-        el = getattr(entry, 'element', None)
+    open_stack = context.open_elements._stack  # type: ignore[attr-defined]
+    for entry in afe._stack:
+        el = entry.element
         if el is None:
             continue
         # Spec: 'nobr' participates in reconstruction; only special parse error when another nobr exists in scope.
@@ -67,8 +68,8 @@ def reconstruct_if_needed(parser, context, *, force: bool = False) -> bool:
 
 # --- Lightweight structural utilities (extracted from parser) ---
 def get_head(parser: "ParserInterface") -> Optional["Node"]:
-    html_node = getattr(parser, "html_node", None)
-    if not html_node or getattr(parser, "fragment_context", None):
+    html_node = parser.html_node
+    if not html_node or parser.fragment_context:
         return None
     for ch in html_node.children:
         if ch.tag_name == "head":
@@ -82,8 +83,8 @@ def ensure_head(parser: "ParserInterface") -> Optional["Node"]:
     private parser helpers. Safe in fragment mode (returns None). New head is
     inserted before the first non-comment/text child to preserve ordering.
     """
-    html_node = getattr(parser, "html_node", None)
-    if not html_node or getattr(parser, "fragment_context", None):
+    html_node = parser.html_node
+    if not html_node or parser.fragment_context:
         return None
     existing = get_head(parser)
     if existing:
@@ -152,6 +153,12 @@ class TagHandler:
     def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # pragma: no cover
         return False
     def early_end_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # pragma: no cover
+        return False
+
+    # Comment hooks (default no-ops so parser can call unconditionally)
+    def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:  # pragma: no cover
+        return False
+    def handle_comment(self, comment: str, context: "ParseContext") -> bool:  # pragma: no cover
         return False
 
     # Helper predicates
@@ -227,12 +234,12 @@ class BodyReentryHandler(TagHandler):
         from turbohtml.context import DocumentState as _DS
         tag = token.tag_name
         if context.document_state in (_DS.AFTER_BODY, _DS.AFTER_HTML) and tag not in ("html", "body"):
-            body_node = getattr(self.parser, "_get_body_node", lambda: None)()
+            body_node = self.parser._get_body_node()
             if not body_node:
-                body_node = getattr(self.parser, "_ensure_body_node", lambda _c: None)(context)
+                body_node = self.parser._ensure_body_node(context)
             if body_node:
                 resume_parent = body_node
-                stack = getattr(context.open_elements, "_stack", [])  # type: ignore[attr-defined]
+                stack = context.open_elements._stack  # type: ignore[attr-defined]
                 for el in reversed(stack):
                     if el is body_node:
                         break
@@ -275,7 +282,7 @@ class AnchorPreSegmentationHandler(TagHandler):
             return False
         # Need an active open <a> that is also the current insertion parent (spec: duplicate or
         # intervening block causes the existing anchor to be closed before inserting the block).
-        afe = getattr(context, 'active_formatting_elements', None)
+        afe = context.active_formatting_elements
         if not afe:
             return False
         a_entry = afe.find('a')
@@ -323,7 +330,7 @@ class EarlyMathMLLeafFragmentEnterHandler(TagHandler):
     _LEAFS = {"mi", "mo", "mn", "ms", "mtext"}
 
     def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
-        frag_ctx = getattr(self.parser, "fragment_context", None)
+        frag_ctx = self.parser.fragment_context
         if not frag_ctx or " " not in frag_ctx:
             return False
         root, leaf = frag_ctx.split(" ", 1)
@@ -575,7 +582,7 @@ class AfterFramesetCommentHandler(TagHandler):
         html = self.parser.html_node
         node = self.parser._create_comment_node(comment)  # type: ignore[attr-defined]
         # context.html_end_explicit used previously; guard via getattr (cold path, not perf critical)
-        html_end_explicit = getattr(context, "html_end_explicit", False)
+        html_end_explicit = context.html_end_explicit
         if not html_end_explicit and html and html in self.parser.root.children:
             html.append_child(node)
         else:
@@ -786,7 +793,7 @@ class TextNormalizationHandler(TagHandler):
         # Determine if first subtree already contains same formatting tag and any text descendant.
         # Leverage parser's adoption_agency descendant iterator if available; fall back to manual DFS.
         def iter_desc(node):
-            aa = getattr(self.parser, "adoption_agency", None)
+            aa = self.parser.adoption_agency
             if aa and hasattr(aa, "_iter_descendants"):
                 try:
                     yield from aa._iter_descendants(node)  # type: ignore[attr-defined]
@@ -821,7 +828,7 @@ class TextNormalizationHandler(TagHandler):
             t.parent = block
             insert_index += 1
         block.remove_child(second)
-        if getattr(self.parser, "env_debug", False):
+        if self.parser.env_debug:
             self.parser.debug(
                 f"TextNormalizationHandler: unwrapped trailing <{second.tag_name}> into text"
             )
@@ -848,6 +855,11 @@ class OptionTextRedirectHandler(TagHandler):
     signal handling complete.
     """
 
+    def __init__(self, parser: "ParserInterface") -> None:  # type: ignore[name-defined]
+        super().__init__(parser)
+        # Default target option placeholder (set during should_handle_text)
+        self._target_option = None
+
     def should_handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
         from turbohtml.context import ContentState as _CS
         if not text:
@@ -863,7 +875,7 @@ class OptionTextRedirectHandler(TagHandler):
             return False
         # Find deepest <option> in open elements stack
         deepest_option = None
-        stack = getattr(context.open_elements, "_stack", [])  # type: ignore[attr-defined]
+        stack = context.open_elements._stack  # type: ignore[attr-defined]
         for el in reversed(stack):
             if el.tag_name == "option":
                 deepest_option = el
@@ -881,8 +893,8 @@ class OptionTextRedirectHandler(TagHandler):
         return True
 
     def handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
-        target = getattr(self, "_target_option", None)  # type: ignore[attr-defined]
-        if not target:
+        target = self._target_option
+        if target is None:
             return False
         # Perform merging semantics consistent with parser.insert_text (subset).
         if target.children and target.children[-1].tag_name == "#text":
@@ -892,7 +904,7 @@ class OptionTextRedirectHandler(TagHandler):
             target.append_child(node)
         # Mark that a text insertion already occurred for this tokenizer index (duplicate guard for template reroute)
         try:
-            context._text_already_inserted_index = getattr(context, 'index', None)
+            context._text_already_inserted_index = context.index
         except Exception:
             pass
         return True
@@ -1128,7 +1140,7 @@ class FormattingReconstructionPreludeHandler(TagHandler):
         # For non-blockish tags reconstruct immediately; blockish handled post element creation in parser
         if tag_name not in self._BLOCKISH:
             # Skip reconstruction if anchor suppression active
-            if getattr(context, 'suppress_anchor_reconstruct_until', None) != 'address':
+            if context.suppress_anchor_reconstruct_until != 'address':
                 reconstruct_if_needed(self.parser, context)
         return False
 
@@ -1152,7 +1164,7 @@ class DefaultElementInsertionHandler(TagHandler):
         from turbohtml.context import DocumentState as _DS
         # Foreign fragment MathML leaf fix: treat self-closing math leaf (<ms/>, <mglyph/>, <malignmark/>) as normal container
         # by clearing is_self_closing flag so text that follows becomes its child (expected indentation/structure tests).
-        if getattr(self.parser, "fragment_context", None) and context.current_context == "math":
+        if self.parser.fragment_context and context.current_context == "math":
             if token.tag_name in ("ms","mglyph","malignmark") and token.is_self_closing:
                 token.is_self_closing = False  # force enter
         if context.document_state in (_DS.IN_TABLE, _DS.IN_TABLE_BODY, _DS.IN_ROW):
@@ -1165,8 +1177,8 @@ class DefaultElementInsertionHandler(TagHandler):
                 if table and table.parent:
                     # If an active formatting element is missing before a fostered insertion, reconstruct first
                     afe = context.active_formatting_elements
-                    if afe and getattr(afe, "_stack", None):  # type: ignore[attr-defined]
-                        for entry in afe._stack:  # type: ignore[attr-defined]
+                    if afe and afe._stack:
+                        for entry in afe._stack:
                             if entry.element and not context.open_elements.contains(entry.element) and entry.element.tag_name != "nobr":
                                 reconstruct_if_needed(self.parser, context)
                                 break
@@ -1188,29 +1200,29 @@ class DefaultElementInsertionHandler(TagHandler):
         # Perform reconstruction only for selected block containers when active formatting elements are missing.
         if token.tag_name in self._RECONSTRUCT_BLOCKS:
             afe = context.active_formatting_elements
-            if afe and getattr(afe, "_stack", None):  # type: ignore[attr-defined]
-                for entry in afe._stack:  # type: ignore[attr-defined]
+            if afe and afe._stack:
+                for entry in afe._stack:
                     if entry.element is None:
                         continue
                     # Suppress reconstruction for address when anchor suppression active; we'll handle sibling
-                    if token.tag_name == 'address' and getattr(context, 'suppress_anchor_reconstruct_until', None) == 'address':
+                    if token.tag_name == 'address' and context.suppress_anchor_reconstruct_until == 'address':
                         break
                     if (not context.open_elements.contains(entry.element)) and entry.element.tag_name != "nobr":
                         reconstruct_if_needed(self.parser, context)
                         break
         # Perform deferred anchor reconstruction inside newly inserted <address> element (adoption02.dat:1 expectation)
-        if token.tag_name == 'address' and getattr(context, 'defer_anchor_reconstruct_for_address', False):
+        if token.tag_name == 'address' and context.defer_anchor_reconstruct_for_address:
             # Move insertion to parent to make reconstructed anchor a child of the same parent (sibling of <address>)
             parent = context.current_parent.parent if context.current_parent else None
             if parent:
                 context.move_to_element(parent)
             reconstruct_if_needed(self.parser, context, force=True)
-            context.defer_anchor_reconstruct_for_address = False  # type: ignore[attr-defined]
+            context.defer_anchor_reconstruct_for_address = False
         # New suppression-based deferred reconstruction
-        if token.tag_name == 'address' and getattr(context, 'suppress_anchor_reconstruct_until', None) == 'address':
+        if token.tag_name == 'address' and context.suppress_anchor_reconstruct_until == 'address':
             # Reconstruct anchor inside address (first anchor inside address) then leave insertion inside address.
             reconstruct_if_needed(self.parser, context, force=True)
-            context.suppress_anchor_reconstruct_until = None  # type: ignore[attr-defined]
+            context.suppress_anchor_reconstruct_until = None
         return True
 
 
@@ -1505,7 +1517,7 @@ class NullParentRecoveryEndHandler(TagHandler):
         if context.document_state == _DS.IN_FRAMESET:
             return False
         # Fragment mode: move to fragment root
-        if getattr(self.parser, "fragment_context", None):
+        if self.parser.fragment_context:
             context.move_to_element(self.parser.root)
             self.debug("Restored insertion point to fragment root for end tag recovery")
             return False
@@ -1535,7 +1547,7 @@ class GenericEndTagHandler(TagHandler):
         if not context.current_parent:
             return True
         from turbohtml.constants import SPECIAL_CATEGORY_ELEMENTS
-        if token.tag_name == 'p' and getattr(self.parser, 'env_debug', False):
+        if token.tag_name == 'p' and self.parser.env_debug:
             stack_tags = [el.tag_name for el in context.open_elements._stack]
             self.debug(f"[p-end] incoming </p> current_parent={context.current_parent.tag_name} stack={stack_tags}")
         # Foreign-context paragraph end suppression (tests19.dat:82): If we encounter </p> while inside
@@ -2272,8 +2284,8 @@ class TextHandler(TagHandler):
     def handle_text(self, text: str, context: "ParseContext") -> bool:
         self.debug(f"handling text '{text}' in state {context.document_state}")
         # Per-token duplicate guard: skip if an earlier handler already inserted this character token
-        tok_idx = getattr(context, 'index', None)
-        if tok_idx is not None and getattr(context, '_text_already_inserted_index', None) == tok_idx:
+        tok_idx = context.index
+        if tok_idx is not None and context._text_already_inserted_index == tok_idx:
             return True
         # Template content single-consumption guard keyed by tokenizer index + parent id
         if context.current_parent.tag_name == 'content':
@@ -2282,8 +2294,8 @@ class TextHandler(TagHandler):
                 last = context.current_parent.children[-1]
                 if last.tag_name == '#text' and (last.text_content or '') == text:
                     return True
-            last_sig = getattr(context, 'last_template_text_sig', None)
-            sig = (id(context.current_parent), getattr(context, 'index', None))
+            last_sig = context.last_template_text_sig
+            sig = (id(context.current_parent), context.index)
             if last_sig == sig:
                 return True
             context.last_template_text_sig = sig  # type: ignore[attr-defined]
@@ -2321,9 +2333,9 @@ class TextHandler(TagHandler):
             # Stale formatting fallback: if no one-shot flag but there exists a stale active formatting element
             # (entry element not on open elements stack) and we are about to insert text in body, reconstruct.
             if context.document_state == DocumentState.IN_BODY and not self._is_in_template_content(context):
-                if getattr(context, 'skip_stale_reconstruct_once', False):
+                if context.skip_stale_reconstruct_once:
                     # Consume one-shot suppression set by complex adoption cloned-only path.
-                    context.skip_stale_reconstruct_once = False  # type: ignore[attr-defined]
+                    context.skip_stale_reconstruct_once = False
                 else:
                     for entry in context.active_formatting_elements:
                         el = entry.element
@@ -3061,7 +3073,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
             existing_a = context.active_formatting_elements.find("a")
             if existing_a and existing_a.element and context.open_elements.contains(existing_a.element):
                 # Duplicate <a>: run adoption once to close previous anchor per spec.
-                prev_flag = getattr(context, 'processing_end_tag', False)
+                prev_flag = context.processing_end_tag
                 context.processing_end_tag = True  # type: ignore[attr-defined]
                 try:
                     self.parser.adoption_agency.run_until_stable('a', context, max_runs=1)
@@ -3075,7 +3087,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         # structure (text becomes sibling). To align with expected structure deterministically without
         # heuristic token lookahead, treat formatting tags as plain elements (insert & push) but do NOT
         # register them in active_formatting_elements and do NOT trigger duplicate <a>/nobr adoption logic.
-        frag_ctx = getattr(self.parser, "fragment_context", None)
+        frag_ctx = self.parser.fragment_context
         if frag_ctx and context.current_context in ("math", "svg"):
             if tag_name in ("b","i","u","em","strong"):
                 self.parser.insert_element(token, context, mode="normal", enter=True)
@@ -3107,7 +3119,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
 
         # (Duplicate <a> logic consolidated above)
         # Pending reconstruction after new adoption segmentation
-        if getattr(context, 'post_adoption_reconstruct_pending', False):
+        if context.post_adoption_reconstruct_pending:
             reconstruct_if_needed(self.parser, context, force=True)
             context.post_adoption_reconstruct_pending = False
 
@@ -3423,127 +3435,67 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
 
     def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
         tag_name = token.tag_name
-        self.debug(
-            f"FormattingElementHandler: *** START PROCESSING END TAG </{tag_name}> ***"
-        )
-        self.debug(
-            f"FormattingElementHandler: handling end tag <{tag_name}>, context={context}"
-        )
-        prev_processing = getattr(context, 'processing_end_tag', False)
+        self.debug(f"FormattingElementHandler: *** START PROCESSING END TAG </{tag_name}> ***")
+        self.debug(f"FormattingElementHandler: handling end tag <{tag_name}>, context={context}")
+        prev_processing = context.processing_end_tag
         context.processing_end_tag = True
 
-        # New adoption feature flag removed – always use legacy adoption agency below.
-
-        fmt_ancestor = context.current_parent.find_ancestor(tag_name)
-        # Removed prior heuristic ignoring premature end tag when nested block present.
-        # Spec still requires running the adoption agency algorithm in these cases.
-
+        # Run adoption agency (legacy)
         runs = self.parser.adoption_agency.run_until_stable(tag_name, context, max_runs=8)
         if runs > 0:
             self.debug(f"FormattingElementHandler: Adoption agency completed after {runs} run(s) for </{tag_name}>")
             context.processing_end_tag = prev_processing
             return True
 
-        self.debug(
-            f"FormattingElementHandler: No adoption agency runs needed for </{tag_name}>, proceeding with normal end tag handling"
-        )
-
-        # Spec alignment: if the formatting element is on the open elements stack but NOT in scope,
-        # the end tag token must be ignored (no stack pops, no insertion point movement). Our previous
-        # boundary logic incorrectly bubbled out of the table, altering the insertion point and causing
-        # subsequent formatting start tags (e.g. <i>) to be foster‑parented before the table instead of
-        # remaining inside the cell (malformed table + inline formatting scenarios).
-        # Detect and short‑circuit here.
+        # If element on stack but not in scope -> ignore
         fmt_on_stack = None
         for el in context.open_elements._stack:
             if el.tag_name == tag_name:
                 fmt_on_stack = el
                 break
         if fmt_on_stack and not context.open_elements.has_element_in_scope(tag_name):
-            self.debug(
-                f"Ignoring </{tag_name}> (formatting element not in scope, per spec steps 4-5)"
-            )
+            self.debug(f"Ignoring </{tag_name}> (not in scope)")
             context.processing_end_tag = prev_processing
             return True
 
-
-        # Check if we're inside a boundary element (except table cells)
-        boundary = context.current_parent.find_ancestor(
-            lambda n: n.tag_name in BOUNDARY_ELEMENTS and n.tag_name not in ("td", "th")
-        )
-
+        # Boundary handling (exclude table cells)
+        boundary = context.current_parent.find_ancestor(lambda n: n.tag_name in BOUNDARY_ELEMENTS and n.tag_name not in ("td","th"))
         if boundary:
-            self.debug(f"Inside boundary element {boundary.tag_name}")
-            # First try to find formatting element within the boundary
-            current = context.current_parent.find_ancestor(
-                tag_name, stop_at_boundary=True
-            )
+            current = context.current_parent.find_ancestor(tag_name, stop_at_boundary=True)
             if current:
-                self.debug(f"Found formatting element within boundary: {current}")
                 self._move_to_parent_of_ancestor(context, current)
                 return True
-
-            # Look for a matching formatting element in the boundary's parent
             if boundary.parent:
-                outer_formatting = boundary.parent.find_ancestor(token.tag_name)
-                if outer_formatting:
-                    self.debug(f"Found outer formatting element: {outer_formatting}")
-                    # Stay inside the boundary element
+                outer = boundary.parent.find_ancestor(tag_name)
+                if outer:
                     context.move_to_element(boundary)
                     return True
-
-            # If no formatting element found, ignore the end tag
             context.processing_end_tag = prev_processing
             return True
 
-        # Find matching formatting element for simple case (no adoption agency needed)
-        current = context.current_parent.find_ancestor(token.tag_name)
+        current = context.current_parent.find_ancestor(tag_name)
         if not current:
-            self.debug(f"No matching formatting element found for end tag: {tag_name}")
             context.processing_end_tag = prev_processing
             return False
 
-        self.debug(f"Found matching formatting element: {current}")
-
-        # Remove from active formatting elements if present
         entry = context.active_formatting_elements.find_element(current)
         if entry:
             context.active_formatting_elements.remove(current)
-
-        # Pop from open elements stack until we find the element
         while not context.open_elements.is_empty():
             popped = context.open_elements.pop()
             if popped == current:
                 break
-
-        # Special case: if the formatting element contains a paragraph as a child,
-        # and we're currently in that paragraph, we should stay in the paragraph
-        # rather than moving to the formatting element's parent
-        if (
-            current.find_child_by_tag("p")
-            and context.current_parent.find_ancestor("p")
-            and current.tag_name == token.tag_name
-        ):
-            p_element = context.current_parent.find_ancestor("p")
-            if p_element and p_element.parent == current:
-                self.debug("Staying in paragraph that's inside formatting element")
-                context.move_to_element(p_element)
+        if (current.find_child_by_tag("p") and context.current_parent.find_ancestor("p") and current.tag_name == tag_name):
+            p_el = context.current_parent.find_ancestor("p")
+            if p_el and p_el.parent == current:
+                context.move_to_element(p_el)
+                context.processing_end_tag = prev_processing
                 return True
-
-        # If we're in a table but not in a cell, move to formatting element's parent
-        if context.document_state in (
-            DocumentState.IN_TABLE,
-            DocumentState.IN_TABLE_BODY,
-            DocumentState.IN_ROW,
-        ):
+        if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
             self._move_to_parent_of_ancestor(context, current)
+            context.processing_end_tag = prev_processing
             return True
-
-        # Otherwise close normally
-        self.debug(f"Moving to parent of formatting element: {current.parent}")
-        context.move_to_element_with_fallback(
-            current.parent, self.parser._get_body_node()
-        )
+        context.move_to_element_with_fallback(current.parent, self.parser._get_body_node())
         context.processing_end_tag = prev_processing
         return True
 
@@ -4660,7 +4612,7 @@ class ParagraphTagHandler(TagHandler):
             # cases (e.g. inline <a>/<nobr> spanning paragraph end). Force a one-shot reconstruction
             # so the next inline/text token rewraps content correctly. Guard with presence of any
             # formatting entries referencing elements no longer on the open stack to avoid redundant work.
-            if getattr(context, 'last_complex_adoption_no_structural_change', False) and context.active_formatting_elements._stack:
+            if context.last_complex_adoption_no_structural_change and context.active_formatting_elements._stack:
                 detached_exists = False
                 for entry in context.active_formatting_elements._stack:
                     el = entry.element
@@ -9789,7 +9741,7 @@ class FramesetTagHandler(TagHandler):
                         "math math",
                     }
                     meaningful = self._frameset_body_has_meaningful_content(body, allowed_tags)
-                    explicit_body = getattr(context, "explicit_body", False)
+                    explicit_body = context.explicit_body
                     if meaningful and context.frameset_ok:
                         self.debug("Ignoring <frameset>; body already meaningful")
                         return True

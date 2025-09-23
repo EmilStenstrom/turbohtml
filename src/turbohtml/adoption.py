@@ -278,7 +278,7 @@ class AdoptionAgencyAlgorithm:
             # Guard: only execute anchor adoption when processing a genuine end tag. Start-tag
             # paths (e.g. table start) must not implicitly segment an open <a> per spec; earlier
             # heuristic closures caused loss of anchor wrapping for foster‑parented text (tests1.dat:78).
-            if tag_name == 'a' and not getattr(context, 'processing_end_tag', False):
+            if tag_name == 'a' and not context.processing_end_tag:
                 break
             # Locate most recent matching formatting element (Step 1 selection prerequisite)
             formatting_entry = None
