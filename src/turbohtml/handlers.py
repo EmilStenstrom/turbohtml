@@ -1543,10 +1543,46 @@ class GenericEndTagHandler(TagHandler):
         if not context.current_parent:
             return True
         from turbohtml.constants import SPECIAL_CATEGORY_ELEMENTS
+        if token.tag_name == 'p' and getattr(self.parser, 'env_debug', False):
+            stack_tags = [el.tag_name for el in context.open_elements._stack]
+            self.debug(f"[p-end] incoming </p> current_parent={context.current_parent.tag_name} stack={stack_tags}")
+        # Foreign-context paragraph end suppression (tests19.dat:82): If we encounter </p> while inside
+        # a MathML/SVG subtree that began after an open <p> element, ignore the end tag so that the
+        # paragraph continues outside the foreign content. The expected tree nests the foreign nodes
+        # inside the original <p> and treats trailing text as still within that paragraph. We detect
+        # this by: (1) target == 'p'; (2) current_parent is inside a foreign (math/svg) subtree; (3)
+        # there exists a <p> ancestor outside that foreign subtree chain. If so, we return True early.
+        target = token.tag_name
+        if target == 'p':
+            # Determine if we're inside math/svg (foreign) context.
+            foreign_ancestor = None
+            probe = context.current_parent
+            while probe and probe.tag_name not in ('html','body','document-fragment'):
+                if probe.tag_name.startswith('math ') or probe.tag_name.startswith('svg ') or probe.tag_name in ('math','svg'):
+                    foreign_ancestor = probe
+                probe = probe.parent
+            if foreign_ancestor is not None:
+                # Look for an open <p> ancestor ABOVE the foreign ancestor.
+                p_above = False
+                cur = foreign_ancestor.parent
+                while cur and cur.tag_name not in ('html','body','document-fragment'):
+                    if cur.tag_name == 'p':
+                        p_above = True
+                        break
+                    cur = cur.parent
+                if p_above:
+                    # Synthesize a nested <p> and enter it so subsequent text becomes its child (expected tree tests19:82).
+                    deepest = context.current_parent
+                    new_p = Node('p')
+                    deepest.append_child(new_p)
+                    # Push onto open elements stack to mirror normal start tag behavior for <p>.
+                    context.open_elements.push(new_p)
+                    context.move_to_element(new_p)
+                    self.debug("GenericEndTagHandler: created and entered nested <p> inside foreign subtree; ignoring </p> (tests19:82)")
+                    return True
         stack = context.open_elements._stack
         if not stack:
             return True
-        target = token.tag_name
         if target in ("html", "head", "body"):
             return True
         # Walk upward looking for match; abort if special element encountered first
@@ -4708,6 +4744,45 @@ class ParagraphTagHandler(TagHandler):
                 _reconstruct_fmt(self.parser, context)
             context.recent_paragraph_close = True  # type: ignore[attr-defined]
             return True
+
+        # Foreign-subtree stray </p> (tests19.dat:82): If current insertion point is inside a foreign
+        # (MathML/SVG) subtree AND the nearest open <p> ancestor lies OUTSIDE that foreign subtree,
+        # we ignore the end tag for purposes of closing the outer paragraph and instead synthesize
+        # an empty <p> element inside the current (foreign) container. This matches the expected tree
+        # shape where the outer paragraph remains open and an empty nested paragraph appears as a
+        # child of the innermost foreign descendant (<span><p></p> text...). We detect this before
+        # generic p_ancestor closure logic so the outer paragraph is preserved.
+        if context.current_parent.tag_name != 'p':
+            # Locate nearest open paragraph ancestor (if any)
+            p_ancestor = context.current_parent.find_ancestor('p')
+            if p_ancestor:
+                # Determine if we are inside a foreign subtree whose root does NOT have the <p> ancestor.
+                foreign_root = None
+                probe = context.current_parent
+                while probe and probe is not p_ancestor and probe.tag_name not in ('html','body','document-fragment'):
+                    if probe.tag_name.startswith('math ') or probe.tag_name.startswith('svg ') or probe.tag_name in ('math','svg'):
+                        foreign_root = probe if foreign_root is None else foreign_root
+                    probe = probe.parent
+                if foreign_root is not None and p_ancestor not in (foreign_root,):
+                    # Ensure the paragraph ancestor is outside the foreign subtree: walk up from foreign_root
+                    cur = foreign_root
+                    outside = True
+                    while cur and cur is not p_ancestor and cur.tag_name not in ('html','body','document-fragment'):
+                        cur = cur.parent
+                    if cur is p_ancestor:
+                        # foreign subtree is nested within <p>; acceptable scenario
+                        # Synthesize empty paragraph under current_parent and ignore closure of outer.
+                        p_token = self._synth_token('p')
+                        self.parser.insert_element(
+                            p_token,
+                            context,
+                            mode='normal',
+                            enter=False,
+                            push_override=False,
+                            parent=context.current_parent,
+                        )
+                        self.debug('Synthesized empty <p> inside foreign subtree; preserving outer paragraph (tests19:82)')
+                        return True
 
         p_ancestor = context.current_parent.find_ancestor("p")
         if p_ancestor:
