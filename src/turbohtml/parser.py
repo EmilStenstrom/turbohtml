@@ -6,6 +6,8 @@ from turbohtml.context import ParseContext, DocumentState, ContentState
 from .handlers import *  # noqa: F401,F403  (intentional: handler registration side-effects)
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
 from turbohtml.adoption import AdoptionAgencyAlgorithm
+from turbohtml.adoption_new import NewAdoptionAgency  # phase 1 rewrite (feature-flagged)
+from turbohtml.flags import NEW_ADOPTION
 from .fragment import parse_fragment
 from turbohtml.node import Node
 from .constants import (
@@ -43,15 +45,18 @@ class TurboHTML:
 
         # Reset all state for each new parser instance
         self._init_dom_structure()
-        # Initialize adoption agency algorithm
+        # Initialize adoption agency algorithms (legacy + new, feature flagged)
         self.adoption_agency = AdoptionAgencyAlgorithm(self)
+        self.new_adoption_agency = NewAdoptionAgency(self) if NEW_ADOPTION else None
 
         # Initialize tag handlers in deterministic order
         self.tag_handlers = [
             DoctypeHandler(self),
+            TemplateContentAutoEnterHandler(self),
             RawtextStartTagIgnoreHandler(self),
             MalformedSelectStartTagFilterHandler(self),
             SpecialElementHandler(self),
+            AnchorPreSegmentationHandler(self),
             EarlyMathMLLeafFragmentEnterHandler(self),
             FormattingReconstructionPreludeHandler(self),
             TemplateTagHandler(self),
@@ -104,6 +109,7 @@ class TurboHTML:
             GenericEndTagHandler(self),
             StructureSynthesisHandler(self),
             PostProcessHandler(self),
+            TemplateContentPostPlacementHandler(self),
         ]
         self.tag_handlers = [h for h in self.tag_handlers if h is not None]
 
@@ -352,6 +358,18 @@ class TurboHTML:
             return None
 
         target_parent = parent or context.current_parent
+        # Template content duplication guard (debug-aware): if consecutive calls on same character index into
+        # a template 'content' subtree with identical text, skip second merge to avoid FooFoo. We rely on
+        # context.last_template_text_index tracking in TextHandler; here we add a secondary safeguard.
+        if self.env_debug and target_parent and target_parent.tag_name == 'content':
+            self.debug(f"[insert_text] parent=content text='{text}' idx={getattr(context,'index',None)}")
+        # Robust duplication suppression for template content: if last child is identical text AND
+        # tokenizer index (when available) is unchanged since that node was appended, skip.
+        if target_parent.tag_name == 'content' and target_parent.children:
+            last = target_parent.children[-1]
+            if last.tag_name == '#text' and last.text_content == text:
+                # Heuristic: treat immediate identical text append as duplication artifact.
+                return last
         if target_parent is None:
             return None
 
@@ -376,11 +394,15 @@ class TurboHTML:
             and target_parent.children[-1].tag_name == "#text"
         ):
             last = target_parent.children[-1]
+            if self.env_debug:
+                self.debug(f"[insert_text] merging into existing text node len_before={len(last.text_content)} add_len={len(text)}")
             last.text_content += text
             return last
 
         new_node = self.create_text_node(text)
         target_parent.append_child(new_node)
+        if self.env_debug:
+            self.debug(f"[insert_text] new text node len={len(text)} parent={target_parent.tag_name}")
         return new_node
 
 

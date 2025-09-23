@@ -71,6 +71,15 @@ class ParseContext:
         # identical tags nested inside the fragment should be processed normally. We keep
         # a simple boolean rather than counting since only the first occurrence is ignored.
         self.fragment_context_ignored = False
+        # Whether the last complex adoption performed no structural changes (no cloned or removed formatting elements).
+        # Used by paragraph end handler to decide whether to force a one-shot reconstruction at paragraph boundary
+        # so that legacy tree shapes are preserved for pure segmentation scenarios (anchor/nobr).
+        self.last_complex_adoption_no_structural_change = False
+        # Index of last character token processed inside template content to prevent duplicate consumption
+        # (used for nested template/table duplication guard).
+        self.last_template_text_index = -1
+        # Anchor element to re-enter after structural element (e.g., table) handling if still open.
+        self.resume_anchor_after_structure = None
 
     # --- Properties / helpers ---
     @property

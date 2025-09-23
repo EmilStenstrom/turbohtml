@@ -52,19 +52,20 @@ def reconstruct_active_formatting_elements(parser: "TurboHTML", context: "ParseC
             and context.current_parent.children[-1].tag_name == "nobr"
         ):
             continue
-        # Reuse existing current_parent for <nobr> when structurally identical & empty
+        # Reuse existing current_parent for <nobr> only when it is empty (no children) to avoid
+        # collapsing expected sibling <nobr> wrappers that follow immediately after text or <br>.
         if (
             entry.element.tag_name == "nobr"
             and context.current_parent
             and context.current_parent.tag_name == entry.element.tag_name
             and context.current_parent.attributes == entry.element.attributes
-            and not any(ch.tag_name == "#text" for ch in context.current_parent.children)
+            and not context.current_parent.children  # strictly empty
         ):
             entry.element = context.current_parent
             context.open_elements.push(context.current_parent)
-            if getattr(parser, "env_debug", False):  # avoid calling parser.debug in hot path unless needed
+            if getattr(parser, "env_debug", False):
                 parser.debug(
-                    f"Reconstructed (reused) formatting element {context.current_parent.tag_name} (no clone)"
+                    f"Reconstructed (reused) formatting element {context.current_parent.tag_name} (empty reuse)"
                 )
             continue
         clone = Node(entry.element.tag_name, entry.element.attributes.copy())
@@ -88,5 +89,12 @@ def reconstruct_active_formatting_elements(parser: "TurboHTML", context: "ParseC
         context.open_elements.push(clone)
         entry.element = clone
         context.move_to_element(clone)
+        # Track anchor reconstruction index for immediate re-adoption suppression. We only care about <a>.
+        if clone.tag_name == 'a':
+            try:
+                context.anchor_last_reconstruct_index = context.index  # type: ignore[attr-defined]
+                context.anchor_suppress_once_done = False  # reset one-shot gate when a new anchor appears
+            except Exception:
+                pass
         if getattr(parser, "env_debug", False):
             parser.debug(f"Reconstructed formatting element {clone.tag_name}")

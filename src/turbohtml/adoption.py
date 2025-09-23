@@ -275,6 +275,11 @@ class AdoptionAgencyAlgorithm:
         simple_case_executed = False    # track simple case (no furthest block)
         # simple_case_popped_above removed (we no longer trigger reconstruction for simple case)
         for iteration_count in range(1, 9):  # spec max 8
+            # Guard: only execute anchor adoption when processing a genuine end tag. Start-tag
+            # paths (e.g. table start) must not implicitly segment an open <a> per spec; earlier
+            # heuristic closures caused loss of anchor wrapping for foster‑parented text (tests1.dat:78).
+            if tag_name == 'a' and not getattr(context, 'processing_end_tag', False):
+                break
             # Locate most recent matching formatting element (Step 1 selection prerequisite)
             formatting_entry = None
             for entry in reversed(list(context.active_formatting_elements)):
@@ -454,9 +459,12 @@ class AdoptionAgencyAlgorithm:
             context.move_to_element(parent)
         elif parent is not None:
             context.move_to_element(parent)
-        # Re-trigger one-shot reconstruction for simple-case: empirical suite requires immediate
-        # reconstruction after popping formatting element to wrap following text (paragraph pass gain).
-        context.post_adoption_reconstruct_pending = True
+        # Conditional reconstruction: request only if there exists a stale active formatting entry (element not on open stack).
+        for entry_chk in context.active_formatting_elements:
+            elc = entry_chk.element
+            if elc and not context.open_elements.contains(elc):
+                context.post_adoption_reconstruct_pending = True
+                break
         insertion_parent_name = context.current_parent.tag_name if context.current_parent else 'None'
         stack_after = [e.tag_name for e in context.open_elements._stack]
         afe_after = [e.element.tag_name for e in context.active_formatting_elements if e.element]
