@@ -302,16 +302,8 @@ class AnchorPreSegmentationHandler(TagHandler):
             except ValueError:
                 return False
         # Perform a single adoption run for <a>. Prefer new algorithm when enabled; fallback to legacy.
-        try:
-            from turbohtml.flags import NEW_ADOPTION
-        except Exception:  # pragma: no cover
-            NEW_ADOPTION = False  # type: ignore
-        ran = False
-        if NEW_ADOPTION and getattr(self.parser, 'new_adoption_agency', None):
-            # Do not spoof end-tag processing; rely on legacy adoption for start-tag segmentation simplicity.
-            ran = self.parser.new_adoption_agency.maybe_run('a', context)  # type: ignore[attr-defined]
-        if not ran:
-            self.parser.adoption_agency.run_until_stable('a', context, max_runs=1)
+        # Always run adoption once to segment existing open <a> before inserting a disallowed block.
+        self.parser.adoption_agency.run_until_stable('a', context, max_runs=1)
         # Force reconstruction so newly inserted block does not incorrectly nest inside stale wrappers.
         context.post_adoption_reconstruct_pending = True
         return False
@@ -3066,32 +3058,16 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 break
         # Proactive duplicate <a> segmentation (spec: any new <a> implies adoption of existing active <a>)
         if tag_name == "a":
-            try:
-                from turbohtml.flags import NEW_ADOPTION
-            except Exception:  # pragma: no cover
-                NEW_ADOPTION = False  # type: ignore
             existing_a = context.active_formatting_elements.find("a")
             if existing_a and existing_a.element and context.open_elements.contains(existing_a.element):
-                # Duplicate <a>: rely on end-tag adoption without special flags (legacy suppression removed)
-                ran = False
-                if NEW_ADOPTION and getattr(self.parser, 'new_adoption_agency', None):
-                    ran = self.parser.new_adoption_agency.maybe_run('a', context)  # type: ignore[attr-defined]
-                if not ran:
-                    prev_flag = getattr(context, 'processing_end_tag', False)
-                    context.processing_end_tag = True  # type: ignore[attr-defined]
-                    try:
-                        self.parser.adoption_agency.run_until_stable('a', context, max_runs=1)
-                    finally:
-                        context.processing_end_tag = prev_flag
-                if not ran:  # fallback legacy adoption
-                    self.parser.adoption_agency.run_until_stable("a", context, max_runs=1)
-                # Restore reconstruction so following inline wrappers/nobr rebuild (regression fix for adoption01/tests22)
-                if getattr(context, 'suppress_anchor_reconstruct_until', None) == 'address':
-                    context.post_adoption_reconstruct_pending = False
-                else:
-                    context.post_adoption_reconstruct_pending = True
-                # restore previous duplicate flag state for nested scenarios
-                # (Suppression flag removed in cleanup)
+                # Duplicate <a>: run adoption once to close previous anchor per spec.
+                prev_flag = getattr(context, 'processing_end_tag', False)
+                context.processing_end_tag = True  # type: ignore[attr-defined]
+                try:
+                    self.parser.adoption_agency.run_until_stable('a', context, max_runs=1)
+                finally:
+                    context.processing_end_tag = prev_flag
+                context.post_adoption_reconstruct_pending = True
         # Foreign fragment adjustment: when parsing a fragment whose context is a MathML or SVG leaf
         # element (e.g. 'math ms', 'math mi', etc.), expected trees in foreign-fragment tests retain the
         # formatting element wrapper as an open element at fragment end (no adoption reparent). Our
@@ -3136,46 +3112,12 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
             context.post_adoption_reconstruct_pending = False
 
         if self._is_in_template_content(context):
-            tableish = {
-                "table",
-                "thead",
-                "tbody",
-                "tfoot",
-                "tr",
-                "td",
-                "th",
-                "caption",
-                "colgroup",
-                "col",
-            }
-            if context.current_parent.tag_name in tableish:
-                # Prefer nearest same-tag ancestor
-                same_ancestor = context.current_parent.find_ancestor(tag_name)
-                if same_ancestor:
-                    context.move_to_element(same_ancestor)
-                else:
-                    # Find the content boundary
-                    boundary = None
-                    node = context.current_parent
-                    while node:
-                        if (
-                            node.tag_name == "content"
-                            and node.parent
-                            and node.parent.tag_name == "template"
-                        ):
-                            boundary = node
-                            break
-                        node = node.parent
-                    if boundary:
-                        # If the last child at the boundary is a table, insert before it to keep formatting siblings
-                        last = boundary.children[-1] if boundary.children else None
-                        if last and last.tag_name == "table":
-                            # We'll create the element and insert before the table below
-                            context.move_to_element(boundary)
-                            pending_insert_before = last
-                        else:
-                            pending_insert_before = None
-                            context.move_to_element(boundary)
+            tableish = {"table", "thead", "tbody", "tfoot"}
+            # Template content handling for formatting elements: if ancestor formatting with same tag exists
+            # inside template content boundary, reuse insertion point at that ancestor; otherwise remain at current.
+            same_ancestor = context.current_parent.find_ancestor(tag_name)
+            if same_ancestor:
+                context.move_to_element(same_ancestor)
 
         if tag_name == "nobr" and context.open_elements.has_element_in_scope("nobr"):
             # Spec: when a <nobr> start tag is seen and one is already in scope, run the adoption
@@ -3490,16 +3432,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         prev_processing = getattr(context, 'processing_end_tag', False)
         context.processing_end_tag = True
 
-        # Phase 1 new adoption integration (feature-flagged): attempt spec-faithful path first.
-        try:
-            from turbohtml.flags import NEW_ADOPTION  # local import to avoid cost when disabled
-        except Exception:  # pragma: no cover - defensive
-            NEW_ADOPTION = False  # type: ignore
-        if NEW_ADOPTION and getattr(self.parser, "new_adoption_agency", None):
-            if self.parser.new_adoption_agency.maybe_run(tag_name, context):  # type: ignore[attr-defined]
-                context.processing_end_tag = prev_processing
-                self.debug(f"FormattingElementHandler: new adoption algorithm handled </{tag_name}>")
-                return True
+        # New adoption feature flag removed – always use legacy adoption agency below.
 
         fmt_ancestor = context.current_parent.find_ancestor(tag_name)
         # Removed prior heuristic ignoring premature end tag when nested block present.
@@ -5233,37 +5166,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
     def _handle_table(self, token: "HTMLToken", context: "ParseContext") -> bool:
         """Handle table element"""
-        # Pre-table anchor segmentation (NEW_ADOPTION): if an <a> is open outside a cell/caption, run adoption to split
-        try:
-            from turbohtml.flags import NEW_ADOPTION
-        except Exception:  # pragma: no cover
-            NEW_ADOPTION = False  # type: ignore
-        if NEW_ADOPTION:
-            # Detect open anchor in active formatting elements that is also on open elements stack
-            afe_a = context.active_formatting_elements.find("a")
-            if (
-                afe_a
-                and afe_a.element
-                and context.open_elements.contains(afe_a.element)
-                and not (
-                    context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
-                )
-            ):
-                # Run adoption via new algorithm if available else legacy; this should pop/replace anchor so table is sibling
-                ran = False
-                if getattr(self.parser, "new_adoption_agency", None):
-                    ran = self.parser.new_adoption_agency.maybe_run("a", context)  # type: ignore[attr-defined]
-                if not ran:
-                    self.parser.adoption_agency.run_until_stable("a", context, max_runs=1)
-                # Remove lingering anchor if still open (enforce segmentation)
-                lingering = context.active_formatting_elements.find("a")
-                if lingering and lingering.element and context.open_elements.contains(lingering.element):
-                    context.open_elements.remove_element(lingering.element)
-                    context.active_formatting_elements.remove(lingering.element)
-                # Trigger reconstruction so following inline content nests correctly outside old anchor
-                context.post_adoption_reconstruct_pending = True
-                from .formatting import reconstruct_active_formatting_elements as _reconstruct_fmt  # local import (cold path)
-                _reconstruct_fmt(self.parser, context)
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
             self.debug("Implicitly closing head and switching to body")
             body = self.parser._ensure_body_node(context)

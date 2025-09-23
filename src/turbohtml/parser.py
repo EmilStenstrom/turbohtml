@@ -6,8 +6,6 @@ from turbohtml.context import ParseContext, DocumentState, ContentState
 from .handlers import *  # noqa: F401,F403  (intentional: handler registration side-effects)
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
 from turbohtml.adoption import AdoptionAgencyAlgorithm
-from turbohtml.adoption_new import NewAdoptionAgency  # phase 1 rewrite (feature-flagged)
-from turbohtml.flags import NEW_ADOPTION
 from .fragment import parse_fragment
 from turbohtml.node import Node
 from .constants import (
@@ -45,9 +43,8 @@ class TurboHTML:
 
         # Reset all state for each new parser instance
         self._init_dom_structure()
-        # Initialize adoption agency algorithms (legacy + new, feature flagged)
+        # Initialize legacy adoption agency (new experimental version removed)
         self.adoption_agency = AdoptionAgencyAlgorithm(self)
-        self.new_adoption_agency = NewAdoptionAgency(self) if NEW_ADOPTION else None
 
         # Initialize tag handlers in deterministic order
         self.tag_handlers = [
