@@ -261,8 +261,6 @@ class AdoptionAgencyAlgorithm:
                 if 'table' in open_tags or 'address' in open_tags:
                     self.parser.debug(f"[adoption][loop] tag=a iter={iteration_count} open={open_tags}")
 
-
-
             # Step 3: formatting element must be on open stack else remove from AFE and ABORT (spec)
             # HTML Standard: "If formatting element is not in the stack of open elements, then this is a parse error;
             # remove the element from the list of active formatting elements and abort these steps." Previous implementation
@@ -354,14 +352,14 @@ class AdoptionAgencyAlgorithm:
     def _find_furthest_block_spec_compliant(self, formatting_element, context):
         """Locate the furthest block per HTML Standard.
 
-    Spec wording: "Let furthestBlock be the topmost node in the stack of open elements that is lower
-    in the stack than formattingElement, and is an element in the special category." Here the stack's
-    0 index is closest to root; "topmost" below formattingElement in spec terms refers to the element
-    highest in tree order among those below it, which corresponds to the *deepest* (largest index) matching
-    special element in our open elements stack representation (since newer descendants are pushed later).
-    Selecting the deepest enables multi-iteration adoption layering required for complex mis-nesting cases
-    (anchors wrapping table structures). Earlier implementation chose the first match (closest to root),
-    prematurely terminating layering and blocking correct split behavior.
+        Spec wording: "Let furthestBlock be the topmost node in the stack of open elements that is lower
+        in the stack than formattingElement, and is an element in the special category." Here the stack's
+        0 index is closest to root; "topmost" below formattingElement in spec terms refers to the element
+        highest in tree order among those below it, which corresponds to the *deepest* (largest index) matching
+        special element in our open elements stack representation (since newer descendants are pushed later).
+        Selecting the deepest enables multi-iteration adoption layering required for complex mis-nesting cases
+        (anchors wrapping table structures). Earlier implementation chose the first match (closest to root),
+        prematurely terminating layering and blocking correct split behavior.
         """
         idx = context.open_elements.index_of(formatting_element)
         if idx == -1:
