@@ -485,8 +485,6 @@ class TurboHTML:
 
     def _handle_fragment_comment(self, text, context):
         """Handle comments in fragment parsing"""
-        from turbohtml.context import DocumentState
-
         comment_node = Node("#comment")
         comment_node.text_content = text
         # html fragment AFTER_HTML - attach at fragment root (siblings with head/body) per expected tree

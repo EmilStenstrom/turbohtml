@@ -3,6 +3,7 @@ from .constants import (
     RAWTEXT_ELEMENTS,
     HTML5_NUMERIC_REPLACEMENTS,
     NUMERIC_ENTITY_INVALID_SENTINEL,
+    VOID_ELEMENTS,
 )
 import html  # Add to top of file
 
@@ -719,9 +720,7 @@ class HTMLTokenizer:
                     if suppressed:
                         # If suppressed void-like element, consume to EOF so no residual tokens are produced
                         # from attribute value content that actually belongs inside the unterminated attribute.
-                        from .constants import VOID_ELEMENTS as _VE
-
-                        if tag_name.lower() in _VE:
+                        if tag_name.lower() in VOID_ELEMENTS:
                             self.pos = self.length
                         return HTMLToken("Character", data="")
                 else:

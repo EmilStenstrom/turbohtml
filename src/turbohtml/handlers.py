@@ -1,5 +1,4 @@
 import re
- # typing removed
 
 from turbohtml.constants import (
     AUTO_CLOSING_TAGS,
@@ -12,8 +11,11 @@ from turbohtml.constants import (
     HTML_BREAK_OUT_ELEMENTS,
     HTML_ELEMENTS,
     MATHML_ELEMENTS,
+    MATHML_CASE_SENSITIVE_ATTRIBUTES,
+    NUMERIC_ENTITY_INVALID_SENTINEL,
     RAWTEXT_ELEMENTS,
     SPECIAL_CATEGORY_ELEMENTS,
+    SVG_CASE_SENSITIVE_ATTRIBUTES,
     SVG_CASE_SENSITIVE_ELEMENTS,
     TABLE_ELEMENTS,
     VOID_ELEMENTS,
@@ -22,7 +24,9 @@ from turbohtml.context import ParseContext, ContentState, DocumentState
 from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken
 from turbohtml import table_modes
+from turbohtml.foster import foster_parent, needs_foster_parenting
 from .formatting import reconstruct_active_formatting_elements as _reconstruct_fmt
+
 
 def reconstruct_if_needed(parser, context, *, force=False):
     """Central reconstruction guard.
@@ -48,8 +52,11 @@ def reconstruct_if_needed(parser, context, *, force=False):
             return False
         cur = cur.parent
     # Table mode cell/caption restriction
-    from turbohtml.context import DocumentState as _DS
-    if context.document_state in (_DS.IN_TABLE, _DS.IN_TABLE_BODY, _DS.IN_ROW):
+    if context.document_state in (
+        DocumentState.IN_TABLE,
+        DocumentState.IN_TABLE_BODY,
+        DocumentState.IN_ROW,
+    ):
         in_cell_or_caption = bool(context.current_parent.find_ancestor(lambda n: n.tag_name in ('td','th','caption')))
         if not in_cell_or_caption:
             return False
@@ -220,9 +227,8 @@ class BodyReentryHandler(TagHandler):
     """
 
     def early_start_preprocess(self, token, context):  # type: ignore[override]
-        from turbohtml.context import DocumentState as _DS
         tag = token.tag_name
-        if context.document_state in (_DS.AFTER_BODY, _DS.AFTER_HTML) and tag not in ("html", "body"):
+        if context.document_state in (DocumentState.AFTER_BODY, DocumentState.AFTER_HTML) and tag not in ("html", "body"):
             body_node = self.parser._get_body_node()
             if not body_node:
                 body_node = self.parser._ensure_body_node(context)
@@ -244,7 +250,7 @@ class BodyReentryHandler(TagHandler):
                         resume_parent = el
                         break
                 context.move_to_element(resume_parent)
-                context.transition_to_state(_DS.IN_BODY, resume_parent)
+                context.transition_to_state(DocumentState.IN_BODY, resume_parent)
                 self.debug(f"Reentered IN_BODY for <{tag}> after post-body state")
         return False
 
@@ -377,13 +383,11 @@ class BodyImplicitCreationHandler(TagHandler):
     """
 
     def early_start_preprocess(self, token, context):  # type: ignore[override]
-        from turbohtml.context import DocumentState as _DS
-        from turbohtml.constants import HEAD_ELEMENTS as _HEAD
         tag = token.tag_name
         if (
             not self.parser.fragment_context
-            and context.document_state in (_DS.INITIAL, _DS.IN_HEAD)
-            and tag not in _HEAD
+            and context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD)
+            and tag not in HEAD_ELEMENTS
             and tag != "html"
             and not self._is_in_template_content(context)
         ):
@@ -411,10 +415,10 @@ class BodyImplicitCreationHandler(TagHandler):
             benign = tag in benign_no_body
             if not (benign and context.frameset_ok):
                 self.debug("Implicitly creating body node (handler)")
-                if context.document_state != _DS.IN_FRAMESET:
+                if context.document_state != DocumentState.IN_FRAMESET:
                     body = self.parser._ensure_body_node(context)
                     if body:
-                        context.transition_to_state(_DS.IN_BODY, body)
+                        context.transition_to_state(DocumentState.IN_BODY, body)
         return False
 
 
@@ -430,11 +434,10 @@ class CommentPlacementHandler(TagHandler):
     """
 
     def should_handle_comment(self, comment, context):  # type: ignore[override]
-        from turbohtml.context import DocumentState as _DS
         # Only intercept when in or just re-entered from post-body situations
-        if context.document_state == _DS.AFTER_BODY:
+        if context.document_state == DocumentState.AFTER_BODY:
             return True
-        if context.document_state == _DS.IN_BODY and self.parser._prev_token is not None:
+        if context.document_state == DocumentState.IN_BODY and self.parser._prev_token is not None:
             prev = self.parser._prev_token
             if prev.type == "EndTag" and prev.tag_name == "body":
                 return True
@@ -477,8 +480,7 @@ class InitialCommentHandler(TagHandler):
     """
 
     def should_handle_comment(self, comment, context):  # type: ignore[override]
-        from turbohtml.context import DocumentState as _DS
-        return context.document_state == _DS.INITIAL
+        return context.document_state == DocumentState.INITIAL
 
     def handle_comment(self, comment, context):  # type: ignore[override]
         html = self.parser.html_node
@@ -500,8 +502,7 @@ class AfterHeadCommentHandler(TagHandler):
     """Place comments in AFTER_HEAD state before <body> if present, else append to <html>."""
 
     def should_handle_comment(self, comment, context):  # type: ignore[override]
-        from turbohtml.context import DocumentState as _DS
-        return context.document_state == _DS.AFTER_HEAD
+        return context.document_state == DocumentState.AFTER_HEAD
 
     def handle_comment(self, comment, context):  # type: ignore[override]
         html = self.parser.html_node
@@ -525,8 +526,7 @@ class AfterHtmlCommentHandler(TagHandler):
     """
 
     def should_handle_comment(self, comment, context):  # type: ignore[override]
-        from turbohtml.context import DocumentState as _DS
-        return context.document_state == _DS.AFTER_HTML
+        return context.document_state == DocumentState.AFTER_HTML
 
     def handle_comment(self, comment, context):  # type: ignore[override]
         body = self.parser._get_body_node()
@@ -559,8 +559,7 @@ class AfterFramesetCommentHandler(TagHandler):
     """
 
     def should_handle_comment(self, comment, context):  # type: ignore[override]
-        from turbohtml.context import DocumentState as _DS
-        return context.document_state == _DS.AFTER_FRAMESET
+        return context.document_state == DocumentState.AFTER_FRAMESET
 
     def handle_comment(self, comment, context):  # type: ignore[override]
         html = self.parser.html_node
@@ -578,8 +577,7 @@ class InBodyHtmlParentCommentHandler(TagHandler):
     """Handle comments in IN_BODY when current_parent is <html> (insert before <head> if present)."""
 
     def should_handle_comment(self, comment, context):  # type: ignore[override]
-        from turbohtml.context import DocumentState as _DS
-        return context.document_state == _DS.IN_BODY and context.current_parent and context.current_parent.tag_name == "html"
+        return context.document_state == DocumentState.IN_BODY and context.current_parent and context.current_parent.tag_name == "html"
 
     def handle_comment(self, comment, context):  # type: ignore[override]
         html = context.current_parent
@@ -605,18 +603,16 @@ class PostBodyCharacterHandler(TagHandler):
     """
 
     def should_handle_text(self, text, context):  # type: ignore[override]
-        from turbohtml.context import DocumentState as _DS
         return (
-            context.document_state in (_DS.AFTER_BODY, _DS.AFTER_HTML)
+            context.document_state in (DocumentState.AFTER_BODY, DocumentState.AFTER_HTML)
             and text.strip() != ""
         )
 
     def handle_text(self, text, context):  # type: ignore[override]
-        from turbohtml.context import DocumentState as _DS
         body = self.parser._get_body_node() or self.parser._ensure_body_node(context)
         if body:
             context.move_to_element(body)
-            context.transition_to_state(_DS.IN_BODY, body)
+            context.transition_to_state(DocumentState.IN_BODY, body)
         # Do not consume the text itself; allow normal TextHandler to process it next cycle.
         # We insert nothing here, just adjust state. Returning False lets downstream handlers run.
         return False
@@ -630,9 +626,8 @@ class AfterHeadWhitespaceHandler(TagHandler):
     """
 
     def should_handle_text(self, text, context):  # type: ignore[override]
-        from turbohtml.context import DocumentState as _DS
         return (
-            context.document_state == _DS.AFTER_HEAD and text and text.strip() == ""
+            context.document_state == DocumentState.AFTER_HEAD and text and text.strip() == ""
         )
 
     def handle_text(self, text, context):  # type: ignore[override]
@@ -717,8 +712,7 @@ class RawtextTextHandler(TagHandler):
     """
 
     def should_handle_text(self, text, context):  # type: ignore[override]
-        from turbohtml.context import ContentState as _CS
-        return context.content_state == _CS.RAWTEXT and bool(text)
+        return context.content_state == ContentState.RAWTEXT and bool(text)
 
     def handle_text(self, text, context):  # type: ignore[override]
         cur = context.current_parent
@@ -843,10 +837,9 @@ class OptionTextRedirectHandler(TagHandler):
         self._target_option = None
 
     def should_handle_text(self, text, context):  # type: ignore[override]
-        from turbohtml.context import ContentState as _CS
         if not text:
             return False
-        if context.content_state == _CS.RAWTEXT:
+        if context.content_state == ContentState.RAWTEXT:
             return False
         if context.current_context in ("math", "svg"):
             return False
@@ -963,11 +956,10 @@ class FramesetLateHandler(TagHandler):
     _BENIGN_INLINE = {"span", "font", "b", "i", "u", "em", "strong"}
 
     def early_start_preprocess(self, token, context):  # type: ignore[override]
-        from turbohtml.context import DocumentState as _DS
         tag = token.tag_name
         # Takeover only when encountering frameset and frameset_ok still True
         if tag == "frameset" and context.frameset_ok and context.document_state in (
-            _DS.INITIAL, _DS.IN_HEAD, _DS.IN_BODY, _DS.AFTER_HEAD
+            DocumentState.INITIAL, DocumentState.IN_HEAD, DocumentState.IN_BODY, DocumentState.AFTER_HEAD
         ):
             body = self.parser._get_body_node()  # type: ignore[attr-defined]
             if body:
@@ -994,7 +986,7 @@ class FramesetLateHandler(TagHandler):
                         context.move_to_element(self.parser.html_node)
         # Guard (only after root frameset established)
         if self.parser._has_root_frameset() and context.document_state in (
-            _DS.IN_FRAMESET, _DS.AFTER_FRAMESET
+            DocumentState.IN_FRAMESET, DocumentState.AFTER_FRAMESET
         ):
             if tag not in ("frameset", "frame", "noframes", "html"):
                 self.debug(
@@ -1025,7 +1017,6 @@ class FragmentPreprocessHandler(TagHandler):
         if not frag:
             return False
         # Table fragment structural insertion (implicit tbody / table section root placement)
-        from turbohtml import table_modes
         if table_modes.fragment_table_insert(tag, token, context, parser):
             return True
         if table_modes.fragment_table_section_insert(tag, token, context, parser):
@@ -1051,8 +1042,7 @@ class FragmentPreprocessHandler(TagHandler):
             context.current_parent.append_child(tr)
             context.open_elements.push(tr)
             context.move_to_element(tr)
-            from turbohtml.context import DocumentState as _DS
-            context.transition_to_state(_DS.IN_ROW, tr)
+            context.transition_to_state(DocumentState.IN_ROW, tr)
             return True
         return False
 
@@ -1071,8 +1061,7 @@ class RawtextStartTagIgnoreHandler(TagHandler):
     """
 
     def early_start_preprocess(self, token, context):  # type: ignore[override]
-        from turbohtml.context import ContentState as _CS
-        if context.content_state == _CS.RAWTEXT:
+        if context.content_state == ContentState.RAWTEXT:
             # Mirror previous debug (optional) via parser.debug for trace parity
             self.debug(f"Ignoring <{token.tag_name}> start tag in RAWTEXT")
             return True
@@ -1104,13 +1093,12 @@ class FormattingReconstructionPreludeHandler(TagHandler):
     }
 
     def early_start_preprocess(self, token, context):  # type: ignore[override]
-        from turbohtml.context import DocumentState as _DS
         # Deferred anchor reconstruction after address segmentation: now handled post element insertion
         # in DefaultElementInsertionHandler so the new anchor becomes a child of <address> rather than a sibling.
         if in_template_content(context):  # type: ignore[name-defined]
             return False
         tag_name = token.tag_name
-        in_table_modes = context.document_state in (_DS.IN_TABLE, _DS.IN_TABLE_BODY, _DS.IN_ROW)
+        in_table_modes = context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW)
         in_cell_or_caption = bool(
             context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
         )
@@ -1140,13 +1128,12 @@ class DefaultElementInsertionHandler(TagHandler):
 
     def handle_start(self, token, context, has_more_content):  # type: ignore[override]
         # Foster parenting for generic non-table elements when in table insertion modes but not inside a cell/caption.
-        from turbohtml.context import DocumentState as _DS
         # Foreign fragment MathML leaf fix: treat self-closing math leaf (<ms/>, <mglyph/>, <malignmark/>) as normal container
         # by clearing is_self_closing flag so text that follows becomes its child (expected indentation/structure tests).
         if self.parser.fragment_context and context.current_context == "math":
             if token.tag_name in ("ms","mglyph","malignmark") and token.is_self_closing:
                 token.is_self_closing = False  # force enter
-        if context.document_state in (_DS.IN_TABLE, _DS.IN_TABLE_BODY, _DS.IN_ROW):
+        if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
             in_cell_or_caption = bool(
                 context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
             )
@@ -1231,8 +1218,7 @@ class TableCellRecoveryHandler(TagHandler):
     }
 
     def early_start_preprocess(self, token, context):  # type: ignore[override]
-        from turbohtml.context import DocumentState as _DS
-        if context.document_state not in (_DS.IN_BODY, _DS.AFTER_BODY, _DS.AFTER_HTML):
+        if context.document_state not in (DocumentState.IN_BODY, DocumentState.AFTER_BODY, DocumentState.AFTER_HTML):
             return False
         tag = token.tag_name
         # Ignore table structural tags; let table handlers run.
@@ -1316,8 +1302,6 @@ class SpecialElementHandler(TagHandler):
     """
 
     def early_start_preprocess(self, token, context):  # type: ignore[override]
-        from turbohtml.context import DocumentState as _DS
-        from turbohtml.constants import HEAD_ELEMENTS as _HEAD
         tag = token.tag_name
         parser = self.parser
         # Skip inside template content; template content handler governs structure there
@@ -1336,13 +1320,13 @@ class SpecialElementHandler(TagHandler):
         # <head>
         if tag == "head":
             head = ensure_head(parser)
-            context.transition_to_state(_DS.IN_HEAD, head)
-            if context.document_state != _DS.IN_FRAMESET:
+            context.transition_to_state(DocumentState.IN_HEAD, head)
+            if context.document_state != DocumentState.IN_FRAMESET:
                 _ = parser._ensure_body_node(context)
             return True
         # <body>
-        if tag == "body" and context.document_state != _DS.IN_FRAMESET:
-            if context.frameset_ok and context.document_state in (_DS.INITIAL, _DS.IN_HEAD):
+        if tag == "body" and context.document_state != DocumentState.IN_FRAMESET:
+            if context.frameset_ok and context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
                 context.frameset_ok = False
             context.explicit_body = True  # type: ignore[attr-defined]
             body = parser._ensure_body_node(context)
@@ -1350,24 +1334,24 @@ class SpecialElementHandler(TagHandler):
                 for k, v in token.attributes.items():
                     if k not in body.attributes:
                         body.attributes[k] = v
-                context.transition_to_state(_DS.IN_BODY, body)
+                context.transition_to_state(DocumentState.IN_BODY, body)
             return True
         # Defer <frameset> (handled by Frameset handlers) when in INITIAL
-        if tag == "frameset" and context.document_state == _DS.INITIAL:
+        if tag == "frameset" and context.document_state == DocumentState.INITIAL:
             return False
         # Implicit head/body transitions: any non-head element outside frameset mode while still in INITIAL/IN_HEAD
         if (
-            tag not in _HEAD
-            and context.document_state != _DS.IN_FRAMESET
+            tag not in HEAD_ELEMENTS
+            and context.document_state != DocumentState.IN_FRAMESET
         ):
-            if context.document_state == _DS.INITIAL:
+            if context.document_state == DocumentState.INITIAL:
                 body = parser._ensure_body_node(context)
                 if body:
-                    context.transition_to_state(_DS.IN_BODY, body)
+                    context.transition_to_state(DocumentState.IN_BODY, body)
             elif context.current_parent == get_head(parser):
                 body = parser._ensure_body_node(context)
                 if body:
-                    context.transition_to_state(_DS.IN_BODY, body)
+                    context.transition_to_state(DocumentState.IN_BODY, body)
         return False
 
 class TemplateContentAutoEnterHandler(TagHandler):
@@ -1469,10 +1453,9 @@ class NullParentRecoveryEndHandler(TagHandler):
     """
 
     def early_end_preprocess(self, token, context):  # type: ignore[override]
-        from turbohtml.context import DocumentState as _DS
         if context.current_parent is not None:
             return False
-        if context.document_state == _DS.IN_FRAMESET:
+        if context.document_state == DocumentState.IN_FRAMESET:
             return False
         # Fragment mode: move to fragment root
         if self.parser.fragment_context:
@@ -1504,7 +1487,6 @@ class GenericEndTagHandler(TagHandler):
     def handle_end(self, token, context):  # type: ignore[override]
         if not context.current_parent:
             return True
-        from turbohtml.constants import SPECIAL_CATEGORY_ELEMENTS
         if token.tag_name == 'p' and self.parser.env_debug:
             stack_tags = [el.tag_name for el in context.open_elements._stack]
             self.debug(f"[p-end] incoming </p> current_parent={context.current_parent.tag_name} stack={stack_tags}")
@@ -1724,7 +1706,6 @@ class TemplateTagHandler(TagHandler):
     def handle_start(
         self, token, context, has_more_content
     ):
-        from turbohtml.context import DocumentState
 
         # Transparent in frameset contexts: don't create special structure
         if context.document_state in (
@@ -1775,9 +1756,8 @@ class TemplateTagHandler(TagHandler):
         if tag_name != "template":
             return False
         # Suppress template end tag handling while in PLAINTEXT so </template> becomes literal text
-        from turbohtml.context import ContentState as _CS
 
-        if context.content_state == _CS.PLAINTEXT:
+        if context.content_state == ContentState.PLAINTEXT:
             return False
         # Normally foreign contexts suppress template handling, but if we're currently inside
         # a real HTML template's content fragment (ancestor 'content' whose parent is an actual
@@ -1801,7 +1781,6 @@ class TemplateTagHandler(TagHandler):
 
     def handle_end(self, token, context):
         # Allow closure even inside foreign context when we're in a real template content fragment.
-        from turbohtml.context import DocumentState
 
         if context.document_state in (
             DocumentState.IN_FRAMESET,
@@ -2903,7 +2882,6 @@ class TextHandler(TagHandler):
         if not parent.children and decoded_text.startswith("\n"):
             decoded_text = decoded_text[1:]
         if decoded_text:
-            from turbohtml.foster import needs_foster_parenting, foster_parent
             if parent and needs_foster_parenting(parent) and decoded_text.strip() and not self._is_in_template_content(context):
                 foster_parent_node, before = foster_parent(parent, context.open_elements, self.parser.root)
                 if before is not None and before.parent is foster_parent_node:
@@ -3225,7 +3203,6 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
             and context.current_parent.tag_name in tableish_containers
         ):
             # Centralized foster parenting path
-            from turbohtml.foster import needs_foster_parenting, foster_parent
             # Prefer direct cell ancestor insertion if inside a cell
             cell = context.current_parent.find_first_ancestor_in_tags(["td", "th"])
             if cell:
@@ -5527,7 +5504,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         if context.current_parent.tag_name == "colgroup":
             self.debug(f"Inside colgroup, checking text content: '{text}'")
             # Split text into whitespace and non-whitespace parts
-            import re
 
             parts = re.split(r"(\S+)", text)
 
@@ -7158,7 +7134,6 @@ class VoidElementHandler(SelectAwareHandler):
         self.debug(f"Current parent: {context.current_parent}")
 
         # Table foster parenting for <input> in IN_TABLE insertion mode (except hidden with clean value)
-        from turbohtml.context import DocumentState
 
         if (
             tag_name == "input"
@@ -7544,10 +7519,6 @@ class ForeignTagHandler(TagHandler):
         if not attributes:
             return attributes
 
-        from .constants import (
-            SVG_CASE_SENSITIVE_ATTRIBUTES,
-            MATHML_CASE_SENSITIVE_ATTRIBUTES,
-        )
 
         fixed_attrs = {}
         for name, value in attributes.items():
@@ -8051,9 +8022,6 @@ class ForeignTagHandler(TagHandler):
         # current_context. Only the root <math> start tag escalates context; this prevents
         # incorrectly treating following sibling HTML as MathML while still preserving expected
         # MathML leaf element representation in mixed fragments.
-        from .constants import (
-            MATHML_ELEMENTS,
-        )  # local import to avoid top‑level cycle risk
 
         if (
             context.current_context is None
@@ -8858,7 +8826,6 @@ class ForeignTagHandler(TagHandler):
                         in ("svg foreignObject", "svg desc", "svg title")
                     ):
                         in_integration_point = True
-            from .constants import HTML_ELEMENTS
 
             tl = tag_name
             # Treat common HTML end tags including p and br specially
@@ -9819,12 +9786,9 @@ class FramesetTagHandler(TagHandler):
                     else:
                         context.move_to_element(self.parser.html_node)
                 # Exit RAWTEXT mode established by <noframes> start
-                from turbohtml.context import (
-                    ContentState as _CS,
-                )  # local import to avoid cycle at top
 
-                if context.content_state == _CS.RAWTEXT:
-                    context.content_state = _CS.NONE
+                if context.content_state == ContentState.RAWTEXT:
+                    context.content_state = ContentState.NONE
             return True
 
         return False
@@ -10020,7 +9984,6 @@ class DoctypeHandler(TagHandler):
 
     def _parse_doctype_declaration(self, doctype):
         """Parse DOCTYPE declaration and normalize it according to HTML5 spec"""
-        import re
 
         doctype_stripped = doctype.strip()
         if not doctype_stripped:
@@ -10771,12 +10734,6 @@ class PostProcessHandler(TagHandler):
         root = parser.root
         if root is None:
             return
-        from .constants import (
-            NUMERIC_ENTITY_INVALID_SENTINEL,
-            MATHML_CASE_SENSITIVE_ATTRIBUTES,
-            MATHML_ELEMENTS,
-            FORMATTING_ELEMENTS,
-        )
 
         def preserve(node):
             cur = node.parent

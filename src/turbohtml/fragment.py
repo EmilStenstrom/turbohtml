@@ -569,14 +569,12 @@ def create_fragment_context(parser):
     Lives here with other fragment helpers for cohesion and to keep the parser
     focused on dispatch + high-level orchestration.
     """
-    from turbohtml.context import DocumentState as _DS
-
     fc = parser.fragment_context
     context = ParseContext(len(parser.html), parser.root, debug_callback=parser.debug)
 
     if fc == "template":
         # Special template: synthesize template/content container then treat as IN_BODY inside content.
-        context.transition_to_state(_DS.IN_BODY, parser.root)
+        context.transition_to_state(DocumentState.IN_BODY, parser.root)
         template_node = Node("template")
         parser.root.append_child(template_node)
         content_node = Node("content")
@@ -586,25 +584,25 @@ def create_fragment_context(parser):
 
     # Map fragment context to initial DocumentState (default IN_BODY)
     state_map = {
-        "td": _DS.IN_CELL,
-        "th": _DS.IN_CELL,
-        "tr": _DS.IN_ROW,
-        "thead": _DS.IN_TABLE_BODY,
-        "tbody": _DS.IN_TABLE_BODY,
-        "tfoot": _DS.IN_TABLE_BODY,
-        "html": _DS.INITIAL,
+        "td": DocumentState.IN_CELL,
+        "th": DocumentState.IN_CELL,
+        "tr": DocumentState.IN_ROW,
+        "thead": DocumentState.IN_TABLE_BODY,
+        "tbody": DocumentState.IN_TABLE_BODY,
+        "tfoot": DocumentState.IN_TABLE_BODY,
+        "html": DocumentState.INITIAL,
     }
     if fc in state_map:
         target_state = state_map[fc]
     elif fc in RAWTEXT_ELEMENTS:
-        target_state = _DS.IN_BODY
+        target_state = DocumentState.IN_BODY
     else:
-        target_state = _DS.IN_BODY
+        target_state = DocumentState.IN_BODY
     context.transition_to_state(target_state, parser.root)
 
     # Table fragment: adjust to IN_TABLE for section handling
     if fc == "table":
-        context.transition_to_state(_DS.IN_TABLE, parser.root)
+        context.transition_to_state(DocumentState.IN_TABLE, parser.root)
 
     # Foreign context detection (math/svg + namespaced)
     if fc:

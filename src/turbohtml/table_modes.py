@@ -14,6 +14,7 @@ implements the spec transitions. For now we expose:
 Each function mirrors logic currently embedded in parser._handle_start_tag.
 """
 from .context import DocumentState
+from .node import Node
 from .constants import (
     TABLE_SECTION_TAGS,
     TABLE_ROW_TAGS,
@@ -149,15 +150,12 @@ def fragment_table_insert(tag_name, token, context, parser):
                 return ch
         return None
 
-    from turbohtml.context import DocumentState as _DS
-    from turbohtml.node import Node
-
     if tag_name == "caption":
         caption = Node("caption", token.attributes)
         root.append_child(caption)
         context.open_elements.push(caption)
         context.move_to_element(caption)
-        context.transition_to_state(_DS.IN_CAPTION, caption)
+        context.transition_to_state(DocumentState.IN_CAPTION, caption)
         return True
     if tag_name == "colgroup":
         cg = Node("colgroup", token.attributes)
@@ -176,7 +174,7 @@ def fragment_table_insert(tag_name, token, context, parser):
         section = Node(tag_name, token.attributes)
         root.append_child(section)
         context.open_elements.push(section)
-        context.transition_to_state(_DS.IN_TABLE_BODY, section)
+        context.transition_to_state(DocumentState.IN_TABLE_BODY, section)
         return True
     if tag_name == "tr":
         container = None
@@ -191,7 +189,7 @@ def fragment_table_insert(tag_name, token, context, parser):
         container.append_child(tr)
         context.open_elements.push(tr)
         context.move_to_element(tr)
-        context.transition_to_state(_DS.IN_ROW, tr)
+        context.transition_to_state(DocumentState.IN_ROW, tr)
         return True
     if tag_name in ("td", "th"):
         container = None
@@ -214,7 +212,7 @@ def fragment_table_insert(tag_name, token, context, parser):
         last_tr.append_child(cell)
         context.open_elements.push(cell)
         context.move_to_element(cell)
-        context.transition_to_state(_DS.IN_CELL, cell)
+        context.transition_to_state(DocumentState.IN_CELL, cell)
         return True
     return False
 
@@ -233,9 +231,6 @@ def fragment_table_section_insert(tag_name, token, context, parser):
     while top.parent:
         top = top.parent
     root = top
-    from turbohtml.node import Node
-    from turbohtml.context import DocumentState as _DS
-
     if tag_name == "tr":
         # Nested table row handling (spec parity for fragment tbody/thead/tfoot contexts):
         # If current insertion point is inside a table section (tbody/thead/tfoot) whose parent is a
@@ -257,14 +252,14 @@ def fragment_table_section_insert(tag_name, token, context, parser):
             nested_section.append_child(tr)
             context.open_elements.push(tr)
             context.move_to_element(tr)
-            context.transition_to_state(_DS.IN_ROW, tr)
+            context.transition_to_state(DocumentState.IN_ROW, tr)
             return True
         # Fallback: root-level row insertion (previous behavior)
         tr = Node("tr", token.attributes)
         root.append_child(tr)
         context.open_elements.push(tr)
         context.move_to_element(tr)
-        context.transition_to_state(_DS.IN_ROW, tr)
+        context.transition_to_state(DocumentState.IN_ROW, tr)
         return True
     # td/th path
     last_tr = None
@@ -279,5 +274,5 @@ def fragment_table_section_insert(tag_name, token, context, parser):
     last_tr.append_child(cell)
     context.open_elements.push(cell)
     context.move_to_element(cell)
-    context.transition_to_state(_DS.IN_CELL, cell)
+    context.transition_to_state(DocumentState.IN_CELL, cell)
     return True

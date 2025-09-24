@@ -1,5 +1,7 @@
 from enum import Enum, auto
 
+from turbohtml.adoption import ActiveFormattingElements, OpenElementsStack
+
 
 class DocumentState(Enum):
     """
@@ -52,8 +54,6 @@ class ParseContext:
         self.frameset_ok = True  # Whether frameset still allowed
 
         # Adoption Agency data structures
-        from turbohtml.adoption import ActiveFormattingElements, OpenElementsStack
-
         self.active_formatting_elements = ActiveFormattingElements()
         self.open_elements = OpenElementsStack()
         # Historical bit (single minimal flag): in a frameset document, did an explicit </html>
