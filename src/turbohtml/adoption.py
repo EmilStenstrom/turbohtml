@@ -92,14 +92,6 @@ class ActiveFormattingElements:
     def __len__(self):
         return len(self._stack)
 
-    def insert_at_index(self, index, element, token):
-        if index < 0:
-            index = 0
-        if index > len(self._stack):
-            index = len(self._stack)
-        entry = FormattingElementEntry(element, token)
-        self._stack.insert(index, entry)
-
     def replace_entry(self, old_entry, new_element, new_token):
         for i, entry in enumerate(self._stack):
             if entry is old_entry:
@@ -111,12 +103,11 @@ class ActiveFormattingElements:
 class OpenElementsStack:
     """Stack of open elements per HTML5 tree construction algorithm.
 
-    Provides only the operations required by the parser and adoption agency:
-      * push / pop / current / is_empty
+        Provides only the operations required by the parser and adoption agency:
+            * push / pop / is_empty
       * contains / index_of / remove_element
-      * replace_element / insert_after
-      * has_element_in_scope (general scope variant sufficient for current tests)
-      * _is_special_category (category check used during adoption)
+            * replace_element
+            * has_element_in_scope (general scope variant sufficient for current tests)
     """
 
     def __init__(self):
@@ -127,8 +118,6 @@ class OpenElementsStack:
         self._stack.append(element)
     def pop(self):
         return self._stack.pop() if self._stack else None
-    def current(self):
-        return self._stack[-1] if self._stack else None
     def is_empty(self):
         return not self._stack
 
@@ -151,13 +140,6 @@ class OpenElementsStack:
         idx = self.index_of(old)
         if idx != -1:
             self._stack[idx] = new
-
-    def insert_after(self, reference, new_element):
-        idx = self.index_of(reference)
-        if idx == -1:
-            self._stack.append(new_element)
-        else:
-            self._stack.insert(idx + 1, new_element)
 
     # --- scope handling ---
     def has_element_in_scope(self, tag_name):
@@ -206,15 +188,9 @@ class OpenElementsStack:
         return False
 
     # --- category helpers ---
-    def _is_special_category(self, element):
-        return element.tag_name in SPECIAL_CATEGORY_ELEMENTS
-
     # --- iteration helpers ---
     def __iter__(self):
         return iter(self._stack)
-
-    def __len__(self):
-        return len(self._stack)
 
 # Experimental anchor/table relocation feature flag removed (kept disabled in practice); code simplified to baseline behavior.
 
@@ -495,21 +471,6 @@ class AdoptionAgencyAlgorithm:
         )
         return True
 
-    def _get_body_or_root(self, context):
-        """Get the body element or fallback to root"""
-        body_node = None
-        # Get HTML node from parser instead of context
-        html_node = self.parser.html_node
-        if html_node:
-            for child in html_node.children:
-                if child.tag_name == "body":
-                    body_node = child
-                    break
-        if body_node:
-            return body_node
-        else:
-            return self.parser.root
-
     def _safe_detach_node(self, node):
         """Detach node from its parent safely, even if linkage is inconsistent.
 
@@ -526,36 +487,6 @@ class AdoptionAgencyAlgorithm:
             node.parent = None
             node.previous_sibling = None
             node.next_sibling = None
-
-    def reconstruct_active_formatting_elements(self, context):
-        """Reconstruct active formatting elements per spec."""
-        stack = context.active_formatting_elements._stack
-        if not stack:
-            return
-        # NOTE: Do NOT snapshot the open elements stack here; it may mutate during reconstruction decisions.
-        # Always reference context.open_elements._stack to avoid stale membership causing spurious clones.
-        open_stack = context.open_elements._stack
-        # Find first (earliest after last marker) formatting entry whose element is not on the current open stack
-        first_missing_index = None
-        for i, entry in enumerate(stack):
-            if entry.element is None:  # marker resets search
-                first_missing_index = None
-                continue
-            if entry.element not in context.open_elements._stack:
-                first_missing_index = i
-                break
-        if first_missing_index is None:
-            return
-        self.parser.debug(f"[reconstruct] start missing_index={first_missing_index} afe={[e.element.tag_name if e.element else 'MARK' for e in stack]} open={[n.tag_name for n in open_stack]}")
-        for entry in list(stack[first_missing_index:]):
-            if entry.element is None or entry.element in open_stack:
-                continue
-            clone = Node(entry.element.tag_name, entry.element.attributes.copy())
-            context.current_parent.append_child(clone)
-            context.open_elements.push(clone)
-            entry.element = clone
-            context.move_to_element(clone)
-            self.parser.debug(f"[reconstruct] cloned <{clone.tag_name}> new_open={[n.tag_name for n in context.open_elements._stack]}")
 
     def _run_complex_adoption_spec(
         self,

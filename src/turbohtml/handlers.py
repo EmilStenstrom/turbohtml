@@ -160,12 +160,6 @@ class TagHandler:
     def _is_in_template_content(self, context):
         return in_template_content(context)  # type: ignore[name-defined]
 
-    def _create_element(self, token):
-        return Node(token.tag_name, token.attributes)
-
-    def _create_and_append_element(self, token, context):
-        return self.parser.insert_element(token, context, mode="normal", enter=True)
-
     def _is_in_select(self, context):
         return context.current_parent.is_inside_tag("select")
 
@@ -1460,25 +1454,6 @@ class TemplateContentPostPlacementHandler(TagHandler):
                 visit(ch)
         visit(parser.root)
         return
-
-class AnchorResumeMarkerHandler(TagHandler):
-    """Marks an open anchor before structural/table elements so we can resume insertion inside it after structure."""
-    def early_start_preprocess(self, token, context):  # type: ignore[override]
-        if token.tag_name == 'table':
-            a_entry = context.active_formatting_elements.find('a')
-            if a_entry and a_entry.element and context.open_elements.contains(a_entry.element):
-                # Only mark if insertion point currently inside anchor subtree
-                cur = context.current_parent
-                inside = False
-                while cur and cur.tag_name not in ('html','document-fragment'):
-                    if cur is a_entry.element:
-                        inside = True
-                        break
-                    cur = cur.parent
-                if inside:
-                    context.resume_anchor_after_structure = a_entry.element
-        return False
-
 
 class NullParentRecoveryEndHandler(TagHandler):
     """Recover from a None current_parent before end tag handling.
