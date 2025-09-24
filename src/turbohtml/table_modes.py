@@ -13,7 +13,7 @@ implements the spec transitions. For now we expose:
 
 Each function mirrors logic currently embedded in parser._handle_start_tag.
 """
-from .context import DocumentState, ParseContext
+from .context import DocumentState
 from .constants import (
     TABLE_SECTION_TAGS,
     TABLE_ROW_TAGS,

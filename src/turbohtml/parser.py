@@ -62,7 +62,7 @@ from .handlers import (
     PostProcessHandler,
     TemplateContentPostPlacementHandler,
 )
-from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
+from turbohtml.tokenizer import HTMLTokenizer
 from turbohtml.adoption import AdoptionAgencyAlgorithm
 from .fragment import parse_fragment
 from turbohtml.node import Node

@@ -17,9 +17,6 @@ We implement character and element cases with a shared path.
 """
 from __future__ import annotations
 
-
-from .node import Node
-
 TABLE_CONTEXT = {"table", "tbody", "tfoot", "thead", "tr"}
 
 

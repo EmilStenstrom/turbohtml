@@ -3,10 +3,7 @@
 Implementation focuses on spec steps; comments describe intent (why) rather than history.
 All static type annotations removed (runtime only)."""
 
-from dataclasses import dataclass  # retained only for potential future structured helpers (not used now)
-
 from turbohtml.node import Node
-from turbohtml.tokenizer import HTMLToken
 from turbohtml.constants import (
     FORMATTING_ELEMENTS,
     SPECIAL_CATEGORY_ELEMENTS,
