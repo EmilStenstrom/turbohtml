@@ -10591,8 +10591,6 @@ class FallbackPlacementHandler(TagHandler):
         # 1. Table foster-parenting path for residual elements.
         if table_modes.should_foster_parent(tag_name, token.attributes, context, self.parser):  # type: ignore[attr-defined]
             # Paragraph special-case: allow ParagraphTagHandler to manage re-entry into cells.
-            if tag_name == "p" and hasattr(table_modes, "reenter_last_cell_for_p") and table_modes.reenter_last_cell_for_p(context):  # type: ignore[attr-defined]
-                return False
             # If table modes logic wants to restore an open cell, skip fostering so cell handlers run.
             if hasattr(table_modes, "restore_insertion_open_cell"):
                 open_cell = table_modes.restore_insertion_open_cell(context)  # type: ignore[attr-defined]

@@ -6,10 +6,10 @@ compound conditions so future refactors can relocate side-effects here.
 
 Later phases will introduce a process_table_token() dispatcher that
 implements the spec transitions. For now we expose:
-  - is_table_mode(document_state)
-  - has_open_table(context)
-  - should_foster_parent(tag_name, token_attrs, context, parser)
-  - find_open_cell(context)
+    - should_foster_parent(tag_name, token_attrs, context, parser)
+    - fragment_table_insert(tag_name, token, context, parser)
+    - fragment_table_section_insert(tag_name, token, context, parser)
+    - restore_insertion_open_cell(context)
 
 Each function mirrors logic currently embedded in parser._handle_start_tag.
 """
@@ -39,27 +39,6 @@ TABLE_ELEMENTS_CANON = {
 HEAD_ELEMENTS_CANON = {"head", "base", "basefont", "bgsound", "link", "meta", "title", "style"}
 
 
-def is_table_mode(state):
-    return state in (
-        DocumentState.IN_TABLE,
-        DocumentState.IN_TABLE_BODY,
-        DocumentState.IN_ROW,
-        DocumentState.IN_CELL,
-        DocumentState.IN_CAPTION,
-    )
-
-
-def has_open_table(context):
-    return any(el.tag_name == "table" for el in context.open_elements._stack)
-
-
-def find_open_cell(context):
-    for el in reversed(context.open_elements._stack):
-        if el.tag_name in TABLE_CELL_TAGS:
-            return el
-    return None
-
-
 def _in_template_content(context):
     p = context.current_parent
     if not p:
@@ -72,6 +51,7 @@ def _in_template_content(context):
             return True
         cur = cur.parent
     return False
+
 
 def _in_integration_point(context):
     cur = context.current_parent
@@ -114,106 +94,6 @@ def should_foster_parent(tag_name, attrs, context, parser):
     return True
 
 
-# Phase 1 extraction: implied tbody / tr helpers (behavioral mirror of existing fragment & parser logic)
-def ensure_implied_tbody_for_tr(context, parser):
-    """If we're about to insert a <tr> directly under a <table> (or fragment root table context)
-    with no open tbody/thead/tfoot, synthesize (or reuse) a <tbody> and move insertion point.
-
-    Idempotent: if current_parent already a section (tbody/thead/tfoot) or a <tr>, does nothing.
-    """
-    cp = context.current_parent
-    if not cp:
-        return
-    tn = cp.tag_name
-    if tn in ("tbody", "thead", "tfoot", "tr"):
-        return
-    # Ascend to find nearest table ancestor (stop at fragment root)
-    node = cp
-    table_ancestor = None
-    while node and node.tag_name != "document-fragment":
-        if node.tag_name == "table":
-            table_ancestor = node
-            break
-        node = node.parent
-    if not table_ancestor:
-        return
-    attach_parent = cp if cp == table_ancestor else table_ancestor
-    # Reuse existing section before any <tr>
-    for ch in attach_parent.children:
-        if ch.tag_name in ("tbody", "thead", "tfoot"):
-            context.move_to_element(ch)
-            return
-        if ch.tag_name == "tr":
-            break
-    from turbohtml.node import Node  # local import to avoid cycle
-
-    tbody = Node("tbody")
-    # Insert before first <tr> if present
-    insert_index = None
-    for i, ch in enumerate(attach_parent.children):
-        if ch.tag_name == "tr":
-            insert_index = i
-            break
-    if insert_index is None:
-        attach_parent.append_child(tbody)
-    else:
-        attach_parent.children.insert(insert_index, tbody)
-        tbody.parent = attach_parent
-    context.move_to_element(tbody)
-
-
-def ensure_implied_tr_for_cell(context):
-    """Ensure there is a <tr> ancestor before inserting a <td>/<th> when inside (or directly under)
-    a table section or table. Mirrors fragment logic that creates a tr when a td/th appears first.
-    """
-    cp = context.current_parent
-    if not cp:
-        return
-    tn = cp.tag_name
-    from turbohtml.node import Node
-
-    # If we're inside a tr already, nothing to do
-    if tn == "tr":
-        return
-    # If inside tbody/thead/tfoot, create or reuse last tr
-    if tn in ("tbody", "thead", "tfoot"):
-        last_tr = None
-        for ch in reversed(cp.children):
-            if ch.tag_name == "tr":
-                last_tr = ch
-                break
-        if not last_tr:
-            last_tr = Node("tr")
-            cp.append_child(last_tr)
-        context.move_to_element(last_tr)
-
-
-# Cell salvage helpers (phase 1 extraction)
-def reenter_last_cell_for_p(context):
-    """If a <p> start tag is being processed during foster-parent consideration and a <tr>
-    is open whose DOM children already include a cell (<td>/<th>) but no cell is currently
-    open on the stack, reposition insertion to that last cell. Mirrors existing inline logic.
-
-    Returns True if repositioning occurred (caller then proceeds with normal creation, skipping foster parent).
-    """
-    open_tr = None
-    for el in reversed(context.open_elements._stack):
-        if el.tag_name == "tr":
-            open_tr = el
-            break
-    if open_tr is None:
-        return False
-    last_cell = None
-    for child in reversed(open_tr.children):
-        if child.tag_name in ("td", "th"):
-            last_cell = child
-            break
-    if last_cell is None:
-        return False
-    context.move_to_element(last_cell)
-    return True
-
-
 def restore_insertion_open_cell(context):
     """If a cell element (<td>/<th>) is still open on the stack but insertion point drifted
     outside it (e.g., foreign content breakout), reposition to that cell. Returns the cell or None."""
@@ -225,9 +105,6 @@ def restore_insertion_open_cell(context):
 
 
 __all__ = [
-    "is_table_mode",
-    "has_open_table",
-    "find_open_cell",
     "should_foster_parent",
     "fragment_table_insert",
     "fragment_table_section_insert",
