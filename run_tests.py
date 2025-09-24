@@ -2,8 +2,6 @@ from turbohtml import TurboHTML
 import argparse
 from io import StringIO
 from contextlib import redirect_stdout
-from dataclasses import dataclass
-from typing import List, Optional
 from pathlib import Path
 import signal
 
@@ -20,26 +18,59 @@ except (
     pass
 
 
-@dataclass
 class TestCase:
-    data: str
-    errors: List[str]
-    document: str
-    fragment_context: Optional[str] = None  # Context element for fragment parsing
-    script_directive: Optional[str] = None  # Either "script-on", "script-off", or None
+    """Container for a single tree-construction test case (typing removed)."""
+    __slots__ = [
+        "data",
+        "errors",
+        "document",
+        "fragment_context",
+        "script_directive",
+    ]
 
+    def __init__(
+        self,
+        data,
+        errors,
+        document,
+        fragment_context=None,
+        script_directive=None,
+    ):
+        self.data = data
+        self.errors = errors
+        self.document = document
+        self.fragment_context = fragment_context
+        self.script_directive = script_directive
 
-@dataclass
 class TestResult:
-    passed: bool
-    input_html: str
-    expected_errors: List[str]
-    expected_output: str
-    actual_output: str
-    debug_output: str = ""
+    """Result object for a single test (typing removed)."""
+    __slots__ = [
+        "passed",
+        "input_html",
+        "expected_errors",
+        "expected_output",
+        "actual_output",
+        "debug_output",
+    ]
+
+    def __init__(
+        self,
+        passed,
+        input_html,
+        expected_errors,
+        expected_output,
+        actual_output,
+        debug_output="",
+    ):
+        self.passed = passed
+        self.input_html = input_html
+        self.expected_errors = expected_errors
+        self.expected_output = expected_output
+        self.actual_output = actual_output
+        self.debug_output = debug_output
 
 
-def compare_outputs(expected: str, actual: str) -> bool:
+def compare_outputs(expected, actual):
     """Compare expected and actual outputs, normalizing whitespace"""
 
     def normalize(text: str) -> str:
@@ -49,13 +80,13 @@ def compare_outputs(expected: str, actual: str) -> bool:
 
 
 class TestRunner:
-    def __init__(self, test_dir: Path, config: dict):
+    def __init__(self, test_dir, config):
         self.test_dir = test_dir
         self.config = config
         self.results = []
         self.file_results = {}  # Track results per file
 
-    def _natural_sort_key(self, path: Path):
+    def _natural_sort_key(self, path):
         """Convert string to list of string and number chunks for natural sorting
         "z23a" -> ["z", 23, "a"]
         """
@@ -67,7 +98,7 @@ class TestRunner:
 
         return [convert(c) for c in re.split("([0-9]+)", str(path))]
 
-    def _parse_dat_file(self, path: Path) -> List[TestCase]:
+    def _parse_dat_file(self, path):
         """Parse a .dat file into a list of TestCase objects"""
         content = path.read_text(encoding="utf-8")
         tests = []
@@ -99,7 +130,7 @@ class TestRunner:
 
         return tests
 
-    def _parse_single_test(self, lines: List[str]) -> Optional[TestCase]:
+    def _parse_single_test(self, lines):
         """Parse a single test from a list of lines"""
         data = []
         errors = []
@@ -136,7 +167,7 @@ class TestRunner:
 
         return None
 
-    def _should_run_test(self, filename: str, index: int, test: TestCase) -> bool:
+    def _should_run_test(self, filename, index, test):
         """Determine if a test should be run based on configuration"""
         # Skip script-dependent tests since HTML parsers don't execute JavaScript
         if test.script_directive in ("script-on", "script-off"):
@@ -180,12 +211,12 @@ class TestRunner:
 
         return True
 
-    def load_tests(self) -> List[tuple[Path, List[TestCase]]]:
+    def load_tests(self):
         """Load and filter test files based on configuration"""
         test_files = self._collect_test_files()
         return [(path, self._parse_dat_file(path)) for path in test_files]
 
-    def _collect_test_files(self) -> List[Path]:
+    def _collect_test_files(self):
         """Collect and filter .dat files based on configuration"""
         files = list(self.test_dir.rglob("*.dat"))
 
@@ -209,7 +240,7 @@ class TestRunner:
 
         return sorted(files, key=self._natural_sort_key)
 
-    def run(self) -> tuple[int, int, int]:
+    def run(self):
         """Run all tests and return (passed, failed, skipped) counts"""
         passed = failed = skipped = 0
 
@@ -268,7 +299,7 @@ class TestRunner:
 
         return passed, failed, skipped
 
-    def _run_single_test(self, test: TestCase) -> TestResult:
+    def _run_single_test(self, test):
         """Run a single test and return the result.
 
         Verbosity levels:
@@ -303,7 +334,7 @@ class TestRunner:
             debug_output=debug_output,
         )
 
-    def _handle_failure(self, file_path: Path, test_index: int, result: TestResult):
+    def _handle_failure(self, file_path, test_index, result):
         """Handle test failure - print report based on verbosity (>=1)."""
         if self.config["verbosity"] >= 1 and not self.config["quiet"]:
             print(f"\nTest failed in {file_path.name}:{test_index}")
@@ -311,10 +342,10 @@ class TestRunner:
 
 
 class TestReporter:
-    def __init__(self, config: dict):
+    def __init__(self, config):
         self.config = config
     # A "full" run means no narrowing flags were supplied. Only then do we write test-summary.txt.
-    def _is_full_run(self) -> bool:
+    def _is_full_run(self):
         return not (
             self.config.get("test_specs")
             or self.config.get("filter_files")
@@ -325,7 +356,7 @@ class TestReporter:
             or self.config.get("filter_html")
         )
 
-    def print_test_result(self, result: TestResult):
+    def print_test_result(self, result):
         """Print detailed test result according to verbosity.
 
         Verbosity >=1: print failing test diffs.
@@ -349,9 +380,7 @@ class TestReporter:
                 lines.insert(3, f"=== DEBUG PRINTS WHEN PARSING ===\n{result.debug_output.rstrip()}\n")
             print("\n".join(lines))
 
-    def print_summary(
-        self, passed: int, failed: int, skipped: int = 0, file_results: dict = None
-    ):
+    def print_summary(self, passed, failed, skipped=0, file_results=None):
         """Print summary and conditionally write test-summary.txt.
 
         We only persist the summary file when running the full unfiltered suite.
@@ -380,9 +409,7 @@ class TestReporter:
             # Full detailed summary (no leading blank line)
             print(detailed)
 
-    def _generate_detailed_summary(
-        self, overall_summary: str, file_results: dict
-    ) -> str:
+    def _generate_detailed_summary(self, overall_summary, file_results):
         """Generate a detailed summary with per-file breakdown"""
         lines = [overall_summary, ""]
 
@@ -426,7 +453,7 @@ class TestReporter:
 
         return "\n".join(lines)
 
-    def _generate_test_pattern(self, test_indices: list) -> str:
+    def _generate_test_pattern(self, test_indices):
         """Generate a compact pattern showing pass/fail/skip for each test"""
         if not test_indices:
             return ""
@@ -447,7 +474,7 @@ class TestReporter:
         return pattern
 
 
-def parse_args() -> dict:
+def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "-x", "--fail-fast", action="store_true", help="Break on first test failure"
@@ -557,7 +584,7 @@ def main():
         _run_regression_check(runner, reporter)
 
 
-def _run_regression_check(runner: TestRunner, reporter: TestReporter):
+def _run_regression_check(runner, reporter):
     """Compare current in-memory results against committed baseline test-summary.txt.
 
     Baseline is read via `git show HEAD:test-summary.txt`. If missing, we skip silently.
@@ -567,7 +594,9 @@ def _run_regression_check(runner: TestRunner, reporter: TestReporter):
       - pattern extension where new char is 'x'
     Exit code: 1 if regressions found, else 0.
     """
-    import subprocess, sys, re
+    import subprocess
+    import sys
+    import re
 
     try:
         proc = subprocess.run(
@@ -624,11 +653,10 @@ def _run_regression_check(runner: TestRunner, reporter: TestReporter):
         print("No new regressions detected.")
         return
     print("New failing test indices (0-based):")
-    specs = []
+    specs = []  # collected spec patterns for rerun message
     for file in sorted(regressions):
         indices = regressions[file]
         joined = ",".join(str(i) for i in indices)
-        spec = f"\n{file}:{joined}"
         specs.append(f"{file}:{joined}")
         print(f"{file} -> {file}:{joined}")
     print("\nRe-run just the regressed tests with:")

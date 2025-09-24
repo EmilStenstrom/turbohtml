@@ -10,30 +10,26 @@ behaviour or test‑specific logic resides here.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, List, Dict
+ # typing removed
 
 from .context import DocumentState, ContentState, ParseContext
 from .constants import RAWTEXT_ELEMENTS
 from .node import Node
 from .tokenizer import HTMLTokenizer, HTMLToken
 
+ # TYPE_CHECKING block removed
+
 @dataclass
 class FragmentSpec:
     name: str
-    ignored_start_tags: set[str] = field(default_factory=set)
-    pre_token_hooks: List[Callable[["TurboHTML", "ParseContext", "HTMLToken"], None]] = field(
-        default_factory=list
-    )
-    post_pass_hooks: List[Callable[["TurboHTML", "ParseContext"], None]] = field(
-        default_factory=list
-    )
-    suppression_predicates: List[
-        Callable[["TurboHTML", "ParseContext", "HTMLToken", str], bool]
-    ] = field(default_factory=list)
-    treat_all_as_text: bool = False  # For rawtext/RCDATA fragment contexts: emit single Character token
+    ignored_start_tags: set = field(default_factory=set)
+    pre_token_hooks: list = field(default_factory=list)
+    post_pass_hooks: list = field(default_factory=list)
+    suppression_predicates: list = field(default_factory=list)
+    treat_all_as_text: bool = False
 
 
-def _html_finalize_post_pass(parser: "TurboHTML", context):
+def _html_finalize_post_pass(parser, context):
     """Ensure <head>/<body> synthesis for html fragments (spec fragment parsing).
 
     Moved from inline tail of parse_fragment into a post-pass hook for symmetry

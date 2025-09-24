@@ -17,14 +17,13 @@ We implement character and element cases with a shared path.
 """
 from __future__ import annotations
 
-from typing import Optional, Tuple
 
 from .node import Node
 
 TABLE_CONTEXT = {"table", "tbody", "tfoot", "thead", "tr"}
 
 
-def find_table_in_scope(open_elements) -> Optional[Node]:  # small helper, not hot path
+def find_table_in_scope(open_elements):  # small helper, not hot path
     # Reverse iterate so we get the most recently opened table consistent with spec phrasing
     for el in reversed(open_elements._stack):  # noqa: SLF001 (internal stack access localized)
         if el.tag_name == "table":
@@ -32,7 +31,7 @@ def find_table_in_scope(open_elements) -> Optional[Node]:  # small helper, not h
     return None
 
 
-def foster_parent(target_parent: Node, open_elements, root: Node) -> Tuple[Node, Optional[Node]]:
+def foster_parent(target_parent, open_elements, root):
     """Return (parent, before) for foster-parented insertion.
 
     Args:
@@ -57,5 +56,5 @@ def foster_parent(target_parent: Node, open_elements, root: Node) -> Tuple[Node,
     return table_parent, table
 
 
-def needs_foster_parenting(current_parent: Node) -> bool:
+def needs_foster_parenting(current_parent):
     return current_parent.tag_name in TABLE_CONTEXT

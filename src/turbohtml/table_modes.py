@@ -14,7 +14,6 @@ implements the spec transitions. For now we expose:
 Each function mirrors logic currently embedded in parser._handle_start_tag.
 """
 from __future__ import annotations
-from typing import Optional
 
 from .context import DocumentState, ParseContext
 from .constants import (

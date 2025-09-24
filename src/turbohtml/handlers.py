@@ -1,6 +1,5 @@
 import re
-from typing import Optional, Protocol, Set
-import os
+ # typing removed
 
 from turbohtml.constants import (
     AUTO_CLOSING_TAGS,
@@ -25,7 +24,7 @@ from turbohtml.tokenizer import HTMLToken
 from turbohtml import table_modes
 from .formatting import reconstruct_active_formatting_elements as _reconstruct_fmt
 
-def reconstruct_if_needed(parser, context, *, force: bool = False) -> bool:
+def reconstruct_if_needed(parser, context, *, force=False):
     """Central reconstruction guard.
 
     Conditions (when not forced):
@@ -67,7 +66,7 @@ def reconstruct_if_needed(parser, context, *, force: bool = False) -> bool:
     return False
 
 # --- Lightweight structural utilities (extracted from parser) ---
-def get_head(parser: "ParserInterface") -> Optional["Node"]:
+def get_head(parser):
     html_node = parser.html_node
     if not html_node or parser.fragment_context:
         return None
@@ -76,7 +75,7 @@ def get_head(parser: "ParserInterface") -> Optional["Node"]:
             return ch
     return None
 
-def ensure_head(parser: "ParserInterface") -> Optional["Node"]:
+def ensure_head(parser):
     """Return existing <head> or create/insert one under <html>.
 
     Replicates old parser._ensure_head_node so handlers no longer depend on
@@ -102,7 +101,7 @@ def ensure_head(parser: "ParserInterface") -> Optional["Node"]:
     return head
 
 # --- Template / integration point utilities (migrated from parser) ---
-def in_template_content(context: "ParseContext") -> bool:
+def in_template_content(context):
     p = context.current_parent
     if not p:
         return False
@@ -115,7 +114,7 @@ def in_template_content(context: "ParseContext") -> bool:
         cur = cur.parent
     return False
 
-def in_integration_point(context: "ParseContext") -> bool:
+def in_integration_point(context):
     # Lightweight structural check; handlers needing more nuance can override.
     cur = context.current_parent
     while cur:
@@ -130,60 +129,56 @@ def in_integration_point(context: "ParseContext") -> bool:
     return False
 
 
-class ParserInterface(Protocol):
-    """Interface that handlers expect from parser."""
-
-    def debug(self, message: str, indent: int = 4) -> None: ...
-    root: "Node"
+## ParserInterface Protocol removed (runtime typing stripped)
 
 class TagHandler:
     """Base class for tag-specific handling logic (full feature set)."""
 
-    def __init__(self, parser: ParserInterface):  # type: ignore[name-defined]
+    def __init__(self, parser):
         self.parser = parser
 
-    def _synth_token(self, tag_name: str) -> HTMLToken:
+    def _synth_token(self, tag_name):
         return HTMLToken("StartTag", tag_name, tag_name, {}, False, False)
 
-    def debug(self, message: str, indent: int = 4) -> None:
+    def debug(self, message, indent=4):
         class_name = self.__class__.__name__
         self.parser.debug(f"{class_name}: {message}", indent=indent)
 
     # Hooks (early)
-    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # pragma: no cover
+    def early_start_preprocess(self, token, context):  # pragma: no cover
         return False
-    def early_end_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # pragma: no cover
+    def early_end_preprocess(self, token, context):  # pragma: no cover
         return False
 
     # Comment hooks (default no-ops so parser can call unconditionally)
-    def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:  # pragma: no cover
+    def should_handle_comment(self, comment, context):  # pragma: no cover
         return False
-    def handle_comment(self, comment: str, context: "ParseContext") -> bool:  # pragma: no cover
+    def handle_comment(self, comment, context):  # pragma: no cover
         return False
 
     # Helper predicates
-    def _is_in_template_content(self, context: "ParseContext") -> bool:
+    def _is_in_template_content(self, context):
         return in_template_content(context)  # type: ignore[name-defined]
 
-    def _create_element(self, token: "HTMLToken") -> "Node":
+    def _create_element(self, token):
         return Node(token.tag_name, token.attributes)
 
-    def _create_and_append_element(self, token: "HTMLToken", context: "ParseContext") -> "Node":
+    def _create_and_append_element(self, token, context):
         return self.parser.insert_element(token, context, mode="normal", enter=True)
 
-    def _is_in_select(self, context: "ParseContext") -> bool:
+    def _is_in_select(self, context):
         return context.current_parent.is_inside_tag("select")
 
-    def _is_in_table_cell(self, context: "ParseContext") -> bool:
+    def _is_in_table_cell(self, context):
         return context.current_parent.find_first_ancestor_in_tags(["td", "th"]) is not None
 
-    def _move_to_parent_of_ancestor(self, context: "ParseContext", ancestor: "Node") -> None:
+    def _move_to_parent_of_ancestor(self, context, ancestor):
         context.move_to_ancestor_parent(ancestor)
 
-    def _should_foster_parent_in_table(self, context: "ParseContext") -> bool:
+    def _should_foster_parent_in_table(self, context):
         return context.document_state == DocumentState.IN_TABLE and not self._is_in_cell_or_caption(context)
 
-    def _foster_parent_before_table(self, token: "HTMLToken", context: "ParseContext") -> "Node":
+    def _foster_parent_before_table(self, token, context):
         table = self.parser.find_current_table(context)
         if table and table.parent:
             return self.parser.insert_element(
@@ -191,7 +186,7 @@ class TagHandler:
             )
         return None  # type: ignore[return-value]
 
-    def _is_in_table_context(self, context: "ParseContext") -> bool:
+    def _is_in_table_context(self, context):
         return context.document_state in (
             DocumentState.IN_TABLE,
             DocumentState.IN_TABLE_BODY,
@@ -199,25 +194,25 @@ class TagHandler:
             DocumentState.IN_CAPTION,
         )
 
-    def _is_in_cell_or_caption(self, context: "ParseContext") -> bool:
+    def _is_in_cell_or_caption(self, context):
         return bool(
             context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
         )
 
     # Default no-op behavior for dispatch predicates / handlers
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_start(self, tag_name, context):
         return False
-    def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:
+    def handle_start(self, token, context, has_more_content):
         return False
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         return False
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         return False
-    def should_handle_text(self, text: str, context: "ParseContext") -> bool:
+    def should_handle_text(self, text, context):
         return False
-    def handle_text(self, text: str, context: "ParseContext") -> bool:
+    def handle_text(self, text, context):
         return False
-    def finalize(self, parser: "TurboHTML") -> None:  # type: ignore[name-defined]
+    def finalize(self, parser):  # parser: TurboHTML (forward ref for lint)
         return
 
 
@@ -230,7 +225,7 @@ class BodyReentryHandler(TagHandler):
     normal body content.
     """
 
-    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+    def early_start_preprocess(self, token, context):  # type: ignore[override]
         from turbohtml.context import DocumentState as _DS
         tag = token.tag_name
         if context.document_state in (_DS.AFTER_BODY, _DS.AFTER_HTML) and tag not in ("html", "body"):
@@ -273,7 +268,7 @@ class AnchorPreSegmentationHandler(TagHandler):
     }
     _TABLEISH_EXEMPT = {'table','tbody','thead','tfoot','tr','td','th','caption'}
 
-    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+    def early_start_preprocess(self, token, context):  # type: ignore[override]
         tag = token.tag_name
         # Fast bail-outs: only care about block/special tags that are NOT table-ish and not phrasing.
         if tag not in self._DISALLOWED:
@@ -325,7 +320,7 @@ class EarlyMathMLLeafFragmentEnterHandler(TagHandler):
 
     _LEAFS = {"mi", "mo", "mn", "ms", "mtext"}
 
-    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+    def early_start_preprocess(self, token, context):  # type: ignore[override]
         frag_ctx = self.parser.fragment_context
         if not frag_ctx or " " not in frag_ctx:
             return False
@@ -341,13 +336,13 @@ class EarlyMathMLLeafFragmentEnterHandler(TagHandler):
 
     # Comment handling stubs (allow parser to call uniformly without hasattr checks)
     def should_handle_comment(
-        self, comment: str, context: "ParseContext"
-    ) -> bool:  # pragma: no cover - default
+        self, comment, context
+    ):  # pragma: no cover - default
         return False
 
     def handle_comment(  # pragma: no cover - default
-        self, comment: str, context: "ParseContext"
-    ) -> bool:
+        self, comment, context
+    ):
         return False
 
 
@@ -361,7 +356,7 @@ class MalformedSelectStartTagFilterHandler(TagHandler):
     select contexts malformed names still flow through normal handler logic (or other recovery paths).
     """
 
-    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+    def early_start_preprocess(self, token, context):  # type: ignore[override]
         if token.type != "StartTag":
             return False
         if "<" not in token.tag_name:
@@ -387,7 +382,7 @@ class BodyImplicitCreationHandler(TagHandler):
     Respects frameset conditions and frameset_ok flag.
     """
 
-    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+    def early_start_preprocess(self, token, context):  # type: ignore[override]
         from turbohtml.context import DocumentState as _DS
         from turbohtml.constants import HEAD_ELEMENTS as _HEAD
         tag = token.tag_name
@@ -440,7 +435,7 @@ class CommentPlacementHandler(TagHandler):
     This keeps parser._handle_comment lean and avoids coupling to previous-token heuristics there.
     """
 
-    def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def should_handle_comment(self, comment, context):  # type: ignore[override]
         from turbohtml.context import DocumentState as _DS
         # Only intercept when in or just re-entered from post-body situations
         if context.document_state == _DS.AFTER_BODY:
@@ -456,8 +451,7 @@ class CommentPlacementHandler(TagHandler):
                 return True
         return False
 
-    def handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
-        from turbohtml.context import DocumentState as _DS
+    def handle_comment(self, comment, context):  # type: ignore[override]
         html_node = self.parser.html_node
         body_node = self.parser._get_body_node()
         if not html_node:
@@ -488,11 +482,11 @@ class InitialCommentHandler(TagHandler):
       * Otherwise append at document root.
     """
 
-    def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def should_handle_comment(self, comment, context):  # type: ignore[override]
         from turbohtml.context import DocumentState as _DS
         return context.document_state == _DS.INITIAL
 
-    def handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def handle_comment(self, comment, context):  # type: ignore[override]
         html = self.parser.html_node
         node = self.parser._create_comment_node(comment)  # type: ignore[attr-defined]
         if html and html in self.parser.root.children:
@@ -511,11 +505,11 @@ class InitialCommentHandler(TagHandler):
 class AfterHeadCommentHandler(TagHandler):
     """Place comments in AFTER_HEAD state before <body> if present, else append to <html>."""
 
-    def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def should_handle_comment(self, comment, context):  # type: ignore[override]
         from turbohtml.context import DocumentState as _DS
         return context.document_state == _DS.AFTER_HEAD
 
-    def handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def handle_comment(self, comment, context):  # type: ignore[override]
         html = self.parser.html_node
         if not html:
             return False
@@ -536,11 +530,11 @@ class AfterHtmlCommentHandler(TagHandler):
       * Otherwise append at document root.
     """
 
-    def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def should_handle_comment(self, comment, context):  # type: ignore[override]
         from turbohtml.context import DocumentState as _DS
         return context.document_state == _DS.AFTER_HTML
 
-    def handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def handle_comment(self, comment, context):  # type: ignore[override]
         body = self.parser._get_body_node()
         root = self.parser.root
         node = self.parser._create_comment_node(comment)  # type: ignore[attr-defined]
@@ -570,11 +564,11 @@ class AfterFramesetCommentHandler(TagHandler):
       * After explicit </html>: always append at root.
     """
 
-    def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def should_handle_comment(self, comment, context):  # type: ignore[override]
         from turbohtml.context import DocumentState as _DS
         return context.document_state == _DS.AFTER_FRAMESET
 
-    def handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def handle_comment(self, comment, context):  # type: ignore[override]
         html = self.parser.html_node
         node = self.parser._create_comment_node(comment)  # type: ignore[attr-defined]
         # context.html_end_explicit used previously; guard via getattr (cold path, not perf critical)
@@ -589,11 +583,11 @@ class AfterFramesetCommentHandler(TagHandler):
 class InBodyHtmlParentCommentHandler(TagHandler):
     """Handle comments in IN_BODY when current_parent is <html> (insert before <head> if present)."""
 
-    def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def should_handle_comment(self, comment, context):  # type: ignore[override]
         from turbohtml.context import DocumentState as _DS
         return context.document_state == _DS.IN_BODY and context.current_parent and context.current_parent.tag_name == "html"
 
-    def handle_comment(self, comment: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def handle_comment(self, comment, context):  # type: ignore[override]
         html = context.current_parent
         node = self.parser._create_comment_node(comment)  # type: ignore[attr-defined]
         head = None
@@ -616,14 +610,14 @@ class PostBodyCharacterHandler(TagHandler):
     text handling proceeds (mirrors spec token reprocessing step).
     """
 
-    def should_handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def should_handle_text(self, text, context):  # type: ignore[override]
         from turbohtml.context import DocumentState as _DS
         return (
             context.document_state in (_DS.AFTER_BODY, _DS.AFTER_HTML)
             and text.strip() != ""
         )
 
-    def handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def handle_text(self, text, context):  # type: ignore[override]
         from turbohtml.context import DocumentState as _DS
         body = self.parser._get_body_node() or self.parser._ensure_body_node(context)
         if body:
@@ -641,13 +635,13 @@ class AfterHeadWhitespaceHandler(TagHandler):
     without forcing body creation. This preserves ordering for frameset and meta tests.
     """
 
-    def should_handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def should_handle_text(self, text, context):  # type: ignore[override]
         from turbohtml.context import DocumentState as _DS
         return (
             context.document_state == _DS.AFTER_HEAD and text and text.strip() == ""
         )
 
-    def handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def handle_text(self, text, context):  # type: ignore[override]
         html = self.parser.html_node
         if not html or html not in self.parser.root.children:
             return False  # fallback to normal text handling if html missing
@@ -670,7 +664,7 @@ class StructureSynthesisHandler(TagHandler):
       * Merge adjacent text nodes (normalization)
     """
 
-    def finalize(self, parser: "TurboHTML") -> None:  # type: ignore[name-defined]
+    def finalize(self, parser):
         # Skip structure synthesis for fragment parsing
         if parser.fragment_context:
             return
@@ -696,7 +690,7 @@ class ListingNewlineHandler(TagHandler):
     the remainder through subsequent handlers.
     """
 
-    def should_handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def should_handle_text(self, text, context):  # type: ignore[override]
         return (
             bool(text)
             and text.startswith("\n")
@@ -704,7 +698,7 @@ class ListingNewlineHandler(TagHandler):
             and not context.current_parent.children
         )
 
-    def handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def handle_text(self, text, context):  # type: ignore[override]
         remainder = text[1:]
         if not remainder:
             return True
@@ -728,11 +722,11 @@ class RawtextTextHandler(TagHandler):
     Ordering: must precede TextHandler so it claims RAWTEXT text first.
     """
 
-    def should_handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def should_handle_text(self, text, context):  # type: ignore[override]
         from turbohtml.context import ContentState as _CS
         return context.content_state == _CS.RAWTEXT and bool(text)
 
-    def handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def handle_text(self, text, context):  # type: ignore[override]
         cur = context.current_parent
         if cur and cur.tag_name in ("script", "style"):
             lower = text.lower()
@@ -757,11 +751,11 @@ class TextNormalizationHandler(TagHandler):
     insertion parent state for the just-inserted text.
     """
 
-    def should_handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def should_handle_text(self, text, context):  # type: ignore[override]
         # Always attempt normalization after any non-empty text processed outside plaintext RAWTEXT skip.
         return bool(text)
 
-    def handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def handle_text(self, text, context):  # type: ignore[override]
         # Inline former parser._post_text_inline_normalize logic (narrow trailing formatting unwrap).
         context_parent = context.current_parent
         if not context_parent:
@@ -849,12 +843,12 @@ class OptionTextRedirectHandler(TagHandler):
     signal handling complete.
     """
 
-    def __init__(self, parser: "ParserInterface") -> None:  # type: ignore[name-defined]
+    def __init__(self, parser):
         super().__init__(parser)
         # Default target option placeholder (set during should_handle_text)
         self._target_option = None
 
-    def should_handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def should_handle_text(self, text, context):  # type: ignore[override]
         from turbohtml.context import ContentState as _CS
         if not text:
             return False
@@ -886,7 +880,7 @@ class OptionTextRedirectHandler(TagHandler):
         self._target_option = deepest_option  # type: ignore[attr-defined]
         return True
 
-    def handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def handle_text(self, text, context):  # type: ignore[override]
         target = self._target_option
         if target is None:
             return False
@@ -915,7 +909,7 @@ class FramesetPreludeHandler(TagHandler):
 
     _BENIGN_INLINE = {"span", "font", "b", "i", "u", "em", "strong"}
 
-    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+    def early_start_preprocess(self, token, context):  # type: ignore[override]
         """Phase 1: frameset_ok management & stray <frame> suppression.
 
         Adjusted vs original:
@@ -941,7 +935,7 @@ class FramesetPreludeHandler(TagHandler):
         # non-benign content (frameset_ok still True) while still in INITIAL/IN_HEAD.
         if tag == "div" and context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
             benign = benign | {"div"}
-        def _foreign_root_wrapper_benign() -> bool:
+        def _foreign_root_wrapper_benign():
             body = self.parser._get_body_node()
             if not body or len(body.children) != 1:
                 return False
@@ -974,7 +968,7 @@ class FramesetLateHandler(TagHandler):
 
     _BENIGN_INLINE = {"span", "font", "b", "i", "u", "em", "strong"}
 
-    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+    def early_start_preprocess(self, token, context):  # type: ignore[override]
         from turbohtml.context import DocumentState as _DS
         tag = token.tag_name
         # Takeover only when encountering frameset and frameset_ok still True
@@ -983,7 +977,7 @@ class FramesetLateHandler(TagHandler):
         ):
             body = self.parser._get_body_node()  # type: ignore[attr-defined]
             if body:
-                def benign(node: Node) -> bool:
+                def benign(node):
                     if node.tag_name == "#comment":
                         return True
                     if node.tag_name == "#text":
@@ -1030,7 +1024,7 @@ class FragmentPreprocessHandler(TagHandler):
 
     order = 19  # after frameset/body handlers, before table/select specific handlers rely on structure
 
-    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+    def early_start_preprocess(self, token, context):  # type: ignore[override]
         parser = self.parser
         tag = token.tag_name
         frag = parser.fragment_context
@@ -1069,8 +1063,8 @@ class FragmentPreprocessHandler(TagHandler):
         return False
 
     def handle_comment(
-        self, comment: str, context: "ParseContext"
-    ) -> bool:  # pragma: no cover - default
+        self, comment, context
+    ):  # pragma: no cover - default
         return False
 
 
@@ -1082,7 +1076,7 @@ class RawtextStartTagIgnoreHandler(TagHandler):
     other early suppression behaviors.
     """
 
-    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+    def early_start_preprocess(self, token, context):  # type: ignore[override]
         from turbohtml.context import ContentState as _CS
         if context.content_state == _CS.RAWTEXT:
             # Mirror previous debug (optional) via parser.debug for trace parity
@@ -1115,7 +1109,7 @@ class FormattingReconstructionPreludeHandler(TagHandler):
         "h1","h2","h3","h4","h5","h6"
     }
 
-    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+    def early_start_preprocess(self, token, context):  # type: ignore[override]
         from turbohtml.context import DocumentState as _DS
         # Deferred anchor reconstruction after address segmentation: now handled post element insertion
         # in DefaultElementInsertionHandler so the new anchor becomes a child of <address> rather than a sibling.
@@ -1145,12 +1139,12 @@ class DefaultElementInsertionHandler(TagHandler):
     structural/suppression logic already executed in earlier handlers.
     """
 
-    def should_handle_start(self, tag_name: str, context: ParseContext) -> bool:  # type: ignore[override]
+    def should_handle_start(self, tag_name, context):  # type: ignore[override]
         return True  # always last -> always claims
 
     _RECONSTRUCT_BLOCKS = {"div", "section", "article", "center", "address", "figure", "figcaption"}
 
-    def handle_start(self, token: HTMLToken, context: ParseContext, has_more_content: bool) -> bool:  # type: ignore[override]
+    def handle_start(self, token, context, has_more_content):  # type: ignore[override]
         # Foster parenting for generic non-table elements when in table insertion modes but not inside a cell/caption.
         from turbohtml.context import DocumentState as _DS
         # Foreign fragment MathML leaf fix: treat self-closing math leaf (<ms/>, <mglyph/>, <malignmark/>) as normal container
@@ -1242,7 +1236,7 @@ class TableCellRecoveryHandler(TagHandler):
         "a","b","i","u","em","strong","font","span","div","section","article","center","address","p"
     }
 
-    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+    def early_start_preprocess(self, token, context):  # type: ignore[override]
         from turbohtml.context import DocumentState as _DS
         if context.document_state not in (_DS.IN_BODY, _DS.AFTER_BODY, _DS.AFTER_HTML):
             return False
@@ -1274,7 +1268,6 @@ class TableCellRecoveryHandler(TagHandler):
         # Pop until cell removed
         popped_any = False
         while context.open_elements._stack:  # type: ignore[attr-defined]
-            top = context.open_elements._stack[-1]  # type: ignore[attr-defined]
             popped = context.open_elements._stack.pop()  # type: ignore[attr-defined]
             popped_any = True
             if popped is cell:
@@ -1294,7 +1287,6 @@ class TableCellRecoveryHandler(TagHandler):
                 trailing = context.open_elements._stack[tr_index+1:]  # type: ignore[attr-defined]
                 if not any(e.tag_name in ("td","th") for e in trailing):
                     # Safe to pop tr
-                    trailing_pop = []
                     # Pop from end until tr popped
                     while context.open_elements._stack:  # type: ignore[attr-defined]
                         p = context.open_elements._stack.pop()  # type: ignore[attr-defined]
@@ -1329,7 +1321,7 @@ class SpecialElementHandler(TagHandler):
     frameset-specific handler can run).
     """
 
-    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+    def early_start_preprocess(self, token, context):  # type: ignore[override]
         from turbohtml.context import DocumentState as _DS
         from turbohtml.constants import HEAD_ELEMENTS as _HEAD
         tag = token.tag_name
@@ -1392,7 +1384,7 @@ class TemplateContentAutoEnterHandler(TagHandler):
     insertion point. Does nothing if already inside the 'content' node.
     """
 
-    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+    def early_start_preprocess(self, token, context):  # type: ignore[override]
         # Auto-enter content when inserting a start tag under a template, even if current_parent
         # is a chain of formatting elements descended from the <template>. We only shift for
         # non-template start tags. This prevents elements like <menu> appearing as siblings of
@@ -1437,7 +1429,7 @@ class TemplateContentPostPlacementHandler(TagHandler):
     Minimal corrective step to satisfy template.dat:76 without broad restructuring.
     """
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def should_handle_start(self, tag_name, context):  # type: ignore[override]
         # Passive observer; relocation occurs in early_start_preprocess of subsequent tokens.
         return False
 
@@ -1471,7 +1463,7 @@ class TemplateContentPostPlacementHandler(TagHandler):
 
 class AnchorResumeMarkerHandler(TagHandler):
     """Marks an open anchor before structural/table elements so we can resume insertion inside it after structure."""
-    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+    def early_start_preprocess(self, token, context):  # type: ignore[override]
         if token.tag_name == 'table':
             a_entry = context.active_formatting_elements.find('a')
             if a_entry and a_entry.element and context.open_elements.contains(a_entry.element):
@@ -1501,7 +1493,7 @@ class NullParentRecoveryEndHandler(TagHandler):
     re-establishes `current_parent` and returns False so normal end-tag handlers proceed.
     """
 
-    def early_end_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+    def early_end_preprocess(self, token, context):  # type: ignore[override]
         from turbohtml.context import DocumentState as _DS
         if context.current_parent is not None:
             return False
@@ -1527,14 +1519,14 @@ class GenericEndTagHandler(TagHandler):
     handling used previously. Skips html/head/body and does nothing inside template content (bounded
     closure already handled earlier in parser._handle_end_tag)."""
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def should_handle_end(self, tag_name, context):  # type: ignore[override]
         # Skip special structure tags (handled elsewhere) and skip when inside template content
         if tag_name in ("html", "head", "body"):
             return False
         # Let parser template-content branch manage bounded closure; we only act outside it
         return True
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+    def handle_end(self, token, context):  # type: ignore[override]
         if not context.current_parent:
             return True
         from turbohtml.constants import SPECIAL_CATEGORY_ELEMENTS
@@ -1620,11 +1612,11 @@ class TemplateContentBoundedEndHandler(TagHandler):
     closing across the synthetic content boundary.
     """
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def should_handle_end(self, tag_name, context):  # type: ignore[override]
         # Activate only when inside template content subtree.
         return in_template_content(context)
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+    def handle_end(self, token, context):  # type: ignore[override]
         boundary = None
         node = context.current_parent
         while node:
@@ -1649,7 +1641,7 @@ class TemplateContentBoundedEndHandler(TagHandler):
 class TemplateAwareHandler(TagHandler):
     """Mixin for handlers that need to skip template content"""
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_start(self, tag_name, context):
         # Allow some handlers even inside template content (formatting and auto-closing semantics still apply)
         if self._is_in_template_content(context):
             # Importing class names locally avoids circular references at import time
@@ -1659,7 +1651,7 @@ class TemplateAwareHandler(TagHandler):
             return False
         return self._should_handle_start_impl(tag_name, context)
 
-    def _should_handle_start_impl(self, tag_name: str, context: "ParseContext") -> bool:
+    def _should_handle_start_impl(self, tag_name, context):
         """Override this instead of should_handle_start"""
         return False
 
@@ -1667,12 +1659,12 @@ class TemplateAwareHandler(TagHandler):
 class SelectAwareHandler(TagHandler):
     """Mixin for handlers that need to avoid handling inside select elements"""
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_start(self, tag_name, context):
         if self._is_in_select(context):
             return False
         return self._should_handle_start_impl(tag_name, context)
 
-    def _should_handle_start_impl(self, tag_name: str, context: "ParseContext") -> bool:
+    def _should_handle_start_impl(self, tag_name, context):
         """Override this instead of should_handle_start"""
         return False
 
@@ -1680,13 +1672,13 @@ class SelectAwareHandler(TagHandler):
 class SimpleElementHandler(TagHandler):
     """Base handler for simple elements that create nodes and may nest"""
 
-    def __init__(self, parser: ParserInterface, handled_tags: tuple):
+    def __init__(self, parser, handled_tags):
         super().__init__(parser)
         self.handled_tags = handled_tags
 
     def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+        self, token, context, has_more_content
+    ):
         treat_as_void = self._is_void_element(token.tag_name)
         mode = "void" if treat_as_void else "normal"
         self.parser.insert_element(
@@ -1698,13 +1690,13 @@ class SimpleElementHandler(TagHandler):
         )
         return True
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         ancestor = context.current_parent.find_ancestor(token.tag_name)
         if ancestor:
             self._move_to_parent_of_ancestor(context, ancestor)
         return True
 
-    def _is_void_element(self, tag_name: str) -> bool:
+    def _is_void_element(self, tag_name):
         """Override in subclasses to specify void elements"""
         return False
 
@@ -1714,11 +1706,11 @@ class AncestorCloseHandler(TagHandler):
 
     def handle_end_by_ancestor(
         self,
-        token: "HTMLToken",
-        context: "ParseContext",
-        tag_name: str = None,
-        stop_at_boundary: bool = False,
-    ) -> bool:
+        token,
+        context,
+        tag_name=None,
+        stop_at_boundary=False,
+    ):
         """Standard pattern: find ancestor by tag name and move to its parent"""
         search_tag = tag_name or token.tag_name
         ancestor = context.current_parent.find_ancestor(
@@ -1743,7 +1735,7 @@ class TemplateTagHandler(TagHandler):
     outer foster parenting or formatting reconstruction.
     """
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_start(self, tag_name, context):
         # Do not treat <template> specially when in foreign (SVG/MathML) contexts; let foreign handlers manage it
         if context.current_context in ("math", "svg"):
             return False
@@ -1757,8 +1749,8 @@ class TemplateTagHandler(TagHandler):
         return tag_name == "template"
 
     def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+        self, token, context, has_more_content
+    ):
         from turbohtml.context import DocumentState
 
         # Transparent in frameset contexts: don't create special structure
@@ -1806,7 +1798,7 @@ class TemplateTagHandler(TagHandler):
         )
         return True
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         if tag_name != "template":
             return False
         # Suppress template end tag handling while in PLAINTEXT so </template> becomes literal text
@@ -1834,7 +1826,7 @@ class TemplateTagHandler(TagHandler):
             return False
         return True
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         # Allow closure even inside foreign context when we're in a real template content fragment.
         from turbohtml.context import DocumentState
 
@@ -1921,7 +1913,7 @@ class TemplateContentFilterHandler(TagHandler):
         "menu",
     }
 
-    def _in_template_content(self, context: "ParseContext") -> bool:
+    def _in_template_content(self, context):
         # Mirror parser._is_in_template_content: allow being inside descendants of content
         p = context.current_parent
         if not p:
@@ -1934,7 +1926,7 @@ class TemplateContentFilterHandler(TagHandler):
             and n.parent.tag_name == "template"
         )
 
-    def _current_content_boundary(self, context: "ParseContext") -> Optional["Node"]:
+    def _current_content_boundary(self, context):
         node = context.current_parent
         while node:
             if (
@@ -1946,7 +1938,7 @@ class TemplateContentFilterHandler(TagHandler):
             node = node.parent
         return None
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_start(self, tag_name, context):
         if not self._in_template_content(context):
             return False
         # In foreign (SVG/MathML) contexts inside template content, let foreign handlers manage tags
@@ -1968,8 +1960,8 @@ class TemplateContentFilterHandler(TagHandler):
         return tag_name in (self.IGNORED_START | self.GENERIC_AS_PLAIN | {"template"})
 
     def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+        self, token, context, has_more_content
+    ):
         if token.tag_name in self.IGNORED_START:
             tableish = {
                 "table",
@@ -2193,7 +2185,7 @@ class TemplateContentFilterHandler(TagHandler):
         )
         return True
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         if not self._in_template_content(context):
             return False
         # In foreign (SVG/MathML) contexts inside template content, let foreign handlers manage tags
@@ -2216,7 +2208,7 @@ class TemplateContentFilterHandler(TagHandler):
         }
         return tag_name in (table_like | {"template", "select"})
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         if token.tag_name in self.IGNORED_START or token.tag_name == "select":
             return True
         # Handle closing of a nested template we opened here: move from content to template, then out
@@ -2269,10 +2261,10 @@ class TemplateContentFilterHandler(TagHandler):
 class TextHandler(TagHandler):
     """Default handler for text nodes"""
 
-    def should_handle_text(self, text: str, context: "ParseContext") -> bool:
+    def should_handle_text(self, text, context):
         return True
 
-    def handle_text(self, text: str, context: "ParseContext") -> bool:
+    def handle_text(self, text, context):
         self.debug(f"handling text '{text}' in state {context.document_state}")
         # Per-token duplicate guard: skip if an earlier handler already inserted this character token
         tok_idx = context.index
@@ -2840,11 +2832,11 @@ class TextHandler(TagHandler):
         self._append_text(text, context)
         return True
 
-    def _is_in_integration_point(self, context: "ParseContext") -> bool:
+    def _is_in_integration_point(self, context):
         # Deprecated duplicate helper (logic exists in parser); retained for backward compatibility but simplified.
         return False
 
-    def _is_plain_svg_foreign(self, context: "ParseContext") -> bool:
+    def _is_plain_svg_foreign(self, context):
         """Return True if current parent is inside an <svg> subtree that is NOT an HTML integration point.
 
         In such cases, HTML table-related tags (table, tbody, thead, tfoot, tr, td, th, caption, col, colgroup)
@@ -2862,7 +2854,7 @@ class TextHandler(TagHandler):
             cur = cur.parent
         return seen_svg
 
-    def _foster_parent_text(self, text: str, context: "ParseContext") -> None:
+    def _foster_parent_text(self, text, context):
         """Foster parent text via centralized foster module (spec-aligned).
 
         This replaces earlier bespoke logic that replicated reconstruction and
@@ -2885,7 +2877,7 @@ class TextHandler(TagHandler):
         if context.frameset_ok and any((not c.isspace()) and c != "\ufffd" for c in text):
             context.frameset_ok = False
 
-    def _append_text(self, text: str, context: "ParseContext") -> None:
+    def _append_text(self, text, context):
         """Helper to append text, either as new node or merged with last sibling"""
         # Context-sensitive replacement character handling:
         #  * In pure foreign SVG/MathML subtrees (not at an HTML integration point) we preserve
@@ -2951,7 +2943,7 @@ class TextHandler(TagHandler):
             if node is not None:
                 self.debug(f"created node with content '{node.text_content}'")
 
-    def _handle_normal_text(self, text: str, context: "ParseContext") -> bool:
+    def _handle_normal_text(self, text, context):
         """Handle normal text content"""
         # If last child is a text node, append to it
         if context.current_parent.last_child_is_text():
@@ -2963,8 +2955,8 @@ class TextHandler(TagHandler):
         return True
 
     def _handle_pre_text(
-        self, text: str, context: "ParseContext", parent: Node
-    ) -> bool:
+        self, text, context, parent
+    ):
         """Handle text specifically for <pre> elements"""
         decoded_text = self._decode_html_entities(text)
 
@@ -2998,7 +2990,7 @@ class TextHandler(TagHandler):
 
         return True
 
-    def _decode_html_entities(self, text: str) -> str:
+    def _decode_html_entities(self, text):
         """Decode numeric HTML entities."""
         text = re.sub(r"&#x([0-9a-fA-F]+);", lambda m: chr(int(m.group(1), 16)), text)
         text = re.sub(r"&#([0-9]+);", lambda m: chr(int(m.group(1))), text)
@@ -3010,13 +3002,13 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
 
     def _insert_formatting_element(
         self,
-        token: "HTMLToken",
-        context: "ParseContext",
+        token,
+        context,
         *,
-        parent: "Node" = None,
-        before: "Node" = None,
-        push_nobr_late: bool = False,
-    ) -> "Node":
+        parent=None,
+        before=None,
+        push_nobr_late=False,
+    ):
         """Insert formatting element; <nobr> push may be deferred."""
         tag_name = token.tag_name
         if tag_name == "nobr":
@@ -3041,12 +3033,12 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
             enter=True,
         )
 
-    def _should_handle_start_impl(self, tag_name: str, context: "ParseContext") -> bool:
+    def _should_handle_start_impl(self, tag_name, context):
         return tag_name in FORMATTING_ELEMENTS
 
     def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+        self, token, context, has_more_content
+    ):
         tag_name = token.tag_name
         self.debug(f"Handling <{tag_name}>, context={context}")
         # Pre-start stale formatting reconstruction: if there exists any active formatting element (except markers)
@@ -3162,7 +3154,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 table = self.parser.find_current_table(context)
                 if table and table.parent and table.parent.tag_name in ("td", "th"):
                     # Determine if table has real structure yet (rows/cells or caption/colgroup/col)
-                    def _has_real_structure(tbl: Node) -> bool:
+                    def _has_real_structure(tbl):
                         for ch in tbl.children:
                             if ch.tag_name in {"caption", "colgroup", "col"}:
                                 return True
@@ -3230,7 +3222,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                     else None
                 )
                 if table and table.parent and table.parent.tag_name in ("td", "th"):
-                    def _has_real_structure_section(tbl: Node, sec: Node) -> bool:
+                    def _has_real_structure_section(tbl, sec):
                         for ch in tbl.children:
                             if ch is sec:
                                 # Only count as structure if sec already has row/cell
@@ -3419,10 +3411,10 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                     gp.append_child(cur)
         return True
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         return tag_name in FORMATTING_ELEMENTS
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         tag_name = token.tag_name
         self.debug(f"FormattingElementHandler: *** START PROCESSING END TAG </{tag_name}> ***")
         self.debug(f"FormattingElementHandler: handling end tag <{tag_name}>, context={context}")
@@ -3497,9 +3489,9 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         # Tracks a table node recently emitted outside a select context so that subsequent
         # formatting elements can be positioned before it if required. Replaces prior
         # dynamic context attribute monkey patching.
-        self._pending_table_outside: Optional[Node] = None  # type: ignore[name-defined]
+        self._pending_table_outside = None
 
-    def _should_handle_start_impl(self, tag_name: str, context: "ParseContext") -> bool:
+    def _should_handle_start_impl(self, tag_name, context):
         # If we're in a select, handle all tags to prevent formatting elements
         # BUT only if we're not in template content (template elements should be handled by template handlers)
         if self._is_in_select(context) and not self._is_in_template_content(context):
@@ -3507,7 +3499,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         return tag_name in ("select", "option", "optgroup", "datalist")
 
     # Override to widen interception scope inside select (TemplateAwareHandler limits to handled_tags otherwise)
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def should_handle_start(self, tag_name, context):  # type: ignore[override]
         if self._is_in_select(context) and not self._is_in_template_content(context):
             # Do NOT intercept script/style so RawtextTagHandler can process them within select per spec
             if tag_name in ("script", "style"):
@@ -3516,8 +3508,8 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         return super().should_handle_start(tag_name, context)
 
     def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+        self, token, context, has_more_content
+    ):
         tag_name = token.tag_name
         self.debug(
             f"Handling {tag_name} in select context, current_parent={context.current_parent}"
@@ -4013,7 +4005,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
 
         return False
 
-    def _find_foster_parent_for_table_element_in_current_table(self, table: "Node", table_tag: str) -> Optional["Node"]:
+    def _find_foster_parent_for_table_element_in_current_table(self, table, table_tag):
         """Greatly simplified: only distinguish row/ cell vs others (unused detailed heuristics removed)."""
         if table_tag == "tr":
             # Find last tbody/thead/tfoot else None
@@ -4031,10 +4023,10 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             return None
         return table if table_tag != "table" else table.parent
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         return tag_name in ("select", "option", "optgroup", "datalist")
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         tag_name = token.tag_name
         self.debug(
             f"Handling end tag {tag_name}, current_parent={context.current_parent}"
@@ -4066,7 +4058,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
 class ParagraphTagHandler(TagHandler):
     """Handles paragraph elements"""
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_start(self, tag_name, context):
         if self._is_in_template_content(context):
             return False
         if tag_name == "p":
@@ -4083,8 +4075,8 @@ class ParagraphTagHandler(TagHandler):
         return False
 
     def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+        self, token, context, has_more_content
+    ):
         self.debug(f"handling {token}, context={context}")
         self.debug(f"Current parent: {context.current_parent}")
 
@@ -4426,10 +4418,10 @@ class ParagraphTagHandler(TagHandler):
         self.debug(f"Created new paragraph node: {new_node} under {new_node.parent}")
         return True
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         return tag_name == "p"
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         self.debug(f"handling <EndTag: p>, context={context}")
         stack = context.open_elements._stack  # direct access (performance path, attribute always present)
         has_open_p = any(el.tag_name == "p" for el in stack)
@@ -4640,7 +4632,6 @@ class ParagraphTagHandler(TagHandler):
                 if foreign_root is not None and p_ancestor not in (foreign_root,):
                     # Ensure the paragraph ancestor is outside the foreign subtree: walk up from foreign_root
                     cur = foreign_root
-                    outside = True
                     while cur and cur is not p_ancestor and cur.tag_name not in ('html','body','document-fragment'):
                         cur = cur.parent
                     if cur is p_ancestor:
@@ -4750,8 +4741,8 @@ class TableElementHandler(TagHandler):
     """Base class for table-related element handlers"""
 
     def _create_table_element(
-        self, token: "HTMLToken", context: "ParseContext"
-    ) -> "Node":
+        self, token, context
+    ):
         """Create a table element and ensure table context"""
         if not self.parser.find_current_table(context):
             # Create table element via unified insertion (push + enter)
@@ -4764,7 +4755,7 @@ class TableElementHandler(TagHandler):
         # Create and return the requested element (may be the table or a descendant)
         return self.parser.insert_element(token, context, mode="normal", enter=True)
 
-    def _append_to_table_level(self, element: "Node", context: "ParseContext") -> None:
+    def _append_to_table_level(self, element, context):
         """Append element at table level"""
         current_table = self.parser.find_current_table(context)
         if current_table:
@@ -4776,7 +4767,7 @@ class TableElementHandler(TagHandler):
 class TableTagHandler(TemplateAwareHandler, TableElementHandler):
     """Handles table-related elements"""
 
-    def early_end_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+    def early_end_preprocess(self, token, context):  # type: ignore[override]
         # Ignore stray </table> when no open <table> exists.
         if token.tag_name == "table":
             table = self.parser.find_current_table(context)
@@ -4820,7 +4811,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     context.resume_anchor_after_structure = a_entry.element
         return False
 
-    def early_start_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def early_start_preprocess(self, token, context):
         """Early table prelude suppression & stray <tr> recovery.
 
         Invoked by parser before formatting reconstruction / handler dispatch via generic
@@ -4886,7 +4877,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 return True
         return False
 
-    def _should_handle_start_impl(self, tag_name: str, context: "ParseContext") -> bool:
+    def _should_handle_start_impl(self, tag_name, context):
         # Always handle col/colgroup here
         if tag_name in ("col", "colgroup"):
             if self.parser.fragment_context == "colgroup":
@@ -4945,8 +4936,8 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         return False
 
     def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+        self, token, context, has_more_content
+    ):
         tag_name = token.tag_name
         self.debug(f"Handling {tag_name} in table context")
 
@@ -5092,7 +5083,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
         return handlers[tag_name](token, context)
 
-    def _handle_caption(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def _handle_caption(self, token, context):
         """Handle caption element"""
         table_parent = self.parser.find_current_table(context)
         self.parser.insert_element(
@@ -5105,7 +5096,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         self.parser.transition_to_state(context, DocumentState.IN_CAPTION)
         return True
 
-    def _handle_table(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def _handle_table(self, token, context):
         """Handle table element"""
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
             self.debug("Implicitly closing head and switching to body")
@@ -5170,7 +5161,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         self.parser.transition_to_state(context, DocumentState.IN_TABLE)
         return True
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         return tag_name in {
             "table",
             "tbody",
@@ -5183,7 +5174,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             "colgroup",
         }
 
-    def _handle_colgroup(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def _handle_colgroup(self, token, context):
         """Handle colgroup element according to spec"""
         self.debug(
             f"_handle_colgroup: token={token}, current_parent={context.current_parent}"
@@ -5217,7 +5208,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         self.debug("Staying in colgroup context")
         return True
 
-    def _handle_col(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def _handle_col(self, token, context):
         """Handle col element according to spec"""
         self.debug(
             f"_handle_col: token={token}, current_parent={context.current_parent}"
@@ -5300,7 +5291,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         context.move_to_element(self.parser.find_current_table(context))
         return True
 
-    def _handle_tbody(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def _handle_tbody(self, token, context):
         """Handle tbody element"""
         table_parent = self.parser.find_current_table(context)
         self.parser.insert_element(
@@ -5313,15 +5304,15 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         )
         return True
 
-    def _handle_thead(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def _handle_thead(self, token, context):
         """Handle thead element"""
         return self._handle_tbody(token, context)  # Same logic as tbody
 
-    def _handle_tfoot(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def _handle_tfoot(self, token, context):
         """Handle tfoot element"""
         return self._handle_tbody(token, context)  # Same logic as tbody
 
-    def _handle_tr(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def _handle_tr(self, token, context):
         """Handle tr element"""
         # Fragment-specific anchor relocation:
         # Some fragment cases expect leading formatting anchors that were placed directly inside
@@ -5349,7 +5340,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 # Structural presence: real structure only if we have row/cell/caption/colgroup/col OR
                 # a section element that already contains a row/cell descendant. A sole empty tbody wrapper
                 # preceding anchors should not block relocation.
-                def _table_has_real_structure(tbl: "Node") -> bool:
+                def _table_has_real_structure(tbl):
                     for c in tbl.children:
                         if c.tag_name in {"caption", "colgroup", "col"}:
                             return True
@@ -5407,7 +5398,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         )
         return True
 
-    def _handle_cell(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def _handle_cell(self, token, context):
         """Handle td/th elements"""
         if self._is_in_template_content(context):
             self.parser.insert_element(
@@ -5444,7 +5435,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         )
         return True
 
-    def _find_or_create_tbody(self, context: "ParseContext") -> "Node":
+    def _find_or_create_tbody(self, context):
         """Find existing tbody or create new one"""
         tbody_ancestor = context.current_parent.find_ancestor("tbody")
         if tbody_ancestor:
@@ -5465,7 +5456,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         )
         return tbody
 
-    def _find_or_create_tr(self, context: "ParseContext") -> "Node":
+    def _find_or_create_tr(self, context):
         """Find existing tr or create new one in tbody"""
         tr_ancestor = context.current_parent.find_ancestor("tr")
         if tr_ancestor:
@@ -5485,7 +5476,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         )
         return tr
 
-    def should_handle_text(self, text: str, context: "ParseContext") -> bool:
+    def should_handle_text(self, text, context):
         if context.content_state != ContentState.NONE:
             return False
         if context.document_state != DocumentState.IN_TABLE:
@@ -5505,7 +5496,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             cur = cur.parent
         return True
 
-    def handle_text(self, text: str, context: "ParseContext") -> bool:
+    def handle_text(self, text, context):
         if not self.should_handle_text(text, context):
             return False
 
@@ -5570,7 +5561,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     cursor = cursor.children[-1]
 
                 # Helper to detect any descendant non-whitespace text; prevents merging separate runs.
-                def _descendant_has_text(node: Node) -> bool:
+                def _descendant_has_text(node):
                     for ch in node.children:
                         if (
                             ch.tag_name == "#text"
@@ -5984,7 +5975,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             # Track last created formatting wrapper to decide sibling vs nesting.
             last_created = None
             # Foster run seen set for sibling forcing of repeated tags
-            seen_run: Set[str] = set()
+            seen_run = set()
             for idx, fmt_elem in enumerate(
                 formatting_elements
             ):  # outer->inner creation
@@ -6145,7 +6136,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         foster_parent.remove_child(candidate)
 
             # Collapse redundant nested <nobr> chains like <nobr><nobr>text</nobr></nobr>
-            def _collapse_redundant_nobr(node: Node) -> None:
+            def _collapse_redundant_nobr(node):
                 if node.tag_name != "nobr":
                     return
                 if len(node.children) == 1 and node.children[0].tag_name == "nobr":
@@ -6235,7 +6226,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
     # duplicate should_handle_end removed (earlier definition in class is canonical)
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         tag_name = token.tag_name
         self.debug(f"handling end tag {tag_name}")
 
@@ -6347,7 +6338,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
         return False
 
-    def _should_foster_parent_table(self, context: "ParseContext") -> bool:
+    def _should_foster_parent_table(self, context):
         """
         Determine if table should be foster parented based on DOCTYPE.
 
@@ -6403,12 +6394,12 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 class FormTagHandler(TagHandler):
     """Handles form-related elements (form, input, button, etc.)"""
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_start(self, tag_name, context):
         return tag_name in ("form", "input", "button", "textarea", "select", "label")
 
     def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", end_tag_idx: int
-    ) -> bool:
+        self, token, context, end_tag_idx
+    ):
         tag_name = token.tag_name
 
         # If we're in head, implicitly close it and switch to body
@@ -6480,10 +6471,10 @@ class FormTagHandler(TagHandler):
         # No persistent pointer; dynamic detection is used instead
         return True
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         return tag_name == "form"
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         # Premature </form> suppression (migrated from early_end_preprocess): ignore when no open form.
         stack = context.open_elements._stack  # type: ignore[attr-defined]
         has_form = False
@@ -6555,7 +6546,7 @@ class FormTagHandler(TagHandler):
 class ListTagHandler(TagHandler):
     """Handles list-related elements (ul, ol, li, dl, dt, dd)"""
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_start(self, tag_name, context):
         # If we're inside a p tag, defer to AutoClosingTagHandler first
         if context.current_parent.tag_name == "p" and tag_name in ("dt", "dd", "li"):
             self.debug(f"Deferring {tag_name} inside p to AutoClosingTagHandler")
@@ -6564,8 +6555,8 @@ class ListTagHandler(TagHandler):
         return tag_name in ("li", "dt", "dd")
 
     def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+        self, token, context, has_more_content
+    ):
         self.debug(f"handling {token.tag_name}")
         self.debug(f"Current parent before: {context.current_parent}")
         tag_name = token.tag_name
@@ -6589,8 +6580,8 @@ class ListTagHandler(TagHandler):
         return False
 
     def _handle_definition_list_item(
-        self, token: "HTMLToken", context: "ParseContext"
-    ) -> bool:
+        self, token, context
+    ):
         """Handle dd/dt elements with implied end of previous item and formatting reconstruction.
 
         Goals:
@@ -6671,7 +6662,7 @@ class ListTagHandler(TagHandler):
         self.debug(f"Created new {tag_name}: {new_node}")
         return True
 
-    def _handle_list_item(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def _handle_list_item(self, token, context):
         """Handle li elements"""
         self.debug(
             f"Handling li tag, current parent is {context.current_parent.tag_name}"
@@ -6735,8 +6726,8 @@ class ListTagHandler(TagHandler):
         return True
 
     def _handle_list_container(
-        self, token: "HTMLToken", context: "ParseContext"
-    ) -> bool:
+        self, token, context
+    ):
         """Handle ul/ol/dl elements"""
         tag_name = token.tag_name
         self.debug(f"Handling {tag_name} tag")
@@ -6744,10 +6735,10 @@ class ListTagHandler(TagHandler):
         self.debug(f"Created new {tag_name}: {new_node}")
         return True
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         return tag_name in ("ul", "ol", "li", "dl", "dt", "dd")
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         self.debug(f"handling end tag {token.tag_name}")
         self.debug(f"Current parent before end: {context.current_parent}")
         tag_name = token.tag_name
@@ -6764,8 +6755,8 @@ class ListTagHandler(TagHandler):
         return False
 
     def _handle_definition_list_item_end(
-        self, token: "HTMLToken", context: "ParseContext"
-    ) -> bool:
+        self, token, context
+    ):
         """Handle end tags for dt/dd"""
         tag_name = token.tag_name
         self.debug(f"Handling end tag for {tag_name}")
@@ -6789,8 +6780,8 @@ class ListTagHandler(TagHandler):
         return False
 
     def _handle_list_item_end(
-        self, token: "HTMLToken", context: "ParseContext"
-    ) -> bool:
+        self, token, context
+    ):
         """Handle end tags for li"""
         self.debug("Handling end tag for li")
 
@@ -6816,8 +6807,8 @@ class ListTagHandler(TagHandler):
         return True
 
     def _handle_list_container_end(
-        self, token: "HTMLToken", context: "ParseContext"
-    ) -> bool:
+        self, token, context
+    ):
         """Handle end tags for ul/ol/dl"""
         tag_name = token.tag_name
         self.debug(f"Handling end tag for {tag_name}")
@@ -6852,15 +6843,15 @@ class ListTagHandler(TagHandler):
 class HeadingTagHandler(SimpleElementHandler):
     """Handles h1-h6 heading elements"""
 
-    def __init__(self, parser: ParserInterface):
+    def __init__(self, parser):
         super().__init__(parser, HEADING_ELEMENTS)
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_start(self, tag_name, context):
         return tag_name in HEADING_ELEMENTS
 
     def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+        self, token, context, has_more_content
+    ):
         # If current element itself is a heading, close it (spec: implies end tag for previous heading)
         if context.current_parent.tag_name in HEADING_ELEMENTS:
             self._move_to_parent_of_ancestor(context, context.current_parent)
@@ -6868,10 +6859,10 @@ class HeadingTagHandler(SimpleElementHandler):
         # should remain nested (tests expect <h1><div><h3>... not breaking out of <h1>).
         return super().handle_start(token, context, has_more_content)
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         return tag_name in HEADING_ELEMENTS
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         tag_name = token.tag_name
         stack = context.open_elements._stack  # type: ignore[attr-defined]
         if not context.open_elements.has_element_in_scope(tag_name):
@@ -6927,7 +6918,7 @@ class HeadingTagHandler(SimpleElementHandler):
 class RawtextTagHandler(SelectAwareHandler):
     """Handles rawtext elements like script, style, title, etc."""
 
-    def _should_handle_start_impl(self, tag_name: str, context: "ParseContext") -> bool:
+    def _should_handle_start_impl(self, tag_name, context):
         # Permit script/style/title/xmp/noscript/rawtext-like tags generally.
         # We intentionally ALLOW script/style inside <select> (spec allows script in select; style behavior differs
         # but tests expect script element creation). SelectAwareHandler would normally block; we re-allow here by
@@ -6939,15 +6930,15 @@ class RawtextTagHandler(SelectAwareHandler):
             return False  # Disallow textarea rawtext handling inside select per spec (ignored)
         return tag_name in RAWTEXT_ELEMENTS
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_start(self, tag_name, context):
         # Override SelectAwareHandler filtering: allow script/style inside select so they form rawtext elements.
         if tag_name in ("script", "style"):
             return self._should_handle_start_impl(tag_name, context)
         return super().should_handle_start(tag_name, context)
 
     def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+        self, token, context, has_more_content
+    ):
         tag_name = token.tag_name
         self.debug(f"handling {tag_name}")
 
@@ -7135,13 +7126,13 @@ class RawtextTagHandler(SelectAwareHandler):
                 context.content_state = ContentState.RAWTEXT
         return True
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         self.debug(
             f"RawtextTagHandler.should_handle_end: checking {tag_name} in content_state {context.content_state}"
         )
         return tag_name in RAWTEXT_ELEMENTS
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         self.debug(f"handling end tag {token.tag_name}")
         self.debug(
             f"Current state: doc={context.document_state}, content={context.content_state}, parent: {context.current_parent}"
@@ -7184,13 +7175,13 @@ class RawtextTagHandler(SelectAwareHandler):
 
         return False
 
-    def should_handle_text(self, text: str, context: "ParseContext") -> bool:
+    def should_handle_text(self, text, context):
         self.debug(
             f"RawtextTagHandler.should_handle_text: checking in content_state {context.content_state}"
         )
         return context.content_state == ContentState.RAWTEXT
 
-    def handle_text(self, text: str, context: "ParseContext") -> bool:
+    def handle_text(self, text, context):
         self.debug(f"handling text in content_state {context.content_state}")
         if not self.should_handle_text(text, context):
             return False
@@ -7222,12 +7213,12 @@ class RawtextTagHandler(SelectAwareHandler):
 class VoidElementHandler(SelectAwareHandler):
     """Handles void elements that can't have children"""
 
-    def _should_handle_start_impl(self, tag_name: str, context: "ParseContext") -> bool:
+    def _should_handle_start_impl(self, tag_name, context):
         return tag_name in VOID_ELEMENTS
 
     def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", end_tag_idx: int
-    ) -> bool:
+        self, token, context, end_tag_idx
+    ):
         tag_name = token.tag_name
         self.debug(f"handling {tag_name}, context={context}")
         self.debug(f"Current parent: {context.current_parent}")
@@ -7336,10 +7327,10 @@ class VoidElementHandler(SelectAwareHandler):
 
         return True
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         return tag_name == "br"
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         # Mirror spec quirk: </br> behaves like <br> start tag.
         in_table_mode = context.document_state in (
             DocumentState.IN_TABLE,
@@ -7387,7 +7378,7 @@ class VoidElementHandler(SelectAwareHandler):
 class AutoClosingTagHandler(TemplateAwareHandler):
     """Handles auto-closing behavior for certain tags"""
 
-    def _should_handle_start_impl(self, tag_name: str, context: "ParseContext") -> bool:
+    def _should_handle_start_impl(self, tag_name, context):
         # Don't intercept list item tags in table context; let ListTagHandler handle foster parenting
         if context.document_state == DocumentState.IN_TABLE and tag_name in (
             "li",
@@ -7407,8 +7398,8 @@ class AutoClosingTagHandler(TemplateAwareHandler):
         )
 
     def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", end_tag_idx: int
-    ) -> bool:
+        self, token, context, end_tag_idx
+    ):
         self.debug(f"Checking auto-closing rules for {token.tag_name}")
         current = context.current_parent
 
@@ -7482,7 +7473,7 @@ class AutoClosingTagHandler(TemplateAwareHandler):
 
         return False
 
-    def _is_in_integration_point(self, context: "ParseContext") -> bool:
+    def _is_in_integration_point(self, context):
         """Check if we're inside an SVG or MathML integration point where HTML rules apply."""
         current = context.current_parent
         while current:
@@ -7497,7 +7488,7 @@ class AutoClosingTagHandler(TemplateAwareHandler):
             current = current.parent
         return False
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         # Don't handle end tags inside template content that would affect document state
         if self._is_in_template_content(context):
             return False
@@ -7517,7 +7508,7 @@ class AutoClosingTagHandler(TemplateAwareHandler):
             or tag_name in ("tr", "td", "th")
         )  # Add table elements
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         self.debug(f"AutoClosingTagHandler.handle_end: {token.tag_name}")
         self.debug(f"Current parent: {context.current_parent}")
 
@@ -7544,7 +7535,7 @@ class AutoClosingTagHandler(TemplateAwareHandler):
                 return False
 
             # Ignore end tag if matching ancestor lies outside an integration point boundary
-            def _crosses_integration_point(target: "Node") -> bool:
+            def _crosses_integration_point(target):
                 cur = context.current_parent
                 while cur and cur is not target:
                     if cur.tag_name in ("svg foreignObject", "svg desc", "svg title"):
@@ -7644,8 +7635,8 @@ class ForeignTagHandler(TagHandler):
         return fixed_attrs
 
     def _handle_foreign_foster_parenting(
-        self, token: "HTMLToken", context: "ParseContext"
-    ) -> bool:
+        self, token, context
+    ):
         """Handle foster parenting for foreign elements (SVG/MathML) in table context"""
         tag_name = token.tag_name
         tag_name_lower = tag_name.lower()
@@ -7714,8 +7705,8 @@ class ForeignTagHandler(TagHandler):
         return False
 
     def _handle_html_breakout(
-        self, token: "HTMLToken", context: "ParseContext"
-    ) -> bool:
+        self, token, context
+    ):
         """Handle HTML elements breaking out of foreign content"""
         tag_name_lower = token.tag_name.lower()
 
@@ -7872,48 +7863,8 @@ class ForeignTagHandler(TagHandler):
 
         return False
 
-    def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:  # type: ignore[override]
-        # Only act if we decided to handle this start tag (should_handle_start True elsewhere)
-        tag = token.tag_name
-        # MathML leaf fragment adjustment: ensure self-closing syntax for integration point leaves (ms, mi, mo, mn, mtext)
-        # is treated as a normal container so following text nests inside.
-        if context.current_context == "math" and tag in ("ms","mi","mo","mn","mtext"):
-            # Force non-self-closing enter behavior
-            token.is_self_closing = False
-        # Standard foreign insertion: prefix with current context if not already prefixed
-        prefix = context.current_context
-        if prefix in ("svg","math") and not tag.startswith(prefix+" ") and tag not in ("svg","math"):
-            fixed_attrs = self._fix_foreign_attribute_case(token.attributes, prefix)
-            self.parser.insert_element(
-                token,
-                context,
-                mode="normal",
-                enter=True,
-                tag_name_override=f"{prefix} {tag}",
-                attributes_override=fixed_attrs,
-                preserve_attr_case=True,
-                push_override=True,
-            )
-            return True
-        # Fallback: if starting a new foreign root (svg/math) set context then insert
-        if tag in ("svg","math"):
-            context.current_context = tag
-            fixed_attrs = self._fix_foreign_attribute_case(token.attributes, tag)
-            self.parser.insert_element(
-                token,
-                context,
-                mode="normal",
-                enter=True,
-                tag_name_override=f"{tag} {tag}",
-                attributes_override=fixed_attrs,
-                preserve_attr_case=True,
-                push_override=True,
-            )
-            return True
-        return False
 
-
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_start(self, tag_name, context):
         """Decide if this foreign handler should process a start tag.
 
         Returns True when we want the foreign handler to create a foreign element node
@@ -8146,10 +8097,13 @@ class ForeignTagHandler(TagHandler):
         return False
 
     def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+        self, token, context, has_more_content
+    ):
         tag_name = token.tag_name
         tag_name_lower = tag_name.lower()
+
+        # Note: previously forced MathML leaf self-closing tokens (mi/mo/mn/ms/mtext) to behave as containers.
+        # Removed to align closer with baseline expectations for tests9 regression case.
 
         if self._handle_foreign_foster_parenting(token, context):
             return True
@@ -8786,7 +8740,7 @@ class ForeignTagHandler(TagHandler):
 
         return False
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         """Decide if this handler should process an end tag.
 
         We keep handling end tags while in a foreign context or when still inside
@@ -8834,7 +8788,7 @@ class ForeignTagHandler(TagHandler):
         )
         return ancestor is not None
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         tag_name = token.tag_name.lower()
         # Find matching element (case-insensitive) accounting for foreign prefixes
         matching_element = context.current_parent.find_ancestor(
@@ -9024,7 +8978,7 @@ class ForeignTagHandler(TagHandler):
 
         return True  # Ignore if nothing matched and not a breakout case
 
-    def _is_in_integration_point(self, context: "ParseContext") -> bool:
+    def _is_in_integration_point(self, context):
         """Check if we're inside an SVG or MathML integration point where HTML rules apply"""
         # Check current parent and ancestors for integration points
         current = context.current_parent
@@ -9049,7 +9003,7 @@ class ForeignTagHandler(TagHandler):
 
         return False
 
-    def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:
+    def should_handle_comment(self, comment, context):
         """Handle <![CDATA[...]]> sequences seen as comments by the tokenizer in foreign content.
 
         In SVG/MathML contexts (but not integration points like foreignObject/desc/title),
@@ -9065,7 +9019,7 @@ class ForeignTagHandler(TagHandler):
             current = current.parent
         return comment.startswith("[CDATA[")
 
-    def handle_comment(self, comment: str, context: "ParseContext") -> bool:
+    def handle_comment(self, comment, context):
         """Convert <![CDATA[...]]> sequences to text content in foreign elements."""
         if not self.should_handle_comment(comment, context):
             return False
@@ -9129,7 +9083,7 @@ class HeadElementHandler(TagHandler):
                 )
         return False
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_start(self, tag_name, context):
         # Do not let head element handler interfere inside template content
         if self._is_in_template_content(context):
             return False
@@ -9154,8 +9108,8 @@ class HeadElementHandler(TagHandler):
         return tag_name in HEAD_ELEMENTS
 
     def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+        self, token, context, has_more_content
+    ):
         tag_name = token.tag_name
         self.debug(f"handling {tag_name}, has_more_content={has_more_content}")
         self.debug(
@@ -9381,9 +9335,7 @@ class HeadElementHandler(TagHandler):
 
         return True
 
-    def _handle_template_start(
-        self, token: "HTMLToken", context: "ParseContext"
-    ) -> bool:
+    def _handle_template_start(self, token, context):
         """Handle template element start tag with special content document fragment"""
         self.debug("handling template start tag")
 
@@ -9451,10 +9403,10 @@ class HeadElementHandler(TagHandler):
 
         return True
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         return tag_name == "head" or tag_name == "template"
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         self.debug(f"handling end tag {token.tag_name}")
         self.debug(
             f"current state: {context.document_state}, current parent: {context.current_parent}"
@@ -9474,7 +9426,7 @@ class HeadElementHandler(TagHandler):
             context.move_to_element(self.parser.html_node)
         return True
 
-    def should_handle_text(self, text: str, context: "ParseContext") -> bool:
+    def should_handle_text(self, text, context):
         # Handle text in RAWTEXT mode or spaces in head
         return (
             context.content_state == ContentState.RAWTEXT
@@ -9482,7 +9434,7 @@ class HeadElementHandler(TagHandler):
             and context.current_parent.tag_name in RAWTEXT_ELEMENTS
         ) or (context.document_state == DocumentState.IN_HEAD and text.isspace())
 
-    def handle_text(self, text: str, context: "ParseContext") -> bool:
+    def handle_text(self, text, context):
         if not self.should_handle_text(text, context):
             return False
 
@@ -9524,14 +9476,14 @@ class HeadElementHandler(TagHandler):
         self.debug(f"Text node content: {text}")
         return True
 
-    def should_handle_comment(self, comment: str, context: "ParseContext") -> bool:
+    def should_handle_comment(self, comment, context):
         return (
             context.content_state == ContentState.RAWTEXT
             and context.current_parent
             and context.current_parent.tag_name in RAWTEXT_ELEMENTS
         )
 
-    def handle_comment(self, comment: str, context: "ParseContext") -> bool:
+    def handle_comment(self, comment, context):
         self.debug(f"handling comment '{comment}' in RAWTEXT mode")
         # In RAWTEXT mode, treat comments as text
         return self.handle_text(comment, context)
@@ -9540,12 +9492,10 @@ class HeadElementHandler(TagHandler):
 class HtmlTagHandler(TagHandler):
     """Handles html element"""
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_start(self, tag_name, context):
         return tag_name == "html"
 
-    def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+    def handle_start(self, token, context, has_more_content):
         self.debug("handling start tag")
         # Spec: For a second <html> start tag, merge only attributes that are not already present.
         html_node = self.parser.html_node
@@ -9558,10 +9508,10 @@ class HtmlTagHandler(TagHandler):
                         html_node.attributes[k] = v
         return True
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         return tag_name == "html"
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         self.debug(f"handling end tag, current state: {context.document_state}")
 
         # Ignore </html> entirely while any table-related insertion mode is active. The HTML Standard
@@ -9637,7 +9587,7 @@ class FramesetTagHandler(TagHandler):
         "main",
     }
 
-    def _trim_body_leading_space(self) -> None:
+    def _trim_body_leading_space(self):
         body = self.parser._get_body_node()
         if not body or not body.children:
             return
@@ -9647,13 +9597,13 @@ class FramesetTagHandler(TagHandler):
             if first.text_content == "":
                 body.remove_child(first)
 
-    def _frameset_body_has_meaningful_content(self, body: Node, allowed: set) -> bool:
+    def _frameset_body_has_meaningful_content(self, body, allowed):
         for child in body.children:
             if self._frameset_node_has_meaningful_content(child, allowed):
                 return True
         return False
 
-    def _frameset_node_has_meaningful_content(self, node: Node, allowed: set) -> bool:
+    def _frameset_node_has_meaningful_content(self, node, allowed):
         if node.tag_name == "#text":
             return bool(node.text_content and node.text_content.strip())
         if node.tag_name == "#comment":
@@ -9673,7 +9623,7 @@ class FramesetTagHandler(TagHandler):
             for child in node.children
         )
 
-    def early_end_preprocess(self, token: "HTMLToken", context: "ParseContext") -> bool:  # type: ignore[override]
+    def early_end_preprocess(self, token, context):
         if context.document_state in (
             DocumentState.IN_FRAMESET,
             DocumentState.AFTER_FRAMESET,
@@ -9685,7 +9635,7 @@ class FramesetTagHandler(TagHandler):
                 return True
         return False
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_start(self, tag_name, context):
         if tag_name not in ("frameset", "frame", "noframes"):
             return False
         if (
@@ -9696,9 +9646,7 @@ class FramesetTagHandler(TagHandler):
             return False
         return True
 
-    def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+    def handle_start(self, token, context, has_more_content):
         tag_name = token.tag_name
         self.debug(f"handling {tag_name}")
 
@@ -9744,7 +9692,7 @@ class FramesetTagHandler(TagHandler):
                     # (br/img/input/wbr) – those should commit to a body per tests (e.g. <br><frameset> expects body).
                     if not context.frameset_ok and not meaningful:
                         benign_containers = self._FRAMES_HTML_EMPTY_CONTAINERS
-                        def _only_empty_containers(node: Node) -> bool:
+                        def _only_empty_containers(node):
                             for ch in node.children:
                                 if ch.tag_name == "#text" and ch.text_content and ch.text_content.strip():
                                     return False
@@ -9849,10 +9797,10 @@ class FramesetTagHandler(TagHandler):
 
         return False
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         return tag_name in ("frameset", "noframes")
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         tag_name = token.tag_name
         self.debug(f"handling end tag {tag_name}")
 
@@ -9951,12 +9899,10 @@ class FramesetTagHandler(TagHandler):
 class ImageTagHandler(TagHandler):
     """Special handling for img tags"""
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_start(self, tag_name, context):
         return tag_name in ("img", "image")
 
-    def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", end_tag_idx: int
-    ) -> bool:
+    def handle_start(self, token, context, end_tag_idx):
         # If we're in head, implicitly close it and switch to body
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
             body = self.parser._ensure_body_node(context)
@@ -9971,10 +9917,10 @@ class ImageTagHandler(TagHandler):
         )
         return True
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         return tag_name in ("img", "image")
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         # Images are void elements, no need to handle end tag
         return True
 
@@ -9982,12 +9928,10 @@ class ImageTagHandler(TagHandler):
 class BodyElementHandler(TagHandler):
     """Handles <body> creation/merging and safe closure"""
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_start(self, tag_name, context):
         return tag_name == "body"
 
-    def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+    def handle_start(self, token, context, has_more_content):
         # For fragment context 'html', delegate to parser helper to ensure deterministic head->body order.
         if self.parser.fragment_context == "html":
             body = self.parser._ensure_body_node(context)  # type: ignore[attr-defined]
@@ -10022,12 +9966,10 @@ class BodyElementHandler(TagHandler):
 class BoundaryElementHandler(TagHandler):
     """Handles marquee boundary element & related formatting closures"""
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_start(self, tag_name, context):
         return tag_name == "marquee"
 
-    def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+    def handle_start(self, token, context, has_more_content):
         # Close an open paragraph first (spec: block boundary elements close <p>)
         if context.current_parent.tag_name == "p":
             context.move_to_element(
@@ -10061,10 +10003,10 @@ class BoundaryElementHandler(TagHandler):
         # upon first phrasing/text insertion if required. This avoids creating nested <p><p>.
         return True
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         return tag_name == "marquee"
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         tag_name = token.tag_name
         self.debug(f"handling end tag {tag_name}")
 
@@ -10114,10 +10056,10 @@ class BoundaryElementHandler(TagHandler):
 class DoctypeHandler(TagHandler):
     """Handles DOCTYPE declarations"""
 
-    def should_handle_doctype(self, doctype: str, context: "ParseContext") -> bool:
+    def should_handle_doctype(self, doctype, context):
         return True
 
-    def handle_doctype(self, doctype: str, context: "ParseContext") -> bool:
+    def handle_doctype(self, doctype, context):
         if context.doctype_seen:
             self.debug("Ignoring duplicate DOCTYPE")
             return True
@@ -10142,7 +10084,7 @@ class DoctypeHandler(TagHandler):
         context.doctype_seen = True
         return True
 
-    def _parse_doctype_declaration(self, doctype: str) -> str:
+    def _parse_doctype_declaration(self, doctype):
         """Parse DOCTYPE declaration and normalize it according to HTML5 spec"""
         import re
 
@@ -10186,7 +10128,7 @@ class DoctypeHandler(TagHandler):
 class PlaintextHandler(SelectAwareHandler):
     """Handles plaintext element which switches to plaintext mode"""
 
-    def _should_handle_start_impl(self, tag_name: str, context: "ParseContext") -> bool:
+    def _should_handle_start_impl(self, tag_name, context):
         # While in PLAINTEXT mode we treat all subsequent tags as literal text here.
         if context.content_state == ContentState.PLAINTEXT:
             return True
@@ -10201,9 +10143,7 @@ class PlaintextHandler(SelectAwareHandler):
         # Always intercept inside select so we can ignore (prevent fallback generic element creation)
         return True
 
-    def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+    def handle_start(self, token, context, has_more_content):
         if context.content_state == ContentState.PLAINTEXT:
             self.debug(f"treating tag as text: <{token.tag_name}>")
             text_node = Node("#text")
@@ -10414,12 +10354,12 @@ class PlaintextHandler(SelectAwareHandler):
         return True
 
     # Text handling while in PLAINTEXT mode (all subsequent tokens)
-    def should_handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def should_handle_text(self, text, context):  # type: ignore[override]
         if not text:
             return False
         return context.content_state == ContentState.PLAINTEXT
 
-    def handle_text(self, text: str, context: "ParseContext") -> bool:  # type: ignore[override]
+    def handle_text(self, text, context):  # type: ignore[override]
         # Tokenizer already transformed disallowed code points into U+FFFD; just append literally.
         node = self.parser.create_text_node(text)
         context.current_parent.append_child(node)
@@ -10427,7 +10367,7 @@ class PlaintextHandler(SelectAwareHandler):
             context.frameset_ok = False
         return True
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         # Handle all end tags in PLAINTEXT mode
         if context.content_state == ContentState.PLAINTEXT:
             return True
@@ -10436,7 +10376,7 @@ class PlaintextHandler(SelectAwareHandler):
             return True
         return False
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         # If we are in PLAINTEXT mode, every end tag becomes literal text.
         if context.content_state == ContentState.PLAINTEXT:
             self.debug(f"PLAINTEXT mode: literalizing </{token.tag_name}>")
@@ -10496,12 +10436,10 @@ class PlaintextHandler(SelectAwareHandler):
 class ButtonTagHandler(TagHandler):
     """Handles button elements with special formatting element rules"""
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_start(self, tag_name, context):
         return tag_name == "button"
 
-    def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+    def handle_start(self, token, context, has_more_content):
         self.debug(f"handling {token}, context={context}")
 
         # If there's an open button element in scope, the start tag for a new button
@@ -10529,10 +10467,10 @@ class ButtonTagHandler(TagHandler):
         )
         return True
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         return tag_name == "button"
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         button = context.current_parent.find_ancestor("button")
         if button:
             # Pop elements until the matching button is removed
@@ -10549,12 +10487,10 @@ class ButtonTagHandler(TagHandler):
 class MenuitemElementHandler(TagHandler):
     """Handles menuitem elements with special behaviors"""
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_start(self, tag_name, context):
         return tag_name == "menuitem"
 
-    def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+    def handle_start(self, token, context, has_more_content):
         tag_name = token.tag_name
         if tag_name != "menuitem":
             return False
@@ -10582,10 +10518,10 @@ class MenuitemElementHandler(TagHandler):
             context.move_to_element(parent_before)
         return True
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         return tag_name == "menuitem"
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         self.debug(f"handling end tag {token.tag_name}")
 
         # Find the nearest menuitem ancestor
@@ -10625,7 +10561,7 @@ class MenuitemElementHandler(TagHandler):
 class FallbackPlacementHandler(TagHandler):
     """Handles residual start tags needing foster parenting or block relocation."""
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_start(self, tag_name, context):
         token = self.parser._last_token
         if not token or token.type != "StartTag":
             return False
@@ -10640,9 +10576,84 @@ class FallbackPlacementHandler(TagHandler):
                 return True
         return False
 
+    def handle_start(self, token, context, has_more_content):
+        """Fallback placement / fostering for residual start tags.
+
+        Restores logic removed during lint cleanup that performed:
+          * Foster parenting of start tags that the table algorithm requires moved
+          * Early fostering of inline formatting elements (font/b/i/u/em/strong/span) before an open table when not in a cell
+          * Relocation of generic block elements (div/section/article) out of special-category containers to a more appropriate ancestor.
+
+        Pure structural logic – no heuristics or reflection.
+        """
+        tag_name = token.tag_name
+
+        # 1. Table foster-parenting path for residual elements.
+        if table_modes.should_foster_parent(tag_name, token.attributes, context, self.parser):  # type: ignore[attr-defined]
+            # Paragraph special-case: allow ParagraphTagHandler to manage re-entry into cells.
+            if tag_name == "p" and hasattr(table_modes, "reenter_last_cell_for_p") and table_modes.reenter_last_cell_for_p(context):  # type: ignore[attr-defined]
+                return False
+            # If table modes logic wants to restore an open cell, skip fostering so cell handlers run.
+            if hasattr(table_modes, "restore_insertion_open_cell"):
+                open_cell = table_modes.restore_insertion_open_cell(context)  # type: ignore[attr-defined]
+                if open_cell is not None:
+                    self.debug(
+                        f"Skipped foster parenting <{tag_name}>; insertion point restored to open cell <{open_cell.tag_name}>"
+                    )
+                    return False
+            self.debug(f"Foster parenting <{tag_name}> before current table")
+            foster_parent_element(tag_name, token.attributes, context, self.parser)  # type: ignore[attr-defined]
+            return True
+
+        # 2. Deterministic fostering of certain inline formatting elements immediately before a table
+        # when not inside a cell/caption – keeps whitespace migration consistent with spec outcomes.
+        if context.document_state == DocumentState.IN_TABLE and tag_name in {"font", "b", "i", "u", "em", "strong", "span"}:
+            table = self.parser.find_current_table(context)
+            if table:
+                # (a) Insertion point is the table element itself.
+                if context.current_parent is table and table.parent:
+                    self.debug(
+                        f"Foster parenting formatting <{tag_name}> before <table> (formatting/table prelude)"
+                    )
+                    foster_parent_element(tag_name, token.attributes, context, self.parser)  # type: ignore[attr-defined]
+                    return True
+                # (b) Insertion point is table.parent (e.g. body) with table open; ensure not in cell/caption.
+                if (
+                    context.current_parent is table.parent
+                    and table.parent.tag_name not in ("td", "th", "caption")
+                ):
+                    self.debug(
+                        f"Foster parenting formatting <{tag_name}> adjacent to ancestor before <table>"
+                    )
+                    foster_parent_element(tag_name, token.attributes, context, self.parser)  # type: ignore[attr-defined]
+                    return True
+
+        # 3. Relocate residual block elements out of special-category parents to a more suitable ancestor.
+        if tag_name in ("div", "section", "article"):
+            if (
+                context.current_parent.tag_name in SPECIAL_CATEGORY_ELEMENTS
+                and context.open_elements._stack  # type: ignore[attr-defined]
+            ):
+                stack = context.open_elements._stack  # type: ignore[attr-defined]
+                for candidate in reversed(stack[:-1]):  # skip current parent (top)
+                    if candidate.tag_name in ("html", "body"):
+                        continue
+                    if candidate.tag_name in SPECIAL_CATEGORY_ELEMENTS:
+                        continue
+                    if candidate.tag_name in BLOCK_ELEMENTS:
+                        continue
+                    if context.current_parent is not candidate:
+                        context.move_to_element(candidate)
+                        self.debug(
+                            f"Relocated block <{tag_name}> under phrasing ancestor <{candidate.tag_name}>"
+                        )
+                    break
+        # Let default element handling create the node if we didn't foster/relocate explicitly.
+        return False
+
 
 # --- Foster parenting primitive (extracted from parser._foster_parent_element) ---
-def foster_parent_element(tag_name: str, attributes: dict, context: "ParseContext", parser: "TurboHTML") -> None:  # type: ignore[name-defined]
+def foster_parent_element(tag_name, attributes, context, parser):  # type: ignore[name-defined]
     """Foster parent an element outside of table context.
 
     Mirrors previous parser._foster_parent_element behavior but lives in handlers module
@@ -10681,91 +10692,25 @@ def foster_parent_element(tag_name: str, attributes: dict, context: "ParseContex
     context.open_elements.push(new_node)
 
     
-class FallbackPlacementHandler(FallbackPlacementHandler):  # type: ignore[misc]
-    """Augment FallbackPlacementHandler with handle_start (split after utility extraction)."""
-
-    def handle_start(self, token: "HTMLToken", context: "ParseContext", has_more_content: bool) -> bool:  # type: ignore[override]
-        tag_name = token.tag_name
-        if table_modes.should_foster_parent(tag_name, token.attributes, context, self.parser):  # type: ignore[attr-defined]
-            if tag_name == "p" and table_modes.reenter_last_cell_for_p(context):
-                self.debug("Re-entered last cell before fostering paragraph")
-                return False
-            open_cell = table_modes.restore_insertion_open_cell(context)
-            if open_cell is not None:
-                self.debug(
-                    f"Skipped foster parenting <{tag_name}>; insertion point set to open cell <{open_cell.tag_name}>"
-                )
-                return False
-            self.debug(f"Foster parenting <{tag_name}> before current table")
-            foster_parent_element(tag_name, token.attributes, context, self.parser)  # type: ignore[attr-defined]
-            return True
-
-        # Additional deterministic fostering: inline formatting elements immediately before a table when
-        # not inside a cell/caption. Mirrors outcomes expected in tricky01 table cases where <font>
-        # should become a sibling before <table>, not wrap whitespace that later migrates into a cell.
-        if context.document_state == DocumentState.IN_TABLE and tag_name in {"font","b","i","u","em","strong","span"}:
-            # Only when current_parent is the table element itself (or its direct ancestor not a cell)
-            table = self.parser.find_current_table(context)
-            if table and context.current_parent is table:
-                # Foster parent the formatting element before the table's position in its parent.
-                if table.parent:
-                    self.debug(f"Foster parenting formatting <{tag_name}> before <table> (formatting/table prelude)")
-                    foster_parent_element(tag_name, token.attributes, context, self.parser)  # type: ignore[attr-defined]
-                    return True
-            # Also handle case where insertion point drifted to body while still IN_TABLE state and table open.
-            if table and context.current_parent is table.parent and table.parent.tag_name not in ("td","th","caption"):
-                self.debug(f"Foster parenting formatting <{tag_name}> adjacent to ancestor before <table>")
-                foster_parent_element(tag_name, token.attributes, context, self.parser)  # type: ignore[attr-defined]
-                return True
-
-        if tag_name in ("div", "section", "article"):
-            if in_template_content(context):  # type: ignore[attr-defined]
-                return False
-            if context.current_context in ("math", "svg"):
-                return False
-            if context.current_parent.tag_name in SPECIAL_CATEGORY_ELEMENTS:
-                stack = context.open_elements._stack  # type: ignore[attr-defined]
-                if stack:
-                    for candidate in reversed(stack[:-1]):
-                        if candidate.tag_name in ("html", "body"):
-                            continue
-                        if candidate.tag_name in SPECIAL_CATEGORY_ELEMENTS:
-                            continue
-                        if candidate.tag_name in BLOCK_ELEMENTS:
-                            continue
-                        if context.current_parent is not candidate:
-                            context.move_to_element(candidate)
-                            self.debug(
-                                f"Relocated block <{tag_name}> under phrasing ancestor <{candidate.tag_name}>"
-                            )
-                        break
-        return False
-
 
 class UnknownElementHandler(TagHandler):
     """Handle unknown/namespace elements with basic start/end tag matching"""
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_start(self, tag_name, context):
         """Only handle unknown elements that contain colons (namespace) or are truly unknown"""
         # Handle namespace elements (contain colon) that aren't handled by other handlers
         if ":" in tag_name:
             return True
         return False
 
-    def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
-        """Handle unknown element start tags with default element creation"""
-        # This will be handled by default element creation in parser
-        return False  # Let default handling create the element
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         """Handle end tags for unknown elements if current parent matches"""
         if ":" in tag_name and context.current_parent.tag_name == tag_name:
             return True
         return False
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         """Handle unknown element end tags by closing the current element"""
         tag_name = token.tag_name
 
@@ -10787,12 +10732,10 @@ class UnknownElementHandler(TagHandler):
 class RubyElementHandler(TagHandler):
     """Handles ruby annotation elements & auto-closing"""
 
-    def should_handle_start(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_start(self, tag_name, context):
         return tag_name in ("ruby", "rb", "rt", "rp", "rtc")
 
-    def handle_start(
-        self, token: "HTMLToken", context: "ParseContext", has_more_content: bool
-    ) -> bool:
+    def handle_start(self, token, context, has_more_content):
         tag_name = token.tag_name
         self.debug(f"handling {tag_name}")
 
@@ -10819,7 +10762,7 @@ class RubyElementHandler(TagHandler):
         )
         return True
 
-    def _auto_close_ruby_elements(self, tag_name: str, context: "ParseContext") -> None:
+    def _auto_close_ruby_elements(self, tag_name, context):
         """Auto-close conflicting ruby elements"""
         elements_to_close = []
 
@@ -10858,10 +10801,10 @@ class RubyElementHandler(TagHandler):
                     element_to_close.parent, context.current_parent
                 )
 
-    def should_handle_end(self, tag_name: str, context: "ParseContext") -> bool:
+    def should_handle_end(self, tag_name, context):
         return tag_name in ("ruby", "rb", "rt", "rp", "rtc")
 
-    def handle_end(self, token: "HTMLToken", context: "ParseContext") -> bool:
+    def handle_end(self, token, context):
         tag_name = token.tag_name
         self.debug(f"handling end tag {tag_name}")
 
@@ -10892,7 +10835,7 @@ class PostProcessHandler(TagHandler):
     keep the parser slimmer. Runs after all other handlers.
     """
 
-    def finalize(self, parser: "TurboHTML") -> None:  # type: ignore[name-defined]
+    def finalize(self, parser):  # type: ignore[name-defined]
         root = parser.root
         if root is None:
             return
@@ -10903,7 +10846,7 @@ class PostProcessHandler(TagHandler):
             FORMATTING_ELEMENTS,
         )
 
-        def preserve(node: Node) -> bool:
+        def preserve(node):
             cur = node.parent
             svg = False
             while cur:
@@ -10915,7 +10858,7 @@ class PostProcessHandler(TagHandler):
                 cur = cur.parent
             return svg
 
-        def walk_replacement(node: Node):
+        def walk_replacement(node):
             if node.tag_name == "#text" and node.text_content:
                 text = node.text_content
                 had = NUMERIC_ENTITY_INVALID_SENTINEL in text
@@ -10930,7 +10873,7 @@ class PostProcessHandler(TagHandler):
 
         walk_replacement(root)
 
-        def normalize_mathml(node: Node):
+        def normalize_mathml(node):
             parts = node.tag_name.split()
             local = parts[-1] if parts else node.tag_name
             is_mathml = local in MATHML_ELEMENTS or node.tag_name.startswith("math ")
@@ -10949,7 +10892,7 @@ class PostProcessHandler(TagHandler):
 
         normalize_mathml(root)
 
-        def collapse_formatting(node: Node):
+        def collapse_formatting(node):
             i = 0
             while i < len(node.children) - 1:
                 a = node.children[i]
@@ -10975,7 +10918,7 @@ class PostProcessHandler(TagHandler):
 
         collapse_formatting(root)
 
-        def adjust_foreign(node: Node):
+        def adjust_foreign(node):
             parts = node.tag_name.split()
             local = parts[-1] if parts else node.tag_name
             is_svg = node.tag_name.startswith("svg ") or local == "svg"

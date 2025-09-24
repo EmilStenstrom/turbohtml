@@ -1,4 +1,3 @@
-from typing import Callable, Dict, List, Optional, Union
 
 BOUNDARY_ELEMENTS = {
     "applet",
@@ -39,12 +38,7 @@ class Node:
         "synthetic_stack_only",
     )
 
-    def __init__(
-        self,
-        tag_name: str,
-        attributes: Optional[Dict[str, str]] = None,
-        preserve_attr_case: bool = False,
-    ):
+    def __init__(self, tag_name, attributes=None, preserve_attr_case=False):
         # Instrumentation / safety: empty tag names should never be constructed.
         # If this triggers we want a loud failure with context so we can trace upstream logic.
         if tag_name is None or tag_name == "":
@@ -55,14 +49,14 @@ class Node:
         if attributes:
             if preserve_attr_case:
                 # Keep first occurrence preserving original key casing
-                kept: Dict[str, str] = {}
+                kept = {}
                 for k, v in attributes.items():
                     if k not in kept:
                         kept[k] = v
                 self.attributes = kept
             else:
                 # Lowercase attribute names deterministically; keep first occurrence
-                lowered: Dict[str, str] = {}
+                lowered = {}
                 for k, v in attributes.items():
                     lk = k.lower()
                     if lk not in lowered:
@@ -70,16 +64,16 @@ class Node:
                 self.attributes = lowered
         else:
             self.attributes = {}
-        self.children: List["Node"] = []
-        self.parent: Optional["Node"] = None
+        self.children = []
+        self.parent = None
         self.text_content = ""  # For text nodes or concatenated text in element nodes
-        self.next_sibling: Optional["Node"] = None
-        self.previous_sibling: Optional["Node"] = None
+        self.next_sibling = None
+        self.previous_sibling = None
         # Default: real DOM node (False). Fragment bootstrap may set True on ephemeral
         # ancestors that exist only on the open elements stack.
-        self.synthetic_stack_only: bool = False
+        self.synthetic_stack_only = False
 
-    def append_child(self, child: "Node"):
+    def append_child(self, child):
         # Check for circular reference before adding
         if self._would_create_circular_reference(child):
             raise ValueError(
@@ -105,7 +99,7 @@ class Node:
         child.next_sibling = None
         self.children.append(child)
 
-    def _would_create_circular_reference(self, child: "Node") -> bool:
+    def _would_create_circular_reference(self, child):
         """Check if adding child would create a circular reference"""
         # Check if self is a descendant of child
         current = self
@@ -125,7 +119,7 @@ class Node:
 
         return False
 
-    def insert_child_at(self, index: int, child: "Node"):
+    def insert_child_at(self, index, child):
         """Insert a child at the specified index"""
         if child.parent:
             # Remove from old location
@@ -168,7 +162,7 @@ class Node:
             # Update previous sibling's next link
             self.children[index - 1].next_sibling = child
 
-    def insert_before(self, new_node: "Node", reference_node: "Node"):
+    def insert_before(self, new_node, reference_node):
         if reference_node not in self.children:
             return
 
@@ -258,11 +252,7 @@ class Node:
             result += "\n" + child.to_test_format(indent + 2)
         return result
 
-    def find_ancestor(
-        self,
-        tag_name_or_predicate: Union[str, Callable[["Node"], bool]],
-        stop_at_boundary: bool = False,
-    ) -> Optional["Node"]:
+    def find_ancestor(self, tag_name_or_predicate, stop_at_boundary=False):
         """Find the nearest ancestor matching the given tag name or predicate.
         Includes the current node in the search.
 
@@ -284,7 +274,7 @@ class Node:
             current = current.parent
         return None
 
-    def remove_child(self, child: "Node"):
+    def remove_child(self, child):
         """Remove a child node, updating all sibling links.
 
         Args:
@@ -305,11 +295,7 @@ class Node:
         child.next_sibling = None
         child.previous_sibling = None
 
-    def find_ancestor_until(
-        self,
-        tag_name_or_predicate: Union[str, Callable[["Node"], bool]],
-        stop_at: "Node",
-    ) -> Optional["Node"]:
+    def find_ancestor_until(self, tag_name_or_predicate, stop_at):
         """Find ancestor matching criteria, stopping at a specific node.
 
         Args:
@@ -328,9 +314,7 @@ class Node:
             current = current.parent
         return None
 
-    def find_first_ancestor_in_tags(
-        self, tag_names: Union[str, list], stop_at: Optional["Node"] = None
-    ) -> Optional["Node"]:
+    def find_first_ancestor_in_tags(self, tag_names, stop_at=None):
         """Find the first ancestor whose tag matches any in the given list.
 
         Args:
@@ -349,11 +333,11 @@ class Node:
             current = current.parent
         return None
 
-    def last_child_is_text(self) -> bool:
+    def last_child_is_text(self):
         """Check if the last child is a text node"""
         return self.children and self.children[-1].tag_name == "#text"
 
-    def is_inside_tag(self, tag_name: str) -> bool:
+    def is_inside_tag(self, tag_name):
         """Check if this node is inside an element with the given tag name.
 
         Args:
@@ -363,7 +347,7 @@ class Node:
         """
         return self.find_ancestor(tag_name) is not None
 
-    def find_child_by_tag(self, tag_name: str) -> Optional["Node"]:
+    def find_child_by_tag(self, tag_name):
         """Find first child with the given tag name.
 
         Args:
@@ -376,7 +360,7 @@ class Node:
                 return child
         return None
 
-    def get_last_child_with_tag(self, tag_name: str) -> Optional["Node"]:
+    def get_last_child_with_tag(self, tag_name):
         """Get the last child with the given tag name.
 
         Args:
@@ -389,9 +373,7 @@ class Node:
                 return child
         return None
 
-    def collect_ancestors_until(
-        self, stop_at: "Node", predicate: Optional[Callable[["Node"], bool]] = None
-    ) -> List["Node"]:
+    def collect_ancestors_until(self, stop_at, predicate=None):
         """Collect ancestors from this node up to (but not including) stop_at.
 
         Args:
@@ -408,7 +390,7 @@ class Node:
             current = current.parent
         return ancestors
 
-    def move_up_while_in_tags(self, tags: Union[list, tuple, str]) -> Optional["Node"]:
+    def move_up_while_in_tags(self, tags):
         """Move up the tree while current node has tag in the given list"""
         if isinstance(tags, str):
             tags = [tags]
@@ -420,7 +402,7 @@ class Node:
                 break
         return current
 
-    def has_ancestor_matching(self, predicate: Callable[["Node"], bool]) -> bool:
+    def has_ancestor_matching(self, predicate):
         """Check if any ancestor matches the given predicate"""
         current = self.parent
         while current:

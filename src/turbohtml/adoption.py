@@ -1,10 +1,9 @@
 """Adoption Agency Algorithm (HTML5 tree construction: formatting element adoption).
 
 Implementation focuses on spec steps; comments describe intent (why) rather than history.
-"""
+All static type annotations removed (runtime only)."""
 
-from typing import List, Optional, Dict
-from dataclasses import dataclass
+from dataclasses import dataclass  # retained only for potential future structured helpers (not used now)
 
 from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken
@@ -13,108 +12,90 @@ from turbohtml.constants import (
     SPECIAL_CATEGORY_ELEMENTS,
 )
 
-@dataclass
 class FormattingElementEntry:
-    """Entry in the active formatting elements stack"""
+    """Entry in the active formatting elements stack.
 
-    element: Node
-    token: HTMLToken
+    Marker entries have element == None (scope boundaries for tables/templates)."""
 
-    # Marker entries have element None (scope boundaries for tables/templates).
+    __slots__ = ("element", "token")
 
-    def matches(self, tag_name: str, attributes: Dict[str, str] = None) -> bool:
-        """Check if this entry matches the given tag and attributes"""
+    def __init__(self, element, token):
+        self.element = element
+        self.token = token
+
+    def matches(self, tag_name, attributes=None):
         if self.element.tag_name != tag_name:
             return False
-
         if attributes is None:
             return True
-
-        # Compare attributes (for Noah's Ark clause)
         return self.element.attributes == attributes
 
 
 class ActiveFormattingElements:
     """Active formatting elements list (spec stack with markers + Noah's Ark clause)."""
 
-    def __init__(self, max_size: int = 12):
-        self._stack: List[FormattingElementEntry] = []
+    def __init__(self, max_size=12):
+        self._stack = []
         self._max_size = max_size
 
-    def push(self, element: Node, token: HTMLToken) -> None:
-        """Add a formatting element to the active list"""
+    def push(self, element, token):
         entry = FormattingElementEntry(element, token)
-        # Enforce Noah's Ark clause before adding more duplicates
         self._apply_noahs_ark(entry)
-
         self._stack.append(entry)
-
-        # Enforce maximum size (remove oldest if needed)
         if len(self._stack) > self._max_size:
             self._stack.pop(0)
 
-    def find(
-        self, tag_name: str, attributes: Dict[str, str] = None
-    ) -> Optional[FormattingElementEntry]:
-        """Find a formatting element by tag name and optionally attributes"""
-        # Search from most recent to oldest
+    def find(self, tag_name, attributes=None):
         for entry in reversed(self._stack):
             if entry.matches(tag_name, attributes):
                 return entry
         return None
 
-    def find_element(self, element: Node) -> Optional[FormattingElementEntry]:
-        """Find an entry by element instance"""
+    def find_element(self, element):
         for entry in self._stack:
             if entry.element is element:
                 return entry
         return None
 
-    def remove(self, element: Node) -> bool:
-        """Remove a formatting element from the active list"""
+    def remove(self, element):
         for i, entry in enumerate(self._stack):
             if entry.element is element:
                 self._stack.pop(i)
                 return True
         return False
 
-    def remove_entry(self, entry: FormattingElementEntry) -> bool:
-        """Remove a specific entry from the active list"""
+    def remove_entry(self, entry):
         if entry in self._stack:
             self._stack.remove(entry)
             return True
         return False
 
-    # --- spec: Noah's Ark clause (prevent more than 3 identical entries) ---
-    def _apply_noahs_ark(self, new_entry: FormattingElementEntry) -> None:
-        # Count existing matching entries (same tag & attributes)
+    def _apply_noahs_ark(self, new_entry):
         matching = []
         for entry in self._stack:
             if entry.matches(new_entry.element.tag_name, new_entry.element.attributes):
                 matching.append(entry)
         if len(matching) >= 3:
-            # Remove the earliest (lowest index) matching entry
             earliest = matching[0]
             if earliest in self._stack:
                 self._stack.remove(earliest)
 
-    def is_empty(self) -> bool:
+    def is_empty(self):
         return len(self._stack) == 0
 
     def __iter__(self):
         return iter(self._stack)
 
-    def get_index(self, entry: FormattingElementEntry) -> int:
+    def get_index(self, entry):
         for i, e in enumerate(self._stack):
             if e is entry:
                 return i
         return -1
 
-    def __len__(self) -> int:
+    def __len__(self):
         return len(self._stack)
 
-    def insert_at_index(self, index: int, element: Node, token: HTMLToken) -> None:
-        # Clamp index to valid range
+    def insert_at_index(self, index, element, token):
         if index < 0:
             index = 0
         if index > len(self._stack):
@@ -122,15 +103,11 @@ class ActiveFormattingElements:
         entry = FormattingElementEntry(element, token)
         self._stack.insert(index, entry)
 
-    def replace_entry(
-        self, old_entry: FormattingElementEntry, new_element: Node, new_token: HTMLToken
-    ) -> None:
-        """Replace an entry with a new element"""
+    def replace_entry(self, old_entry, new_element, new_token):
         for i, entry in enumerate(self._stack):
             if entry is old_entry:
                 self._stack[i] = FormattingElementEntry(new_element, new_token)
                 return
-        # If not found, just push
         self.push(new_element, new_token)
 
 
@@ -145,45 +122,40 @@ class OpenElementsStack:
       * _is_special_category (category check used during adoption)
     """
 
-    def __init__(self) -> None:
-        self._stack: List[Node] = []
+    def __init__(self):
+        self._stack = []
 
     # --- basic stack ops ---
-    def push(self, element: Node) -> None:
+    def push(self, element):
         self._stack.append(element)
-
-    def pop(self) -> Optional[Node]:
+    def pop(self):
         return self._stack.pop() if self._stack else None
-
-    def current(self) -> Optional[Node]:
+    def current(self):
         return self._stack[-1] if self._stack else None
-
-    def is_empty(self) -> bool:
+    def is_empty(self):
         return not self._stack
 
     # --- membership / search ---
-    def contains(self, element: Node) -> bool:
+    def contains(self, element):
         return element in self._stack
-
-    def index_of(self, element: Node) -> int:
+    def index_of(self, element):
         for i, el in enumerate(self._stack):
             if el is element:
                 return i
         return -1
-
-    def remove_element(self, element: Node) -> bool:
+    def remove_element(self, element):
         if element in self._stack:
             self._stack.remove(element)
             return True
         return False
 
     # --- structural mutation ---
-    def replace_element(self, old: Node, new: Node) -> None:
+    def replace_element(self, old, new):
         idx = self.index_of(old)
         if idx != -1:
             self._stack[idx] = new
 
-    def insert_after(self, reference: Node, new_element: Node) -> None:
+    def insert_after(self, reference, new_element):
         idx = self.index_of(reference)
         if idx == -1:
             self._stack.append(new_element)
@@ -191,7 +163,7 @@ class OpenElementsStack:
             self._stack.insert(idx + 1, new_element)
 
     # --- scope handling ---
-    def has_element_in_scope(self, tag_name: str) -> bool:
+    def has_element_in_scope(self, tag_name):
         scope_boundaries = {
             "applet",
             "caption",
@@ -210,7 +182,7 @@ class OpenElementsStack:
                 return False
         return False
 
-    def has_element_in_button_scope(self, tag_name: str) -> bool:
+    def has_element_in_button_scope(self, tag_name):
         """Return True if an element with tag_name is in button scope (HTML spec).
 
         Button scope is the same as the normal *scope* definition but with the additional
@@ -237,7 +209,7 @@ class OpenElementsStack:
         return False
 
     # --- category helpers ---
-    def _is_special_category(self, element: Node) -> bool:
+    def _is_special_category(self, element):
         return element.tag_name in SPECIAL_CATEGORY_ELEMENTS
 
     # --- iteration helpers ---
@@ -257,7 +229,7 @@ class AdoptionAgencyAlgorithm:
     # Deterministic descendant iterator used by text normalization (handlers) to inspect
     # formatting subtrees without relying on reflective attribute probing. Kept simple
     # and allocation‑light (explicit stack) to preserve hot path performance.
-    def _iter_descendants(self, node: Node):  # pragma: no cover - traversal utility
+    def _iter_descendants(self, node):  # pragma: no cover - traversal utility
         stack = list(node.children)
         while stack:
             cur = stack.pop()
@@ -265,14 +237,14 @@ class AdoptionAgencyAlgorithm:
             if cur.children:
                 stack.extend(cur.children)
 
-    def should_run_adoption(self, tag_name: str, context) -> bool:
+    def should_run_adoption(self, tag_name, context):
         # Spec trigger: end tag whose tag name is a formatting element AND a matching
         # entry exists in the active formatting elements list.
         if tag_name not in FORMATTING_ELEMENTS:
             return False
         return context.active_formatting_elements.find(tag_name) is not None
 
-    def run_algorithm(self, tag_name: str, context, outer_invocation: int = 1) -> bool:
+    def run_algorithm(self, tag_name, context, outer_invocation=1):
         """Run the full Adoption Agency Algorithm for a given end tag.
 
         This inlines the spec's internal *loop* (up to 8 iterations) inside a single call so callers
@@ -283,7 +255,6 @@ class AdoptionAgencyAlgorithm:
         made_progress_overall = False
         processed_furthest_blocks = set()
         complex_case_executed = False  # track whether we performed complex (steps 8-19) adoption
-        simple_case_executed = False    # track simple case (no furthest block)
         # simple_case_popped_above removed (we no longer trigger reconstruction for simple case)
         for iteration_count in range(1, 9):  # spec max 8
             # Guard: only execute anchor adoption when processing a genuine end tag. Start-tag
@@ -317,9 +288,6 @@ class AdoptionAgencyAlgorithm:
                 if 'table' in open_tags or 'address' in open_tags:
                     self.parser.debug(f"[adoption][loop] tag=a iter={iteration_count} open={open_tags}")
 
-            # Snapshot signatures for progress detection
-            open_sig_before = tuple(id(el) for el in context.open_elements._stack)
-            afe_sig_before = tuple(id(e.element) for e in context.active_formatting_elements if e.element)
 
 
             # Step 3: formatting element must be on open stack else remove from AFE and ABORT (spec)
@@ -368,7 +336,6 @@ class AdoptionAgencyAlgorithm:
             if furthest_block is None:
                 if self._handle_no_furthest_block_spec(formatting_element, formatting_entry, context):
                     made_progress_overall = True
-                    simple_case_executed = True
                 # Simple case always terminates algorithm per spec
                 break
             else:
@@ -390,14 +357,14 @@ class AdoptionAgencyAlgorithm:
 
             # (progress detection block removed as loop always continues or breaks earlier)
 
-    # Trigger one-shot reconstruction only for complex-case adoptions (steps 8–19) where cloned wrappers were produced;
-    # simple-case removals must not immediately re-wrap subsequent text to avoid duplicating inline formatting wrappers.
+        # Trigger one-shot reconstruction only for complex-case adoptions (steps 8–19) where cloned wrappers were produced;
+        # simple-case removals must not immediately re-wrap subsequent text to avoid duplicating inline formatting wrappers.
         if made_progress_overall and complex_case_executed:
             context.post_adoption_reconstruct_pending = True
         return made_progress_overall
 
     # Helper: run adoption repeatedly (spec max 8) until no action
-    def run_until_stable(self, tag_name: str, context, max_runs: int = 8) -> int:
+    def run_until_stable(self, tag_name, context, max_runs=8):
         """Run the adoption agency algorithm up to max_runs times until it reports no further action.
 
         Returns the number of successful runs performed. Encapsulates the counter that used
@@ -411,7 +378,7 @@ class AdoptionAgencyAlgorithm:
         return runs
 
     # --- Spec helpers ---
-    def _find_furthest_block_spec_compliant(self, formatting_element: Node, context) -> Optional[Node]:
+    def _find_furthest_block_spec_compliant(self, formatting_element, context):
         """Locate the furthest block per HTML Standard.
 
     Spec wording: "Let furthestBlock be the topmost node in the stack of open elements that is lower
@@ -442,10 +409,10 @@ class AdoptionAgencyAlgorithm:
 
     def _handle_no_furthest_block_spec(
         self,
-        formatting_element: Node,
-        formatting_entry: FormattingElementEntry,
+        formatting_element,
+        formatting_entry,
         context,
-    ) -> bool:
+    ):
         """Simple case: pop formatting element and remove its active entry."""
         self.parser.debug(
             f"[adoption] simple-case for <{formatting_element.tag_name}> stack_before={[e.tag_name for e in context.open_elements._stack]} afe_before={[e.element.tag_name for e in context.active_formatting_elements if e.element]}"
@@ -546,7 +513,7 @@ class AdoptionAgencyAlgorithm:
         else:
             return self.parser.root
 
-    def _safe_detach_node(self, node: Node) -> None:
+    def _safe_detach_node(self, node):
         """Detach node from its parent safely, even if linkage is inconsistent.
 
         Ensures node.parent becomes None and sibling pointers are cleared without throwing.
@@ -615,7 +582,7 @@ class AdoptionAgencyAlgorithm:
         )
 
         # Step 8: bookmark position of formatting element
-        bookmark_index = context.active_formatting_elements.get_index(formatting_entry)
+        _bookmark_index = context.active_formatting_elements.get_index(formatting_entry)  # noqa: F841 (retained for potential future step alignment)
         # Step 9: Create a list of elements to be removed from the stack of open elements
         formatting_index = context.open_elements.index_of(formatting_element)
 
@@ -634,12 +601,10 @@ class AdoptionAgencyAlgorithm:
         fe_index = context.open_elements.index_of(formatting_element)
         fb_index = context.open_elements.index_of(furthest_block)
         if fe_index != -1 and fb_index != -1 and fb_index > fe_index:
-            intermediates = fb_index - fe_index - 1
-            # intermediates count previously used for metrics; retained local for potential future debugging
+            _intermediates = fb_index - fe_index - 1  # noqa: F841 retained for potential debugging
         else:
-            intermediates = 0
-
-        open_stack = context.open_elements._stack
+            _intermediates = 0  # noqa: F841
+        open_stack = context.open_elements._stack  # noqa: F841 (debug logging later may reference)
         # Guard: indexes must be valid
         if fe_index == -1 or fb_index == -1 or fb_index <= fe_index:
             return False

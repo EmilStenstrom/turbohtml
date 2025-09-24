@@ -5,17 +5,12 @@ core parser can remain a thin orchestrator. Handlers (and the parser itself)
 invoke the public function here instead of a parser method.
 """
 from __future__ import annotations
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:  # pragma: no cover - type checking only
-    from .parser import TurboHTML
-    from .context import ParseContext, DocumentState
 
 from .node import Node
 from .context import DocumentState
 
 
-def reconstruct_active_formatting_elements(parser: "TurboHTML", context: "ParseContext") -> None:
+def reconstruct_active_formatting_elements(parser, context):
     """Reconstruct active formatting elements inside the current parent.
 
     Mirrors the former TurboHTML.reconstruct_active_formatting_elements method. Kept
@@ -91,7 +86,7 @@ def reconstruct_active_formatting_elements(parser: "TurboHTML", context: "ParseC
         context.move_to_element(clone)
         # Track anchor reconstruction index for immediate re-adoption suppression. We only care about <a>.
         if clone.tag_name == 'a':
-            context.anchor_last_reconstruct_index = context.index  # type: ignore[attr-defined]
-            context.anchor_suppress_once_done = False  # reset one-shot gate when a new anchor appears
+            context.anchor_last_reconstruct_index = context.index
+            context.anchor_suppress_once_done = False
         if parser.env_debug:
             parser.debug(f"Reconstructed formatting element {clone.tag_name}")

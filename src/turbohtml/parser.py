@@ -1,18 +1,72 @@
-from __future__ import annotations
+"""TurboHTML parser (type annotations removed)."""
 
-from typing import Optional
-
-from turbohtml.context import ParseContext, DocumentState, ContentState
-from .handlers import *  # noqa: F401,F403  (intentional: handler registration side-effects)
+from turbohtml.context import ParseContext, DocumentState
+from .handlers import (
+    DoctypeHandler,
+    TemplateContentAutoEnterHandler,
+    RawtextStartTagIgnoreHandler,
+    MalformedSelectStartTagFilterHandler,
+    SpecialElementHandler,
+    AnchorPreSegmentationHandler,
+    EarlyMathMLLeafFragmentEnterHandler,
+    FormattingReconstructionPreludeHandler,
+    TemplateTagHandler,
+    TemplateContentFilterHandler,
+    FragmentPreprocessHandler,
+    ListingNewlineHandler,
+    PlaintextHandler,
+    FramesetPreludeHandler,
+    BodyImplicitCreationHandler,
+    BodyReentryHandler,
+    FramesetLateHandler,
+    FramesetTagHandler,
+    SelectTagHandler,
+    TableTagHandler,
+    NullParentRecoveryEndHandler,
+    InitialCommentHandler,
+    AfterHeadCommentHandler,
+    AfterHtmlCommentHandler,
+    AfterFramesetCommentHandler,
+    InBodyHtmlParentCommentHandler,
+    CommentPlacementHandler,
+    PostBodyCharacterHandler,
+    AfterHeadWhitespaceHandler,
+    ForeignTagHandler,
+    ParagraphTagHandler,
+    AutoClosingTagHandler,
+    MenuitemElementHandler,
+    ListTagHandler,
+    HeadElementHandler,
+    BodyElementHandler,
+    HtmlTagHandler,
+    ButtonTagHandler,
+    VoidElementHandler,
+    RawtextTagHandler,
+    BoundaryElementHandler,
+    TableCellRecoveryHandler,
+    FormattingElementHandler,
+    ImageTagHandler,
+    RawtextTextHandler,
+    OptionTextRedirectHandler,
+    TextHandler,
+    TextNormalizationHandler,
+    FormTagHandler,
+    HeadingTagHandler,
+    RubyElementHandler,
+    FallbackPlacementHandler,
+    DefaultElementInsertionHandler,
+    UnknownElementHandler,
+    TemplateContentBoundedEndHandler,
+    GenericEndTagHandler,
+    StructureSynthesisHandler,
+    PostProcessHandler,
+    TemplateContentPostPlacementHandler,
+)
 from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
 from turbohtml.adoption import AdoptionAgencyAlgorithm
 from .fragment import parse_fragment
 from turbohtml.node import Node
-from .constants import (
-    RAWTEXT_ELEMENTS,
-    VOID_ELEMENTS,
-)
-from .formatting import reconstruct_active_formatting_elements as _reconstruct_fmt
+from .constants import VOID_ELEMENTS
 
 
 class TurboHTML:
@@ -25,10 +79,10 @@ class TurboHTML:
 
     def __init__(
         self,
-        html: str,
-        handle_foreign_elements: bool = True,
-        debug: bool = False,
-        fragment_context: Optional[str] = None,
+        html,
+        handle_foreign_elements=True,
+        debug=False,
+        fragment_context=None,
     ):
         """
         Args:
@@ -128,17 +182,17 @@ class TurboHTML:
         for handler in self.tag_handlers:
             handler.finalize(self)
 
-    def __repr__(self) -> str:
+    def __repr__(self):
         return f"<TurboHTML root={self.root}>"
 
-    def debug(self, *args, indent=4, **kwargs) -> None:
+    def debug(self, *args, indent=4, **kwargs):
         if not self.env_debug:
             return
 
         print(f"{' ' * indent}{args[0]}", *args[1:], **kwargs)
 
     # --- Foreign subtree helpers ---
-    def is_plain_svg_foreign(self, context: ParseContext) -> bool:
+    def is_plain_svg_foreign(self, context):
         """Return True if current position is inside an <svg> subtree that is not an HTML integration point.
 
         Table handlers and other HTML tree construction logic use this to suppress HTML
@@ -150,7 +204,7 @@ class TurboHTML:
         return self.text_handler._is_plain_svg_foreign(context)  # type: ignore[attr-defined]
 
     # DOM Structure Methods
-    def _init_dom_structure(self) -> None:
+    def _init_dom_structure(self):
         """Initialize the basic DOM structure"""
         if self.fragment_context:
             # For fragment parsing, create a simplified structure
@@ -167,7 +221,7 @@ class TurboHTML:
             head = Node("head")
             self.html_node.append_child(head)
 
-    def _ensure_html_node(self) -> None:
+    def _ensure_html_node(self):
         """Materialize <html> into the root if not already present (document mode only)."""
         # Skip for fragment parsing (fragment root is a synthetic document-fragment)
         if self.fragment_context:
@@ -178,7 +232,7 @@ class TurboHTML:
     # Head access helpers removed – handlers synthesize/locate head directly when necessary.
 
 
-    def _get_body_node(self) -> Optional[Node]:  # minimal body lookup for handlers
+    def _get_body_node(self):  # minimal body lookup for handlers
         if self.fragment_context:
             return None
         if not self.html_node:
@@ -188,7 +242,7 @@ class TurboHTML:
                 return child
         return None
 
-    def _has_root_frameset(self) -> bool:
+    def _has_root_frameset(self):
         """Return True if <html> (when present) has a direct <frameset> child.
 
         Micro-optimized with a generator expression; no behavior change.
@@ -198,7 +252,7 @@ class TurboHTML:
             and any(ch.tag_name == "frameset" for ch in self.html_node.children)
         )
 
-    def _ensure_body_node(self, context: ParseContext) -> Optional[Node]:
+    def _ensure_body_node(self, context):
         """Return existing <body> or create one (unless frameset/fragment constraints block it)."""
         if self.fragment_context:
             # Special case: html fragment context should create document structure
@@ -236,28 +290,26 @@ class TurboHTML:
         return body
 
     # State transition helper methods
-    def transition_to_state(
-        self, context: ParseContext, new_state: DocumentState, new_parent: "Node" = None
-    ) -> None:
+    def transition_to_state(self, context, new_state, new_parent=None):
         """Transition context to any document state, optionally with a new parent node"""
         context.transition_to_state(new_state, new_parent)
 
     # --- Standardized element insertion helpers ---
     def insert_element(
         self,
-        token: HTMLToken,
-        context: ParseContext,
+        token,
+        context,
         *,
-        mode: str = "normal",  # 'normal' | 'transient' | 'void'
-        enter: bool = True,
-        treat_as_void: bool = False,  # force void semantics (ignored if mode == 'void')
-        parent: Optional[Node] = None,
-        before: Optional[Node] = None,
-        tag_name_override: Optional[str] = None,
-        attributes_override: Optional[dict] = None,
-        preserve_attr_case: bool = False,
-        push_override: Optional[bool] = None,  # None => default semantics; True/False force push
-    ) -> Node:
+        mode="normal",
+        enter=True,
+        treat_as_void=False,
+        parent=None,
+        before=None,
+        tag_name_override=None,
+        attributes_override=None,
+        preserve_attr_case=False,
+        push_override=None,
+    ):
         """Insert a start tag's element with controlled stack / current_parent semantics.
 
         Modes:
@@ -319,7 +371,7 @@ class TurboHTML:
         return new_node
 
     # --- Text node helper ---
-    def create_text_node(self, text: str) -> Node:
+    def create_text_node(self, text):
         """Create a new text node with the given text content.
 
         Centralizes the common pattern:
@@ -337,15 +389,15 @@ class TurboHTML:
     # --- Centralized text insertion helper ---
     def insert_text(
         self,
-        text: str,
-        context: ParseContext,
+        text,
+        context,
         *,
-        parent: Optional[Node] = None,
-        before: Optional[Node] = None,
-        merge: bool = True,
-        foster: bool = False,  # retained for API compatibility (no-op)
-        strip_replacement: bool = True,  # retained for API compatibility (no-op)
-    ) -> Optional[Node]:
+        parent=None,
+        before=None,
+        merge=True,
+        foster=False,
+        strip_replacement=True,
+    ):
         """Insert character data performing standard merge with preceding text node.
 
         Legacy params 'foster' & 'strip_replacement' are kept for handler API stability.
@@ -404,7 +456,7 @@ class TurboHTML:
 
 
     # DOM traversal helper methods
-    def find_current_table(self, context: ParseContext) -> Optional["Node"]:
+    def find_current_table(self, context):
         """Find the current table element from the open elements stack when in table context."""
         # Always search open elements stack first (even in IN_BODY) so foster-parenting decisions
         # can detect an open table that the insertion mode no longer reflects (foreign breakout, etc.).
@@ -421,17 +473,17 @@ class TurboHTML:
         return None
 
     # Main Parsing Methods
-    def _parse(self) -> None:
+    def _parse(self):
         """Entry point selecting document vs fragment strategy."""
         if self.fragment_context:
             self._parse_fragment()
         else:
             self._parse_document()
 
-    def _parse_fragment(self) -> None:
+    def _parse_fragment(self):
         parse_fragment(self)
 
-    def _handle_fragment_comment(self, text: str, context: "ParseContext") -> None:
+    def _handle_fragment_comment(self, text, context):
         """Handle comments in fragment parsing"""
         from turbohtml.context import DocumentState
 

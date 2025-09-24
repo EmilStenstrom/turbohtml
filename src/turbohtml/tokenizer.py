@@ -1,5 +1,4 @@
 import re
-from typing import Dict, Iterator, Optional
 from .constants import (
     RAWTEXT_ELEMENTS,
     HTML5_NUMERIC_REPLACEMENTS,
@@ -28,13 +27,13 @@ class HTMLToken:
 
     def __init__(
         self,
-        type_: str,
-        data: str = "",
-        tag_name: str = "",
-        attributes: Optional[Dict[str, str]] = None,
-        is_self_closing: bool = False,
-        is_last_token: bool = False,
-        needs_rawtext: bool = False,  # deferred rawtext activation flag
+        type_,
+        data="",
+        tag_name="",
+        attributes=None,
+        is_self_closing=False,
+        is_last_token=False,
+        needs_rawtext=False,  # deferred rawtext activation flag
     ):
         self.type = type_  # 'DOCTYPE', 'StartTag', 'EndTag', 'Comment', 'Character'
         self.data = data
@@ -68,7 +67,7 @@ class HTMLTokenizer:
     a cleaner separation of concerns.
     """
 
-    def __init__(self, html: str, debug: bool = False):
+    def __init__(self, html, debug=False):
         self.html = html
         self.length = len(html)
         self.pos = 0
@@ -84,13 +83,13 @@ class HTMLTokenizer:
         self.script_type_value = ""
         self._pending_tokens = []  # New list for pending tokens
 
-    def debug(self, *args, indent: int = 4) -> None:
+    def debug(self, *args, indent: int = 4):
         """Print debug message if debugging is enabled"""
         if not self.env_debug:
             return
         print(f"{' ' * indent}{args[0]}", *args[1:])
 
-    def start_rawtext(self, tag_name: str) -> None:
+    def start_rawtext(self, tag_name):
         """Switch to RAWTEXT state for the given tag"""
         self.state = "RAWTEXT"
         self.rawtext_tag = tag_name
@@ -100,14 +99,14 @@ class HTMLTokenizer:
         if tag_name == "script":
             self.script_content = ""
 
-    def start_plaintext(self) -> None:
+    def start_plaintext(self):
         """Switch tokenizer into PLAINTEXT mode: all subsequent characters are literal text."""
         self.state = "PLAINTEXT"
         self.rawtext_tag = None
         self.buffer = []
         self.temp_buffer = []
 
-    def tokenize(self) -> Iterator[HTMLToken]:
+    def tokenize(self):
         """Generate tokens from the HTML string"""
         while self.pos < self.length or self._pending_tokens:
             # Yield pending tokens first
@@ -157,7 +156,7 @@ class HTMLTokenizer:
                     yield token
                 break
 
-    def _tokenize_rawtext(self) -> Optional[HTMLToken]:
+    def _tokenize_rawtext(self):
         """Tokenize content in RAWTEXT state"""
         self.debug(
             f"_tokenize_rawtext: pos={self.pos}, next_chars={self.html[self.pos : self.pos + 10]!r}"
@@ -170,7 +169,7 @@ class HTMLTokenizer:
         # Regular RAWTEXT handling for other elements
         return self._tokenize_regular_rawtext()
 
-    def _tokenize_script_content(self) -> Optional[HTMLToken]:
+    def _tokenize_script_content(self):
         """Handle script content with HTML5 comment rules"""
         # Look for </script> but respect comment context
         if self.html.startswith("</", self.pos):
@@ -226,7 +225,7 @@ class HTMLTokenizer:
                     # Advance through any attribute-like junk until real tag closing '>' accounting for quotes
                     scan = i
                     saw_gt = False
-                    quote: Optional[str] = None
+                    quote = None
                     while scan < self.length:
                         c = self.html[scan]
                         if quote:
@@ -344,7 +343,7 @@ class HTMLTokenizer:
 
         return None
 
-    def _should_honor_script_end_tag(self, script_content: str) -> bool:
+    def _should_honor_script_end_tag(self, script_content):
         """
         Determine if a </script> tag should end the script based on HTML5 script parsing rules.
 
@@ -385,7 +384,7 @@ class HTMLTokenizer:
         return True
 
     @staticmethod
-    def _in_escaped_script_comment(script_content: str) -> bool:
+    def _in_escaped_script_comment(script_content):
         """Return True if inside an escaped script comment like <!-- <script or <!--	<script with no closing --> yet.
 
         The html5lib tests treat patterns where a comment opening marker <!-- is immediately (allowing only
@@ -420,7 +419,7 @@ class HTMLTokenizer:
             return True
         return False
 
-    def _tokenize_regular_rawtext(self) -> Optional[HTMLToken]:
+    def _tokenize_regular_rawtext(self):
         """Handle regular RAWTEXT elements (non-script)"""
         if self.html.startswith("</", self.pos):
             self.debug("  found </: looking for end tag")
@@ -502,7 +501,7 @@ class HTMLTokenizer:
 
         return None
 
-    def _try_tag(self) -> Optional[HTMLToken]:
+    def _try_tag(self):
         """Try to match a tag at current position"""
         if not self.html.startswith("<", self.pos):
             return None
@@ -685,9 +684,7 @@ class HTMLTokenizer:
                     scan = self.pos + len(match.group(0)) - 1
                     # Seed quote state to reflect the unbalanced quote type detected so that the
                     # immediately reprocessed '>' is not mistaken for a tag terminator.
-                    quote: Optional[str] = (
-                        '"' if (dbl % 2 != 0) else ("'" if (sgl % 2 != 0) else None)
-                    )
+                    quote = '"' if (dbl % 2 != 0) else ("'" if (sgl % 2 != 0) else None)
                     # Reconstruct attributes including everything until real closing '>' outside quotes
                     extra = []
                     saw_inner_lt = False
@@ -800,7 +797,7 @@ class HTMLTokenizer:
         self.pos += 1
         return HTMLToken("Character", data="<")
 
-    def _try_text(self) -> Optional[HTMLToken]:
+    def _try_text(self):
         """Try to match text at current position"""
         if self.pos >= self.length:
             return None
@@ -827,8 +824,8 @@ class HTMLTokenizer:
         return HTMLToken("Character", data=decoded)
 
     def _parse_attributes_and_check_self_closing(
-        self, attr_string: str
-    ) -> tuple[bool, Dict[str, str]]:
+        self, attr_string
+    ):
         """
         Parse attributes and determine if tag is self-closing.
 
@@ -867,7 +864,7 @@ class HTMLTokenizer:
         # No trailing slash
         return False, self._parse_attributes(attr_string)
 
-    def _parse_attributes(self, attr_string: str) -> Dict[str, str]:
+    def _parse_attributes(self, attr_string):
         if self.env_debug:
             print(f"[DEBUG] Raw attribute string: '{attr_string}'")
         """Parse attributes from a string using the ATTR_RE pattern"""
@@ -955,7 +952,7 @@ class HTMLTokenizer:
                 attributes[part] = ""
         return attributes
 
-    def _handle_comment(self) -> HTMLToken:
+    def _handle_comment(self):
         """Handle comment according to HTML5 spec"""
         self.debug(f"_handle_comment: pos={self.pos}, state={self.state}")
         self.pos += 4  # Skip <!--
@@ -1007,7 +1004,7 @@ class HTMLTokenizer:
         self.pos = self.length
         return HTMLToken("Comment", data=comment_text)
 
-    def _handle_bogus_comment(self, from_end_tag: bool = False) -> Optional[HTMLToken]:
+    def _handle_bogus_comment(self, from_end_tag=False):
         """Handle bogus comment according to HTML5 spec"""
         self.debug(
             f"_handle_bogus_comment: pos={self.pos}, state={self.state}, from_end_tag={from_end_tag}"
