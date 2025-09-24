@@ -293,12 +293,12 @@ class AdoptionAgencyAlgorithm:
             formatting_element = formatting_entry.element
             # Diagnostic: show formatting element selection and stack slice below it
             if tag_name == 'a':
-                try:
-                    fmt_idx = context.open_elements.index_of(formatting_element)
-                    below = [n.tag_name for n in context.open_elements._stack[fmt_idx+1:]] if fmt_idx != -1 else []
-                    self.parser.debug(f"[adoption][diag-select] fmt=<a> idx={fmt_idx} below={below}")
-                except Exception:
-                    pass
+                fmt_idx = context.open_elements.index_of(formatting_element)
+                if fmt_idx != -1:
+                    below = [n.tag_name for n in context.open_elements._stack[fmt_idx+1:]]
+                else:
+                    below = []
+                self.parser.debug(f"[adoption][diag-select] fmt=<a> idx={fmt_idx} below={below}")
 
             # Instrumentation (kept minimal)
             if tag_name == 'a':
@@ -336,12 +336,12 @@ class AdoptionAgencyAlgorithm:
 
             # Step 6: furthest block
             if tag_name == 'a':
-                try:
-                    fmt_idx_dbg = context.open_elements.index_of(formatting_element)
-                    slice_tags = [n.tag_name for n in context.open_elements._stack[fmt_idx_dbg+1:]] if fmt_idx_dbg != -1 else []
-                    self.parser.debug(f"[adoption][pre-furthest-scan] fmt_idx={fmt_idx_dbg} slice={slice_tags}")
-                except Exception:
-                    pass
+                fmt_idx_dbg = context.open_elements.index_of(formatting_element)
+                if fmt_idx_dbg != -1:
+                    slice_tags = [n.tag_name for n in context.open_elements._stack[fmt_idx_dbg+1:]]
+                else:
+                    slice_tags = []
+                self.parser.debug(f"[adoption][pre-furthest-scan] fmt_idx={fmt_idx_dbg} slice={slice_tags}")
             furthest_block = self._find_furthest_block_spec_compliant(formatting_element, context)
             if tag_name == 'a':
                 self.parser.debug(f"[adoption][furthest-result] {'None' if furthest_block is None else furthest_block.tag_name}")
@@ -728,15 +728,12 @@ class AdoptionAgencyAlgorithm:
             table_parent = last_node.parent.parent
             table_node = last_node.parent
             if table_node in table_parent.children:
-                try:
-                    table_index = table_parent.children.index(table_node)
-                    # Detach and insert before table (preserve relative order of any existing siblings)
-                    self._safe_detach_node(last_node)
-                    table_parent.children.insert(table_index, last_node)
-                    last_node.parent = table_parent
-                    self.parser.debug(f"[adoption][post-step14-foster] moved <{last_node.tag_name}> before <table> under <{table_parent.tag_name}>")
-                except Exception:
-                    pass
+                table_index = table_parent.children.index(table_node)
+                # Detach and insert before table (preserve relative order of any existing siblings)
+                self._safe_detach_node(last_node)
+                table_parent.children.insert(table_index, last_node)
+                last_node.parent = table_parent
+                self.parser.debug(f"[adoption][post-step14-foster] moved <{last_node.tag_name}> before <table> under <{table_parent.tag_name}>")
         # Instrumentation: show path from formatting element to furthest_block (if still connected)
         path_tags = []
         cur = furthest_block

@@ -91,10 +91,7 @@ def reconstruct_active_formatting_elements(parser: "TurboHTML", context: "ParseC
         context.move_to_element(clone)
         # Track anchor reconstruction index for immediate re-adoption suppression. We only care about <a>.
         if clone.tag_name == 'a':
-            try:
-                context.anchor_last_reconstruct_index = context.index  # type: ignore[attr-defined]
-                context.anchor_suppress_once_done = False  # reset one-shot gate when a new anchor appears
-            except Exception:
-                pass
+            context.anchor_last_reconstruct_index = context.index  # type: ignore[attr-defined]
+            context.anchor_suppress_once_done = False  # reset one-shot gate when a new anchor appears
         if parser.env_debug:
             parser.debug(f"Reconstructed formatting element {clone.tag_name}")

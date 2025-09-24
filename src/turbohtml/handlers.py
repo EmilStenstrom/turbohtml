@@ -298,15 +298,11 @@ class AnchorPreSegmentationHandler(TagHandler):
             if anchor_el not in stack:
                 return False
             # Verify anchor_el appears below current_parent in stack ordering (ancestor relationship).
-            try:
-                idx_anchor = stack.index(anchor_el)
-                idx_parent = stack.index(context.current_parent)
-                if idx_anchor < idx_parent:
-                    # Anchor is ancestor; proceed.
-                    pass
-                else:
-                    return False
-            except ValueError:
+            if anchor_el not in stack or context.current_parent not in stack:
+                return False
+            idx_anchor = stack.index(anchor_el)
+            idx_parent = stack.index(context.current_parent)
+            if not (idx_anchor < idx_parent):
                 return False
         # Perform a single adoption run for <a>. Prefer new algorithm when enabled; fallback to legacy.
         # Always run adoption once to segment existing open <a> before inserting a disallowed block.
@@ -795,17 +791,16 @@ class TextNormalizationHandler(TagHandler):
         def iter_desc(node):
             aa = self.parser.adoption_agency
             if aa and hasattr(aa, "_iter_descendants"):
-                try:
-                    yield from aa._iter_descendants(node)  # type: ignore[attr-defined]
-                    return
-                except Exception:
-                    pass
-            stack = [node]
-            while stack:
-                cur = stack.pop()
+                # Assume deterministic helper does not raise under normal operation.
+                for d in aa._iter_descendants(node):  # type: ignore[attr-defined]
+                    yield d
+                return
+            stack_local = [node]
+            while stack_local:
+                cur = stack_local.pop()
                 for ch in cur.children:
                     yield ch
-                    stack.append(ch)
+                    stack_local.append(ch)
         has_same_fmt = False
         for d in iter_desc(first):
             if d.tag_name == second.tag_name:
@@ -903,10 +898,7 @@ class OptionTextRedirectHandler(TagHandler):
             node = self.parser.create_text_node(text)
             target.append_child(node)
         # Mark that a text insertion already occurred for this tokenizer index (duplicate guard for template reroute)
-        try:
-            context._text_already_inserted_index = context.index
-        except Exception:
-            pass
+        context._text_already_inserted_index = context.index
         return True
 
 
@@ -3075,10 +3067,8 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 # Duplicate <a>: run adoption once to close previous anchor per spec.
                 prev_flag = context.processing_end_tag
                 context.processing_end_tag = True  # type: ignore[attr-defined]
-                try:
-                    self.parser.adoption_agency.run_until_stable('a', context, max_runs=1)
-                finally:
-                    context.processing_end_tag = prev_flag
+                self.parser.adoption_agency.run_until_stable('a', context, max_runs=1)
+                context.processing_end_tag = prev_flag
                 context.post_adoption_reconstruct_pending = True
         # Foreign fragment adjustment: when parsing a fragment whose context is a MathML or SVG leaf
         # element (e.g. 'math ms', 'math mi', etc.), expected trees in foreign-fragment tests retain the
@@ -5339,13 +5329,12 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         # an empty <table> (before any row groups/rows) to appear *before* the table element
         # itself. When we see the first <tr> for such a table in fragment parsing, relocate any
         # contiguous leading <a> children out so serialization order matches expectations.
-        try:
-            table = self.parser.find_current_table(context)
-            if (
-                table
-                and self.parser.fragment_context is not None  # fragment parsing mode
-                and table.parent is not None
-            ):
+        table = self.parser.find_current_table(context)
+        if (
+            table
+            and self.parser.fragment_context is not None  # fragment parsing mode
+            and table.parent is not None
+        ):
                 # Only if no structural descendants yet (row groups / rows / caption / cols)
                 structural_tags = {
                     "tbody",
@@ -5409,8 +5398,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         self.debug(
                             f"Relocated {len(leading_anchors)} leading <a> element(s) before <table> in fragment (tbody_wrapper={'yes' if tbody_wrapper else 'no'})"
                         )
-        except Exception as e:  # pragma: no cover - defensive; must not disrupt parsing
-            self.debug(f"Anchor relocation skipped due to error: {e}")
         if context.current_parent.tag_name in ("tbody", "thead", "tfoot"):
             self.parser.insert_element(token, context, mode="normal", enter=True)
             return True
@@ -5738,17 +5725,18 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                             cur_parent = context.current_parent
                             if table_node and table_node.parent and cur_parent.parent is table_node.parent:
                                 siblings = table_node.parent.children
-                                try:
-                                    t_index = siblings.index(table_node)
-                                    if t_index > 0 and siblings[t_index-1] is cur_parent:
-                                        seg_token = HTMLToken('StartTag', tag_name='a', attributes=a_elem.attributes.copy())
-                                        self.debug('[anchor-cont][seg-clone] inserting segmentation <a> clone (manual clone removed)')
-                                        # (metrics removed)
-                                        seg_node = self.parser.insert_element(seg_token, context, mode='normal', enter=True)
-                                        a_entry.element = seg_node
-                                        target = seg_node
-                                except ValueError:
-                                    pass
+                                # Safe index computation without exception flow
+                                t_index = -1
+                                for _i, _ch in enumerate(siblings):
+                                    if _ch is table_node:
+                                        t_index = _i
+                                        break
+                                if t_index > 0 and siblings[t_index-1] is cur_parent:
+                                    seg_token = HTMLToken('StartTag', tag_name='a', attributes=a_elem.attributes.copy())
+                                    self.debug('[anchor-cont][seg-clone] inserting segmentation <a> clone (manual clone removed)')
+                                    seg_node = self.parser.insert_element(seg_token, context, mode='normal', enter=True)
+                                    a_entry.element = seg_node
+                                    target = seg_node
             # Append/merge text at target
             if target.children and target.children[-1].tag_name == "#text":
                 target.children[-1].text_content += text
