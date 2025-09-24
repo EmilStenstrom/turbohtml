@@ -254,6 +254,17 @@ class AdoptionAgencyAlgorithm:
         self.parser = parser
         # Pure spec implementation (no metrics / instrumentation state retained).
 
+    # Deterministic descendant iterator used by text normalization (handlers) to inspect
+    # formatting subtrees without relying on reflective attribute probing. Kept simple
+    # and allocation‑light (explicit stack) to preserve hot path performance.
+    def _iter_descendants(self, node: Node):  # pragma: no cover - traversal utility
+        stack = list(node.children)
+        while stack:
+            cur = stack.pop()
+            yield cur
+            if cur.children:
+                stack.extend(cur.children)
+
     def should_run_adoption(self, tag_name: str, context) -> bool:
         # Spec trigger: end tag whose tag name is a formatting element AND a matching
         # entry exists in the active formatting elements list.

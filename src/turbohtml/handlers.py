@@ -449,7 +449,7 @@ class CommentPlacementHandler(TagHandler):
             prev = self.parser._prev_token
             if prev.type == "EndTag" and prev.tag_name == "body":
                 return True
-            if prev.type == "Character" and hasattr(prev, "data") and prev.data.strip() == "":
+            if prev.type == "Character" and prev.data is not None and prev.data.strip() == "":
                 # Look further back: ensure prior non-whitespace was a body end tag
                 # (we only keep one prev token; if whitespace is prev we can't see </body> directly, so fall back to body existence)
                 # Conservative: require that open_elements has body but no html end yet (document_state IN_BODY suffices)
@@ -790,9 +790,8 @@ class TextNormalizationHandler(TagHandler):
         # Leverage parser's adoption_agency descendant iterator if available; fall back to manual DFS.
         def iter_desc(node):
             aa = self.parser.adoption_agency
-            if aa and hasattr(aa, "_iter_descendants"):
-                # Assume deterministic helper does not raise under normal operation.
-                for d in aa._iter_descendants(node):  # type: ignore[attr-defined]
+            if aa:
+                for d in aa._iter_descendants(node):  # guaranteed to exist
                     yield d
                 return
             stack_local = [node]
