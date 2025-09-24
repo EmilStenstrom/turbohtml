@@ -1651,9 +1651,7 @@ class SimpleElementHandler(TagHandler):
         super().__init__(parser)
         self.handled_tags = handled_tags
 
-    def handle_start(
-        self, token, context, has_more_content
-    ):
+    def handle_start(self, token, context, has_more_content):
         treat_as_void = self._is_void_element(token.tag_name)
         mode = "void" if treat_as_void else "normal"
         self.parser.insert_element(
@@ -2807,10 +2805,6 @@ class TextHandler(TagHandler):
         self._append_text(text, context)
         return True
 
-    def _is_in_integration_point(self, context):
-        # Deprecated duplicate helper (logic exists in parser); retained for backward compatibility but simplified.
-        return False
-
     def _is_plain_svg_foreign(self, context):
         """Return True if current parent is inside an <svg> subtree that is NOT an HTML integration point.
 
@@ -2828,29 +2822,6 @@ class TextHandler(TagHandler):
                 return False
             cur = cur.parent
         return seen_svg
-
-    def _foster_parent_text(self, text, context):
-        """Foster parent text via centralized foster module (spec-aligned).
-
-        This replaces earlier bespoke logic that replicated reconstruction and
-        merge semantics. We now delegate placement to foster_parent() and rely on
-        parser.insert_text for merging. Active formatting reconstruction (when
-        needed) is handled earlier in the character insertion flow by the
-        reconstruction guard / post-adoption hook.
-        """
-        from turbohtml.foster import foster_parent, needs_foster_parenting
-        parent = context.current_parent
-        if not parent or not needs_foster_parenting(parent):
-            self._append_text(text, context)
-            return
-        fp_parent, before = foster_parent(parent, context.open_elements, self.parser.root)
-        if before is not None and before.parent is fp_parent:
-            self.parser.insert_text(text, context, parent=fp_parent, before=before, merge=True)
-        else:
-            self.parser.insert_text(text, context, parent=fp_parent, merge=True)
-        # Update frameset_ok consistently with generic text append
-        if context.frameset_ok and any((not c.isspace()) and c != "\ufffd" for c in text):
-            context.frameset_ok = False
 
     def _append_text(self, text, context):
         """Helper to append text, either as new node or merged with last sibling"""
@@ -2917,18 +2888,6 @@ class TextHandler(TagHandler):
             )
             if node is not None:
                 self.debug(f"created node with content '{node.text_content}'")
-
-    def _handle_normal_text(self, text, context):
-        """Handle normal text content"""
-        # If last child is a text node, append to it
-        if context.current_parent.last_child_is_text():
-            context.current_parent.children[-1].text_content += text
-            return True
-        self.parser.insert_text(
-            text, context, parent=context.current_parent, merge=False
-        )
-        return True
-
     def _handle_pre_text(
         self, text, context, parent
     ):
