@@ -201,7 +201,7 @@ class TurboHTML:
         of truth without reflective hasattr checks.
         """
         # TextHandler is always registered; rely on direct attribute (no reflection)
-        return self.text_handler._is_plain_svg_foreign(context)  # type: ignore[attr-defined]
+        return self.text_handler._is_plain_svg_foreign(context)
 
     # DOM Structure Methods
     def _init_dom_structure(self):
@@ -571,7 +571,7 @@ class TurboHTML:
         """Handle all opening HTML tags."""
 
         for h in self.tag_handlers:
-            if h.early_start_preprocess(token, context):  # type: ignore[attr-defined]
+            if h.early_start_preprocess(token, context):
                 return
 
         for handler in self.tag_handlers:
@@ -586,7 +586,7 @@ class TurboHTML:
         """Handle all closing HTML tags (spec-aligned, no auxiliary adoption flags)."""
         # Early end-tag preprocessing (mirrors start tag path).
         for h in self.tag_handlers:
-            if h.early_end_preprocess(token, context):  # type: ignore[attr-defined]
+            if h.early_end_preprocess(token, context):
                 return
         # Create body node if needed and not in frameset mode
 
