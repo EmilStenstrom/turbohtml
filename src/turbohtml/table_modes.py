@@ -13,8 +13,6 @@ implements the spec transitions. For now we expose:
 
 Each function mirrors logic currently embedded in parser._handle_start_tag.
 """
-from __future__ import annotations
-
 from .context import DocumentState, ParseContext
 from .constants import (
     TABLE_SECTION_TAGS,
@@ -41,7 +39,7 @@ TABLE_ELEMENTS_CANON = {
 HEAD_ELEMENTS_CANON = {"head", "base", "basefont", "bgsound", "link", "meta", "title", "style"}
 
 
-def is_table_mode(state: DocumentState) -> bool:
+def is_table_mode(state):
     return state in (
         DocumentState.IN_TABLE,
         DocumentState.IN_TABLE_BODY,
@@ -51,18 +49,18 @@ def is_table_mode(state: DocumentState) -> bool:
     )
 
 
-def has_open_table(context: ParseContext) -> bool:
+def has_open_table(context):
     return any(el.tag_name == "table" for el in context.open_elements._stack)
 
 
-def find_open_cell(context: ParseContext):
+def find_open_cell(context):
     for el in reversed(context.open_elements._stack):
         if el.tag_name in TABLE_CELL_TAGS:
             return el
     return None
 
 
-def _in_template_content(context: ParseContext) -> bool:
+def _in_template_content(context):
     p = context.current_parent
     if not p:
         return False
@@ -75,7 +73,7 @@ def _in_template_content(context: ParseContext) -> bool:
         cur = cur.parent
     return False
 
-def _in_integration_point(context: ParseContext) -> bool:
+def _in_integration_point(context):
     cur = context.current_parent
     while cur:
         if cur.tag_name in ("svg foreignObject", "svg desc", "svg title"):
@@ -88,7 +86,7 @@ def _in_integration_point(context: ParseContext) -> bool:
         cur = cur.parent
     return False
 
-def should_foster_parent(tag_name: str, attrs: dict, context: ParseContext, parser) -> bool:
+def should_foster_parent(tag_name, attrs, context, parser):
     """Mirror the existing foster parenting compound condition.
 
     This returns True only when the parser would currently foster parent the element.
@@ -117,7 +115,7 @@ def should_foster_parent(tag_name: str, attrs: dict, context: ParseContext, pars
 
 
 # Phase 1 extraction: implied tbody / tr helpers (behavioral mirror of existing fragment & parser logic)
-def ensure_implied_tbody_for_tr(context: ParseContext, parser) -> None:
+def ensure_implied_tbody_for_tr(context, parser):
     """If we're about to insert a <tr> directly under a <table> (or fragment root table context)
     with no open tbody/thead/tfoot, synthesize (or reuse) a <tbody> and move insertion point.
 
@@ -164,7 +162,7 @@ def ensure_implied_tbody_for_tr(context: ParseContext, parser) -> None:
     context.move_to_element(tbody)
 
 
-def ensure_implied_tr_for_cell(context: ParseContext) -> None:
+def ensure_implied_tr_for_cell(context):
     """Ensure there is a <tr> ancestor before inserting a <td>/<th> when inside (or directly under)
     a table section or table. Mirrors fragment logic that creates a tr when a td/th appears first.
     """
@@ -191,7 +189,7 @@ def ensure_implied_tr_for_cell(context: ParseContext) -> None:
 
 
 # Cell salvage helpers (phase 1 extraction)
-def reenter_last_cell_for_p(context: ParseContext) -> bool:
+def reenter_last_cell_for_p(context):
     """If a <p> start tag is being processed during foster-parent consideration and a <tr>
     is open whose DOM children already include a cell (<td>/<th>) but no cell is currently
     open on the stack, reposition insertion to that last cell. Mirrors existing inline logic.
@@ -216,7 +214,7 @@ def reenter_last_cell_for_p(context: ParseContext) -> bool:
     return True
 
 
-def restore_insertion_open_cell(context: ParseContext):
+def restore_insertion_open_cell(context):
     """If a cell element (<td>/<th>) is still open on the stack but insertion point drifted
     outside it (e.g., foreign content breakout), reposition to that cell. Returns the cell or None."""
     for el in reversed(context.open_elements._stack):
@@ -240,7 +238,7 @@ __all__ = [
 ]
 
 
-def fragment_table_insert(tag_name: str, token, context: ParseContext, parser) -> bool:
+def fragment_table_insert(tag_name, token, context, parser):
     """Handle start tag insertion when fragment_context == 'table'.
 
     Mirrors the inline block previously in parser._handle_start_tag with no semantic changes.
@@ -268,7 +266,7 @@ def fragment_table_insert(tag_name: str, token, context: ParseContext, parser) -
     context.move_to_element(top)
     root = top
 
-    def _find_last(name: str):
+    def _find_last(name):
         for ch in reversed(root.children):
             if ch.tag_name == name:
                 return ch
@@ -344,7 +342,7 @@ def fragment_table_insert(tag_name: str, token, context: ParseContext, parser) -
     return False
 
 
-def fragment_table_section_insert(tag_name: str, token, context: ParseContext, parser) -> bool:
+def fragment_table_section_insert(tag_name, token, context, parser):
     """Handle start tags when fragment_context in (tbody, thead, tfoot).
 
     Replicates the inline logic from parser._handle_start_tag. Returns True if handled.

@@ -419,7 +419,7 @@ class AdoptionAgencyAlgorithm:
         )
         # Simple-case: pop elements above formatting element (ignored) then pop formatting element itself.
         stack = context.open_elements._stack
-        popped_above: List[Node] = []
+        popped_above = []
         if formatting_element in stack:
             while stack and stack[-1] is not formatting_element:
                 popped_above.append(stack.pop())  # record elements popped above formatting element
@@ -562,11 +562,11 @@ class AdoptionAgencyAlgorithm:
 
     def _run_complex_adoption_spec(
         self,
-        formatting_entry: FormattingElementEntry,
-        furthest_block: Node,
+        formatting_entry,
+        furthest_block,
         context,
-        iteration_count: int = 0,
-    ) -> bool:
+        iteration_count=0,
+    ):
         """Run the complex adoption agency algorithm (steps 8-19) per HTML5 spec.
 
         This implements the full algorithm with proper element reconstruction
@@ -618,7 +618,7 @@ class AdoptionAgencyAlgorithm:
         # keep a mapping of previous-above relationships for removed nodes.
         inner_loop_counter = 0
         # For removed nodes we store the element that was above them at time of removal.
-        removed_above: dict[int, Node] = {}
+        removed_above = {}
         while True:
             if node is formatting_element:
                 # Reached the formatting element; stop inner loop per spec Step 11.
@@ -680,7 +680,7 @@ class AdoptionAgencyAlgorithm:
                     content_child = ch
                     break
             if content_child is not None:
-                def _under(node: Node, ancestor: Node) -> bool:
+                def _under(node, ancestor):
                     cur = node
                     while cur is not None:
                         if cur is ancestor:
@@ -791,7 +791,7 @@ class AdoptionAgencyAlgorithm:
         return True
 
 
-    def _iter_descendants(self, node: Node):
+    def _iter_descendants(self, node):
         # Yield all descendants (depth-first) of a node
         stack = list(node.children)
         while stack:
@@ -801,7 +801,7 @@ class AdoptionAgencyAlgorithm:
                 stack.extend(cur.children)
 
     # --- Step 14 helper ---
-    def _step14_place_last_node(self, formatting_element: Node, last_node: Node, furthest_block: Node, common_ancestor: Node) -> None:
+    def _step14_place_last_node(self, formatting_element, last_node, furthest_block, common_ancestor):
         """Place last_node relative to common_ancestor following spec's 'appropriate place for inserting a node'.
 
         Heuristic foster-parenting of the furthest block was previously attempted here; that deviated from the

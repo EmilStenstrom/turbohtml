@@ -83,7 +83,7 @@ class HTMLTokenizer:
         self.script_type_value = ""
         self._pending_tokens = []  # New list for pending tokens
 
-    def debug(self, *args, indent: int = 4):
+    def debug(self, *args, indent=4):
         """Print debug message if debugging is enabled"""
         if not self.env_debug:
             return
@@ -920,7 +920,7 @@ class HTMLTokenizer:
 
         # Try regex first
         matches = ATTR_RE.findall(attr_string)
-        attributes: Dict[str, str] = {}
+        attributes = {}
         if matches:
             for attr_name, val1, val2, val3 in matches:
                 lower_name = attr_name.lower()
@@ -1057,7 +1057,7 @@ class HTMLTokenizer:
             return None
         return HTMLToken("Comment", data=comment_text)
 
-    def _decode_entities(self, text: str, in_attribute: bool = False) -> str:
+    def _decode_entities(self, text, in_attribute=False):
         """Decode HTML entities in text according to HTML5 spec."""
         if "&" not in text:
             return text
@@ -1066,13 +1066,13 @@ class HTMLTokenizer:
 
         # Entities for which we DO decode even if followed by '=' or alnum when semicolon omitted
         # (uppercase legacy names like AElig per entities02 expectations)
-        def _allow_decode_without_semicolon_follow(entity_name: str) -> bool:
+        def _allow_decode_without_semicolon_follow(entity_name):
             # Disallow basic entities like gt when followed by alnum; allow longer uppercase legacy forms
             if entity_name in {"gt", "lt", "amp", "quot", "apos"}:
                 return False
             return entity_name and entity_name[0].isupper() and len(entity_name) > 2
 
-        result: list[str] = []
+        result = []
         i = 0
         length = len(text)
         while i < length:
@@ -1164,7 +1164,7 @@ class HTMLTokenizer:
             i += 1
         return "".join(result)
 
-    def _replace_invalid_characters(self, text: str) -> str:
+    def _replace_invalid_characters(self, text):
         """Replace invalid characters according to HTML5 spec."""
         if not text:
             return text
@@ -1256,7 +1256,7 @@ class HTMLTokenizer:
 
         return "".join(result)
 
-    def _codepoint_to_char(self, codepoint: int) -> str:
+    def _codepoint_to_char(self, codepoint):
         """Convert a numeric codepoint to character with HTML5 replacements."""
         # Handle invalid codepoints
         if codepoint > 0x10FFFF:

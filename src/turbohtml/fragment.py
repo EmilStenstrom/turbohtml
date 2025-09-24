@@ -7,26 +7,38 @@ apply suppressions, dispatch token handlers, then run post‑hooks. No heuristic
 behaviour or test‑specific logic resides here.
 """
 
-from __future__ import annotations
-
-from dataclasses import dataclass, field
- # typing removed
-
 from .context import DocumentState, ContentState, ParseContext
 from .constants import RAWTEXT_ELEMENTS
 from .node import Node
 from .tokenizer import HTMLTokenizer, HTMLToken
 
- # TYPE_CHECKING block removed
-
-@dataclass
 class FragmentSpec:
-    name: str
-    ignored_start_tags: set = field(default_factory=set)
-    pre_token_hooks: list = field(default_factory=list)
-    post_pass_hooks: list = field(default_factory=list)
-    suppression_predicates: list = field(default_factory=list)
-    treat_all_as_text: bool = False
+    __slots__ = (
+        "name",
+        "ignored_start_tags",
+        "pre_token_hooks",
+        "post_pass_hooks",
+        "suppression_predicates",
+        "treat_all_as_text",
+    )
+
+    def __init__(
+        self,
+        name,
+        ignored_start_tags=None,
+        pre_token_hooks=None,
+        post_pass_hooks=None,
+        suppression_predicates=None,
+        treat_all_as_text=False,
+    ):
+        self.name = name
+        self.ignored_start_tags = set(ignored_start_tags) if ignored_start_tags else set()
+        self.pre_token_hooks = list(pre_token_hooks) if pre_token_hooks else []
+        self.post_pass_hooks = list(post_pass_hooks) if post_pass_hooks else []
+        self.suppression_predicates = (
+            list(suppression_predicates) if suppression_predicates else []
+        )
+        self.treat_all_as_text = treat_all_as_text
 
 
 def _html_finalize_post_pass(parser, context):
@@ -210,7 +222,7 @@ def _supp_fragment_legacy_context(parser, context, token, fragment_context):
     return False
 
 # Fragment specifications registry (includes suppression predicates)
-FRAGMENT_SPECS: Dict[str, FragmentSpec] = {
+FRAGMENT_SPECS = {
     "template": FragmentSpec(
         name="template",
         ignored_start_tags={"template"},
@@ -269,7 +281,7 @@ FRAGMENT_SPECS: Dict[str, FragmentSpec] = {
 }
 
 
-def _implied_table_section_pre_token(parser: "TurboHTML", context, token: HTMLToken):
+def _implied_table_section_pre_token(parser, context, token):
     """Spec-aligned implied tbody generation (not a heuristic relocation).
 
     HTML Standard: When a <tr> start tag is processed in the *in table* insertion mode
@@ -484,7 +496,7 @@ def handle_character(parser, context, token, fragment_context):
                 break
 
 
-def parse_fragment(parser: "TurboHTML") -> None:  # pragma: no cover
+def parse_fragment(parser):  # pragma: no cover
     fragment_context = parser.fragment_context
     parser.debug(f"Parsing fragment in context: {fragment_context}")
     # Use externalized helper (parser retains wrapper for compatibility)
@@ -513,9 +525,7 @@ def parse_fragment(parser: "TurboHTML") -> None:  # pragma: no cover
     treat_all_as_text = spec.treat_all_as_text if spec else False
 
     if treat_all_as_text:
-        parser.tokenizer._pending_tokens.append(
-            HTMLToken("Character", data=parser.html)
-        )
+        parser.tokenizer._pending_tokens.append(HTMLToken("Character", data=parser.html))
         parser.tokenizer.pos = parser.tokenizer.length
     for token in parser.tokenizer.tokenize():
         parser._prev_token = parser._last_token
@@ -552,7 +562,7 @@ def parse_fragment(parser: "TurboHTML") -> None:  # pragma: no cover
     # Synthetic stack pruning no-op (bootstrap disabled).
 
 
-def create_fragment_context(parser: "TurboHTML") -> "ParseContext":
+def create_fragment_context(parser):
     """Initialize a fragment ParseContext with state derived from the context element.
 
     Extraction of former TurboHTML._create_fragment_context (no behavior change).

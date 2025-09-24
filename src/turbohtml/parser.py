@@ -498,7 +498,7 @@ class TurboHTML:
             return
         context.current_parent.append_child(comment_node)
 
-    def _parse_document(self) -> None:
+    def _parse_document(self):
         """Parse a full HTML document (token loop delegating to handlers)."""
         # Initialize context with html_node as current_parent
         context = ParseContext(len(self.html), self.html_node, debug_callback=self.debug)
@@ -568,8 +568,8 @@ class TurboHTML:
                                 break
 
     def _handle_start_tag(
-        self, token: HTMLToken, tag_name: str, context: ParseContext, end_tag_idx: int
-    ) -> None:
+        self, token, tag_name, context, end_tag_idx
+    ):
         """Handle all opening HTML tags."""
 
         for h in self.tag_handlers:
@@ -583,8 +583,8 @@ class TurboHTML:
                     return
 
     def _handle_end_tag(
-        self, token: HTMLToken, tag_name: str, context: ParseContext
-    ) -> None:
+        self, token, tag_name, context
+    ):
         """Handle all closing HTML tags (spec-aligned, no auxiliary adoption flags)."""
         # Early end-tag preprocessing (mirrors start tag path).
         for h in self.tag_handlers:
@@ -603,20 +603,20 @@ class TurboHTML:
 
 
     # Utility for handlers to create a comment node (keeps single construction style)
-    def _create_comment_node(self, text: str) -> Node:  # type: ignore[name-defined]
+    def _create_comment_node(self, text):
         node = Node("#comment")
         node.text_content = text
         return node
 
-    def _merge_adjacent_text_nodes(self, node: Node) -> None:
+    def _merge_adjacent_text_nodes(self, node):
         """Iteratively merge adjacent sibling text nodes (non-recursive)."""
         stack = [node]
         while stack:
             cur = stack.pop()
             if not cur.children:
                 continue
-            merged: list[Node] = []
-            pending_text: Optional[Node] = None
+            merged = []
+            pending_text = None
             changed = False
             for ch in cur.children:
                 if ch.tag_name == "#text":
