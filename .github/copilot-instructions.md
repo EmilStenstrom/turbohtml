@@ -11,7 +11,7 @@
 - Keep preambles to a single declarative sentence (“I’m scanning the repo and then drafting a minimal fix.”) — no approval requests.
 
 ### Core Purpose
-TurboHTML is a HTML5 parser targeting full html5 spec compliance with handler modularity, speed (2–5× lxml), and lean memory (30–50% below BeautifulSoup).
+TurboHTML is a HTML5 parser targeting 100% html5 spec compliance with handler modularity, speed (2–5× lxml), and lean memory (30–50% below BeautifulSoup).
 
 ### Architecture Snapshot
 - Tokenizer (`tokenizer.py`): Spec state machines (incl. RAWTEXT). No exception-driven flow.
@@ -39,32 +39,31 @@ TurboHTML is a HTML5 parser targeting full html5 spec compliance with handler mo
 No heuristics allowed, and if found remove and replace with spec-compliant code instead.
 
 ### Prohibited
-- Test filename strings in non-test code (`tests\d+`, `tricky`, `webkit`, etc.).
-- Hidden fallback branches.
-- Overfitting patches referencing specific test cases.
+- No test filename references in comments (`tests\d+`, `tricky`, `webkit`, etc.).
+- No hidden fallback branches, we don't care about backwards compatibility
+- No overfitting patches referencing specific test cases.
 - Caching “one-shot” flags that the structure (via parse tree or open elements) already implies.
+- No typing
+- No exceptions
+- No hasattr/getattr/delattr, we have full control of the code
 
 ### Testing Workflow
 1. Target failing areas first (use `--filter-files` or `--test-specs`).
-2. Use `--debug --print-fails` to trace execution path through the parser.
+2. Use `-vv` to trace execution path through the parser.
 2. Iterate: fix → focused run → full run.
-3. Guard regressions: run `python run_tests.py --regressions` or inspect `git diff test-summary.txt`.
+3. Always check for regressions: run `python run_tests.py --regressions` or inspect `git diff test-summary.txt`.
 4. Never merge with net fewer passing tests unless justified.
 5. Quick snippet runner (full test suite never takes longer than 5s):
    ```
-   timeout 5s python3 -c "from turbohtml import TurboHTML; print(TurboHTML('<html>', debug=True).root.to_test_format())"
+   python -c "from turbohtml import TurboHTML; print(TurboHTML('<html>', debug=True).root.to_test_format())"
    ```
 
 ### Logging & Comments
 - Comments: current behavior + spec rationale (cite concept/step).
-- No historical notes (use version control).
-- Debug: use `self.debug()` / `parser.debug()`; consistent indentation.
+- No historical notes ("Previously", "Removed"), prefer replacing old code with nothing.
+- Debug: use `self.debug()` / `parser.debug()`, no gating needed.
+- Be dilligent when determining consistent indentation.
 
 ### Performance Mindset
 - Keep tokenizer tight (no slicing churn, no exception rewinds).
 - Infer instead of storing (e.g., adoption state from stacks).
-- Avoid repeated attribute resorting.
-
-### Style & Consistency
-- Python 3.8+, Black (119 chars). Descriptive names. Type hints for public surfaces.
-- Don’t reformat unrelated regions in functional changes.
