@@ -105,7 +105,7 @@ class OpenElementsStack:
 
         Provides only the operations required by the parser and adoption agency:
             * push / pop / is_empty
-      * contains / index_of / remove_element
+            * contains / index_of / remove_element
             * replace_element
             * has_element_in_scope (general scope variant sufficient for current tests)
     """
