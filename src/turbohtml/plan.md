@@ -13,7 +13,7 @@ Result: anchors stay glued inside tables instead of resuming outside (tests1.dat
 # Anchor/text resume heuristics
 
 TextHandler forcibly re-enters the last open <a> (via resume_anchor_after_structure / active-<a> scan) and merges text into it, even after spec-driven adoption should have closed it.
-That’s why tests1.dat:77 and :79 weld “aoe” or “braoe” onto the wrong anchor.
+That’s why tests1.dat:77,79 weld “aoe” or “braoe” onto the wrong anchor.
 
 # Formatting start-tag order of operations
 
