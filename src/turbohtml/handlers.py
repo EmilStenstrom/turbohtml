@@ -6237,6 +6237,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 self.debug(
                     f"After </table> pop stack={[el.tag_name for el in context.open_elements._stack]}"
                 )
+                preferred_after_table_parent = None
                 if (
                     formatting_parent
                     and formatting_parent.tag_name in FORMATTING_ELEMENTS
@@ -6258,7 +6259,36 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                                 self.debug(
                                     f"Flagging reconstruction after table close for <{candidate.tag_name}>"
                                 )
+                                if formatting_parent.parent:
+                                    preferred_after_table_parent = formatting_parent.parent
                     target_parent = formatting_parent
+                    if preferred_after_table_parent is not None:
+                        target_parent = preferred_after_table_parent
+                    elif (
+                        context.post_adoption_reconstruct_pending
+                        and context.active_formatting_elements
+                    ):
+                        entries_for_parent = []
+                        for entry in context.active_formatting_elements:
+                            element = entry.element
+                            if (
+                                element is None
+                                or context.open_elements.contains(element)
+                            ):
+                                continue
+                            if element.parent is formatting_parent:
+                                entries_for_parent.append(entry)
+                        if entries_for_parent:
+                            if formatting_parent.parent:
+                                target_parent = formatting_parent.parent
+                            anchor_entries = [
+                                e
+                                for e in entries_for_parent
+                                if e.element.tag_name == "a"
+                            ]
+                            if len(anchor_entries) > 1:
+                                for extra in anchor_entries[:-1]:
+                                    context.active_formatting_elements.remove_entry(extra)
                     if (
                         formatting_parent.tag_name == "a"
                         and not context.open_elements.contains(formatting_parent)
