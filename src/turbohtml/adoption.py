@@ -8,6 +8,7 @@ from turbohtml.constants import (
     FORMATTING_ELEMENTS,
     SPECIAL_CATEGORY_ELEMENTS,
 )
+from turbohtml.foster import foster_parent, needs_foster_parenting
 
 class FormattingElementEntry:
     """Entry in the active formatting elements stack.
@@ -98,6 +99,16 @@ class ActiveFormattingElements:
                 self._stack[i] = FormattingElementEntry(new_element, new_token)
                 return
         self.push(new_element, new_token)
+
+    def insert_at(self, index, element, token):
+        entry = FormattingElementEntry(element, token)
+        if index < 0:
+            index = 0
+        if index > len(self._stack):
+            index = len(self._stack)
+        self._stack.insert(index, entry)
+        if len(self._stack) > self._max_size:
+            self._stack.pop(0)
 
 
 class OpenElementsStack:
@@ -385,87 +396,93 @@ class AdoptionAgencyAlgorithm:
         context,
     ):
         """Simple case: pop formatting element and remove its active entry."""
+        stack_before = [e.tag_name for e in context.open_elements._stack]
+        afe_before = [e.element.tag_name for e in context.active_formatting_elements if e.element]
         self.parser.debug(
-            f"[adoption] simple-case for <{formatting_element.tag_name}> stack_before={[e.tag_name for e in context.open_elements._stack]} afe_before={[e.element.tag_name for e in context.active_formatting_elements if e.element]}"
+            f"[adoption] simple-case for <{formatting_element.tag_name}> stack_before={stack_before} afe_before={afe_before}"
         )
-        # Simple-case: pop elements above formatting element (ignored) then pop formatting element itself.
-        stack = context.open_elements._stack
-        popped_above = []
-        if formatting_element in stack:
-            while stack and stack[-1] is not formatting_element:
-                popped_above.append(stack.pop())  # record elements popped above formatting element
-            if stack and stack[-1] is formatting_element:
-                stack.pop()
-        # Remove from active formatting list
+
+        # Step 7a: remove the formatting element entry from the active formatting elements list.
         context.active_formatting_elements.remove_entry(formatting_entry)
-        # If we popped additional formatting elements that were children of the anchor (e.g. <a><b></a> case),
-        # remove their active formatting entries as well so they are not later reconstructed outside the anchor.
-        # This matches html5lib expectation that a stray formatting descendant does not leak out after an early
-        # anchor closure (tests19.dat:97/98). We scope this pruning strictly to the anchor simple-case to avoid
-        # altering generic formatting mis-nesting layering behavior.
-        if formatting_element.tag_name == 'a' and popped_above:
-            # Refined rule: prune only a single top-most descendant formatting element when it has no
-            # textual siblings outside its subtree (pure wrapper) to prevent duplication. Leaving deeper
-            # formatting entries intact preserves adoption layering required by other tests (adoption01:3).
-            for popped in popped_above[:1]:  # consider only the first popped (nearest top of stack)
-                if popped.tag_name in FORMATTING_ELEMENTS and popped.tag_name != 'nobr':
-                    # If popped has any non-whitespace text directly under the anchor sibling chain, keep it.
-                    sibling_text = False
-                    for s in popped.children:
-                        if s.tag_name == '#text' and s.text_content and s.text_content.strip():
-                            sibling_text = True
-                            break
-                    if not sibling_text:
-                        entry = context.active_formatting_elements.find_element(popped)
-                        if entry:
-                            context.active_formatting_elements.remove_entry(entry)
-                            self.parser.debug(f"[adoption] pruned single descendant formatting <{popped.tag_name}> (anchor simple-case refined)")
-                        self.parser.debug(f"[adoption] pruned descendant formatting <{popped.tag_name}> from AFE during anchor simple-case")
-        # Insertion point heuristic: if the parent is a surviving formatting element still open,
-        # keep insertion inside it; else fallback to parent (stable behavior).
-        parent = formatting_element.parent
-        if (
-            parent is not None
-            and parent.tag_name in FORMATTING_ELEMENTS
-            and parent in context.open_elements._stack
-        ):
-            context.move_to_element(parent)
-        elif parent is not None:
-            context.move_to_element(parent)
-        # Conditional reconstruction: request only if there exists a stale active formatting entry (element not on open stack).
-        # For anchor simple-case we intentionally suppress reconstruction when elements were popped above it to
-        # prevent recreating those formatting descendants outside the closed anchor (avoids duplicate <b> wrappers).
-        if formatting_element.tag_name == 'a' and popped_above:
-            # If a <nobr> was among popped descendants we must allow reconstruction so that the additional
-            # <nobr> wrapper expected by html5lib appears (tests26.dat:0). Only suppress when no popped
-            # descendant is <nobr>.
-            if any(p.tag_name == 'nobr' for p in popped_above):
-                # Perform the same reconstruction scan as the generic path (below) to recreate missing wrappers.
-                for entry_chk in context.active_formatting_elements:
-                    elc = entry_chk.element
-                    if elc and not context.open_elements.contains(elc):
-                        context.post_adoption_reconstruct_pending = True
-                        break
-            else:
-                self.parser.debug("[adoption] suppressing reconstruction after anchor simple-case (refined)")
-                insertion_parent_name = context.current_parent.tag_name if context.current_parent else 'None'
-                stack_after = [e.tag_name for e in context.open_elements._stack]
-                afe_after = [e.element.tag_name for e in context.active_formatting_elements if e.element]
-                self.parser.debug(
-                    f"[adoption] simple-case after pop insertion_parent={insertion_parent_name} stack_after={stack_after} afe_after={afe_after}"
-                )
-                return True
-        else:
-            for entry_chk in context.active_formatting_elements:
-                elc = entry_chk.element
-                if elc and not context.open_elements.contains(elc):
-                    context.post_adoption_reconstruct_pending = True
+
+        # Step 7b: if the element is missing from the open elements stack, we are done.
+        if not context.open_elements.contains(formatting_element):
+            self.parser.debug(
+                f"[adoption] simple-case exit (<{formatting_element.tag_name}> not in open stack)"
+            )
+            return True
+
+        # Step 7c: pop elements from the stack of open elements until the formatting element has been removed.
+        stack = context.open_elements._stack
+        if formatting_element in stack:
+            while stack:
+                removed = stack.pop()
+                if removed is formatting_element:
                     break
-        insertion_parent_name = context.current_parent.tag_name if context.current_parent else 'None'
+
+        # Step 7d (spec): set the current node to the last node in the stack of open elements.
+        if context.open_elements._stack:
+            context.move_to_element(context.open_elements._stack[-1])
+        else:
+            body = self.parser._ensure_body_node(context)
+            if body:
+                context.move_to_element(body)
+            else:
+                context.move_to_element(self.parser.root)
+
+        if formatting_element.tag_name == 'a':
+            afe_elements = {
+                entry.element
+                for entry in context.active_formatting_elements
+                if entry.element is not None
+            }
+            stack = context.open_elements._stack
+            if stack:
+                new_stack = []
+                removed_anchor = False
+                for el in stack:
+                    if el.tag_name == 'a' and el not in afe_elements:
+                        removed_anchor = True
+                        continue
+                    new_stack.append(el)
+                if removed_anchor:
+                    context.open_elements._stack = new_stack
+                    if new_stack:
+                        context.move_to_element(new_stack[-1])
+                    else:
+                        body = self.parser._ensure_body_node(context)
+                        context.move_to_element(body if body else self.parser.root)
+
+        fmt_parent = formatting_element.parent
+        if fmt_parent is not None and fmt_parent is not context.current_parent:
+            if fmt_parent.tag_name in ("td", "th", "caption"):
+                context.move_to_element(fmt_parent)
+            else:
+                target = fmt_parent
+                while target is not None:
+                    if target is context.current_parent:
+                        break
+                    if context.open_elements.contains(target):
+                        break
+                    tag = target.tag_name
+                    if tag.startswith("svg ") or tag.startswith("math ") or tag in {"svg", "math", "math annotation-xml"}:
+                        break
+                    target = target.parent
+                if target is not None and target is not context.current_parent:
+                    context.move_to_element(target)
+
+        # Trigger reconstruction if any active formatting entries are now stale.
+        for entry_chk in context.active_formatting_elements:
+            elc = entry_chk.element
+            if elc and not context.open_elements.contains(elc):
+                context.post_adoption_reconstruct_pending = True
+                break
+
+        insertion_parent = context.current_parent.tag_name if context.current_parent else 'None'
         stack_after = [e.tag_name for e in context.open_elements._stack]
         afe_after = [e.element.tag_name for e in context.active_formatting_elements if e.element]
         self.parser.debug(
-            f"[adoption] simple-case after pop insertion_parent={insertion_parent_name} stack_after={stack_after} afe_after={afe_after}"
+            f"[adoption] simple-case exit insertion_parent={insertion_parent} stack_after={stack_after} afe_after={afe_after}"
         )
         return True
 
@@ -508,7 +525,7 @@ class AdoptionAgencyAlgorithm:
         )
 
         # Step 8: bookmark position of formatting element
-        _bookmark_index = context.active_formatting_elements.get_index(formatting_entry)  # noqa: F841 (retained for potential future step alignment)
+        bookmark_index = context.active_formatting_elements.get_index(formatting_entry)
         # Step 9: Create a list of elements to be removed from the stack of open elements
         formatting_index = context.open_elements.index_of(formatting_element)
 
@@ -539,56 +556,65 @@ class AdoptionAgencyAlgorithm:
         # Step 11: node and lastNode initialized to furthest_block
         node = furthest_block
         last_node = furthest_block
-        # Capture ordering so we can find element immediately above a node even if it is later removed.
-        # We'll recompute indices on each loop since open_stack mutates (removals & replacements) but we
-        # keep a mapping of previous-above relationships for removed nodes.
         inner_loop_counter = 0
-        # For removed nodes we store the element that was above them at time of removal.
         removed_above = {}
         while True:
             if node is formatting_element:
-                # Reached the formatting element; stop inner loop per spec Step 11.
-                break  # Step: stop before reaching formatting element
+                break
             inner_loop_counter += 1
-            # Find nodeAbove (element immediately above node in open elements stack)
             if context.open_elements.contains(node):
                 idx_cur = context.open_elements.index_of(node)
                 above_index = idx_cur - 1
-                node_above = context.open_elements._stack[above_index] if above_index >= 0 else None
+                node_above = (
+                    context.open_elements._stack[above_index]
+                    if above_index >= 0
+                    else None
+                )
             else:
                 node_above = removed_above.get(id(node))
             if node_above is None:
                 break
             candidate = node_above
-            # If candidate not a formatting element: spec says set node to element above and continue (NO removal).
             candidate_entry = context.active_formatting_elements.find_element(candidate)
             if not candidate_entry:
-                # Spec: just advance upward; do NOT remove non-formatting elements from the open stack here
-                node = candidate
-                continue
-            # If inner_loop_counter > 3: remove candidate entry (and from stack) then continue upward
-            if inner_loop_counter > 3:
-                if context.active_formatting_elements.find_element(candidate):
-                    context.active_formatting_elements.remove_entry(candidate_entry)
                 if context.open_elements.contains(candidate):
                     idx_cand = context.open_elements.index_of(candidate)
-                    above2 = context.open_elements._stack[idx_cand - 1] if idx_cand - 1 >= 0 else None
+                    above2 = (
+                        context.open_elements._stack[idx_cand - 1]
+                        if idx_cand - 1 >= 0
+                        else None
+                    )
                     removed_above[id(candidate)] = above2
                     context.open_elements.remove_element(candidate)
                 node = candidate
                 continue
-            # If candidate IS the formatting element, stop (do not clone formatting element itself)
+            if inner_loop_counter > 3:
+                cand_index = context.active_formatting_elements.get_index(candidate_entry)
+                if cand_index != -1:
+                    context.active_formatting_elements.remove_entry(candidate_entry)
+                if context.open_elements.contains(candidate):
+                    idx_cand = context.open_elements.index_of(candidate)
+                    above2 = (
+                        context.open_elements._stack[idx_cand - 1]
+                        if idx_cand - 1 >= 0
+                        else None
+                    )
+                    removed_above[id(candidate)] = above2
+                    context.open_elements.remove_element(candidate)
+                node = candidate
+                continue
             if candidate is formatting_element:
                 node = candidate
                 break
-            # Otherwise clone candidate formatting element
+            cand_index = context.active_formatting_elements.get_index(candidate_entry)
+            if last_node is furthest_block and cand_index != -1:
+                bookmark_index = cand_index + 1
             clone = Node(candidate.tag_name, candidate.attributes.copy())
             context.active_formatting_elements.replace_entry(candidate_entry, clone, candidate_entry.token)
             if context.open_elements.contains(candidate):
                 context.open_elements.replace_element(candidate, clone)
             clone.append_child(last_node)
             last_node = clone
-            # Spec: let node be the new element (clone) so next iteration climbs from its position
             node = clone
 
         # Step 14 (refined): Insert last_node at the "appropriate place for inserting a node" using common_ancestor as override.
@@ -615,27 +641,13 @@ class AdoptionAgencyAlgorithm:
                     return False
                 if _under(furthest_block, content_child) or _under(formatting_element, content_child):
                     common_ancestor = content_child
-        self._step14_place_last_node(formatting_element, last_node, furthest_block, common_ancestor)
-        # Post-Step14 foster adjustment: If the common_ancestor is a table element and the furthest_block
-        # just placed under it is a block container that per the generic insertion algorithm would have
-        # been foster-parented (p, div, section, article, blockquote, li), relocate it before the table.
-        # This mirrors what would have happened had the text/element insertion occurred outside the
-        # adoption algorithm and prevents paragraphs from remaining as table children (adoption01.dat:5).
-        if (
-            last_node.parent is not None
-            and last_node.parent.tag_name == 'table'
-            and last_node.tag_name in ('p','div','section','article','blockquote','li')
-            and last_node.parent.parent is not None
-        ):
-            table_parent = last_node.parent.parent
-            table_node = last_node.parent
-            if table_node in table_parent.children:
-                table_index = table_parent.children.index(table_node)
-                # Detach and insert before table (preserve relative order of any existing siblings)
-                self._safe_detach_node(last_node)
-                table_parent.children.insert(table_index, last_node)
-                last_node.parent = table_parent
-                self.parser.debug(f"[adoption][post-step14-foster] moved <{last_node.tag_name}> before <table> under <{table_parent.tag_name}>")
+        self._step14_place_last_node(
+            formatting_element,
+            last_node,
+            furthest_block,
+            common_ancestor,
+            context,
+        )
         # Instrumentation: show path from formatting element to furthest_block (if still connected)
         path_tags = []
         cur = furthest_block
@@ -664,21 +676,6 @@ class AdoptionAgencyAlgorithm:
         # Previous relocation adjustment removed; spec insertion above covers extraction.
 
         # Step 15: Create a clone of the formatting element
-        # Anchor/table structural special-case: if the furthest_block is a table-structural element
-        # directly parented by the formatting <a>, the expected tree in malformed anchor/table mixes
-        # does NOT introduce an <a> clone inside that structural element (e.g. no <table><a><tbody>).
-        # Instead, the original <a> continues wrapping the table chain unchanged while the duplicate
-        # start tag later inserts a new <a> at the current insertion point. To approximate that, we
-        # perform an early exit here: remove the formatting entry from the active list (so we made
-        # progress and will not loop infinitely) but keep the original element on the open stack.
-        # Removed anchor/table special-case relocation skip; rely on uniform placement logic.
-        # Capture whether furthest_block had any (non-whitespace) text descendants BEFORE we extract
-        # its children into the fe_clone. This helps decide a better insertion point after step19.
-        had_text_descendant = False
-        for ch in furthest_block.children:
-            if ch.tag_name == "#text" and ch.text_content and ch.text_content.strip():
-                had_text_descendant = True
-                break
         fe_clone = Node(formatting_element.tag_name, formatting_element.attributes.copy())
         # Step 16: Move all children of furthest_block into fe_clone
         for ch in list(furthest_block.children):
@@ -686,27 +683,25 @@ class AdoptionAgencyAlgorithm:
             fe_clone.append_child(ch)
         # Step 17: Append fe_clone to furthest_block
         furthest_block.append_child(fe_clone)
-        # Step 18: Replace formatting element entry in active formatting elements with clone (keep same position)
-        context.active_formatting_elements.replace_entry(formatting_entry, fe_clone, formatting_entry.token)
+        # Step 18: Remove formatting entry and insert clone at bookmark position per spec
+        formatting_token = formatting_entry.token
+        context.active_formatting_elements.remove_entry(formatting_entry)
+        if bookmark_index == -1:
+            bookmark_index = len(context.active_formatting_elements)
+        if bookmark_index < 0:
+            bookmark_index = 0
+        if bookmark_index > len(context.active_formatting_elements):
+            bookmark_index = len(context.active_formatting_elements)
+        context.active_formatting_elements.insert_at(bookmark_index, fe_clone, formatting_token)
         # Step 19: Remove formatting element from open elements stack; insert fe_clone immediately AFTER furthest_block
         if context.open_elements.contains(formatting_element):
             context.open_elements.remove_element(formatting_element)
         if context.open_elements.contains(furthest_block):
             fb_index2 = context.open_elements.index_of(furthest_block)
             context.open_elements._stack.insert(fb_index2 + 1, fe_clone)
-        # In the complex case the end tag for the formatting element has been processed.
-        # Existing heuristic always moved insertion point to furthest_block so following
-        # text landed OUTSIDE the freshly created fe_clone. However, in some malformed
-        # sequences (e.g. tricky font/i runs) the expected tree wants the next text
-        # outside the entire formatting scope only when the furthest block already
-        # contained text (so the formatting wrapper should not absorb new text). If the
-        # furthest block had no text before cloning (pure structural container), keeping
-        # insertion at furthest_block is still correct. When it had text, we move to the
-        # parent so that subsequent text does not re-enter the formatting wrapper scope.
-        if had_text_descendant and furthest_block.parent is not None:
-            context.move_to_element(furthest_block.parent)
-        else:
-            context.move_to_element(furthest_block)
+        # After step 19 the current node should be the last entry on the open elements stack.
+        if context.open_elements._stack:
+            context.move_to_element(context.open_elements._stack[-1])
         stack_tags = [e.tag_name for e in context.open_elements._stack]
         afe_tags = [e.element.tag_name for e in context.active_formatting_elements if e.element]
         self.parser.debug(f"[adoption] post-step19 fe_clone=<{fe_clone.tag_name}> parent=<{fe_clone.parent.tag_name if fe_clone.parent else 'None'}> stack={stack_tags} afe={afe_tags}")
@@ -727,39 +722,61 @@ class AdoptionAgencyAlgorithm:
                 stack.extend(cur.children)
 
     # --- Step 14 helper ---
-    def _step14_place_last_node(self, formatting_element, last_node, furthest_block, common_ancestor):
-        """Place last_node relative to common_ancestor following spec's 'appropriate place for inserting a node'.
+    def _step14_place_last_node(
+        self,
+        formatting_element,
+        last_node,
+        furthest_block,
+        common_ancestor,
+        context,
+    ):
+        """Insert last_node using the general 'appropriate place' algorithm with override target.
 
-        Heuristic foster-parenting of the furthest block was previously attempted here; that deviated from the
-        HTML Standard (which relies on the general insertion algorithm outside the adoption agency). We now
-        restrict Step14 to only: redundancy check, detach, then insert-after-formatting-element or append.
+        Mirrors the HTML Standard definition: select the override target (common_ancestor),
+        redirect to template content when needed, and delegate table contexts to the foster
+        parent helper. No special-casing for formatting/tag combinations remains here.
         """
-        # If already correct parent & correct slot (just after formatting_element if applicable) skip.
-        if last_node.parent is common_ancestor:
-            if (
-                formatting_element.parent is common_ancestor
-                and formatting_element in common_ancestor.children
-                and last_node in common_ancestor.children
-            ):
-                pos_fmt = common_ancestor.children.index(formatting_element)
-                desired_index = pos_fmt + 1
-                cur_index = common_ancestor.children.index(last_node)
-                if cur_index == desired_index:
-                    self.parser.debug('[adoption][step14] skip relocation (redundant)')
-                    return
+        if common_ancestor is None:
+            return
 
-        # Detach if parent differs or ordering mismatch
-        if last_node.parent is not None:
-            self._safe_detach_node(last_node)
-        inserted = False
+        target = common_ancestor
+
+        # Template override: insert into template content fragment when available.
+        if target.tag_name == "template":
+            content_child = None
+            for ch in target.children:
+                if ch.tag_name == "content":
+                    content_child = ch
+                    break
+            if content_child is not None:
+                target = content_child
+
+        # Fast-path: already the last child of the correct parent.
         if (
-            formatting_element.parent is common_ancestor
-            and formatting_element in common_ancestor.children
+            last_node.parent is target
+            and target.children
+            and target.children[-1] is last_node
         ):
-            pos_fmt = common_ancestor.children.index(formatting_element)
-            common_ancestor.insert_child_at(pos_fmt + 1, last_node)
-            inserted = True
-        if not inserted:
-            common_ancestor.append_child(last_node)
-        self.parser.debug(f"[adoption][step14] placed <{last_node.tag_name}> under <{common_ancestor.tag_name}> children={[c.tag_name for c in common_ancestor.children]}")
+            self.parser.debug("[adoption][step14] skip (already tail child)")
+            return
+
+        # Table contexts rely on foster parenting (table, tbody, thead, tfoot, tr).
+        if needs_foster_parenting(target):
+            parent, before = foster_parent(target, context.open_elements, self.parser.root)
+            if parent is None:
+                parent = target
+            if before is not None and before.parent is parent:
+                parent.insert_before(last_node, before)
+            else:
+                parent.append_child(last_node)
+            self.parser.debug(
+                f"[adoption][step14] fostered <{last_node.tag_name}> into <{parent.tag_name}> before={before.tag_name if before else 'None'}"
+            )
+            return
+
+        # Default: append into target (Node helpers handle reparenting and sibling links).
+        target.append_child(last_node)
+        self.parser.debug(
+            f"[adoption][step14] appended <{last_node.tag_name}> under <{target.tag_name}> children={[c.tag_name for c in target.children]}"
+        )
 

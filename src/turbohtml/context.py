@@ -90,6 +90,9 @@ class ParseContext:
         self.anchor_suppress_once_done = False  # gate for one-shot anchor duplicate suppression
         self.explicit_body = False  # whether a literal <body> start tag appeared (affects comment placement)
         self.last_template_text_sig = None  # signature tuple (parent_id, index) of last template text append for duplication guard
+        # HTML Standard form element pointer: tracks the most recently opened <form> outside templates
+        # so additional <form> start tags can be ignored until the pointer is cleared.
+        self.form_element = None
 
     # --- Properties / helpers ---
     @property
