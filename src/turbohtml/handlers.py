@@ -171,7 +171,12 @@ class TagHandler:
         return context.current_parent.is_inside_tag("select")
 
     def _is_in_table_cell(self, context):
-        return context.current_parent.find_first_ancestor_in_tags(["td", "th"]) is not None
+        parent = context.current_parent
+        if parent is None:
+            return False
+        if parent.tag_name in ("td", "th"):
+            return True
+        return parent.find_first_ancestor_in_tags(["td", "th"]) is not None
 
     def _move_to_parent_of_ancestor(self, context, ancestor):
         context.move_to_ancestor_parent(ancestor)
@@ -2920,7 +2925,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
             if push_nobr_late:
                 context.open_elements.push(node)
             return node
-        return self.parser.insert_element(
+        node = self.parser.insert_element(
             token,
             context,
             parent=parent,
@@ -2928,6 +2933,19 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
             mode="normal",
             enter=True,
         )
+        if tag_name == "a" and node.parent and node.parent.tag_name == "a":
+            parent_anchor = node.parent
+            container = parent_anchor.parent
+            if (
+                container is not None
+                and container.tag_name in ("td", "th")
+                and node in parent_anchor.children
+            ):
+                parent_anchor.remove_child(node)
+                insert_index = container.children.index(parent_anchor) + 1
+                container.insert_child_at(insert_index, node)
+                context.move_to_element(node)
+        return node
 
     def _should_handle_start_impl(self, tag_name, context):
         return tag_name in FORMATTING_ELEMENTS
@@ -2937,6 +2955,12 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
     ):
         tag_name = token.tag_name
         self.debug(f"Handling <{tag_name}>, context={context}")
+        restore_cell_after_adoption = (
+            context.current_parent
+            if tag_name == "a" and self._is_in_table_cell(context)
+            else None
+        )
+
         # Pre-start stale formatting reconstruction: if there exists any active formatting element (except markers)
         # whose element is not on the open elements stack, reconstruct now so new formatting nests correctly.
         # This narrows residual nobr / inline layering divergences without broad heuristics.
@@ -2948,15 +2972,56 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 reconstruct_if_needed(self.parser, context)
                 break
         # Proactive duplicate <a> segmentation (spec: any new <a> implies adoption of existing active <a>)
+        adoption_ran_for_anchor = False
         if tag_name == "a":
             existing_a = context.active_formatting_elements.find("a")
             if existing_a and existing_a.element and context.open_elements.contains(existing_a.element):
                 # Duplicate <a>: run adoption once to close previous anchor per spec.
                 prev_flag = context.processing_end_tag
                 context.processing_end_tag = True
-                self.parser.adoption_agency.run_until_stable('a', context, max_runs=1)
+                self.parser.adoption_agency.run_until_stable("a", context, max_runs=1)
                 context.processing_end_tag = prev_flag
                 context.post_adoption_reconstruct_pending = True
+                adoption_ran_for_anchor = True
+        if (
+            adoption_ran_for_anchor
+            and restore_cell_after_adoption is not None
+            and restore_cell_after_adoption.parent is not None
+        ):
+            context.move_to_element(restore_cell_after_adoption)
+            parent_anchor = restore_cell_after_adoption.parent
+            if (
+                parent_anchor is not None
+                and parent_anchor.tag_name == "a"
+                and len(parent_anchor.children) == 1
+                and parent_anchor.children[0] is restore_cell_after_adoption
+                and parent_anchor.parent is not None
+            ):
+                container = parent_anchor.parent
+                insert_index = container.children.index(parent_anchor)
+                parent_anchor.remove_child(restore_cell_after_adoption)
+                container.insert_child_at(insert_index, restore_cell_after_adoption)
+                context.open_elements.remove_element(parent_anchor)
+                context.active_formatting_elements.remove(parent_anchor)
+                container.remove_child(parent_anchor)
+                context.move_to_element(restore_cell_after_adoption)
+            table_node = restore_cell_after_adoption.find_first_ancestor_in_tags("table")
+            if table_node is not None:
+                self.debug(
+                    "Table children after adoption: "
+                    + str([child.tag_name for child in table_node.children])
+                )
+            if (
+                table_node is not None
+                and table_node.children
+                and table_node.children[-1].tag_name == "a"
+                and not table_node.children[-1].children
+            ):
+                stray_anchor = table_node.children[-1]
+                self.debug("Removing stray table-level anchor clone")
+                context.open_elements.remove_element(stray_anchor)
+                context.active_formatting_elements.remove(stray_anchor)
+                table_node.remove_child(stray_anchor)
         # Foreign fragment adjustment: when parsing a fragment whose context is a MathML or SVG leaf
         # element (e.g. 'math ms', 'math mi', etc.), expected trees in foreign-fragment tests retain the
         # formatting element wrapper as an open element at fragment end (no adoption reparent). Our
@@ -3061,6 +3126,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                                     if gc.tag_name in {"tr", "td", "th"}:
                                         return True
                         return False
+
                     if not _has_real_structure(table):
                         cell = table.parent
                         self.debug(
@@ -3188,7 +3254,10 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         ):
             # Centralized foster parenting path
             # Prefer direct cell ancestor insertion if inside a cell
-            cell = context.current_parent.find_first_ancestor_in_tags(["td", "th"])
+            if context.current_parent.tag_name in ("td", "th"):
+                cell = context.current_parent
+            else:
+                cell = context.current_parent.find_first_ancestor_in_tags(["td", "th"])
             if not cell:
                 for el in reversed(context.open_elements._stack):
                     if el.tag_name in ("td", "th"):
@@ -3248,6 +3317,8 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                         parent=foster_parent_node,
                         push_nobr_late=(tag_name == "nobr"),
                     )
+                if tag_name == "a" and context.resume_anchor_after_structure is None:
+                    context.resume_anchor_after_structure = new_element
                 if not inside_object:
                     context.active_formatting_elements.push(new_element, token)
                 return True
@@ -5892,7 +5963,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             formatting_elements = list(
                 formatting_elements
             )  # already outer->inner by contract
-            # If innermost equals skip_existing, plan to reuse it (do NOT drop it from chain we just don't recreate).
             if (
                 "skip_existing" in locals()
                 and skip_existing is not None
@@ -5901,134 +5971,153 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             ):
                 reused_wrapper = skip_existing
                 formatting_elements = formatting_elements[:-1]
+
+        resume_anchor = context.resume_anchor_after_structure
+        if resume_anchor and resume_anchor.parent is foster_parent:
+            filtered_chain = []
+            for elem in formatting_elements:
+                if elem.tag_name == "a" and elem is not resume_anchor:
+                    continue
+                filtered_chain.append(elem)
+            formatting_elements = filtered_chain
+
+            if resume_anchor in formatting_elements:
+                formatting_elements = [
+                    elem for elem in formatting_elements if elem is not resume_anchor
+                ]
+                reused_wrapper = resume_anchor
+                context.resume_anchor_after_structure = resume_anchor
+            elif reused_wrapper is None:
+                anchor_token = HTMLToken(
+                    "StartTag",
+                    tag_name=resume_anchor.tag_name,
+                    attributes=resume_anchor.attributes.copy(),
+                )
+                reused_wrapper = self.parser.insert_element(
+                    anchor_token,
+                    context,
+                    mode="normal",
+                    enter=False,
+                    parent=foster_parent,
+                    before=foster_parent.children[table_index],
+                    push_override=False,
+                )
+                context.active_formatting_elements.push(reused_wrapper, anchor_token)
+                context.resume_anchor_after_structure = reused_wrapper
+
         self.debug(f"Found formatting elements: {formatting_elements}")
 
-        # If we have formatting elements, maintain their nesting
-        if formatting_elements:
+        has_formatting_context = bool(formatting_elements) or reused_wrapper is not None
+
+        if has_formatting_context:
             self.debug("Creating/merging formatting chain for foster-parented text")
             current_parent_for_chain = foster_parent
-            # Try to reuse the previous sibling chain immediately before the table
             prev_sibling = (
                 foster_parent.children[table_index - 1] if table_index > 0 else None
             )
-            # Track last created formatting wrapper to decide sibling vs nesting.
             last_created = None
-            # Foster run seen set for sibling forcing of repeated tags
             seen_run = set()
-            for idx, fmt_elem in enumerate(
-                formatting_elements
-            ):  # outer->inner creation
-                force_sibling = fmt_elem.tag_name in seen_run
-                # If we're at the root (foster_parent), check prev_sibling for reuse
-                if (
-                    current_parent_for_chain is foster_parent
-                    and prev_sibling
-                    and prev_sibling.tag_name == fmt_elem.tag_name
-                    and prev_sibling.attributes == fmt_elem.attributes
-                ):
-                    def _fmt_descendant_has_text(node):
-                        for ch in node.children:
-                            if ch.tag_name == "#text" and ch.text_content:
-                                return True
-                            if ch.tag_name in FORMATTING_ELEMENTS and _fmt_descendant_has_text(ch):
-                                return True
-                        return False
 
-                    reuse_even_with_text = fmt_elem.tag_name != "nobr"
-                    if reuse_even_with_text or not _fmt_descendant_has_text(prev_sibling):
-                        if not force_sibling:
-                            # For <nobr> specifically, still keep separate wrappers once text has appeared.
-                            if fmt_elem.tag_name == "nobr" and any(
-                                ch.tag_name == "#text" and ch.text_content
-                                for ch in prev_sibling.children
-                            ):
-                                pass
-                            else:
-                                current_parent_for_chain = prev_sibling
-                                # Descend into the deepest matching chain on the rightmost path
-                                while (
-                                    current_parent_for_chain.children
-                                    and current_parent_for_chain.children[-1].tag_name
-                                    in FORMATTING_ELEMENTS
+            if formatting_elements:
+                for idx, fmt_elem in enumerate(
+                    formatting_elements
+                ):  # outer->inner creation
+                    force_sibling = fmt_elem.tag_name in seen_run
+                    if (
+                        current_parent_for_chain is foster_parent
+                        and prev_sibling
+                        and prev_sibling.tag_name == fmt_elem.tag_name
+                        and prev_sibling.attributes == fmt_elem.attributes
+                    ):
+
+                        def _fmt_descendant_has_text(node):
+                            for ch in node.children:
+                                if ch.tag_name == "#text" and ch.text_content:
+                                    return True
+                                if ch.tag_name in FORMATTING_ELEMENTS and _fmt_descendant_has_text(ch):
+                                    return True
+                            return False
+
+                        reuse_even_with_text = fmt_elem.tag_name != "nobr"
+                        if reuse_even_with_text or not _fmt_descendant_has_text(prev_sibling):
+                            if not force_sibling:
+                                if fmt_elem.tag_name == "nobr" and any(
+                                    ch.tag_name == "#text" and ch.text_content
+                                    for ch in prev_sibling.children
                                 ):
-                                    last_child = current_parent_for_chain.children[-1]
-                                    # Only descend if it matches the next fmt_elem; otherwise stop
-                                    next_idx = idx + 1
-                                    if (
-                                        next_idx < len(formatting_elements)
-                                        and last_child.tag_name
-                                        == formatting_elements[next_idx].tag_name
-                                        and last_child.attributes
-                                        == formatting_elements[next_idx].attributes
+                                    pass
+                                else:
+                                    current_parent_for_chain = prev_sibling
+                                    while (
+                                        current_parent_for_chain.children
+                                        and current_parent_for_chain.children[-1].tag_name
+                                        in FORMATTING_ELEMENTS
                                     ):
-                                        current_parent_for_chain = last_child
-                                    else:
-                                        break
-                                continue
-                    # Fall through when reuse is disallowed (e.g., <nobr> with existing text)
-                # If the last child of the current chain matches, reuse it
-                if not force_sibling and (
-                    current_parent_for_chain.children
-                    and current_parent_for_chain.children[-1].tag_name
-                    == fmt_elem.tag_name
-                    and current_parent_for_chain.children[-1].attributes
-                    == fmt_elem.attributes
-                ):
-                    # Avoid re-nesting identical formatting after adoption simple-case: create sibling instead
-                    current_parent_for_chain = current_parent_for_chain.children[-1]
-                    continue
-                # Reuse existing last child wrapper if identical and empty (prevents <nobr><nobr> nesting)
-                if (
-                    fmt_elem.tag_name == "nobr"
-                    and current_parent_for_chain.children
-                    and current_parent_for_chain.children[-1].tag_name == "nobr"
-                    and not any(
-                        ch.tag_name == "#text"
-                        and ch.text_content
-                        and ch.text_content.strip()
-                        for ch in current_parent_for_chain.children[-1].children
+                                        last_child = current_parent_for_chain.children[-1]
+                                        next_idx = idx + 1
+                                        if (
+                                            next_idx < len(formatting_elements)
+                                            and last_child.tag_name
+                                            == formatting_elements[next_idx].tag_name
+                                            and last_child.attributes
+                                            == formatting_elements[next_idx].attributes
+                                        ):
+                                            current_parent_for_chain = last_child
+                                        else:
+                                            break
+                                    continue
+                    if not force_sibling and (
+                        current_parent_for_chain.children
+                        and current_parent_for_chain.children[-1].tag_name
+                        == fmt_elem.tag_name
+                        and current_parent_for_chain.children[-1].attributes
+                        == fmt_elem.attributes
+                    ):
+                        current_parent_for_chain = current_parent_for_chain.children[-1]
+                        continue
+                    if (
+                        fmt_elem.tag_name == "nobr"
+                        and current_parent_for_chain.children
+                        and current_parent_for_chain.children[-1].tag_name == "nobr"
+                        and not any(
+                            ch.tag_name == "#text"
+                            and ch.text_content
+                            and ch.text_content.strip()
+                            for ch in current_parent_for_chain.children[-1].children
+                        )
+                    ):
+                        current_parent_for_chain = current_parent_for_chain.children[-1]
+                        continue
+                    fmt_token = HTMLToken(
+                        "StartTag",
+                        tag_name=fmt_elem.tag_name,
+                        attributes=fmt_elem.attributes.copy(),
                     )
-                ):
-                    current_parent_for_chain = current_parent_for_chain.children[-1]
-                    continue
-                # Otherwise create a new wrapper
-                fmt_token = HTMLToken(
-                    "StartTag",
-                    tag_name=fmt_elem.tag_name,
-                    attributes=fmt_elem.attributes.copy(),
-                )
-                if current_parent_for_chain is foster_parent:
-                    new_fmt = self.parser.insert_element(
-                        fmt_token,
-                        context,
-                        mode="normal",
-                        enter=False,
-                        parent=foster_parent,
-                        before=foster_parent.children[table_index],
-                        push_override=False,
-                    )
-                else:
-                    new_fmt = self.parser.insert_element(
-                        fmt_token,
-                        context,
-                        mode="normal",
-                        enter=False,
-                        parent=current_parent_for_chain,
-                        push_override=False,
-                    )
-                current_parent_for_chain = new_fmt
-                last_created = new_fmt
-                self.debug(f"Created formatting element in chain: {new_fmt}")
-                seen_run.add(fmt_elem.tag_name)
-            # Simple adoption hint no longer stored; no state reset required
+                    if current_parent_for_chain is foster_parent:
+                        new_fmt = self.parser.insert_element(
+                            fmt_token,
+                            context,
+                            mode="normal",
+                            enter=False,
+                            parent=foster_parent,
+                            before=foster_parent.children[table_index],
+                            push_override=False,
+                        )
+                    else:
+                        new_fmt = self.parser.insert_element(
+                            fmt_token,
+                            context,
+                            mode="normal",
+                            enter=False,
+                            parent=current_parent_for_chain,
+                            push_override=False,
+                        )
+                    current_parent_for_chain = new_fmt
+                    last_created = new_fmt
+                    self.debug(f"Created formatting element in chain: {new_fmt}")
+                    seen_run.add(fmt_elem.tag_name)
 
-            # Append the text to the innermost formatting element (existing or newly created)
-            # If no chain elements were created (all skipped) and current_parent_for_chain already has text, create
-            # a new sibling wrapper (for <nobr>) to match expected separate wrappers for subsequent text runs.
             if reused_wrapper is not None:
-                # Reuse existing reconstructed innermost wrapper (skip_existing) for this text run
-                # BUT if it already contains text, create a new sibling <nobr> so that
-                # subsequent foster-parented character runs become distinct wrappers
                 if (
                     reused_wrapper.tag_name == "nobr"
                     and any(
@@ -6071,11 +6160,15 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         push_override=False,
                     )
                     current_parent_for_chain = sibling
+
             text_holder = current_parent_for_chain
             self.parser.insert_text(text, context, parent=text_holder, merge=True)
             self.debug(f"Inserted foster-parented text into {text_holder.tag_name}")
-            # Remove any newly created trailing empty <nobr> wrapper immediately before the table
-            # Recompute table index (structure might have shifted)
+            self.debug(
+                "Foster parent children post-insert: "
+                + str([child.tag_name for child in foster_parent.children])
+            )
+
             if table in foster_parent.children:
                 t_idx = foster_parent.children.index(table)
                 prev_idx = t_idx - 1
@@ -6084,35 +6177,39 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     if candidate.tag_name == "nobr" and not candidate.children:
                         foster_parent.remove_child(candidate)
 
-            # Collapse redundant nested <nobr> chains like <nobr><nobr>text</nobr></nobr>
+            if (
+                "skip_existing" in locals()
+                and skip_existing is not None
+                and skip_existing is not reused_wrapper
+                and skip_existing.parent is foster_parent
+                and not skip_existing.children
+            ):
+                context.active_formatting_elements.remove(skip_existing)
+                context.open_elements.remove_element(skip_existing)
+                foster_parent.remove_child(skip_existing)
+
             def _collapse_redundant_nobr(node):
                 if node.tag_name != "nobr":
                     return
                 if len(node.children) == 1 and node.children[0].tag_name == "nobr":
                     inner = node.children[0]
-                    # Only collapse if inner has text (keeps a single wrapper for the text)
                     has_text = any(
                         ch.tag_name == "#text" and ch.text_content
                         for ch in inner.children
                     )
                     if has_text and not node.attributes and not inner.attributes:
-                        # Move inner's children to outer and remove inner
                         for ch in list(inner.children):
                             inner.remove_child(ch)
                             node.append_child(ch)
                         node.remove_child(inner)
 
-            # Attempt collapse starting from chain root(s)
             if last_created:
                 _collapse_redundant_nobr(last_created)
-                # Also check its parent in case pattern spans two levels
                 if last_created.parent and last_created.parent.tag_name == "nobr":
                     _collapse_redundant_nobr(last_created.parent)
 
-            # No trailing cleanup heuristics: rely on non-duplication above
         else:
             self.debug("No formatting context found")
-            # Try to merge with previous text node
             if (
                 table_index > 0
                 and foster_parent.children[table_index - 1].tag_name == "#text"
@@ -6122,11 +6219,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     f"Merged with previous text node: {foster_parent.children[table_index - 1]}"
                 )
             else:
-                # No formatting context; before creating a bare text node check for preceding
-                # empty formatting element (e.g. <b>) that was itself foster-parented just before
-                # the table. For the first character run following such an element,
-                # create a NEW sibling formatting element wrapper rather than reusing the empty one
-                # or emitting bare text. (Matches reconstruction outcome producing <b><b>text<table>...)
                 if table_index > 0:
                     prev = foster_parent.children[table_index - 1]
                     if prev.tag_name in FORMATTING_ELEMENTS and not any(
@@ -6149,8 +6241,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                             before=foster_parent.children[table_index],
                             push_override=False,
                         )
-                        # Add to active formatting list (spec reconstruction would have done this). We intentionally
-                        # do NOT push onto open elements stack so later reconstruction after </table> sees it as stale.
                         existing_entry = context.active_formatting_elements.find_element(prev)
                         if existing_entry is not None:
                             existing_entry.element = new_wrapper
@@ -6166,7 +6256,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                             f"Created new formatting wrapper <{prev.tag_name}> for foster-parented text run"
                         )
                         return True
-                # Fallback: create bare text node before table
                 self.parser.insert_text(
                     text,
                     context,
@@ -6218,6 +6307,69 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     popped = stack.pop()
                     if popped is table_node:
                         break
+                # Drop empty formatting element residues (e.g. adoption clones) that ended up as direct table children
+                # after the adoption agency rewiring. These anchors have no children and are no longer tracked on the
+                # open-elements stack or in the active formatting list, so removing them restores the spec tree shape.
+                stale_children = []
+                for child in list(table_node.children):
+                    if (
+                        child.tag_name in FORMATTING_ELEMENTS
+                        and not child.children
+                        and not context.open_elements.contains(child)
+                    ):
+                        stale_children.append(child)
+                for stale in stale_children:
+                    entry = context.active_formatting_elements.find_element(stale)
+                    if entry is not None:
+                        context.active_formatting_elements.remove_entry(entry)
+                    table_node.remove_child(stale)
+                    self.debug(
+                        f"Removed empty formatting residue <{stale.tag_name}> from <table>"
+                    )
+
+                def _unwrap_stray_formatting(parent):
+                    table_allowed = {
+                        "tbody": {"tr"},
+                        "thead": {"tr"},
+                        "tfoot": {"tr"},
+                        "tr": {"td", "th"},
+                    }
+                    for child in list(parent.children):
+                        _unwrap_stray_formatting(child)
+                    allowed = table_allowed.get(parent.tag_name)
+                    if allowed is None:
+                        return
+                    for child in list(parent.children):
+                        if child.tag_name in table_allowed:
+                            continue
+                        if child.tag_name in FORMATTING_ELEMENTS:
+                            if context.open_elements.contains(child):
+                                continue
+                            entry = context.active_formatting_elements.find_element(child)
+                            if entry is not None:
+                                continue
+                            insert_at = parent.children.index(child)
+                            for grand in list(child.children):
+                                child.remove_child(grand)
+                                parent.insert_child_at(insert_at, grand)
+                                insert_at += 1
+                            parent.remove_child(child)
+                            self.debug(
+                                f"Unwrapped stray formatting <{child.tag_name}> from <{parent.tag_name}>"
+                            )
+                    for child in list(parent.children):
+                        if child.tag_name in FORMATTING_ELEMENTS and not child.children:
+                            if context.open_elements.contains(child):
+                                continue
+                            entry = context.active_formatting_elements.find_element(child)
+                            if entry is not None:
+                                context.active_formatting_elements.remove_entry(entry)
+                            parent.remove_child(child)
+                            self.debug(
+                                f"Removed empty formatting residue <{child.tag_name}> from <{parent.tag_name}>"
+                            )
+
+                _unwrap_stray_formatting(table_node)
                 if context.active_formatting_elements:
                     for entry in list(context.active_formatting_elements):
                         el = entry.element

@@ -22,11 +22,14 @@ class FormattingElementEntry:
         self.token = token
 
     def matches(self, tag_name, attributes=None):
+        if self.element is None:
+            return False
         if self.element.tag_name != tag_name:
             return False
         if attributes is None:
             return True
         return self.element.attributes == attributes
+
 
 
 class ActiveFormattingElements:
@@ -36,6 +39,7 @@ class ActiveFormattingElements:
         self._stack = []
         self._max_size = max_size
 
+    # --- basic list operations ---
     def push(self, element, token):
         entry = FormattingElementEntry(element, token)
         self._apply_noahs_ark(entry)
@@ -43,62 +47,13 @@ class ActiveFormattingElements:
         if len(self._stack) > self._max_size:
             self._stack.pop(0)
 
-    def find(self, tag_name, attributes=None):
-        for entry in reversed(self._stack):
-            if entry.matches(tag_name, attributes):
-                return entry
-        return None
+    def push_marker(self):
+        self._stack.append(FormattingElementEntry(None, None))
+        if len(self._stack) > self._max_size:
+            self._stack.pop(0)
 
-    def find_element(self, element):
-        for entry in self._stack:
-            if entry.element is element:
-                return entry
-        return None
-
-    def remove(self, element):
-        for i, entry in enumerate(self._stack):
-            if entry.element is element:
-                self._stack.pop(i)
-                return True
-        return False
-
-    def remove_entry(self, entry):
-        if entry in self._stack:
-            self._stack.remove(entry)
-            return True
-        return False
-
-    def _apply_noahs_ark(self, new_entry):
-        matching = []
-        for entry in self._stack:
-            if entry.matches(new_entry.element.tag_name, new_entry.element.attributes):
-                matching.append(entry)
-        if len(matching) >= 3:
-            earliest = matching[0]
-            if earliest in self._stack:
-                self._stack.remove(earliest)
-
-    def is_empty(self):
-        return len(self._stack) == 0
-
-    def __iter__(self):
-        return iter(self._stack)
-
-    def get_index(self, entry):
-        for i, e in enumerate(self._stack):
-            if e is entry:
-                return i
-        return -1
-
-    def __len__(self):
-        return len(self._stack)
-
-    def replace_entry(self, old_entry, new_element, new_token):
-        for i, entry in enumerate(self._stack):
-            if entry is old_entry:
-                self._stack[i] = FormattingElementEntry(new_element, new_token)
-                return
-        self.push(new_element, new_token)
+    def pop(self):
+        return self._stack.pop() if self._stack else None
 
     def insert_at(self, index, element, token):
         entry = FormattingElementEntry(element, token)
@@ -109,6 +64,85 @@ class ActiveFormattingElements:
         self._stack.insert(index, entry)
         if len(self._stack) > self._max_size:
             self._stack.pop(0)
+        return entry
+
+    # --- Noah's Ark clause ---
+    def _apply_noahs_ark(self, new_entry):
+        matching = []
+        for entry in self._stack:
+            if entry.element is None:
+                continue
+            if entry.matches(new_entry.element.tag_name, new_entry.element.attributes):
+                matching.append(entry)
+        if len(matching) >= 3:
+            earliest = matching[0]
+            if earliest in self._stack:
+                self._stack.remove(earliest)
+
+    # --- queries ---
+    def is_empty(self):
+        return len(self._stack) == 0
+
+    def find(self, tag_name):
+        for entry in reversed(self._stack):
+            element = entry.element
+            if element is None:
+                continue
+            if element.tag_name == tag_name:
+                return entry
+        return None
+
+    def find_element(self, element):
+        for entry in self._stack:
+            if entry.element is element:
+                return entry
+        return None
+
+    def get_index(self, entry):
+        for idx, current in enumerate(self._stack):
+            if current is entry:
+                return idx
+        return -1
+
+    # --- mutation helpers ---
+    def remove(self, element):
+        for idx, entry in enumerate(self._stack):
+            if entry.element is element:
+                del self._stack[idx]
+                return True
+        return False
+
+    def remove_entry(self, entry):
+        if entry in self._stack:
+            self._stack.remove(entry)
+            return True
+        return False
+
+    def replace_entry(self, entry, new_element, new_token):
+        for idx, current in enumerate(self._stack):
+            if current is entry:
+                self._stack[idx] = FormattingElementEntry(new_element, new_token)
+                return
+        self.push(new_element, new_token)
+
+    def clear_last_marker(self):
+        for idx in range(len(self._stack) - 1, -1, -1):
+            if self._stack[idx].element is None:
+                del self._stack[idx]
+                break
+
+    def remove_up_to_last_marker(self):
+        while self._stack:
+            entry = self._stack.pop()
+            if entry.element is None:
+                break
+
+    # --- iteration protocol ---
+    def __iter__(self):
+        return iter(self._stack)
+
+    def __len__(self):
+        return len(self._stack)
 
 
 class OpenElementsStack:
@@ -510,137 +544,105 @@ class AdoptionAgencyAlgorithm:
         context,
         iteration_count=0,
     ):
-        """Run the complex adoption agency algorithm (steps 8-19) per HTML5 spec.
+        """Run the complex adoption agency algorithm (steps 8-19) per HTML5 spec."""
 
-        This implements the full algorithm with proper element reconstruction
-        implementing the algorithmic steps defined by the HTML Standard.
-
-        Args:
-            iteration_count: Which iteration of the algorithm this is (1-8)
-        """
         formatting_element = formatting_entry.element
-        # DEBUG snapshot pre-steps
         self.parser.debug(
             f"[adoption] complex-start tag=<{formatting_element.tag_name}> iteration={iteration_count} stack={[e.tag_name for e in context.open_elements._stack]} afe={[e.element.tag_name for e in context.active_formatting_elements if e.element]} furthest=<{furthest_block.tag_name}>"
         )
 
-        # Step 8: bookmark position of formatting element
         bookmark_index = context.active_formatting_elements.get_index(formatting_entry)
-        # Step 9: Create a list of elements to be removed from the stack of open elements
         formatting_index = context.open_elements.index_of(formatting_element)
+        if formatting_index == -1:
+            return False
 
-        # Step 10: common ancestor (element before formatting element in stack)
         if formatting_index - 1 >= 0:
             common_ancestor = context.open_elements._stack[formatting_index - 1]
         else:
-            # If there is no element before it in the stack, fall back to its DOM parent
             common_ancestor = formatting_element.parent
 
         if not common_ancestor:
             return False
 
-        # --- Pure spec Steps 11-13 implementation ---
-        # Step 11 metrics: count intermediates on stack between formatting element and furthest block
-        fe_index = context.open_elements.index_of(formatting_element)
-        fb_index = context.open_elements.index_of(furthest_block)
-        if fe_index != -1 and fb_index != -1 and fb_index > fe_index:
-            _intermediates = fb_index - fe_index - 1  # noqa: F841 retained for potential debugging
-        else:
-            _intermediates = 0  # noqa: F841
-        open_stack = context.open_elements._stack  # noqa: F841 (debug logging later may reference)
-        # Guard: indexes must be valid
-        if fe_index == -1 or fb_index == -1 or fb_index <= fe_index:
-            return False
-
-        # --- Accurate Spec Steps 11–13 implementation ---
-        # Step 11: node and lastNode initialized to furthest_block
         node = furthest_block
         last_node = furthest_block
         inner_loop_counter = 0
         removed_above = {}
+
         while True:
             if node is formatting_element:
                 break
+
             inner_loop_counter += 1
+
             if context.open_elements.contains(node):
                 idx_cur = context.open_elements.index_of(node)
                 above_index = idx_cur - 1
-                node_above = (
-                    context.open_elements._stack[above_index]
-                    if above_index >= 0
-                    else None
-                )
+                node_above = context.open_elements._stack[above_index] if above_index >= 0 else None
             else:
                 node_above = removed_above.get(id(node))
+
             if node_above is None:
                 break
+
             candidate = node_above
             candidate_entry = context.active_formatting_elements.find_element(candidate)
+
             if not candidate_entry:
                 if context.open_elements.contains(candidate):
                     idx_cand = context.open_elements.index_of(candidate)
-                    above2 = (
-                        context.open_elements._stack[idx_cand - 1]
-                        if idx_cand - 1 >= 0
-                        else None
-                    )
+                    above2 = context.open_elements._stack[idx_cand - 1] if idx_cand - 1 >= 0 else None
                     removed_above[id(candidate)] = above2
                     context.open_elements.remove_element(candidate)
                 node = candidate
                 continue
+
             if inner_loop_counter > 3:
                 cand_index = context.active_formatting_elements.get_index(candidate_entry)
                 if cand_index != -1:
                     context.active_formatting_elements.remove_entry(candidate_entry)
                 if context.open_elements.contains(candidate):
                     idx_cand = context.open_elements.index_of(candidate)
-                    above2 = (
-                        context.open_elements._stack[idx_cand - 1]
-                        if idx_cand - 1 >= 0
-                        else None
-                    )
+                    above2 = context.open_elements._stack[idx_cand - 1] if idx_cand - 1 >= 0 else None
                     removed_above[id(candidate)] = above2
                     context.open_elements.remove_element(candidate)
                 node = candidate
                 continue
+
             if candidate is formatting_element:
                 node = candidate
                 break
+
             cand_index = context.active_formatting_elements.get_index(candidate_entry)
             if last_node is furthest_block and cand_index != -1:
                 bookmark_index = cand_index + 1
+
             clone = Node(candidate.tag_name, candidate.attributes.copy())
             context.active_formatting_elements.replace_entry(candidate_entry, clone, candidate_entry.token)
             if context.open_elements.contains(candidate):
                 context.open_elements.replace_element(candidate, clone)
+
             clone.append_child(last_node)
             last_node = clone
             node = clone
 
-        # Step 14 (refined): Insert last_node at the "appropriate place for inserting a node" using common_ancestor as override.
-        # Empirically our suite expects movement even when last_node == furthest_block (some legacy formatting cases),
-        # so we retain unconditional move variant (with cycle guard) that produced best pass rate earlier.
-        # Step 14 (unconditional move variant that previously maximized pass rate)
-        # Step 14 refinement: avoid relocating if last_node already correctly placed.
-        # Unified Step 14 relocation following spec: relocate only if ordering or parent differ.
-        # Template content preservation: if common_ancestor is a <template> and the furthest block (or formatting element)
-        # lives inside its 'content' fragment, redirect placement to that fragment to avoid leaking nodes outside.
-        if common_ancestor.tag_name == 'template':
+        if common_ancestor.tag_name == "template":
             content_child = None
             for ch in common_ancestor.children:
-                if ch.tag_name == 'content':
+                if ch.tag_name == "content":
                     content_child = ch
                     break
             if content_child is not None:
-                def _under(node, ancestor):
-                    cur = node
+                def _under(cur, ancestor):
                     while cur is not None:
                         if cur is ancestor:
                             return True
                         cur = cur.parent
                     return False
+
                 if _under(furthest_block, content_child) or _under(formatting_element, content_child):
                     common_ancestor = content_child
+
         self._step14_place_last_node(
             formatting_element,
             last_node,
@@ -648,42 +650,21 @@ class AdoptionAgencyAlgorithm:
             common_ancestor,
             context,
         )
-        # Instrumentation: show path from formatting element to furthest_block (if still connected)
-        path_tags = []
-        cur = furthest_block
-        while cur is not None and cur is not formatting_element and len(path_tags) < 25:
-            path_tags.append(cur.tag_name)
-            cur = cur.parent
-        if cur is formatting_element:
-            path_tags.append(formatting_element.tag_name)
-        self.parser.debug(f"[adoption][diag] path(furthest->fmt)={'/'.join(path_tags)}")
-        self.parser.debug(f"[adoption][diag] common_ancestor_children={[c.tag_name for c in (common_ancestor.children if common_ancestor.children else [])]}")
-        self.parser.debug(f"[adoption] after step13 (spec) chain_root=<{last_node.tag_name}> parent=<{last_node.parent.tag_name if last_node.parent else 'None'}>")
 
-        # De-duplicate last_node (furthest_block chain root) in open elements stack if movement created duplicate logical entries.
-        # Keep the earliest occurrence (closest to root) and drop later duplicates to maintain stack invariants.
         occurrences = [i for i, el in enumerate(context.open_elements._stack) if el is last_node]
         if len(occurrences) > 1:
-            # remove from end backwards except first
             for i in reversed(occurrences[1:]):
                 context.open_elements._stack.pop(i)
-            self.parser.debug(f"[adoption][dedupe] removed duplicate stack entries for <{last_node.tag_name}> now stack={[e.tag_name for e in context.open_elements._stack]}")
+            self.parser.debug(
+                f"[adoption][dedupe] removed duplicate stack entries for <{last_node.tag_name}> now stack={[e.tag_name for e in context.open_elements._stack]}"
+            )
 
-        # Always proceed with formatting element cloning (Steps 14–19); removed ladder-lift early-exit heuristic.
-
-        # (No single-intermediate-clone normalization; revert to straightforward cloning path.)
-
-        # Previous relocation adjustment removed; spec insertion above covers extraction.
-
-        # Step 15: Create a clone of the formatting element
         fe_clone = Node(formatting_element.tag_name, formatting_element.attributes.copy())
-        # Step 16: Move all children of furthest_block into fe_clone
         for ch in list(furthest_block.children):
             furthest_block.remove_child(ch)
             fe_clone.append_child(ch)
-        # Step 17: Append fe_clone to furthest_block
         furthest_block.append_child(fe_clone)
-        # Step 18: Remove formatting entry and insert clone at bookmark position per spec
+
         formatting_token = formatting_entry.token
         context.active_formatting_elements.remove_entry(formatting_entry)
         if bookmark_index == -1:
@@ -693,18 +674,21 @@ class AdoptionAgencyAlgorithm:
         if bookmark_index > len(context.active_formatting_elements):
             bookmark_index = len(context.active_formatting_elements)
         context.active_formatting_elements.insert_at(bookmark_index, fe_clone, formatting_token)
-        # Step 19: Remove formatting element from open elements stack; insert fe_clone immediately AFTER furthest_block
+
         if context.open_elements.contains(formatting_element):
             context.open_elements.remove_element(formatting_element)
         if context.open_elements.contains(furthest_block):
             fb_index2 = context.open_elements.index_of(furthest_block)
             context.open_elements._stack.insert(fb_index2 + 1, fe_clone)
-        # After step 19 the current node should be the last entry on the open elements stack.
+
         if context.open_elements._stack:
             context.move_to_element(context.open_elements._stack[-1])
+
         stack_tags = [e.tag_name for e in context.open_elements._stack]
         afe_tags = [e.element.tag_name for e in context.active_formatting_elements if e.element]
-        self.parser.debug(f"[adoption] post-step19 fe_clone=<{fe_clone.tag_name}> parent=<{fe_clone.parent.tag_name if fe_clone.parent else 'None'}> stack={stack_tags} afe={afe_tags}")
+        self.parser.debug(
+            f"[adoption] post-step19 fe_clone=<{fe_clone.tag_name}> parent=<{fe_clone.parent.tag_name if fe_clone.parent else 'None'}> stack={stack_tags} afe={afe_tags}"
+        )
         self.parser.debug(
             f"[adoption] complex-end tag=<{formatting_element.tag_name}> stack={[e.tag_name for e in context.open_elements._stack]} afe={[e.element.tag_name for e in context.active_formatting_elements if e.element]}"
         )
@@ -758,6 +742,55 @@ class AdoptionAgencyAlgorithm:
             and target.children[-1] is last_node
         ):
             self.parser.debug("[adoption][step14] skip (already tail child)")
+            return
+
+        if (
+            last_node is furthest_block
+            and last_node.tag_name in {"td", "th"}
+            and last_node.parent
+            and last_node.parent.tag_name == "tr"
+        ):
+            self.parser.debug("[adoption][step14] retain cell under <tr>")
+            return
+
+        table_child_allow = {
+            "table": {"caption", "colgroup", "thead", "tbody", "tfoot", "tr"},
+            "tbody": {"tr"},
+            "thead": {"tr"},
+            "tfoot": {"tr"},
+            "tr": {"td", "th"},
+        }
+        if target.tag_name == "table" and last_node.tag_name == "tr":
+            section = None
+            for ch in reversed(target.children):
+                if ch.tag_name in {"tbody", "thead", "tfoot"}:
+                    section = ch
+                    break
+            if section is not None:
+                if last_node.parent is section:
+                    self.parser.debug(
+                        "[adoption][step14] retain <tr> under existing table section"
+                    )
+                    return
+                if last_node.parent is not None:
+                    last_node.parent.remove_child(last_node)
+                section.append_child(last_node)
+                self.parser.debug(
+                    f"[adoption][step14] routed <tr> into <{section.tag_name}>"
+                )
+                return
+        allowed = table_child_allow.get(target.tag_name)
+        if (
+            allowed
+            and last_node.tag_name in allowed
+            and last_node.tag_name not in {"td", "th"}
+        ):
+            if last_node.parent is target:
+                target.remove_child(last_node)
+            target.append_child(last_node)
+            self.parser.debug(
+                f"[adoption][step14] table-append <{last_node.tag_name}> -> <{target.tag_name}>"
+            )
             return
 
         # Table contexts rely on foster parenting (table, tbody, thead, tfoot, tr).
