@@ -3366,6 +3366,29 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
             )
         if not inside_object:
             context.active_formatting_elements.push(new_element, token)
+        if tag_name == "a" and new_element.parent is not None:
+            parent = new_element.parent
+            active_anchor_elements = {
+                entry.element
+                for entry in context.active_formatting_elements
+                if entry.element is not None and entry.element.tag_name == "a"
+            }
+            target_anchor = existing_a.element if (tag_name == "a" and existing_a and existing_a.element) else None
+            stale = []
+            for child in parent.children:
+                if (
+                    child.tag_name == "a"
+                    and child is not new_element
+                    and child not in active_anchor_elements
+                    and not child.children
+                    and child is target_anchor
+                ):
+                    stale.append(child)
+            if stale:
+                for anchor in stale:
+                    parent.remove_child(anchor)
+                # Ensure context remains positioned on the newly inserted anchor.
+                context.move_to_element(new_element)
         if tag_name == "nobr":
             parent = new_element.parent
             changed = True
