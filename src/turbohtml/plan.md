@@ -1,7 +1,6 @@
-# Remaining HTML5 Tree-Construction Gaps (7 tests)
+# Remaining HTML5 Tree-Construction Gaps (6 tests)
 
 ## tests1.dat – lists and table contexts
-- **Case 102** (`<ul><li></li><div><li>…`): definition-list style adoption still mangles the `<li>` stack when inline formatting is reparented. Need the adoption simple case to stop before the list boundary and then trigger reconstruction under the correct `<li>`.
 - **Case 108** (`<table><colgroup><tbody><colgroup>…`): we continue to accept `<colgroup>` inside a tbody/tr. The parser should jump back to the “in table” insertion mode and reprocess structural tokens so they land before the row group.
 
 ## tests19.dat – nested tables and inline adoption
@@ -14,13 +13,12 @@
 - **Case 7** (`<center><center><td>…` / nested tables + `<font>`): stacked centers + fonts break when adoption fires inside table insertion modes. We need a unified path that reprocesses structural tokens in “in table” mode and then rebuilds the formatting chain without duplicates.
 
 # Targeted Workstreams
-1. **List/adoption boundary enforcement**  \
-	Refine the simple-case adoption cleanup so it preserves the active `<li>` container and rebuilds formatting beneath it (tests1 102, tricky01 3).
-2. **Table insertion-mode recovery**  \
+
+1. **Table insertion-mode recovery**  \
 	When structural tags like `<colgroup>` appear from tbody/tr contexts, switch back to “in table”, reprocess the token, and ensure adoption doesn’t leave the insertion point inside the row group (tests1 108, tricky01 7).
-3. **Adoption × foster parenting integration**  \
+2. **Adoption × foster parenting integration**  \
 	Share a single “appropriate place” helper for Step 14 and foster-parent relocation so inline nodes stay attached to the correct table ancestor (tests19 93/94, tricky01 5/7).
-4. **Inline chain stabilization in nested tables**  \
+3. **Inline chain stabilization in nested tables**  \
 	Audit the cloned formatting stacks created during complex-case adoption to guarantee we neither duplicate nor drop `<b>/<i>` wrappers when the furthest block sits in a cell or foster-parent slot (tests19 93/94, tricky01 5).
 
 Each item should ship with focused runs (`python run_tests.py --filter-files …`) followed by a full regression sweep.
