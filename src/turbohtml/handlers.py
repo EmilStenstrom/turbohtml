@@ -4320,6 +4320,9 @@ class ParagraphTagHandler(TagHandler):
                     )
                 else:
                     self.debug("Foster parenting paragraph out of table")
+                    if context.open_elements.has_element_in_button_scope("p"):
+                        fake_end = HTMLToken("EndTag", tag_name="p")
+                        self.handle_end(fake_end, context)
                     foster_parent_element(token.tag_name, token.attributes, context, self.parser)
                 return True
 
@@ -4550,19 +4553,29 @@ class ParagraphTagHandler(TagHandler):
                 and table.previous_sibling.tag_name == "p"
             ):
                 original_paragraph = table.previous_sibling
-                p_token = self._synth_token("p")
-                self.parser.insert_element(
-                    p_token,
-                    context,
-                    mode="normal",
-                    enter=False,
-                    parent=original_paragraph,
-                    push_override=False,
-                )
-                self.debug(
-                    f"Created implicit p as child of original paragraph {original_paragraph}"
-                )
-                return True
+                # Only synthesize an additional paragraph if the original paragraph is effectively empty.
+                contains_content = False
+                for child in original_paragraph.children:
+                    if child.tag_name != "#text":
+                        contains_content = True
+                        break
+                    if child.text_content and child.text_content.strip():
+                        contains_content = True
+                        break
+                if not contains_content:
+                    p_token = self._synth_token("p")
+                    self.parser.insert_element(
+                        p_token,
+                        context,
+                        mode="normal",
+                        enter=False,
+                        parent=original_paragraph,
+                        push_override=False,
+                    )
+                    self.debug(
+                        f"Created implicit p as child of original paragraph {original_paragraph}"
+                    )
+                    return True
 
         # Standard behavior: Find nearest p ancestor and move up to its parent
         if context.current_parent.tag_name == "p":
@@ -5660,53 +5673,58 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 # After reconstruction the current_parent points at the innermost reconstructed formatting element.
                 # Move back to the block so our descent logic below deterministically picks the rightmost formatting chain.
                 context.move_to_element(block_elem)
-            target = context.current_parent
-            # If the last child is a formatting element, descend to its deepest rightmost formatting descendant
-            # Only descend into trailing formatting element if it is also the current insertion node.
-            # This prevents immediately following text after an adoption-agency close (e.g. </a>)
-            # from being merged back inside the reconstructed formatting clone when current_parent
-            # has been intentionally moved to the block (structural relocation already applied).
-            if target.children and target.children[-1].tag_name in FORMATTING_ELEMENTS:
-                last_fmt = target.children[-1]
-                if context.current_parent is last_fmt:
-                    cursor = last_fmt
+            block_elem = context.current_parent
+            target = block_elem
+            # Prefer the most recent active formatting element that is currently a descendant of the block.
+            if context.active_formatting_elements:
+                for entry in reversed(context.active_formatting_elements._stack):
+                    node = entry.element
+                    if node is None:
+                        break
+                    if not context.open_elements.contains(node):
+                        continue
+                    # Check if node lives inside the foster-parented block
+                    cursor = node
+                    while cursor is not None and cursor is not block_elem:
+                        cursor = cursor.parent
+                    if cursor is block_elem or node is block_elem:
+                        target = node
+                        break
+            # If target is still the block, but its last child is a formatting element that is open, descend to the
+            # deepest rightmost open formatting descendant so upcoming text nests inside the inline wrapper.
+            if target is block_elem and block_elem.children:
+                candidate = block_elem.children[-1]
+                if (
+                    candidate.tag_name in FORMATTING_ELEMENTS
+                    and context.open_elements.contains(candidate)
+                ):
+                    cursor = candidate
                     while (
                         cursor.children
                         and cursor.children[-1].tag_name in FORMATTING_ELEMENTS
+                        and context.open_elements.contains(cursor.children[-1])
                     ):
                         cursor = cursor.children[-1]
                     target = cursor
-            else:
-                # If we expected an <a> (active formatting) but it wasn't reconstructed, attempt reconstruction once;
-                # if still absent and an active <a> exists elsewhere, create a narrow segmentation clone only when
-                # paragraph sits immediately before the table (replaces prior broad manual clone heuristic).
-                a_entry = context.active_formatting_elements.find("a") if context.active_formatting_elements else None
-                if a_entry and not any(ch.tag_name == "a" for ch in context.current_parent.children):
-                    pre_ids = {id(ch) for ch in context.current_parent.children}
-                    _reconstruct_fmt(self.parser, context)
-                    new_a = [ch for ch in context.current_parent.children if ch.tag_name == 'a' and id(ch) not in pre_ids]
-                    if new_a:
-                        self.debug('[anchor-cont][reconstruct] late reconstruction produced <a>')
-                    else:
-                        # Narrow segmentation path
-                        a_elem = a_entry.element
-                        if a_elem and context.current_parent.find_ancestor('a') is None:
-                            table_node = self.parser.find_current_table(context)
-                            cur_parent = context.current_parent
-                            if table_node and table_node.parent and cur_parent.parent is table_node.parent:
-                                siblings = table_node.parent.children
-                                # Safe index computation without exception flow
-                                t_index = -1
-                                for _i, _ch in enumerate(siblings):
-                                    if _ch is table_node:
-                                        t_index = _i
-                                        break
-                                if t_index > 0 and siblings[t_index-1] is cur_parent:
-                                    seg_token = HTMLToken('StartTag', tag_name='a', attributes=a_elem.attributes.copy())
-                                    self.debug('[anchor-cont][seg-clone] inserting segmentation <a> clone (manual clone removed)')
-                                    seg_node = self.parser.insert_element(seg_token, context, mode='normal', enter=True)
-                                    a_entry.element = seg_node
-                                    target = seg_node
+            # If we still ended up targeting the block and an active <a> exists but wasn't reconstructed into it,
+            # perform a one-time reconstruction so the upcoming text can reuse that anchor wrapper.
+            if (
+                target is block_elem
+                and context.active_formatting_elements
+                and context.active_formatting_elements.find("a")
+                and not any(ch.tag_name == "a" for ch in block_elem.children)
+            ):
+                pre_ids = {id(ch) for ch in block_elem.children}
+                _reconstruct_fmt(self.parser, context)
+                context.move_to_element(block_elem)
+                new_a = [
+                    ch
+                    for ch in block_elem.children
+                    if ch.tag_name == "a" and id(ch) not in pre_ids
+                ]
+                if new_a:
+                    self.debug("[anchor-cont][reconstruct] late reconstruction produced <a>")
+                    target = new_a[-1]
             # Append/merge text at target
             if target.children and target.children[-1].tag_name == "#text":
                 target.children[-1].text_content += text
@@ -5716,6 +5734,9 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
         # Foster parent non-whitespace text nodes
         table = self.parser.find_current_table(context)
+        self.debug(
+            f"[foster-chain] current table: {table.tag_name if table else None} parent={table.parent.tag_name if table and table.parent else None}"
+        )
         if not table or not table.parent:
             self.debug("No table or table parent found")
             return False
@@ -5958,6 +5979,10 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         formatting_elements = context.current_parent.collect_ancestors_until(
             foster_parent, lambda n: n.tag_name in FORMATTING_ELEMENTS
         )
+        self.debug(
+            "Formatting chain candidates: "
+            + str([elem.tag_name for elem in formatting_elements])
+        )
         reused_wrapper = None
         if formatting_elements:
             formatting_elements = list(
@@ -6023,6 +6048,12 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     formatting_elements
                 ):  # outer->inner creation
                     force_sibling = fmt_elem.tag_name in seen_run
+                    if fmt_elem is context.current_parent:
+                        current_parent_for_chain = fmt_elem
+                        continue
+                    if fmt_elem.parent is current_parent_for_chain:
+                        current_parent_for_chain = fmt_elem
+                        continue
                     if (
                         current_parent_for_chain is foster_parent
                         and prev_sibling
@@ -6162,6 +6193,9 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     current_parent_for_chain = sibling
 
             text_holder = current_parent_for_chain
+            self.debug(
+                f"Foster-parent chain insertion target: <{text_holder.tag_name}>"
+            )
             self.parser.insert_text(text, context, parent=text_holder, merge=True)
             self.debug(f"Inserted foster-parented text into {text_holder.tag_name}")
             self.debug(
