@@ -73,7 +73,11 @@ def should_foster_parent(tag_name, attrs, context, parser):
     This returns True only when the parser would currently foster parent the element.
     Side-effects (moving insertion point, salvage) stay in parser for phase 1.
     """
-    if context.document_state != DocumentState.IN_TABLE:
+    if context.document_state not in (
+        DocumentState.IN_TABLE,
+        DocumentState.IN_TABLE_BODY,
+        DocumentState.IN_ROW,
+    ):
         return False
     if tag_name in TABLE_ELEMENTS_CANON:
         return False

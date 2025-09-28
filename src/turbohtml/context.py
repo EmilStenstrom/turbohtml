@@ -65,6 +65,10 @@ class ParseContext:
         # the *next* character token in IN_BODY triggers active formatting elements reconstruction
         # before inserting text. Cleared immediately after consumption (see TextHandler).
         self.post_adoption_reconstruct_pending = False
+        # Deferred wrapper for legacy formatting when adoption removes the element but upcoming tokens
+        # should continue inside an equivalent container (e.g. fostered <font> around stray table content).
+        self.pending_font_wrapper_parent = None
+        self.pending_font_wrapper = None
         # Fragment parsing: track whether we've already ignored the first start tag
         # matching the fragment context element (e.g., context='td' and first <td>). The
         # HTML fragment algorithm only skips the context element token itself; subsequent

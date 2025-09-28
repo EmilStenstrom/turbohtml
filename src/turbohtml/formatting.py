@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from .node import Node
 from .context import DocumentState
+from .constants import FORMATTING_ELEMENTS
 
 
 def reconstruct_active_formatting_elements(parser, context):
@@ -69,16 +70,37 @@ def reconstruct_active_formatting_elements(parser, context):
             DocumentState.IN_TABLE_BODY,
             DocumentState.IN_ROW,
         ):
-            first_table_idx = None
-            for idx, child in enumerate(context.current_parent.children):
-                if child.tag_name == "table":
-                    first_table_idx = idx
+            table_node = parser.find_current_table(context)
+            inside_table_subtree = False
+            cur_parent = context.current_parent
+            while cur_parent:
+                if cur_parent is table_node:
+                    inside_table_subtree = True
                     break
-            if first_table_idx is not None:
-                context.current_parent.children.insert(first_table_idx, clone)
-                clone.parent = context.current_parent
+                cur_parent = cur_parent.parent
+            if (
+                table_node
+                and not inside_table_subtree
+                and context.current_parent.tag_name in FORMATTING_ELEMENTS
+                and table_node.parent is not None
+            ):
+                foster_parent = table_node.parent
+                try:
+                    insert_at = foster_parent.children.index(table_node)
+                except ValueError:
+                    insert_at = len(foster_parent.children)
+                foster_parent.insert_child_at(insert_at, clone)
             else:
-                context.current_parent.append_child(clone)
+                first_table_idx = None
+                for idx, child in enumerate(context.current_parent.children):
+                    if child.tag_name == "table":
+                        first_table_idx = idx
+                        break
+                if first_table_idx is not None:
+                    context.current_parent.children.insert(first_table_idx, clone)
+                    clone.parent = context.current_parent
+                else:
+                    context.current_parent.append_child(clone)
         else:
             context.current_parent.append_child(clone)
         context.open_elements.push(clone)

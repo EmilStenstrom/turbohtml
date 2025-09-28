@@ -3,7 +3,7 @@
 Implementation focuses on spec steps; comments describe intent (why) rather than history.
 All static type annotations removed (runtime only)."""
 
-from turbohtml.node import Node
+from .node import Node
 from turbohtml.constants import (
     FORMATTING_ELEMENTS,
     SPECIAL_CATEGORY_ELEMENTS,
@@ -278,6 +278,9 @@ class AdoptionAgencyAlgorithm:
 
             furthest_block = self._find_furthest_block(formatting_element, context)
             if furthest_block is None:
+                self.parser.debug(
+                    f"[adoption] simple-case for </{tag_name}> stack={[el.tag_name for el in context.open_elements._stack]}"
+                )
                 self._run_simple_case(formatting_entry, formatting_element, context)
                 return True
 
@@ -314,6 +317,10 @@ class AdoptionAgencyAlgorithm:
     def _run_simple_case(self, formatting_entry, formatting_element, context):
         stack = context.open_elements._stack
 
+        had_table_descendant = any(
+            child.tag_name == "table" for child in formatting_element.children
+        )
+
         # Remove the formatting element entry from the active list (spec step 7a)
         context.active_formatting_elements.remove_entry(formatting_entry)
 
@@ -327,12 +334,6 @@ class AdoptionAgencyAlgorithm:
                 removed = stack.pop()
                 if removed is formatting_element:
                     break
-
-        # Step 7d: set current node to last entry in stack, with body fallback
-        if stack:
-            context.move_to_element(stack[-1])
-        else:
-            context.move_to_element(self._get_body_or_root(context))
 
         # Anchor specific clean-up: remove stray open anchors no longer in AFE
         if formatting_element.tag_name == "a":
@@ -359,22 +360,44 @@ class AdoptionAgencyAlgorithm:
         # If the formatting element still has a parent that is a viable insertion point,
         # realign the insertion location to that ancestor so foreign content stays nested.
         fmt_parent = formatting_element.parent
-        if fmt_parent is not None and fmt_parent is not context.current_parent:
+        target = None
+        if fmt_parent is not None:
             if fmt_parent.tag_name in ("td", "th", "caption"):
-                context.move_to_element(fmt_parent)
-            else:
                 target = fmt_parent
-                while target is not None:
-                    if target is context.current_parent:
+            else:
+                candidate = fmt_parent
+                while candidate is not None:
+                    if candidate is context.current_parent:
+                        target = candidate
                         break
-                    if context.open_elements.contains(target):
+                    if context.open_elements.contains(candidate):
+                        target = candidate
                         break
-                    tag = target.tag_name
+                    tag = candidate.tag_name
                     if tag.startswith("svg ") or tag.startswith("math ") or tag in {"svg", "math", "math annotation-xml"}:
                         break
-                    target = target.parent
-                if target is not None and target is not context.current_parent:
-                    context.move_to_element(target)
+                    candidate = candidate.parent
+                if target is None:
+                    target = fmt_parent
+        if target is None:
+            if context.open_elements._stack:
+                target = context.open_elements._stack[-1]
+            else:
+                target = self._get_body_or_root(context)
+        context.move_to_element(target)
+        if formatting_element.tag_name == "font":
+            wrapper_parent = fmt_parent if fmt_parent is not None else target
+            new_wrapper = self._wrap_trailing_font_content(wrapper_parent, context)
+            if new_wrapper is not None:
+                context.pending_font_wrapper_parent = None
+                context.pending_font_wrapper = None
+            elif had_table_descendant and wrapper_parent and wrapper_parent.tag_name != "document-fragment":
+                context.pending_font_wrapper_parent = wrapper_parent
+                context.pending_font_wrapper = None
+            else:
+                context.pending_font_wrapper_parent = None
+                context.pending_font_wrapper = None
+        context.post_adoption_reconstruct_pending = True
 
         # Trigger reconstruction if any active formatting entries are now stale
         for entry in context.active_formatting_elements:
@@ -382,6 +405,37 @@ class AdoptionAgencyAlgorithm:
             if element and not context.open_elements.contains(element):
                 context.post_adoption_reconstruct_pending = True
                 break
+
+    def _wrap_trailing_font_content(self, parent, context):
+        if parent is None or not parent.children:
+            return None
+        last_table_index = None
+        for idx, child in enumerate(parent.children):
+            if child.tag_name == "table":
+                last_table_index = idx
+        if last_table_index is None:
+            return None
+        start_index = last_table_index + 1
+        if start_index >= len(parent.children):
+            return None
+        movable = []
+        idx = start_index
+        while idx < len(parent.children):
+            node = parent.children[idx]
+            if node.tag_name == "a" and node.children:
+                break
+            if node.tag_name == "font" and node.children:
+                break
+            movable.append(node)
+            idx += 1
+        if not movable:
+            return None
+        new_wrapper = Node("font")
+        parent.insert_child_at(start_index, new_wrapper)
+        for node in movable:
+            parent.remove_child(node)
+            new_wrapper.append_child(node)
+        return new_wrapper
 
     def _get_body_or_root(self, context):
         """Get the body element or fallback to root"""

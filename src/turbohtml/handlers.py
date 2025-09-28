@@ -3297,24 +3297,74 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                     context.current_parent, context.open_elements, self.parser.root
                 )
                 if before is not None:
-                    self.debug(
-                        f"Foster parenting formatting element <{tag_name}> before <{before.tag_name}>"
-                    )
-                    new_element = self._insert_formatting_element(
-                        token,
-                        context,
-                        parent=foster_parent_node,
-                        before=before,
-                        push_nobr_late=(tag_name == "nobr"),
-                    )
+                    try:
+                        table_idx = foster_parent_node.children.index(before)
+                    except ValueError:
+                        table_idx = len(foster_parent_node.children)
+                else:
+                    table_idx = len(foster_parent_node.children)
+
+                chain_parent = foster_parent_node
+                chain_before = before
+                if context.active_formatting_elements:
+                    best_idx = -1
+                    best_depth = -1
+                    best_element = None
+                    for entry in context.active_formatting_elements._stack:
+                        candidate = entry.element
+                        if candidate is None or candidate.parent is None:
+                            continue
+                        top = candidate
+                        depth = 0
+                        while top.parent and top.parent is not foster_parent_node:
+                            top = top.parent
+                            depth += 1
+                        if top.parent is not foster_parent_node:
+                            continue
+                        try:
+                            idx = foster_parent_node.children.index(top)
+                        except ValueError:
+                            continue
+                        if idx >= table_idx:
+                            continue
+                        if idx > best_idx or (idx == best_idx and depth > best_depth):
+                            best_idx = idx
+                            best_depth = depth
+                            best_element = candidate
+                    if best_element is not None:
+                        chain_parent = best_element
+                        chain_before = None
+
+                if chain_parent is foster_parent_node:
+                    if chain_before is not None:
+                        self.debug(
+                            f"Foster parenting formatting element <{tag_name}> before <{chain_before.tag_name}>"
+                        )
+                        new_element = self._insert_formatting_element(
+                            token,
+                            context,
+                            parent=foster_parent_node,
+                            before=chain_before,
+                            push_nobr_late=(tag_name == "nobr"),
+                        )
+                    else:
+                        self.debug(
+                            f"Foster parenting formatting element <{tag_name}> (append path) under <{foster_parent_node.tag_name}>"
+                        )
+                        new_element = self._insert_formatting_element(
+                            token,
+                            context,
+                            parent=foster_parent_node,
+                            push_nobr_late=(tag_name == "nobr"),
+                        )
                 else:
                     self.debug(
-                        f"Foster parenting formatting element <{tag_name}> (append path) under <{foster_parent_node.tag_name}>"
+                        f"Foster parenting formatting element <{tag_name}> inside existing chain <{chain_parent.tag_name}>"
                     )
                     new_element = self._insert_formatting_element(
                         token,
                         context,
-                        parent=foster_parent_node,
+                        parent=chain_parent,
                         push_nobr_late=(tag_name == "nobr"),
                     )
                 if tag_name == "a" and context.resume_anchor_after_structure is None:
@@ -5962,9 +6012,18 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         #   2. Split continuation when the immediately previous active/on-stack <a> already has text – create a
         #      sibling <a> for the new foster-parented text run. No generic cloning or broad continuation heuristic.
         # Collect formatting context up to foster parent; reconstruct if stale AFE entries exist.
+        def _precedes_table(node):
+            top = node
+            while top.parent is not None and top.parent is not foster_parent:
+                top = top.parent
+            if top.parent is not foster_parent:
+                return False
+            return foster_parent.children.index(top) < table_index
+
         if context.active_formatting_elements and any(
             entry.element is not None
             and entry.element not in context.open_elements._stack
+            and not _precedes_table(entry.element)
             for entry in context.active_formatting_elements._stack
             if entry.element is not None
         ):
@@ -6002,10 +6061,32 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         formatting_elements = context.current_parent.collect_ancestors_until(
             foster_parent, lambda n: n.tag_name in FORMATTING_ELEMENTS
         )
+        if context.post_adoption_reconstruct_pending and formatting_elements:
+            filtered = []
+            for elem in formatting_elements:
+                top = elem
+                while top.parent and top.parent is not foster_parent:
+                    top = top.parent
+                if top.parent is foster_parent:
+                    idx = foster_parent.children.index(top)
+                    if idx < table_index and elem is not formatting_elements[-1]:
+                        continue
+                filtered.append(elem)
+            formatting_elements = filtered
         self.debug(
             "Formatting chain candidates: "
             + str([elem.tag_name for elem in formatting_elements])
         )
+
+        def _has_inline_text(node):
+            stack_local = [node]
+            while stack_local:
+                cur = stack_local.pop()
+                for child in cur.children:
+                    if child.tag_name == "#text" and child.text_content:
+                        return True
+                    stack_local.append(child)
+            return False
         reused_wrapper = None
         if formatting_elements:
             formatting_elements = list(
@@ -6070,13 +6151,27 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 for idx, fmt_elem in enumerate(
                     formatting_elements
                 ):  # outer->inner creation
-                    force_sibling = fmt_elem.tag_name in seen_run
+                    has_text_content = _has_inline_text(fmt_elem)
+                    is_innermost = idx == len(formatting_elements) - 1
+                    force_sibling = fmt_elem.tag_name in seen_run or (
+                        is_innermost
+                        and has_text_content
+                        and context.post_adoption_reconstruct_pending
+                    )
                     if fmt_elem is context.current_parent:
-                        current_parent_for_chain = fmt_elem
-                        continue
+                        if not force_sibling:
+                            current_parent_for_chain = fmt_elem
+                            continue
                     if fmt_elem.parent is current_parent_for_chain:
-                        current_parent_for_chain = fmt_elem
-                        continue
+                        if (
+                            is_innermost
+                            and has_text_content
+                            and context.post_adoption_reconstruct_pending
+                        ):
+                            pass
+                        else:
+                            current_parent_for_chain = fmt_elem
+                            continue
                     if (
                         current_parent_for_chain is foster_parent
                         and prev_sibling
@@ -6092,8 +6187,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                                     return True
                             return False
 
-                        reuse_even_with_text = fmt_elem.tag_name != "nobr"
-                        if reuse_even_with_text or not _fmt_descendant_has_text(prev_sibling):
+                        if (not is_innermost) or not _fmt_descendant_has_text(prev_sibling):
                             if not force_sibling:
                                 if fmt_elem.tag_name == "nobr" and any(
                                     ch.tag_name == "#text" and ch.text_content
@@ -6127,8 +6221,12 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         and current_parent_for_chain.children[-1].attributes
                         == fmt_elem.attributes
                     ):
-                        current_parent_for_chain = current_parent_for_chain.children[-1]
-                        continue
+                        candidate = current_parent_for_chain.children[-1]
+                        if _has_inline_text(candidate):
+                            pass
+                        else:
+                            current_parent_for_chain = candidate
+                            continue
                     if (
                         fmt_elem.tag_name == "nobr"
                         and current_parent_for_chain.children
@@ -6276,6 +6374,41 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     f"Merged with previous text node: {foster_parent.children[table_index - 1]}"
                 )
             else:
+                if (
+                    foster_parent.tag_name == "nobr"
+                    and context.post_adoption_reconstruct_pending
+                    and any(
+                        ch.tag_name == "#text" and ch.text_content
+                        for ch in foster_parent.children[:table_index]
+                    )
+                ):
+                    sibling_token = self._synth_token("nobr")
+                    new_nobr = self.parser.insert_element(
+                        sibling_token,
+                        context,
+                        mode="normal",
+                        enter=False,
+                        parent=foster_parent,
+                        before=foster_parent.children[table_index],
+                        push_override=False,
+                    )
+                    existing_entry = context.active_formatting_elements.find_element(
+                        foster_parent
+                    )
+                    if existing_entry is not None:
+                        existing_entry.element = new_nobr
+                        existing_entry.token = sibling_token
+                    else:
+                        context.active_formatting_elements.push(
+                            new_nobr, sibling_token
+                        )
+                    self.parser.insert_text(
+                        text, context, parent=new_nobr, merge=True
+                    )
+                    self.debug(
+                        "Created fallback <nobr> wrapper for foster-parented text run"
+                    )
+                    return True
                 if table_index > 0:
                     prev = foster_parent.children[table_index - 1]
                     if prev.tag_name in FORMATTING_ELEMENTS and not any(
