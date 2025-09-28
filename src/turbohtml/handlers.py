@@ -6997,10 +6997,17 @@ class ListTagHandler(TagHandler):
                 lambda n: n.tag_name in ("ul", "ol", "menu")
             )
             if list_ancestor:
-                self.debug(
-                    f"Found list ancestor: {list_ancestor.tag_name}, moving to it"
-                )
-                context.move_to_element(list_ancestor)
+                if (
+                    context.current_parent.tag_name == "div"
+                    and context.current_parent.parent
+                    and context.current_parent.parent.tag_name not in ("li", "dt", "dd")
+                ):
+                    self.debug("Staying inside div for list item insertion")
+                else:
+                    self.debug(
+                        f"Found list ancestor: {list_ancestor.tag_name}, moving to it"
+                    )
+                    context.move_to_element(list_ancestor)
             else:
                 self.debug("No list ancestor found - creating li in current context")
 
@@ -7699,9 +7706,11 @@ class AutoClosingTagHandler(TemplateAwareHandler):
         # Also check if there are active formatting elements that need reconstruction
         has_active_formatting = len(context.active_formatting_elements) > 0
 
+        block_tag = token.tag_name
+        # List item handling follows its own algorithm; avoid hijacking it with the block-in-formatting path.
         if (
             formatting_element or has_active_formatting
-        ) and token.tag_name in BLOCK_ELEMENTS:
+        ) and block_tag in BLOCK_ELEMENTS and block_tag != "li":
             # Narrow pre-step: if current_parent is <a> and we're inserting a <div>, pop the <a> but
             # retain its active formatting entry so it will reconstruct inside the div (ensures reconstruction ordering).
             # Disabled pop-a-before-div pre-step; rely on
