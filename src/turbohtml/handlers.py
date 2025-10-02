@@ -5735,26 +5735,46 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         if text.isspace():
             table = self.parser.find_current_table(context)
             if table:
-                # Leading = table has no tbody/thead/tfoot/tr yet and this space occurs while current_parent is not a cell
+                # Check if table has no row content yet
                 has_row_content = any(
                     ch.tag_name in ("tbody", "thead", "tfoot", "tr")
                     for ch in table.children
                 )
                 if not has_row_content:
-                    # Also ensure we haven't already inserted leading whitespace
-                    existing_ws = any(
-                        ch.tag_name == "#text"
-                        and ch.text_content
-                        and ch.text_content.isspace()
-                        for ch in table.children
+                    # Check if we should promote this whitespace to table
+                    # Promote if:
+                    # 1. current_parent is table-like (table, tbody, etc.), OR
+                    # 2. current_parent is an EMPTY foster-parented formatting element, OR
+                    # 3. current_parent is a foster parent (ancestor of table, not inside table structure)
+                    is_table_context = context.current_parent.tag_name in ("table", "tbody", "thead", "tfoot", "tr")
+                    is_empty_foster_formatting = (
+                        context.current_parent.tag_name in FORMATTING_ELEMENTS
+                        and context.current_parent.find_ancestor("table") is None
+                        and len(context.current_parent.children) == 0
                     )
-                    if not existing_ws:
-                        self.debug(
-                            "Promoting leading table whitespace as direct <table> child"
+                    # Check if current_parent is a foster parent (has table as child but is not table-related)
+                    is_foster_parent = (
+                        context.document_state == DocumentState.IN_TABLE
+                        and context.current_parent.tag_name not in ("table", "tbody", "thead", "tfoot", "tr", "td", "th", "caption", "colgroup")
+                        and table in context.current_parent.children
+                    )
+                    if is_table_context or is_empty_foster_formatting or is_foster_parent:
+                        # Also ensure we haven't already inserted leading whitespace
+                        existing_ws = any(
+                            ch.tag_name == "#text"
+                            and ch.text_content
+                            and ch.text_content.isspace()
+                            for ch in table.children
                         )
-                        self.parser.insert_text(text, context, parent=table, merge=True)
-                        return True
+                        if not existing_ws:
+                            self.debug(
+                                "Promoting leading table whitespace as direct <table> child"
+                            )
+                            self.parser.insert_text(text, context, parent=table, merge=True)
+                            return True
             # Fallback: keep whitespace where it is
+            # Whitespace in table context does NOT reconstruct formatting elements
+            # (void elements and text will handle that)
             self.debug("Whitespace text in table, keeping in current parent")
             self.parser.insert_text(
                 text, context, parent=context.current_parent, merge=True
@@ -7089,9 +7109,7 @@ class ListTagHandler(TagHandler):
                 and ancestor in context.open_elements._stack
             ):
                 anc_index = context.open_elements._stack.index(ancestor)
-                self.debug(f"Processing formatting descendants, ancestor={ancestor.tag_name} at index {anc_index}, stack after it: {[el.tag_name for el in context.open_elements._stack[anc_index + 1:]]}, original_parent={original_parent.tag_name}")
                 for el in context.open_elements._stack[anc_index + 1 :]:
-                    self.debug(f"Checking element {el.tag_name}, has ancestor {ancestor.tag_name}? {bool(el.find_ancestor(lambda n: n is ancestor))}, is formatting? {el.tag_name in FORMATTING_ELEMENTS}")
                     if (
                         el.find_ancestor(lambda n: n is ancestor)
                         and el.tag_name in FORMATTING_ELEMENTS
@@ -7100,10 +7118,8 @@ class ListTagHandler(TagHandler):
                         # Skip cloning if el is original_parent or an ancestor of original_parent
                         is_current = el is original_parent
                         is_ancestor = original_parent.find_ancestor(lambda n: n is el) if original_parent else False
-                        if is_current or is_ancestor:
-                            self.debug(f"Skipping {el.tag_name} clone (but will remove from stack): is_current={is_current}, is_ancestor={bool(is_ancestor)}")
-                            continue
-                        formatting_descendants.append(el)
+                        if not (is_current or is_ancestor):
+                            formatting_descendants.append(el)
             # Ensure direct child formatting also included if not already (covers elements not on stack due to prior closure)
             for ch in ancestor.children:
                 if (
@@ -7114,10 +7130,8 @@ class ListTagHandler(TagHandler):
                     # Skip cloning if ch is original_parent or ancestor of original_parent
                     is_current = ch is original_parent
                     is_ancestor = original_parent.find_ancestor(lambda n: n is ch) if original_parent else False
-                    if is_current or is_ancestor:
-                        self.debug(f"Skipping child {ch.tag_name} clone: is_current={is_current}, is_ancestor={bool(is_ancestor)}")
-                        continue
-                    formatting_descendants.append(ch)
+                    if not (is_current or is_ancestor):
+                        formatting_descendants.append(ch)
             # Remove formatting descendants from open elements stack (implicit close) but keep active formatting entries
             for fmt in formatting_to_remove:
                 if context.open_elements.contains(fmt):
@@ -7796,6 +7810,21 @@ class VoidElementHandler(SelectAwareHandler):
 
         # Create the void element at the current level
         self.debug(f"Creating void element {tag_name} at current level")
+        
+        # Reconstruct active formatting elements before inserting void element in table/body context
+        # This ensures void elements like <img> properly nest inside reconstructed formatting
+        if (
+            context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_BODY)
+            and context.active_formatting_elements
+            and context.active_formatting_elements._stack
+        ):
+            # Check if there are stale formatting elements (on AFE but not open)
+            for entry in context.active_formatting_elements._stack:
+                el = entry.element
+                if el and not context.open_elements.contains(el):
+                    _reconstruct_fmt(self.parser, context)
+                    break
+        
         # nobr segmentation alignment: if we are about to insert a <br> and there exists a stale
         # <nobr> formatting entry (present in AFE but not on the open elements stack), reconstruct
         # first so the <br> nests under the expected nobr wrapper (matching spec tree shapes in
