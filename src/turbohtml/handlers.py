@@ -2269,6 +2269,7 @@ class TextHandler(TagHandler):
                     # Consume one-shot suppression set by complex adoption cloned-only path.
                     context.skip_stale_reconstruct_once = False
                 else:
+                    self.debug(f"Checking for stale AFE: active_formatting={[e.element.tag_name if e.element else 'marker' for e in context.active_formatting_elements]}, open_stack={[el.tag_name for el in context.open_elements._stack]}")
                     for entry in context.active_formatting_elements:
                         el = entry.element
                         if el and not context.open_elements.contains(el):
@@ -3103,6 +3104,7 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
         )
 
         if self._is_in_table_cell(context):
+            self.debug(f"_is_in_table_cell returned True for parent={context.current_parent.tag_name}")
             # Fragment-leading anchor relocation: In fragment contexts rooted in a row/cell where a
             # <table><tbody?> (no rows yet) precedes an <a><tr> sequence, the expected tree places
             # the <a> before the <table> inside the cell. When encountering the <a> start tag while
@@ -7054,6 +7056,9 @@ class ListTagHandler(TagHandler):
             self.debug(
                 f"Found existing {ancestor.tag_name} ancestor - performing implied end handling"
             )
+            # Remember the original current_parent before climbing (needed to avoid cloning elements we're inside)
+            original_parent = context.current_parent
+            
             # If currently inside a formatting element child (e.g., <dt><b>|cursor| ...), move up to the dt/dd first
             if (
                 context.current_parent is not ancestor
@@ -7075,27 +7080,46 @@ class ListTagHandler(TagHandler):
                 # Move insertion to dl (or ancestor parent)
                 context.move_to_element(ancestor.parent)
             # Collect formatting descendants by scanning open elements stack above ancestor (captures nested chains)
+            # Skip cloning formatting elements that we're currently inside (or are ancestors of current position)
+            # to avoid duplicating elements we're already in
             formatting_descendants = []
+            formatting_to_remove = []  # Always remove from stack, even if not cloning
             if (
                 context.open_elements._stack
                 and ancestor in context.open_elements._stack
             ):
                 anc_index = context.open_elements._stack.index(ancestor)
+                self.debug(f"Processing formatting descendants, ancestor={ancestor.tag_name} at index {anc_index}, stack after it: {[el.tag_name for el in context.open_elements._stack[anc_index + 1:]]}, original_parent={original_parent.tag_name}")
                 for el in context.open_elements._stack[anc_index + 1 :]:
+                    self.debug(f"Checking element {el.tag_name}, has ancestor {ancestor.tag_name}? {bool(el.find_ancestor(lambda n: n is ancestor))}, is formatting? {el.tag_name in FORMATTING_ELEMENTS}")
                     if (
                         el.find_ancestor(lambda n: n is ancestor)
                         and el.tag_name in FORMATTING_ELEMENTS
                     ):
+                        formatting_to_remove.append(el)  # Always remove from stack
+                        # Skip cloning if el is original_parent or an ancestor of original_parent
+                        is_current = el is original_parent
+                        is_ancestor = original_parent.find_ancestor(lambda n: n is el) if original_parent else False
+                        if is_current or is_ancestor:
+                            self.debug(f"Skipping {el.tag_name} clone (but will remove from stack): is_current={is_current}, is_ancestor={bool(is_ancestor)}")
+                            continue
                         formatting_descendants.append(el)
             # Ensure direct child formatting also included if not already (covers elements not on stack due to prior closure)
             for ch in ancestor.children:
                 if (
                     ch.tag_name in FORMATTING_ELEMENTS
                     and ch not in formatting_descendants
+                    and ch not in formatting_to_remove
                 ):
+                    # Skip cloning if ch is original_parent or ancestor of original_parent
+                    is_current = ch is original_parent
+                    is_ancestor = original_parent.find_ancestor(lambda n: n is ch) if original_parent else False
+                    if is_current or is_ancestor:
+                        self.debug(f"Skipping child {ch.tag_name} clone: is_current={is_current}, is_ancestor={bool(is_ancestor)}")
+                        continue
                     formatting_descendants.append(ch)
             # Remove formatting descendants from open elements stack (implicit close) but keep active formatting entries
-            for fmt in formatting_descendants:
+            for fmt in formatting_to_remove:
                 if context.open_elements.contains(fmt):
                     context.open_elements.remove_element(fmt)
             # Finally remove the old dt/dd from open elements stack
@@ -7109,6 +7133,7 @@ class ListTagHandler(TagHandler):
         new_node = self.parser.insert_element(token, context, mode="normal", enter=True)
         # Manually duplicate formatting chain inside the new dt/dd without mutating active formatting entries.
         # This allows later text (after </dl>) to still reconstruct original formatting.
+        self.debug(f"formatting_descendants to clone: {[f.tag_name for f in formatting_descendants]}")
         if formatting_descendants:
             for fmt in formatting_descendants:
                 clone = Node(fmt.tag_name, fmt.attributes.copy())
