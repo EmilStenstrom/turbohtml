@@ -51,11 +51,11 @@ No heuristics allowed, and if found remove and replace with spec-compliant code 
 1. Target failing areas first (use `--filter-files` or `--test-specs`).
 2. Use `-vv` to trace execution path through the parser.
 2. Iterate: fix → focused run → full run.
-3. Always check for regressions: run `python run_tests.py --regressions` or inspect `git diff test-summary.txt`.
+3. Always check for regressions before continuing to the next test: run `python run_tests.py --regressions` to see regressions since the last git check-in.
 4. Never merge with net fewer passing tests unless justified.
 5. Quick snippet runner (full test suite never takes longer than 5s):
    ```
-   python -c "from turbohtml import TurboHTML; print(TurboHTML('<html>', debug=True).root.to_test_format())"
+   python -c 'from turbohtml import TurboHTML; print(TurboHTML("<html>", debug=True).root.to_test_format())'
    ```
 
 ### Logging & Comments
