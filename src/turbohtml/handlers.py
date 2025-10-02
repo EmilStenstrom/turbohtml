@@ -5239,7 +5239,11 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         }
 
     def _handle_colgroup(self, token, context):
-        """Handle colgroup element according to spec"""
+        """Handle colgroup element according to spec.
+        
+        When colgroup appears in invalid contexts (tbody/tr/td), close those elements
+        and insert colgroup at table level. Tbody will be created later if needed.
+        """
         self.debug(
             f"_handle_colgroup: token={token}, current_parent={context.current_parent}"
         )
@@ -5247,29 +5251,36 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         if context.document_state != DocumentState.IN_TABLE:
             self.debug("Ignoring colgroup outside table context")
             return True
-        self.debug("Creating new colgroup")
-        self.parser.insert_element(
+        
+        table = self.parser.find_current_table(context)
+        if not table:
+            return True
+        
+        # Pop tbody/thead/tfoot/tr/td/th to get back to table level
+        stack = context.open_elements._stack
+        table_idx = -1
+        for i in range(len(stack) - 1, -1, -1):
+            if stack[i] is table:
+                table_idx = i
+                break
+        
+        if table_idx != -1 and len(stack) > table_idx + 1:
+            # Pop everything above table
+            while len(stack) > table_idx + 1:
+                popped = stack.pop()
+                self.debug(f"Popping {popped.tag_name} to reach table level")
+            context.move_to_element(table)
+        
+        # Insert colgroup at table level and enter it (col, comment, template can be children)
+        self.debug("Creating colgroup at table level")
+        colgroup = self.parser.insert_element(
             token,
             context,
             mode="normal",
             enter=True,
-            parent=self.parser.find_current_table(context),
+            parent=table,
         )
-        # Check context for tbody/tr/td ancestors
-        td_ancestor = context.current_parent.find_ancestor("td")
-        if td_ancestor:
-            self.debug("Found td ancestor, staying in colgroup context")
-            return True
-
-        tbody_ancestor = context.current_parent.find_first_ancestor_in_tags(
-            ["tbody", "tr"], self.parser.find_current_table(context)
-        )
-        if tbody_ancestor:
-            self.debug("Found tbody/tr ancestor, staying in colgroup context")
-            return True
-
-        # Rule 5: Stay in colgroup context
-        self.debug("Staying in colgroup context")
+        
         return True
 
     def _handle_col(self, token, context):
@@ -5356,8 +5367,20 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         return True
 
     def _handle_tbody(self, token, context):
-        """Handle tbody element"""
+        """Handle tbody element.
+        
+        If colgroup is currently open, close it first (implicit colgroup end).
+        """
         table_parent = self.parser.find_current_table(context)
+        
+        # Implicitly close colgroup if open
+        if context.current_parent.tag_name == "colgroup":
+            stack = context.open_elements._stack
+            if stack and stack[-1].tag_name == "colgroup":
+                stack.pop()
+                context.move_to_element(table_parent)
+                self.debug("Implicitly closed colgroup before tbody")
+        
         self.parser.insert_element(
             token,
             context,
@@ -5500,23 +5523,40 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         return True
 
     def _find_or_create_tbody(self, context):
-        """Find existing tbody or create new one"""
+        """Find existing tbody or create new one.
+        
+        Returns existing tbody only if:
+        1. It's an ancestor of current_parent (still open on stack), OR
+        2. It's a direct table child that comes AFTER any colgroups (not closed by colgroup)
+        """
         tbody_ancestor = context.current_parent.find_ancestor("tbody")
         if tbody_ancestor:
             return tbody_ancestor
-        existing_tbody = self.parser.find_current_table(context).find_child_by_tag(
-            "tbody"
-        )
-        if existing_tbody:
-            return existing_tbody
+        
+        table = self.parser.find_current_table(context)
+        if not table:
+            return None
+        
+        # Find tbody that comes after any colgroups (valid for reuse)
+        last_colgroup_idx = -1
+        for i, child in enumerate(table.children):
+            if child.tag_name == "colgroup":
+                last_colgroup_idx = i
+        
+        # Look for tbody after last colgroup
+        for i in range(last_colgroup_idx + 1, len(table.children)):
+            if table.children[i].tag_name == "tbody":
+                return table.children[i]
+        
+        # No valid tbody found, create new one
         tbody_token = self._synth_token("tbody")
         tbody = self.parser.insert_element(
             token=tbody_token,
             context=context,
             mode="normal",
             enter=False,
-            parent=self.parser.find_current_table(context),
-            push_override=True,  # tbody participates in table section scope; original code effectively had it appended without enter
+            parent=table,
+            push_override=True,
         )
         return tbody
 
