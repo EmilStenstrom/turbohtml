@@ -176,6 +176,10 @@ class TagHandler:
             return False
         if parent.tag_name in ("td", "th"):
             return True
+        # If we're at a table element itself, we're not in a cell OF that table
+        # (even if the table is nested inside a cell of an outer table)
+        if parent.tag_name == "table":
+            return False
         return parent.find_first_ancestor_in_tags(["td", "th"]) is not None
 
     def _move_to_parent_of_ancestor(self, context, ancestor):
@@ -3287,8 +3291,16 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                 cell = None
             if cell:
                 self.debug(f"Formatting in cell <{cell.tag_name}>")
+                # If cell contains a table and current_parent is table-related, insert formatting before the table
+                # This handles the case: <td><table><i> where i should go before the table in td
+                before_element = None
+                if context.current_parent.tag_name in ("table", "tbody", "thead", "tfoot", "tr"):
+                    for child in cell.children:
+                        if child.tag_name == "table":
+                            before_element = child
+                            break
                 new_element = self._insert_formatting_element(
-                    token, context, parent=cell, push_nobr_late=(tag_name == "nobr")
+                    token, context, parent=cell, before=before_element, push_nobr_late=(tag_name == "nobr")
                 )
                 if not inside_object:
                     context.active_formatting_elements.push(new_element, token)
@@ -5646,6 +5658,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             # Before deciding target, reconstruct active formatting elements if any are stale (present in AFE list
             # but their DOM element is no longer on the open elements stack). This mirrors the body insertion mode
             # "reconstruct active formatting elements" step that runs before inserting character tokens.
+            reconstructed = False
             if context.active_formatting_elements and any(
                 entry.element is not None
                 and entry.element not in context.open_elements._stack
@@ -5653,11 +5666,16 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 if entry.element is not None
             ):
                 _reconstruct_fmt(self.parser, context)
+                reconstructed = True
                 # After reconstruction current_parent points at the deepest reconstructed formatting element.
-                # Move insertion point back to the cell so targeting logic below can choose appropriately.
-                context.move_to_element(current_cell)
+                # Don't move back to cell - use the reconstructed element as target
+            
             # Choose insertion target: deepest rightmost formatting element under the cell
-            target = context.current_parent
+            if reconstructed:
+                # After reconstruction, current_parent is already the correct target
+                target = context.current_parent
+            else:
+                target = context.current_parent
             # If current_parent is not inside the cell (rare), fall back to cell
             if (
                 not target.find_ancestor(lambda n: n is current_cell)
