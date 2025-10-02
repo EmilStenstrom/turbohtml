@@ -5169,6 +5169,16 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             body = self.parser._ensure_body_node(context)
             self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
 
+        # If we're in table context and current_parent is a foster-parented formatting element, close it
+        if (
+            context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY)
+            and context.current_parent.tag_name in FORMATTING_ELEMENTS
+            and context.current_parent.find_ancestor("table") is None
+            and context.current_parent.parent
+        ):
+            self.debug(f"Closing foster-parented {context.current_parent.tag_name} before inserting table")
+            context.move_to_element(context.current_parent.parent)
+
         if context.document_state == DocumentState.IN_TABLE:
             # Determine if we are effectively inside a cell even if current_parent is formatting element.
             in_cell = (
@@ -11183,6 +11193,7 @@ def foster_parent_element(tag_name, attributes, context, parser):
             "article",
             "blockquote",
             "li",
+            "center",
         ):
             new_node = Node(tag_name, attributes)
             prev_sibling.append_child(new_node)
