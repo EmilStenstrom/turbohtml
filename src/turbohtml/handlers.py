@@ -499,86 +499,6 @@ class ListingNewlineHandler(TagHandler):
                     break
         return True
 
-class TextNormalizationHandler(TagHandler):
-    """Invokes parser._post_text_inline_normalize after text handling.
-
-    Keeps original normalization logic centralized in parser but decouples the call site from the
-    parser token loop. This handler should run immediately after TextHandler so it sees the final
-    insertion parent state for the just-inserted text.
-    """
-
-    def should_handle_text(self, text, context):
-        # Always attempt normalization after any non-empty text processed outside plaintext RAWTEXT skip.
-        return bool(text)
-
-    def handle_text(self, text, context):
-        # Inline former parser._post_text_inline_normalize logic (narrow trailing formatting unwrap).
-        context_parent = context.current_parent
-        if not context_parent:
-            return True
-        # Climb to nearest block container (p, div, section, article, body) from current parent which may be a formatting element.
-        block_tags = ("p", "div", "section", "article", "body")
-        block = context_parent
-        while block and block.tag_name not in block_tags:
-            block = block.parent
-        if not block:
-            return True
-        # Need at least two element (non-text) children
-        elems = [ch for ch in block.children if ch.tag_name != "#text"]
-        if len(elems) < 2:
-            return True
-        second = elems[-1]
-        first = elems[-2]
-        # Only unwrap if the most recently modified element is the trailing formatting element (i/em) with only text children & no attrs
-        if second is not context_parent or second.tag_name not in ("i", "em"):
-            return True
-        if second.attributes or not second.children:
-            return True
-        if not all(ch.tag_name == "#text" for ch in second.children):
-            return True
-        # Determine if first subtree already contains same formatting tag and any text descendant.
-        # Leverage parser's adoption_agency descendant iterator if available; fall back to manual DFS.
-        def iter_desc(node):
-            aa = self.parser.adoption_agency
-            if aa:
-                for d in aa._iter_descendants(node):  # guaranteed to exist
-                    yield d
-                return
-            stack_local = [node]
-            while stack_local:
-                cur = stack_local.pop()
-                for ch in cur.children:
-                    yield ch
-                    stack_local.append(ch)
-        has_same_fmt = False
-        for d in iter_desc(first):
-            if d.tag_name == second.tag_name:
-                has_same_fmt = True
-                break
-        if not has_same_fmt:
-            return True
-        has_any_text = any(
-            (dd.tag_name == "#text" and dd.text_content and dd.text_content.strip())
-            for dd in iter_desc(first)
-        )
-        if not has_any_text:
-            return True
-        # Perform unwrap: move text children of second after it then remove the element.
-        insert_index = block.children.index(second) + 1
-        children_copy = list(second.children)
-        for t in children_copy:
-            second.remove_child(t)
-            block.children.insert(insert_index, t)
-            t.parent = block
-            insert_index += 1
-        block.remove_child(second)
-        if self.parser.env_debug:
-            self.parser.debug(
-                f"TextNormalizationHandler: unwrapped trailing <{second.tag_name}> into text"
-            )
-        return True
-
-
 class FramesetPreludeHandler(TagHandler):
     """Consolidated frameset prelude handler.
 
@@ -2402,7 +2322,88 @@ class TextHandler(TagHandler):
             else:
                 self.parser.insert_text(decoded_text, context, parent=parent, merge=True)
 
+        # Text normalization: unwrap trailing formatting elements to reduce redundant nesting
+        self._normalize_trailing_formatting(context)
+
         return True
+
+    def _normalize_trailing_formatting(self, context):
+        """Unwrap trailing <i>/<em> if identical formatting already exists in prior sibling.
+        
+        This is the logic formerly in TextNormalizationHandler, now integrated directly
+        into TextHandler to eliminate a separate handler pass.
+        """
+        context_parent = context.current_parent
+        if not context_parent:
+            return
+        
+        # Climb to nearest block container
+        block_tags = ("p", "div", "section", "article", "body")
+        block = context_parent
+        while block and block.tag_name not in block_tags:
+            block = block.parent
+        if not block:
+            return
+        
+        # Need at least two element (non-text) children
+        elems = [ch for ch in block.children if ch.tag_name != "#text"]
+        if len(elems) < 2:
+            return
+        
+        second = elems[-1]
+        first = elems[-2]
+        
+        # Only unwrap if the most recently modified element is the trailing formatting element
+        if second is not context_parent or second.tag_name not in ("i", "em"):
+            return
+        if second.attributes or not second.children:
+            return
+        if not all(ch.tag_name == "#text" for ch in second.children):
+            return
+        
+        # Check if first subtree already contains same formatting tag and any text
+        def iter_desc(node):
+            aa = self.parser.adoption_agency
+            if aa:
+                for d in aa._iter_descendants(node):
+                    yield d
+                return
+            stack_local = [node]
+            while stack_local:
+                cur = stack_local.pop()
+                for ch in cur.children:
+                    yield ch
+                    stack_local.append(ch)
+        
+        has_same_fmt = False
+        for d in iter_desc(first):
+            if d.tag_name == second.tag_name:
+                has_same_fmt = True
+                break
+        if not has_same_fmt:
+            return
+        
+        has_any_text = any(
+            (dd.tag_name == "#text" and dd.text_content and dd.text_content.strip())
+            for dd in iter_desc(first)
+        )
+        if not has_any_text:
+            return
+        
+        # Perform unwrap: move text children of second after it then remove the element
+        insert_index = block.children.index(second) + 1
+        children_copy = list(second.children)
+        for t in children_copy:
+            second.remove_child(t)
+            block.children.insert(insert_index, t)
+            t.parent = block
+            insert_index += 1
+        block.remove_child(second)
+        
+        if self.parser.env_debug:
+            self.parser.debug(
+                f"Unwrapped trailing <{second.tag_name}> into text (integrated normalization)"
+            )
 
     def _decode_html_entities(self, text):
         """Decode numeric HTML entities."""
@@ -4804,7 +4805,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         
         # Insert colgroup at table level and enter it (col, comment, template can be children)
         self.debug("Creating colgroup at table level")
-        colgroup = self.parser.insert_element(
+        self.parser.insert_element(
             token,
             context,
             mode="normal",
