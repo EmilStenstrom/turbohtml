@@ -669,22 +669,6 @@ class FragmentPreprocessHandler(TagHandler):
         return False
 
 
-class RawtextStartTagIgnoreHandler(TagHandler):
-    """Consumes any start tag while in RAWTEXT content state.
-
-    Previously an early inline check in parser._handle_start_tag returned immediately when
-    context.content_state == RAWTEXT. Moving it here keeps the parser lean and aligns with
-    other early suppression behaviors.
-    """
-
-    def early_start_preprocess(self, token, context):
-        if context.content_state == ContentState.RAWTEXT:
-            # Mirror previous debug (optional) via parser.debug for trace parity
-            self.debug(f"Ignoring <{token.tag_name}> start tag in RAWTEXT")
-            return True
-        return False
-
-
 class FormattingReconstructionPreludeHandler(TagHandler):
     """Performs pre-start-tag formatting element reconstruction or defers it.
 
@@ -6954,7 +6938,18 @@ class HeadingTagHandler(SimpleElementHandler):
 
 
 class RawtextTagHandler(SelectAwareHandler):
-    """Handles rawtext elements like script, style, title, etc."""
+    """Handles rawtext elements like script, style, title, etc.
+    
+    Also includes early suppression of any start tags while in RAWTEXT content state
+    (formerly RawtextStartTagIgnoreHandler).
+    """
+
+    def early_start_preprocess(self, token, context):
+        """Suppress any start tags while in RAWTEXT content state."""
+        if context.content_state == ContentState.RAWTEXT:
+            self.debug(f"Ignoring <{token.tag_name}> start tag in RAWTEXT")
+            return True
+        return False
 
     def _should_handle_start_impl(self, tag_name, context):
         # Permit script/style/title/xmp/noscript/rawtext-like tags generally.
