@@ -222,7 +222,9 @@ class TagHandler:
         return False
     def handle_text(self, text, context):
         return False
-    def finalize(self, parser):  # parser: TurboHTML (forward ref for lint)
+    
+    def finalize(self, parser):
+        """Post-parse tree normalization hook (default: no-op)"""
         return
 
 
@@ -268,8 +270,8 @@ class AnchorPreSegmentationHandler(TagHandler):
 
     Runs before generic element insertion. If an active <a> is open and we encounter a
     non-phrasing, non-table block/special element (div, address, heading, etc.), invoke the
-    adoption agency once for 'a' so the anchor closes (adoption02.dat:1). Excludes table-related
-    tags to preserve earlier table anchor continuity behavior (tests1.dat:78).
+    adoption agency once for 'a' so the anchor closes. Excludes table-related
+    tags to preserve earlier table anchor continuity behavior.
     """
     _DISALLOWED = {
         'div','address','article','section','nav','header','footer','aside','center','title',
@@ -437,7 +439,7 @@ class CommentPlacementHandler(TagHandler):
     Responsibilities:
       * AFTER_BODY: place comment as sibling of <body> under <html> (after body)
       * Stray </body> + immediate comment after premature IN_BODY reentry: relocate comment after <body>
-      * Stray </body> + whitespace-only character + comment: same relocation (webkit01 case)
+      * Stray </body> + whitespace-only character + comment: same relocation
 
     This keeps parser._handle_comment lean and avoids coupling to previous-token heuristics there.
     """
@@ -911,7 +913,7 @@ class FramesetPreludeHandler(TagHandler):
         Adjusted vs original:
           * Deduplicated stray <frame> check.
           * Treat an initial solitary <div> (before any non-benign content is emitted) as benign so a
-            subsequent root <frameset> can still take over (tests19.dat:79 expectation <div> discarded).
+            subsequent root <frameset> can still take over.
           * Benign predicate kept narrow & state-free – only structural inspection of existing (optional) body subtree.
         """
         tag = token.tag_name
@@ -1187,7 +1189,7 @@ class DefaultElementInsertionHandler(TagHandler):
                     if (not context.open_elements.contains(entry.element)) and entry.element.tag_name != "nobr":
                         reconstruct_if_needed(self.parser, context)
                         break
-        # Perform deferred anchor reconstruction inside newly inserted <address> element (adoption02.dat:1 expectation)
+        # Perform deferred anchor reconstruction inside newly inserted <address> element
         if token.tag_name == 'address' and context.defer_anchor_reconstruct_for_address:
             # Move insertion to parent to make reconstructed anchor a child of the same parent (sibling of <address>)
             parent = context.current_parent.parent if context.current_parent else None
@@ -1394,9 +1396,6 @@ class TemplateContentAutoEnterHandler(TagHandler):
                     context.move_to_element(content)
         return False
 
-    def finalize(self, parser):  # no-op override (placeholder for symmetry)
-        return
-
 class TemplateContentPostPlacementHandler(TagHandler):
     """Correct misplaced non-formatting direct children of a <template> that should live under its content.
 
@@ -1488,7 +1487,7 @@ class GenericEndTagHandler(TagHandler):
         if token.tag_name == 'p' and self.parser.env_debug:
             stack_tags = [el.tag_name for el in context.open_elements._stack]
             self.debug(f"[p-end] incoming </p> current_parent={context.current_parent.tag_name} stack={stack_tags}")
-        # Foreign-context paragraph end suppression (tests19.dat:82): If we encounter </p> while inside
+        # Foreign-context paragraph end suppression: If we encounter </p> while inside
         # a MathML/SVG subtree that began after an open <p> element, ignore the end tag so that the
         # paragraph continues outside the foreign content. The expected tree nests the foreign nodes
         # inside the original <p> and treats trailing text as still within that paragraph. We detect
@@ -2478,9 +2477,9 @@ class TextHandler(TagHandler):
                 )
                 # New: if trailing text follows a table and there exists an active formatting element
                 # whose DOM node is no longer open (was foster‑parented / adoption removed) we must
-                # reconstruct before appending so the text is wrapped (e.g. tests7.dat:30 requires a
-                # second <b> after the table). This mirrors spec "reconstruct active formatting elements"
-                # step before inserting character tokens in the body insertion mode.
+                # reconstruct before appending so the text is wrapped. This mirrors spec
+                # "reconstruct active formatting elements" step before inserting character tokens
+                # in the body insertion mode.
                 need_reconstruct_after_table = False
                 if (
                     elems
@@ -4688,7 +4687,7 @@ class ParagraphTagHandler(TagHandler):
             context.recent_paragraph_close = True
             return True
 
-        # Foreign-subtree stray </p> (tests19.dat:82): If current insertion point is inside a foreign
+        # Foreign-subtree stray </p>: If current insertion point is inside a foreign
         # (MathML/SVG) subtree AND the nearest open <p> ancestor lies OUTSIDE that foreign subtree,
         # we ignore the end tag for purposes of closing the outer paragraph and instead synthesize
         # an empty <p> element inside the current (foreign) container. This matches the expected tree
@@ -10934,7 +10933,7 @@ class PlaintextHandler(SelectAwareHandler):
             # Stray </plaintext>:
             #  * In full document parsing: ignore (spec behavior; no literal node created).
             #  * In fragment parsing (root == document-fragment): html5lib tree-construction tests expect a
-            #    literal text node "</plaintext>" (tests4.dat:4). Emit only in that mode to avoid reintroducing
+            #    literal text node "</plaintext>". Emit only in that mode to avoid reintroducing
             #    prior over-literalization regression.
             root_name = self.parser.root.tag_name if self.parser.root else None
             if root_name == "document-fragment":
