@@ -9072,7 +9072,7 @@ class ForeignTagHandler(TagHandler):
                 inner = candidate
             else:
                 trailing = comment[7:]
-                # Unterminated case hack: tokenizer appends a space when inner endswith ']]'
+                # Unterminated CDATA: tokenizer appends a space when inner endswith ']]'
                 if trailing == "]]":
                     # Proper empty terminated CDATA -> no text
                     inner = ""
