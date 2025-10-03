@@ -584,27 +584,6 @@ class AfterFramesetCommentHandler(TagHandler):
         return True
 
 
-class InBodyHtmlParentCommentHandler(TagHandler):
-    """Handle comments in IN_BODY when current_parent is <html> (insert before <head> if present)."""
-
-    def should_handle_comment(self, comment, context):
-        return context.document_state == DocumentState.IN_BODY and context.current_parent and context.current_parent.tag_name == "html"
-
-    def handle_comment(self, comment, context):
-        html = context.current_parent
-        node = self.parser._create_comment_node(comment)
-        head = None
-        for ch in html.children:
-            if ch.tag_name == "head":
-                head = ch
-                break
-        if head:
-            html.insert_before(node, head)
-        else:
-            html.append_child(node)
-        return True
-
-
 class StructureSynthesisHandler(TagHandler):
     """Finalization handler ensuring minimal document structure and performing normalization.
 
@@ -1260,46 +1239,6 @@ class TemplateContentAutoEnterHandler(TagHandler):
                     context.move_to_element(content)
         return False
 
-class TemplateContentPostPlacementHandler(TagHandler):
-    """Correct misplaced non-formatting direct children of a <template> that should live under its content.
-
-    Runs late (after default element insertion) to relocate the first non-formatting element (e.g. <menu>)
-    that sits alongside the <content> node instead of inside it due to earlier formatting chain insertion.
-    Minimal corrective step to satisfy template.dat:76 without broad restructuring.
-    """
-
-    def should_handle_start(self, tag_name, context):
-        # Passive observer; relocation occurs in early_start_preprocess of subsequent tokens.
-        return False
-
-    def finalize(self, parser):
-        # Walk templates; relocate first non-content, non-template element child into content if present.
-        def visit(node):
-            if node.tag_name == 'template':
-                content = None
-                for ch in node.children:
-                    if ch.tag_name == 'content':
-                        content = ch
-                        break
-                if content:
-                    misplaced = []
-                    for ch in list(node.children):
-                        if ch is content:
-                            continue
-                        if ch.tag_name in ('#text', 'template'):
-                            continue
-                        # Formatting descendants that appeared before relocation remain; relocate only first non-formatting.
-                        if ch.tag_name not in FORMATTING_ELEMENTS:
-                            misplaced.append(ch)
-                            break
-                    for el in misplaced:
-                        node.remove_child(el)
-                        content.append_child(el)
-            for ch in list(node.children):
-                visit(ch)
-        visit(parser.root)
-        return
-
 class NullParentRecoveryEndHandler(TagHandler):
     """Recover from a None current_parent before end tag handling.
 
@@ -1417,43 +1356,6 @@ class GenericEndTagHandler(TagHandler):
             if popped.tag_name == target:
                 break
         return True
-
-
-class TemplateContentBoundedEndHandler(TagHandler):
-    """Handles simple end tags inside template content boundary.
-
-    Mirrors parser._handle_end_tag's inline logic: when inside a <template>'s content subtree,
-    walk from current_parent up toward the content boundary to find a matching open element.
-    If found, move insertion point to its parent (effectively exiting it). If not, ignore.
-    We do not touch open_elements stack here beyond moving current_parent because template
-    content hosting uses normal element push/pop semantics already; the bounded search prevents
-    closing across the synthetic content boundary.
-    """
-
-    def should_handle_end(self, tag_name, context):
-        # Activate only when inside template content subtree.
-        return in_template_content(context)
-
-    def handle_end(self, token, context):
-        boundary = None
-        node = context.current_parent
-        while node:
-            if (
-                node.tag_name == "content"
-                and node.parent
-                and node.parent.tag_name == "template"
-            ):
-                boundary = node
-                break
-            node = node.parent
-        cursor = context.current_parent
-        while cursor and cursor is not boundary:
-            if cursor.tag_name == token.tag_name:
-                if cursor.parent:
-                    context.move_to_element_with_fallback(cursor.parent, cursor)
-                return True
-            cursor = cursor.parent
-        return True  # Ignore unmatched below boundary
 
 
 class TemplateAwareHandler(TagHandler):

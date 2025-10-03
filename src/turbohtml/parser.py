@@ -27,7 +27,6 @@ from .handlers import (
     AfterHeadCommentHandler,
     AfterHtmlCommentHandler,
     AfterFramesetCommentHandler,
-    InBodyHtmlParentCommentHandler,
     CommentPlacementHandler,
     ForeignTagHandler,
     ParagraphTagHandler,
@@ -53,11 +52,9 @@ from .handlers import (
     FallbackPlacementHandler,
     DefaultElementInsertionHandler,
     UnknownElementHandler,
-    TemplateContentBoundedEndHandler,
     GenericEndTagHandler,
     StructureSynthesisHandler,
     PostProcessHandler,
-    TemplateContentPostPlacementHandler,
 )
 from turbohtml.tokenizer import HTMLTokenizer
 from turbohtml.adoption import AdoptionAgencyAlgorithm
@@ -124,7 +121,6 @@ class TurboHTML:
             AfterHeadCommentHandler(self),
             AfterHtmlCommentHandler(self),
             AfterFramesetCommentHandler(self),
-            InBodyHtmlParentCommentHandler(self),
             CommentPlacementHandler(self),
             ForeignTagHandler(self) if handle_foreign_elements else None,
             ParagraphTagHandler(self),
@@ -150,11 +146,9 @@ class TurboHTML:
             FallbackPlacementHandler(self),
             DefaultElementInsertionHandler(self),
             UnknownElementHandler(self),
-            TemplateContentBoundedEndHandler(self),
             GenericEndTagHandler(self),
             StructureSynthesisHandler(self),
             PostProcessHandler(self),
-            TemplateContentPostPlacementHandler(self),
         ]
         self.tag_handlers = [h for h in self.tag_handlers if h is not None]
 
