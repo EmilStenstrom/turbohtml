@@ -11113,13 +11113,12 @@ class FallbackPlacementHandler(TagHandler):
         if table_modes.should_foster_parent(tag_name, token.attributes, context, self.parser):
             # Paragraph special-case: allow ParagraphTagHandler to manage re-entry into cells.
             # If table modes logic wants to restore an open cell, skip fostering so cell handlers run.
-            if hasattr(table_modes, "restore_insertion_open_cell"):
-                open_cell = table_modes.restore_insertion_open_cell(context)
-                if open_cell is not None:
-                    self.debug(
-                        f"Skipped foster parenting <{tag_name}>; insertion point restored to open cell <{open_cell.tag_name}>"
-                    )
-                    return False
+            open_cell = table_modes.restore_insertion_open_cell(context)
+            if open_cell is not None:
+                self.debug(
+                    f"Skipped foster parenting <{tag_name}>; insertion point restored to open cell <{open_cell.tag_name}>"
+                )
+                return False
             self.debug(f"Foster parenting <{tag_name}> before current table")
             foster_parent_element(tag_name, token.attributes, context, self.parser)
             return True
