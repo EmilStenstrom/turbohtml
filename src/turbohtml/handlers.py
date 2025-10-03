@@ -265,60 +265,6 @@ class BodyReentryHandler(TagHandler):
                 self.debug(f"Reentered IN_BODY for <{tag}> after post-body state")
         return False
 
-class AnchorPreSegmentationHandler(TagHandler):
-    """Early anchor segmentation for disallowed block/special descendants.
-
-    Runs before generic element insertion. If an active <a> is open and we encounter a
-    non-phrasing, non-table block/special element (div, address, heading, etc.), invoke the
-    adoption agency once for 'a' so the anchor closes. Excludes table-related
-    tags to preserve earlier table anchor continuity behavior.
-    """
-    _DISALLOWED = {
-        'div','address','article','section','nav','header','footer','aside','center','title',
-        'h1','h2','h3','h4','h5','h6','p','ul','ol','li','dl','dt','dd','form','pre','blockquote','hr','fieldset','figure','figcaption','main'
-    }
-    _TABLEISH_EXEMPT = {'table','tbody','thead','tfoot','tr','td','th','caption'}
-
-    def early_start_preprocess(self, token, context):
-        tag = token.tag_name
-        # Fast bail-outs: only care about block/special tags that are NOT table-ish and not phrasing.
-        if tag not in self._DISALLOWED:
-            return False
-        if tag in self._TABLEISH_EXEMPT:
-            return False
-        # Need an active open <a> that is also the current insertion parent (spec: duplicate or
-        # intervening block causes the existing anchor to be closed before inserting the block).
-        afe = context.active_formatting_elements
-        if not afe:
-            return False
-        a_entry = afe.find('a')
-        if not a_entry or not a_entry.element:
-            return False
-        anchor_el = a_entry.element
-        if not context.open_elements.contains(anchor_el):
-            return False
-        if context.current_parent is not anchor_el:
-            # Allow segmentation if anchor_el is an ancestor (still open) and no other formatting
-            # element of the same tag intervenes between anchor_el and current_parent on open stack.
-            stack = context.open_elements._stack
-            if anchor_el not in stack:
-                return False
-            # Verify anchor_el appears below current_parent in stack ordering (ancestor relationship).
-            if anchor_el not in stack or context.current_parent not in stack:
-                return False
-            idx_anchor = stack.index(anchor_el)
-            idx_parent = stack.index(context.current_parent)
-            if not (idx_anchor < idx_parent):
-                return False
-        # Perform a single adoption run for <a>. Prefer new algorithm when enabled; fallback to legacy.
-        # Always run adoption once to segment existing open <a> before inserting a disallowed block.
-        self.parser.adoption_agency.run_until_stable('a', context, max_runs=1)
-        # Force reconstruction so newly inserted block does not incorrectly nest inside stale wrappers.
-        context.post_adoption_reconstruct_pending = True
-        return False
-        
-
-
 class EarlyMathMLLeafFragmentEnterHandler(TagHandler):
     """Normalize self-closing MathML leaf in fragment context so following text nests.
 
