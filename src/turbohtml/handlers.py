@@ -1290,19 +1290,6 @@ class TableCellRecoveryHandler(TagHandler):
         return False
 
 
-class TableMalformedRecoveryHandler(TagHandler):
-    """Abandon stale table subtree when malformed sequence leaves a table open without active row/cell.
-
-    Trigger conditions (structure-only, deterministic):
-      * Document state IN_BODY (already left table insertion modes) OR current_parent not inside last open <table>.
-      * Open elements stack still contains a <table> (innermost) but there is no <tr>, <td>, or <th> after it.
-      * Upcoming start tag (seen via early_start_preprocess) is a formatting/generic flow element.
-
-    Action: Pop elements down to (and including) that <table>, set insertion point to its parent. This
-    mirrors spec error recovery where abandoned table elements are implicitly closed after impossible tokens.
-    """
-
-
 class SpecialElementHandler(TagHandler):
     """Handles special root structure elements: html, head, body (and implicit head/body transitions).
 
