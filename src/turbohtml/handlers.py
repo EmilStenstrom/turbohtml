@@ -3298,9 +3298,9 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                     context.current_parent, context.open_elements, self.parser.root
                 )
                 if before is not None:
-                    try:
+                    if before in foster_parent_node.children:
                         table_idx = foster_parent_node.children.index(before)
-                    except ValueError:
+                    else:
                         table_idx = len(foster_parent_node.children)
                 else:
                     table_idx = len(foster_parent_node.children)
@@ -3322,10 +3322,9 @@ class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
                             depth += 1
                         if top.parent is not foster_parent_node:
                             continue
-                        try:
-                            idx = foster_parent_node.children.index(top)
-                        except ValueError:
+                        if top not in foster_parent_node.children:
                             continue
+                        idx = foster_parent_node.children.index(top)
                         if idx >= table_idx:
                             continue
                         if idx > best_idx or (idx == best_idx and depth > best_depth):
