@@ -332,152 +332,109 @@ class MalformedSelectStartTagFilterHandler(TagHandler):
         return True
 
 
-class CommentPlacementHandler(TagHandler):
-    """Handles post-body comment placement previously embedded in parser._handle_comment.
-
-    Responsibilities:
-      * AFTER_BODY: place comment as sibling of <body> under <html> (after body)
-      * Stray </body> + immediate comment after premature IN_BODY reentry: relocate comment after <body>
-      * Stray </body> + whitespace-only character + comment: same relocation
-
-    This keeps parser._handle_comment lean and avoids coupling to previous-token heuristics there.
+class UnifiedCommentHandler(TagHandler):
+    """Unified comment placement handler for all document states.
+    
+    Consolidates InitialCommentHandler, AfterHeadCommentHandler, AfterHtmlCommentHandler,
+    AfterFramesetCommentHandler, and CommentPlacementHandler into a single handler with
+    mode-specific logic branches.
+    
+    Note: Does not handle CDATA sections in foreign content - those are handled by ForeignTagHandler.
     """
 
     def should_handle_comment(self, comment, context):
-        # Only intercept when in or just re-entered from post-body situations
-        if context.document_state == DocumentState.AFTER_BODY:
-            return True
-        if context.document_state == DocumentState.IN_BODY and self.parser._prev_token is not None:
-            prev = self.parser._prev_token
-            if prev.type == "EndTag" and prev.tag_name == "body":
-                return True
-            if prev.type == "Character" and prev.data is not None and prev.data.strip() == "":
-                # Look further back: ensure prior non-whitespace was a body end tag
-                # (we only keep one prev token; if whitespace is prev we can't see </body> directly, so fall back to body existence)
-                # Conservative: require that open_elements has body but no html end yet (document_state IN_BODY suffices)
-                return True
-        return False
+        # Skip CDATA sections in foreign content (SVG/MathML) - let ForeignTagHandler handle them
+        if context.current_context in ("svg", "math") and comment.startswith("[CDATA["):
+            return False
+        # Handle all other comments
+        return True
 
     def handle_comment(self, comment, context):
-        html_node = self.parser.html_node
-        body_node = self.parser._get_body_node()
-        if not html_node:
-            return False
-        # Ensure html node attached
-        if html_node not in self.parser.root.children:
-            self.parser.root.append_child(html_node)
-        # Find insertion index: after body if body exists, else append
-        if body_node and body_node.parent is html_node:
-            # Insert after body (append if body last)
-            if html_node.children and html_node.children[-1] is body_node:
-                html_node.append_child(self.parser._create_comment_node(comment))
+        state = context.document_state
+        html = self.parser.html_node
+        node = self.parser._create_comment_node(comment)
+        
+        # INITIAL state: insert inside <html> before first non-comment/non-text, or at root
+        if state == DocumentState.INITIAL:
+            if html and html in self.parser.root.children:
+                insert_idx = 0
+                for i, ch in enumerate(html.children):
+                    if ch.tag_name not in ("#comment", "#text"):
+                        insert_idx = i
+                        break
+                    insert_idx = i + 1
+                html.insert_child_at(insert_idx, node)
             else:
-                idx = html_node.children.index(body_node) + 1
-                node = self.parser._create_comment_node(comment)
-                html_node.insert_child_at(idx, node)
-        else:
-            html_node.append_child(self.parser._create_comment_node(comment))
-        # Do not change state (parser already transitions for other tokens)
-        return True
-
-
-class InitialCommentHandler(TagHandler):
-    """Place comments encountered in INITIAL insertion mode.
-
-    Mirrors former parser._handle_comment logic:
-      * If <html> already attached, insert inside <html> before first non-comment/non-text element
-      * Otherwise append at document root.
-    """
-
-    def should_handle_comment(self, comment, context):
-        return context.document_state == DocumentState.INITIAL
-
-    def handle_comment(self, comment, context):
-        html = self.parser.html_node
-        node = self.parser._create_comment_node(comment)
-        if html and html in self.parser.root.children:
-            insert_idx = 0
-            for i, ch in enumerate(html.children):
-                if ch.tag_name not in ("#comment", "#text"):
-                    insert_idx = i
-                    break
-                insert_idx = i + 1
-            html.insert_child_at(insert_idx, node)
-        else:
-            self.parser.root.append_child(node)
-        return True
-
-
-class AfterHeadCommentHandler(TagHandler):
-    """Place comments in AFTER_HEAD state before <body> if present, else append to <html>."""
-
-    def should_handle_comment(self, comment, context):
-        return context.document_state == DocumentState.AFTER_HEAD
-
-    def handle_comment(self, comment, context):
-        html = self.parser.html_node
-        if not html:
-            return False
-        node = self.parser._create_comment_node(comment)
-        body = self.parser._get_body_node()
-        if body and body.parent is html:
-            html.insert_before(node, body)
-        else:
-            html.append_child(node)
-        return True
-
-
-class AfterHtmlCommentHandler(TagHandler):
-    """Place comments while in AFTER_HTML state.
-
-    Behavior replicated from removed parser logic:
-      * Prefer appending to <body> when there is a preceding non-whitespace text node with no following comments.
-      * Otherwise append at document root.
-    """
-
-    def should_handle_comment(self, comment, context):
-        return context.document_state == DocumentState.AFTER_HTML
-
-    def handle_comment(self, comment, context):
-        body = self.parser._get_body_node()
-        root = self.parser.root
-        node = self.parser._create_comment_node(comment)
-        if body:
-            text_nodes = [ch for ch in body.children if ch.tag_name == "#text" and ch.text_content is not None]
-            placed = False
-            if text_nodes:
-                last_text = text_nodes[-1]
-                if any(c for c in last_text.text_content if not c.isspace()):
-                    idx_last = body.children.index(last_text)
-                    comments_after = [ch for ch in body.children[idx_last + 1 :] if ch.tag_name == "#comment"]
-                    if not comments_after:
-                        body.append_child(node)
-                        placed = True
-            if not placed:
+                self.parser.root.append_child(node)
+            return True
+        
+        # AFTER_HEAD state: place before <body> if present, else append to <html>
+        if state == DocumentState.AFTER_HEAD:
+            if not html:
+                return False
+            body = self.parser._get_body_node()
+            if body and body.parent is html:
+                html.insert_before(node, body)
+            else:
+                html.append_child(node)
+            return True
+        
+        # AFTER_BODY state OR post-body IN_BODY reentry: place as sibling of <body> under <html>
+        if state == DocumentState.AFTER_BODY or (
+            state == DocumentState.IN_BODY and self.parser._prev_token is not None and (
+                (self.parser._prev_token.type == "EndTag" and self.parser._prev_token.tag_name == "body") or
+                (self.parser._prev_token.type == "Character" and self.parser._prev_token.data is not None and 
+                 self.parser._prev_token.data.strip() == "")
+            )
+        ):
+            body_node = self.parser._get_body_node()
+            if not html:
+                return False
+            if html not in self.parser.root.children:
+                self.parser.root.append_child(html)
+            if body_node and body_node.parent is html:
+                if html.children and html.children[-1] is body_node:
+                    html.append_child(node)
+                else:
+                    idx = html.children.index(body_node) + 1
+                    html.insert_child_at(idx, node)
+            else:
+                html.append_child(node)
+            return True
+        
+        # AFTER_HTML state: append to <body> if conditions met, else at root
+        if state == DocumentState.AFTER_HTML:
+            body = self.parser._get_body_node()
+            root = self.parser.root
+            if body:
+                text_nodes = [ch for ch in body.children if ch.tag_name == "#text" and ch.text_content is not None]
+                placed = False
+                if text_nodes:
+                    last_text = text_nodes[-1]
+                    if any(c for c in last_text.text_content if not c.isspace()):
+                        idx_last = body.children.index(last_text)
+                        comments_after = [ch for ch in body.children[idx_last + 1 :] if ch.tag_name == "#comment"]
+                        if not comments_after:
+                            body.append_child(node)
+                            placed = True
+                if not placed:
+                    root.append_child(node)
+            else:
                 root.append_child(node)
-        else:
-            root.append_child(node)
-        return True
-
-
-class AfterFramesetCommentHandler(TagHandler):
-    """Handle comments in AFTER_FRAMESET state.
-
-    Matches earlier behavior:
-      * Before explicit </html>: append inside <html> if present else root.
-      * After explicit </html>: always append at root.
-    """
-
-    def should_handle_comment(self, comment, context):
-        return context.document_state == DocumentState.AFTER_FRAMESET
-
-    def handle_comment(self, comment, context):
-        html = self.parser.html_node
-        node = self.parser._create_comment_node(comment)
-        # context.html_end_explicit used previously; guard via getattr (cold path, not perf critical)
-        html_end_explicit = context.html_end_explicit
-        if not html_end_explicit and html and html in self.parser.root.children:
-            html.append_child(node)
+            return True
+        
+        # AFTER_FRAMESET state: append inside <html> or at root depending on html_end_explicit
+        if state == DocumentState.AFTER_FRAMESET:
+            html_end_explicit = context.html_end_explicit
+            if not html_end_explicit and html and html in self.parser.root.children:
+                html.append_child(node)
+            else:
+                self.parser.root.append_child(node)
+            return True
+        
+        # Fallback: append at current parent or root
+        if context.current_parent:
+            context.current_parent.append_child(node)
         else:
             self.parser.root.append_child(node)
         return True
