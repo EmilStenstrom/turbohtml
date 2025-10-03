@@ -386,53 +386,6 @@ class MalformedSelectStartTagFilterHandler(TagHandler):
         return True
 
 
-class BodyImplicitCreationHandler(TagHandler):
-    """Implicit body creation formerly inline in parser.
-
-    Creates <body> when leaving INITIAL/IN_HEAD via a non-head, non-html start tag outside template content.
-    Respects frameset conditions and frameset_ok flag.
-    """
-
-    def early_start_preprocess(self, token, context):
-        tag = token.tag_name
-        if (
-            not self.parser.fragment_context
-            and context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD)
-            and tag not in HEAD_ELEMENTS
-            and tag != "html"
-            and not self._is_in_template_content(context)
-        ):
-            if tag == "frameset":
-                return False  # allow frameset handler to create frameset instead
-            if self.parser._has_root_frameset():
-                return True  # suppress creating body in frameset document
-            benign_no_body = {
-                "frameset",
-                "frame",
-                "param",
-                "source",
-                "track",
-                "base",
-                "basefont",
-                "bgsound",
-                "link",
-                "meta",
-                "script",
-                "style",
-                "title",
-                "svg",
-                "math",
-            }
-            benign = tag in benign_no_body
-            if not (benign and context.frameset_ok):
-                self.debug("Implicitly creating body node (handler)")
-                if context.document_state != DocumentState.IN_FRAMESET:
-                    body = self.parser._ensure_body_node(context)
-                    if body:
-                        context.transition_to_state(DocumentState.IN_BODY, body)
-        return False
-
-
 class CommentPlacementHandler(TagHandler):
     """Handles post-body comment placement previously embedded in parser._handle_comment.
 
@@ -10211,44 +10164,6 @@ class ImageTagHandler(TagHandler):
         return True
 
 
-class BodyElementHandler(TagHandler):
-    """Handles <body> creation/merging and safe closure"""
-
-    def should_handle_start(self, tag_name, context):
-        return tag_name == "body"
-
-    def handle_start(self, token, context, has_more_content):
-        # For fragment context 'html', delegate to parser helper to ensure deterministic head->body order.
-        if self.parser.fragment_context == "html":
-            body = self.parser._ensure_body_node(context)
-            context.move_to_element(body)
-            self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
-            context.frameset_ok = (
-                False  # explicit body in fragment context disallows frameset takeover
-            )
-            return True
-        body = None
-        if self.parser.html_node:
-            for ch in self.parser.html_node.children:
-                if ch.tag_name == "body":
-                    body = ch
-                    break
-        if body is None:
-            body = Node("body", {k.lower(): v for k, v in token.attributes.items()})
-            if self.parser.html_node:
-                self.parser.html_node.append_child(body)
-        else:
-            for k, v in token.attributes.items():
-                lk = k.lower()
-                if lk not in body.attributes:
-                    body.attributes[lk] = v
-        context.move_to_element(body)
-        self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
-        context.frameset_ok = False  # explicit body tag encountered (spec: frameset-ok flag set to not ok)
-        return True
-
-
-
 class BoundaryElementHandler(TagHandler):
     """Handles marquee boundary element & related formatting closures"""
 
@@ -10975,42 +10890,6 @@ def foster_parent_element(tag_name, attributes, context, parser):
     context.open_elements.push(new_node)
 
     
-
-class UnknownElementHandler(TagHandler):
-    """Handle unknown/namespace elements with basic start/end tag matching"""
-
-    def should_handle_start(self, tag_name, context):
-        """Only handle unknown elements that contain colons (namespace) or are truly unknown"""
-        # Handle namespace elements (contain colon) that aren't handled by other handlers
-        if ":" in tag_name:
-            return True
-        return False
-
-
-    def should_handle_end(self, tag_name, context):
-        """Handle end tags for unknown elements if current parent matches"""
-        if ":" in tag_name and context.current_parent.tag_name == tag_name:
-            return True
-        return False
-
-    def handle_end(self, token, context):
-        """Handle unknown element end tags by closing the current element"""
-        tag_name = token.tag_name
-
-        if context.current_parent.tag_name == tag_name:
-            if context.current_parent.parent:
-                context.move_up_one_level()
-                self.debug(
-                    f"UnknownElementHandler: closed {tag_name}, current_parent now: {context.current_parent.tag_name}"
-                )
-            else:
-                self.debug(
-                    f"UnknownElementHandler: {tag_name} at root level, leaving current_parent unchanged"
-                )
-            return True
-
-        return False
-
 
 class RubyElementHandler(TagHandler):
     """Handles ruby annotation elements & auto-closing"""
