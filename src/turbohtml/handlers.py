@@ -10191,8 +10191,8 @@ class MenuitemElementHandler(TagHandler):
         return True
 
 
-class FallbackPlacementHandler(TagHandler):
-    """Handles residual start tags needing foster parenting per table algorithm."""
+class TableFosterParentHandler(TagHandler):
+    """Foster parents unclaimed elements in table context per HTML5 algorithm."""
 
     def should_handle_start(self, tag_name, context):
         token = self.parser._last_token

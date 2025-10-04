@@ -27,7 +27,7 @@ from .handlers import (
     FormTagHandler,
     HeadingTagHandler,
     RubyElementHandler,
-    FallbackPlacementHandler,
+    TableFosterParentHandler,
     GenericEndTagHandler,
     PostProcessHandler,
 )
@@ -96,7 +96,7 @@ class TurboHTML:
             FormTagHandler(self),
             HeadingTagHandler(self),
             RubyElementHandler(self),
-            FallbackPlacementHandler(self),
+            TableFosterParentHandler(self),
             GenericEndTagHandler(self),
             PostProcessHandler(self),
         ]
