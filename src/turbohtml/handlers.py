@@ -402,37 +402,6 @@ class StructureSynthesisHandler(TagHandler):
         parser._merge_adjacent_text_nodes(parser.root)
 
 
-class ListingNewlineHandler(TagHandler):
-    """Suppress a single leading newline in an empty <listing> element.
-
-    Extracted from parser character-token loop. If the current parent is a <listing> with
-    no children yet and incoming text begins with '\n', drop that newline and re-dispatch
-    the remainder through subsequent handlers.
-    """
-
-    def should_handle_text(self, text, context):
-        return (
-            bool(text)
-            and text.startswith("\n")
-            and context.current_parent.tag_name == "listing"
-            and not context.current_parent.children
-        )
-
-    def handle_text(self, text, context):
-        remainder = text[1:]
-        if not remainder:
-            return True
-        started = False
-        for h in self.parser.tag_handlers:
-            if not started:
-                if h is self:
-                    started = True
-                continue
-            if h.should_handle_text(remainder, context):
-                if h.handle_text(remainder, context):
-                    break
-        return True
-
 class FramesetPreprocessHandler(TagHandler):
     """Unified frameset preprocessing (frameset_ok, takeover, guard).
 
@@ -2020,9 +1989,9 @@ class TextHandler(TagHandler):
                     self.debug("Skipping third duplicate text after </body>")
                     return
 
-        # Special handling for pre elements
-        if context.current_parent.tag_name == "pre":
-            self.debug(f"handling text in pre element: '{text}'")
+        # Special handling for pre and listing elements (both strip leading newline)
+        if context.current_parent.tag_name in ("pre", "listing"):
+            self.debug(f"handling text in {context.current_parent.tag_name} element: '{text}'")
             self._handle_pre_text(text, context, context.current_parent)
             return
 
@@ -2049,7 +2018,7 @@ class TextHandler(TagHandler):
     def _handle_pre_text(
         self, text, context, parent
     ):
-        """Handle text specifically for <pre> elements"""
+        """Handle text for <pre> and <listing> elements (both strip leading newline)"""
         decoded_text = self._decode_html_entities(text)
 
         # Append to existing text node if present
