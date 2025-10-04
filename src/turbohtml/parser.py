@@ -216,11 +216,6 @@ class TurboHTML:
             self.html_node.append_child(body)
         return body
 
-    # State transition helper methods
-    def transition_to_state(self, context, new_state, new_parent=None):
-        """Transition context to any document state, optionally with a new parent node"""
-        context.transition_to_state(new_state, new_parent)
-
     # --- Standardized element insertion helpers ---
     def insert_element(
         self,
@@ -241,9 +236,9 @@ class TurboHTML:
         """Insert a start tag's element with controlled stack / current_parent semantics.
 
         Modes:
-          normal    – Standard spec path: push (unless forced void) then optionally enter.
-          transient – Insert but never push (synthetic wrappers inside template content).
-          void      – Insert and never push/enter (independent of actual tag classification).
+          normal    - Standard spec path: push (unless forced void) then optionally enter.
+          transient - Insert but never push (synthetic wrappers inside template content).
+          void      - Insert and never push/enter (independent of actual tag classification).
 
         treat_as_void can force void behavior under normal/transient modes. All invariants
         mirror HTML tree construction: no scoped side effects hidden here.
