@@ -268,8 +268,6 @@ class TurboHTML:
         parent=None,
         before=None,
         merge=True,
-        foster=False,
-        strip_replacement=True,
     ):
         """Insert character data performing standard merge with preceding text node.
 

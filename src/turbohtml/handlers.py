@@ -1270,7 +1270,6 @@ class TextHandler(TagHandler):
                         context,
                         parent=last_cell,
                         merge=False,
-                        strip_replacement=False,
                     )
                     return True
 
@@ -1300,7 +1299,6 @@ class TextHandler(TagHandler):
                         context,
                         parent=target_cell,
                         merge=False,
-                        strip_replacement=False,
                     )
                     return True
 
@@ -1453,7 +1451,6 @@ class TextHandler(TagHandler):
                         parent=boundary,
                         before=last_child,
                         merge=False,
-                        strip_replacement=False,
                     )
                     return True
             self._append_text(text, context)
@@ -6549,13 +6546,11 @@ class RawtextTagHandler(SelectAwareHandler):
             and context.current_parent.children[-1].tag_name == "#text"
         )
         # Preserve replacement characters inside <script> rawtext per spec expectations (domjs-unsafe cases)
-        strip = not (context.current_parent.tag_name == "script")
         self.parser.insert_text(
             text,
             context,
             parent=context.current_parent,
             merge=True,
-            strip_replacement=strip,
         )
         if merged:
             self.debug("merged with previous text node")
