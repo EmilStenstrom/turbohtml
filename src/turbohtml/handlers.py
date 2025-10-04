@@ -3323,18 +3323,6 @@ class ParagraphTagHandler(TagHandler):
                         contains_content = True
                         break
                 if not contains_content:
-                    p_token = self._synth_token("p")
-                    self.parser.insert_element(
-                        p_token,
-                        context,
-                        mode="normal",
-                        enter=False,
-                        parent=original_paragraph,
-                        push_override=False,
-                    )
-                    self.debug(
-                        f"Created implicit p as child of original paragraph {original_paragraph}",
-                    )
                     return True
 
         # Standard behavior: Find nearest p ancestor and move up to its parent
@@ -3599,21 +3587,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             and not in_template_content(context)
             and not context.current_parent.find_ancestor("select")
         ):
-            last_elem = None
-            for ch in reversed(context.current_parent.children):
-                if ch.tag_name != "#text":
-                    last_elem = ch
-                    break
-            already_isolated = (
-                last_elem is not None
-                and last_elem.tag_name == "tr"
-                and not last_elem.find_ancestor("table")
-            )
-            if not already_isolated:
-                tr = Node("tr", token.attributes)
-                context.current_parent.append_child(tr)
-                context.enter_element(tr)
-                context.open_elements.push(tr)
             return True
         return False
 
@@ -5817,21 +5790,6 @@ class ListTagHandler(TagHandler):
         )
 
         if matching_container:
-            self.debug(f"Found matching {tag_name}")
-            # If we're inside an li/dt/dd, stay there
-            if matching_container.parent and matching_container.parent.tag_name in (
-                "li",
-                "dt",
-                "dd",
-            ):
-                self.debug(f"Staying in {matching_container.parent.tag_name}")
-                context.move_to_element(matching_container.parent)
-            else:
-                self.debug("Moving to parent")
-                body = get_body(self.parser.root)
-                context.move_to_element_with_fallback(
-                    matching_container.parent, body,
-                ) or self.parser.html_node
             return True
 
         self.debug(f"No matching {tag_name} found")
@@ -5911,6 +5869,7 @@ class HeadingTagHandler(SimpleElementHandler):
             context.move_to_element(fallback)
 
         return True
+
 
 
 class RawtextTagHandler(SelectAwareHandler):
@@ -6245,42 +6204,7 @@ class VoidTagHandler(SelectAwareHandler):
             form_ancestor = context.current_parent.find_ancestor("form")
             table_ancestor = context.current_parent.find_ancestor("table")
             if form_ancestor and table_ancestor:
-                input_type = token.attributes.get("type", "").lower()
-                if input_type == "hidden":
-                    # Hidden input becomes a sibling immediately after the form inside the table
-                    self.debug("Making hidden input a sibling to form in table")
-                    form_parent = form_ancestor.parent
-                    if form_parent:
-                        # Insert hidden input as sibling immediately after form (void insertion)
-                        form_index = form_parent.children.index(form_ancestor)
-                        before = (
-                            form_parent.children[form_index + 1]
-                            if form_index + 1 < len(form_parent.children)
-                            else None
-                        )
-                        self.parser.insert_element(
-                            token,
-                            context,
-                            mode="void",
-                            enter=False,
-                            parent=form_parent,
-                            before=before,
-                        )
-                        return True
-                else:
-                    # Non-hidden input foster parented outside the table (before the table)
-                    self.debug("Foster parenting non-hidden input outside table")
-                    if table_ancestor.parent:
-                        table_ancestor.parent.children.index(table_ancestor)
-                        self.parser.insert_element(
-                            token,
-                            context,
-                            mode="void",
-                            enter=False,
-                            parent=table_ancestor.parent,
-                            before=table_ancestor,
-                        )
-                        return True
+                return True
 
         # Create the void element at the current level
         self.debug(f"Creating void element {tag_name} at current level")
@@ -7086,27 +7010,6 @@ class ForeignTagHandler(TagHandler):
             "svg desc",
             "svg title",
         ):
-            # Within integration point fragments, HTML elements are treated as HTML regardless of current_context
-            table_related = {
-                "table",
-                "thead",
-                "tbody",
-                "tfoot",
-                "tr",
-                "td",
-                "th",
-                "caption",
-                "col",
-                "colgroup",
-            }
-            tnl = tag_name.lower()
-            if tag_name in ("svg", "math"):
-                return True
-            if tnl in table_related:
-                return True  # still treat as foreign for nesting expectations
-            if tnl in HTML_ELEMENTS:
-                return False  # delegate HTML elements
-            # Unknown elements (e.g., <figure>) inside integration point fragments should still be HTML
             return False
 
         # 3. Already inside MathML foreign content
@@ -7158,27 +7061,7 @@ class ForeignTagHandler(TagHandler):
             and self.parser.fragment_context.startswith("svg")
             and context.current_context is None
         ):
-            tnl = tag_name.lower()
-            # Suppress fallback only while inside an open HTML breakout subtree.
-            open_html_ancestor = False
-            cur = context.current_parent
-            while cur and cur.tag_name != "document-fragment":
-                if not (
-                    cur.tag_name.startswith("svg ") or cur.tag_name.startswith("math ")
-                ):
-                    open_html_ancestor = True
-                    break
-                cur = cur.parent
-            if (
-                tnl not in HTML_ELEMENTS
-                and tnl not in ("svg", "math")
-                and tnl not in MATHML_ELEMENTS
-                and not open_html_ancestor
-            ):
-                self.debug(
-                    f"SVG fragment fallback handling <{tag_name}> as foreign SVG element; fragment_context={self.parser.fragment_context}",
-                )
-                return True
+            return True
 
         # Math fragment figure heuristic: in fragment contexts rooted at 'math math' or
         # 'math annotation-xml' (non HTML-encoded) a solitary <figure> should remain MathML
@@ -8845,21 +8728,6 @@ class FramesetTagHandler(TagHandler):
             # becomes a descendant of frameset (handled above). This matches html5lib expectations where
             # early <noframes> appears under head and its closing switches back to body/frameset modes.
             parent = context.current_parent
-            if (
-                context.document_state
-                in (
-                    DocumentState.INITIAL,
-                    DocumentState.IN_HEAD,
-                    DocumentState.AFTER_HEAD,
-                )
-                and not context.current_parent.find_ancestor("frameset")
-                and not has_root_frameset(self.parser.root)
-            ):
-                head = ensure_head(self.parser)
-                parent = head if head else parent
-                if context.document_state == DocumentState.INITIAL:
-                    context.transition_to_state(DocumentState.IN_HEAD, parent,
-                    )
             self.parser.insert_element(
                 token,
                 context,
