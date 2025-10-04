@@ -1954,9 +1954,7 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
                 if not inside_object:
                     context.active_formatting_elements.push(new_element, token)
                 return True
-        if pending_target and pending_target.parent is context.current_parent:
-            pass
-        else:
+        if not (pending_target and pending_target.parent is context.current_parent):
             new_element = self._insert_formatting_element(
                 token,
                 context,
@@ -2079,8 +2077,6 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
             popped = context.open_elements.pop()
             if popped == current:
                 break
-        if (current.find_child_by_tag("p") and context.current_parent.find_ancestor("p") and current.tag_name == tag_name):
-            pass
         if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
             context.move_to_ancestor_parent(current)
             context.in_end_tag_dispatch = prev_processing
@@ -7046,8 +7042,6 @@ class ForeignTagHandler(TagHandler):
             if crosses_forbidden_ip:
                 matching_element = None
 
-        suppressed_foreign_object_close = False
-
         if matching_element and matching_element.tag_name.endswith("foreignObject"):
             # If there are open non-foreign (HTML) elements beneath the foreignObject when its end tag appears,
             # treat the end tag as stray (ignore) so that subsequent HTML stays inside integration point.
@@ -7064,7 +7058,6 @@ class ForeignTagHandler(TagHandler):
                 cur = cur.parent
             if html_nested:
                 matching_element = None
-                suppressed_foreign_object_close = True
 
         if matching_element:
             # Move out of the matching element
