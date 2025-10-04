@@ -40,4 +40,5 @@ ignore = [
     "PLR",
     "C",
     "SIM",
+    "ARG",
 ]
