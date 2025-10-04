@@ -3,10 +3,8 @@
 from turbohtml.context import ParseContext, DocumentState
 from .handlers import (
     DoctypeHandler,
-    TemplateContentAutoEnterHandler,
+    TemplateHandler,
     SpecialElementHandler,
-    TemplateTagHandler,
-    TemplateContentFilterHandler,
     PlaintextHandler,
     FramesetPreprocessHandler,
     BodyReentryHandler,
@@ -78,10 +76,8 @@ class TurboHTML:
         # Initialize tag handlers in deterministic order
         self.tag_handlers = [
             DoctypeHandler(self),
-            TemplateContentAutoEnterHandler(self),
+            TemplateHandler(self),
             SpecialElementHandler(self),
-            TemplateTagHandler(self),
-            TemplateContentFilterHandler(self),
             PlaintextHandler(self),
             FramesetPreprocessHandler(self),
             BodyReentryHandler(self),
