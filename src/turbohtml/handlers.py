@@ -3540,17 +3540,14 @@ class ParagraphTagHandler(TagHandler):
             # Force reconstruction when adoption performed no structural changes
             # but stale active formatting elements may exist for inline spanning cases
             # formatting entries referencing elements no longer on the open stack to avoid redundant work.
-            if context.last_complex_adoption_no_structural_change and context.active_formatting_elements._stack:
-                detached_exists = False
-                for entry in context.active_formatting_elements._stack:
-                    el = entry.element
-                    if el and el not in context.open_elements._stack:
-                        detached_exists = True
-                        break
-                if detached_exists:
-                    context.post_adoption_reconstruct_pending = True
-                    # Reset flag so consecutive paragraph closures do not cascade reconstructions.
-                    context.last_complex_adoption_no_structural_change = False
+            detached_exists = False
+            for entry in context.active_formatting_elements._stack:
+                el = entry.element
+                if el and el not in context.open_elements._stack:
+                    detached_exists = True
+                    break
+            if detached_exists:
+                context.post_adoption_reconstruct_pending = True
 
             # In integration points, reconstruct immediately so following text is wrapped
             if in_svg_ip or in_math_ip:
@@ -3630,8 +3627,6 @@ class ParagraphTagHandler(TagHandler):
                 # Trigger one-shot reconstruction for next character token so detached formatting wrappers
                 # are recreated before subsequent inline text (mirrors spec reconstruction after paragraph boundary).
                 context.post_adoption_reconstruct_pending = True
-                # Reset structural-change flag; explicit detachment already requests reconstruction.
-                context.last_complex_adoption_no_structural_change = False
             if in_svg_ip or in_math_ip:
                 reconstruct_active_formatting_elements(self.parser, context)
             context.recent_paragraph_close = True
