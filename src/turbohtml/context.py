@@ -62,7 +62,6 @@ class ParseContext:
         # Deferred wrapper for legacy formatting when adoption removes the element but upcoming tokens
         # should continue inside an equivalent container (e.g. fostered <font> around stray table content).
         self.pending_font_wrapper_parent = None
-        self.pending_font_wrapper = None
         # Fragment parsing: track whether we've already ignored the first start tag
         # matching the fragment context element (e.g., context='td' and first <td>). The
         # HTML fragment algorithm only skips the context element token itself; subsequent
@@ -73,7 +72,6 @@ class ParseContext:
         self.resume_anchor_after_structure = None
         # Anchor reconstruction / suppression coordination flags (previously accessed via getattr)
         self.processing_end_tag = False  # True only during end-tag handler dispatch to gate adoption agency anchor segmentation
-        self._text_already_inserted_index = None  # template/text duplicate guard (set by OptionTextRedirectHandler/TextHandler)
         self.anchor_last_reconstruct_index = None  # tokenizer position of last anchor reconstruction (duplicate suppression)
         self.explicit_body = False  # whether a literal <body> start tag appeared (affects comment placement)
         self.last_template_text_sig = None  # signature tuple (parent_id, index) of last template text append for duplication guard

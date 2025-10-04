@@ -1057,10 +1057,6 @@ class TextHandler(TagHandler):
 
     def handle_text(self, text, context):
         self.debug(f"handling text '{text}' in state {context.document_state}")
-        # Per-token duplicate guard: skip if an earlier handler already inserted this character token
-        tok_idx = self.parser.get_token_position()
-        if tok_idx is not None and context._text_already_inserted_index == tok_idx:
-            return True
         # Template content single-consumption guard keyed by tokenizer index + parent id
         if context.current_parent.tag_name == "content":
             # Deduplicate if identical text already last child (handles double path table->content reroute)
