@@ -11,6 +11,7 @@ from .context import DocumentState, ContentState, ParseContext
 from .constants import RAWTEXT_ELEMENTS
 from .node import Node
 from .tokenizer import HTMLTokenizer, HTMLToken
+from . import table_modes
 
 class FragmentSpec:
     __slots__ = (
@@ -221,6 +222,49 @@ def _supp_fragment_legacy_context(parser, context, token, fragment_context):
             return True
     return False
 
+
+def _fragment_table_preprocess(parser, context, token, fragment_context):
+    """Fragment table structural insertion suppression predicate.
+    
+    Handles table fragment structural insertion via table_modes helpers.
+    Returns True if token was handled and should be suppressed.
+    """
+    if token.type != "StartTag":
+        return False
+    
+    tag = token.tag_name
+    
+    # Table fragment structural insertion (implicit tbody / root-level table section placement)
+    if table_modes.fragment_table_insert(tag, token, context, parser):
+        return True
+    if table_modes.fragment_table_section_insert(tag, token, context, parser):
+        return True
+    
+    return False
+
+
+def _fragment_colgroup_col_handler(parser, context, token, fragment_context):
+    """Colgroup fragment: only admit <col> elements, handle them specially.
+    
+    Returns True if token was handled and should be suppressed.
+    """
+    if fragment_context != "colgroup":
+        return False
+    if token.type != "StartTag":
+        return False
+    
+    tag = token.tag_name
+    
+    # Only allow <col> in colgroup fragment
+    if tag != "col":
+        return True  # suppress non-col tags
+    
+    # Insert <col> directly at fragment root
+    col = Node("col", token.attributes)
+    context.current_parent.append_child(col)
+    return True  # suppress further processing
+
+
 # Fragment specifications registry (includes suppression predicates)
 FRAGMENT_SPECS = {
     "template": FragmentSpec(
@@ -245,7 +289,12 @@ FRAGMENT_SPECS = {
     ),
     "colgroup": FragmentSpec(
         name="colgroup",
-        suppression_predicates=[_supp_doctype, _supp_colgroup_whitespace, _supp_fragment_nonhtml_structure],
+        suppression_predicates=[
+            _supp_doctype,
+            _supp_colgroup_whitespace,
+            _fragment_colgroup_col_handler,
+            _supp_fragment_nonhtml_structure,
+        ],
     ),
     "td": FragmentSpec(name="td", suppression_predicates=[_supp_doctype, _supp_duplicate_cell_or_initial_row]),
     "th": FragmentSpec(name="th", suppression_predicates=[_supp_doctype, _supp_duplicate_cell_or_initial_row]),
@@ -260,23 +309,39 @@ FRAGMENT_SPECS = {
     "noframes": FragmentSpec(name="noframes", suppression_predicates=[_supp_doctype], treat_all_as_text=True),
     "table": FragmentSpec(
         name="table",
-        suppression_predicates=[_supp_doctype, _supp_fragment_legacy_context],
+        suppression_predicates=[
+            _supp_doctype,
+            _fragment_table_preprocess,
+            _supp_fragment_legacy_context,
+        ],
         pre_token_hooks=[],
     ),
     "tbody": FragmentSpec(
         name="tbody",
         pre_token_hooks=[],  # hook added later after definition
-        suppression_predicates=[_supp_doctype, _supp_duplicate_section_wrapper],
+        suppression_predicates=[
+            _supp_doctype,
+            _fragment_table_preprocess,
+            _supp_duplicate_section_wrapper,
+        ],
     ),
     "thead": FragmentSpec(
         name="thead",
         pre_token_hooks=[],
-        suppression_predicates=[_supp_doctype, _supp_duplicate_section_wrapper],
+        suppression_predicates=[
+            _supp_doctype,
+            _fragment_table_preprocess,
+            _supp_duplicate_section_wrapper,
+        ],
     ),
     "tfoot": FragmentSpec(
         name="tfoot",
         pre_token_hooks=[],
-        suppression_predicates=[_supp_doctype, _supp_duplicate_section_wrapper],
+        suppression_predicates=[
+            _supp_doctype,
+            _fragment_table_preprocess,
+            _supp_duplicate_section_wrapper,
+        ],
     ),
 }
 
