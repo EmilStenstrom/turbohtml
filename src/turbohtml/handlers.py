@@ -9615,8 +9615,13 @@ class ImageTagHandler(TagHandler):
         return True
 
 
-class BoundaryTagHandler(TagHandler):
-    """Handles marquee boundary element & related formatting closures"""
+class MarqueeTagHandler(TagHandler):
+    """Handles marquee element with special formatting element interaction.
+    
+    Marquee is a special element that interacts with formatting elements differently:
+    - On start: inserts inside deepest formatting ancestor
+    - On end: properly closes intervening formatting elements
+    """
 
     def should_handle_start(self, tag_name, context):
         return tag_name == "marquee"
