@@ -10192,39 +10192,24 @@ class MenuitemElementHandler(TagHandler):
 
 
 class FallbackPlacementHandler(TagHandler):
-    """Handles residual start tags needing foster parenting or block relocation."""
+    """Handles residual start tags needing foster parenting per table algorithm."""
 
     def should_handle_start(self, tag_name, context):
         token = self.parser._last_token
         if not token or token.type != "StartTag":
             return False
-        if table_modes.should_foster_parent(tag_name, token.attributes, context, self.parser):
-            return True
-        if tag_name in ("div", "section", "article"):
-            if in_template_content(context):
-                return False
-            if context.current_context in ("math", "svg"):
-                return False
-            if context.current_parent.tag_name in SPECIAL_CATEGORY_ELEMENTS:
-                return True
-        return False
+        return table_modes.should_foster_parent(tag_name, token.attributes, context, self.parser)
 
     def handle_start(self, token, context, has_more_content):
-        """Fallback placement / fostering for residual start tags.
-
-        Restores logic removed during lint cleanup that performed:
-          * Foster parenting of start tags that the table algorithm requires moved
-          * Early fostering of inline formatting elements (font/b/i/u/em/strong/span) before an open table when not in a cell
-          * Relocation of generic block elements (div/section/article) out of special-category containers to a more appropriate ancestor.
-
-        Pure structural logic – no heuristics or reflection.
+        """Foster parent residual start tags per table algorithm.
+        
+        Uses table_modes.should_foster_parent() to determine if element needs
+        fostering before table. Allows ParagraphTagHandler to manage cell re-entry.
         """
         tag_name = token.tag_name
 
-        # 1. Table foster-parenting path for residual elements.
         if table_modes.should_foster_parent(tag_name, token.attributes, context, self.parser):
-            # Paragraph special-case: allow ParagraphTagHandler to manage re-entry into cells.
-            # If table modes logic wants to restore an open cell, skip fostering so cell handlers run.
+            # Allow ParagraphTagHandler to manage re-entry into cells.
             open_cell = table_modes.restore_insertion_open_cell(context)
             if open_cell is not None:
                 self.debug(
@@ -10235,50 +10220,6 @@ class FallbackPlacementHandler(TagHandler):
             foster_parent_element(tag_name, token.attributes, context, self.parser)
             return True
 
-        # 2. Deterministic fostering of certain inline formatting elements immediately before a table
-        # when not inside a cell/caption – keeps whitespace migration consistent with spec outcomes.
-        if context.document_state == DocumentState.IN_TABLE and tag_name in {"font", "b", "i", "u", "em", "strong", "span"}:
-            table = self.parser.find_current_table(context)
-            if table:
-                # (a) Insertion point is the table element itself.
-                if context.current_parent is table and table.parent:
-                    self.debug(
-                        f"Foster parenting formatting <{tag_name}> before <table> (formatting/table prelude)"
-                    )
-                    foster_parent_element(tag_name, token.attributes, context, self.parser)
-                    return True
-                # (b) Insertion point is table.parent (e.g. body) with table open; ensure not in cell/caption.
-                if (
-                    context.current_parent is table.parent
-                    and table.parent.tag_name not in ("td", "th", "caption")
-                ):
-                    self.debug(
-                        f"Foster parenting formatting <{tag_name}> adjacent to ancestor before <table>"
-                    )
-                    foster_parent_element(tag_name, token.attributes, context, self.parser)
-                    return True
-
-        # 3. Relocate residual block elements out of special-category parents to a more suitable ancestor.
-        if tag_name in ("div", "section", "article"):
-            if (
-                context.current_parent.tag_name in SPECIAL_CATEGORY_ELEMENTS
-                and context.open_elements._stack
-            ):
-                stack = context.open_elements._stack
-                for candidate in reversed(stack[:-1]):  # skip current parent (top)
-                    if candidate.tag_name in ("html", "body"):
-                        continue
-                    if candidate.tag_name in SPECIAL_CATEGORY_ELEMENTS:
-                        continue
-                    if candidate.tag_name in BLOCK_ELEMENTS:
-                        continue
-                    if context.current_parent is not candidate:
-                        context.move_to_element(candidate)
-                        self.debug(
-                            f"Relocated block <{tag_name}> under phrasing ancestor <{candidate.tag_name}>"
-                        )
-                    break
-        # Let default element handling create the node if we didn't foster/relocate explicitly.
         return False
 
 
