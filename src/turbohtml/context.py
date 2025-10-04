@@ -36,10 +36,9 @@ class ContentState(Enum):
 class ParseContext:
     """Mutable parser state: stacks, modes, insertion point."""
 
-    def __init__(self, length, initial_parent, debug_callback=None):
+    def __init__(self, initial_parent, debug_callback=None):
         # Input bounds
         self.index = 0
-        self.length = length
 
         if initial_parent is None:
             raise ValueError("ParseContext requires a valid initial parent")

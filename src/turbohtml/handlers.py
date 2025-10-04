@@ -20,7 +20,7 @@ from turbohtml.constants import (
     TABLE_ELEMENTS,
     VOID_ELEMENTS,
 )
-from turbohtml.context import ParseContext, ContentState, DocumentState
+from turbohtml.context import ContentState, DocumentState
 from turbohtml.node import Node
 from turbohtml.tokenizer import HTMLToken
 from turbohtml import table_modes
@@ -406,7 +406,7 @@ class DocumentStructureHandler(TagHandler):
         ensure_head(parser)
         # Only ensure body if NOT a frameset document
         if not has_root_frameset(parser.root):
-            body = get_body(parser.root) or ensure_body(parser.root, ParseContext(len(parser.html), parser.html_node, debug_callback=parser.debug).document_state, parser.fragment_context)
+            body = get_body(parser.root) or ensure_body(parser.root, DocumentState.INITIAL, parser.fragment_context)
             _ = body
         # Merge adjacent text nodes
         self._merge_adjacent_text_nodes(parser.root)
@@ -1235,8 +1235,7 @@ class TextHandler(TagHandler):
             # For simplicity, always append AFTER_BODY character data straight into body (not preserving current_parent)
             body = get_body(self.parser.root) or ensure_body(
                 self.parser.root,
-                self.parser.html_node,
-                context,
+                context.document_state,
                 self.parser.fragment_context
             )
             if not body:

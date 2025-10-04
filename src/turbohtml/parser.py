@@ -57,7 +57,6 @@ class TurboHTML:
             fragment_context: Context element for fragment parsing (e.g., 'td', 'tr')
         """
         self.env_debug = debug
-        self.html = html
         self.fragment_context = fragment_context
 
         self._init_dom_structure()
@@ -111,8 +110,8 @@ class TurboHTML:
             None  # The token currently being processed (internal convenience)
         )
 
-        # Parse immediately upon construction
-        self._parse()
+        # Parse immediately upon construction (html string only used during parsing)
+        self._parse(html)
         
         # Post-parse finalization
         for handler in self.tag_handlers:
@@ -331,12 +330,12 @@ class TurboHTML:
             self.debug(f"[insert_text] new text node len={len(text)} parent={target_parent.tag_name}")
         return new_node
 
-    def _parse(self):
+    def _parse(self, html):
         """Entry point selecting document vs fragment strategy."""
         if self.fragment_context:
-            parse_fragment(self)
+            parse_fragment(self, html)
         else:
-            self._parse_document()
+            self._parse_document(html)
 
     def _handle_fragment_comment(self, text, context):
         """Handle comments in fragment parsing"""
@@ -350,11 +349,11 @@ class TurboHTML:
             return
         context.current_parent.append_child(comment_node)
 
-    def _parse_document(self):
+    def _parse_document(self, html):
         """Parse a full HTML document (token loop delegating to handlers)."""
         # Initialize context with html_node as current_parent
-        context = ParseContext(len(self.html), self.html_node, debug_callback=self.debug)
-        self.tokenizer = HTMLTokenizer(self.html)
+        context = ParseContext(self.html_node, debug_callback=self.debug)
+        self.tokenizer = HTMLTokenizer(html)
 
 
         for token in self.tokenizer.tokenize():

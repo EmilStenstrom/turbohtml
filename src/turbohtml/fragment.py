@@ -10,7 +10,6 @@ behaviour or test‑specific logic resides here.
 from .context import DocumentState, ContentState, ParseContext
 from .constants import RAWTEXT_ELEMENTS
 from .node import Node
-from .node import Node
 from .tokenizer import HTMLTokenizer, HTMLToken
 from . import table_modes
 from .utils import ensure_body
@@ -556,12 +555,12 @@ def handle_character(parser, context, token, fragment_context):
                 break
 
 
-def parse_fragment(parser):  # pragma: no cover
+def parse_fragment(parser, html):  # pragma: no cover
     fragment_context = parser.fragment_context
     parser.debug(f"Parsing fragment in context: {fragment_context}")
     # Use externalized helper (parser retains wrapper for compatibility)
-    context = create_fragment_context(parser)
-    parser.tokenizer = HTMLTokenizer(parser.html)
+    context = create_fragment_context(parser, html)
+    parser.tokenizer = HTMLTokenizer(html)
     spec = FRAGMENT_SPECS.get(fragment_context)
 
     # Some handlers assume parser.html_node exists (mirrors document parsing path). For non-html
@@ -585,7 +584,7 @@ def parse_fragment(parser):  # pragma: no cover
     treat_all_as_text = spec.treat_all_as_text if spec else False
 
     if treat_all_as_text:
-        parser.tokenizer._pending_tokens.append(HTMLToken("Character", data=parser.html))
+        parser.tokenizer._pending_tokens.append(HTMLToken("Character", data=html))
         parser.tokenizer.pos = parser.tokenizer.length
     for token in parser.tokenizer.tokenize():
         parser._prev_token = parser._last_token
@@ -622,7 +621,7 @@ def parse_fragment(parser):  # pragma: no cover
     # Synthetic stack pruning no-op (bootstrap disabled).
 
 
-def create_fragment_context(parser):
+def create_fragment_context(parser, html):
     """Initialize a fragment ParseContext with state derived from the context element.
 
     Extraction of former TurboHTML._create_fragment_context (no behavior change).
@@ -630,7 +629,7 @@ def create_fragment_context(parser):
     focused on dispatch + high-level orchestration.
     """
     fc = parser.fragment_context
-    context = ParseContext(len(parser.html), parser.root, debug_callback=parser.debug)
+    context = ParseContext(parser.root, debug_callback=parser.debug)
 
     if fc == "template":
         # Special template: synthesize template/content container then treat as IN_BODY inside content.
