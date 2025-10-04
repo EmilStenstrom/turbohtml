@@ -140,7 +140,7 @@ class TurboHTML:
             self.root = Node("document")
             self.html_node = Node("html")
 
-    def _ensure_html_node(self):
+    def ensure_html_node(self):
         """Materialize <html> into the root if not already present (document mode only)."""
         if self.fragment_context:
             return
@@ -351,7 +351,7 @@ class TurboHTML:
         else:
             self._parse_document(html)
 
-    def _handle_fragment_comment(self, text, context):
+    def handle_fragment_comment(self, text, context):
         """Handle comments in fragment parsing."""
         comment_node = Node("#comment", text_content=text)
         # html fragment AFTER_HTML - attach at fragment root (siblings with head/body) per expected tree
@@ -398,7 +398,7 @@ class TurboHTML:
                 continue
 
             # Ensure html node is in tree before processing any non-DOCTYPE/Comment token
-            self._ensure_html_node()
+            self.ensure_html_node()
 
             if token.type == "StartTag":
                 self.handle_start_tag(token, context)

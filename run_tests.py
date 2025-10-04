@@ -250,21 +250,18 @@ class TestRunner:
                         file_test_indices.append(("skip", i))
                     continue
 
-                try:
-                    result = self._run_single_test(test)
-                    self.results.append(result)
+                result = self._run_single_test(test)
+                self.results.append(result)
 
-                    if result.passed:
-                        passed += 1
-                        file_passed += 1
-                        file_test_indices.append(("pass", i))
-                    else:
-                        failed += 1
-                        file_failed += 1
-                        file_test_indices.append(("fail", i))
-                        self._handle_failure(file_path, i, result)
-                except Exception:
-                    raise  # Re-raise the exception to show the full traceback
+                if result.passed:
+                    passed += 1
+                    file_passed += 1
+                    file_test_indices.append(("pass", i))
+                else:
+                    failed += 1
+                    file_failed += 1
+                    file_test_indices.append(("fail", i))
+                    self._handle_failure(file_path, i, result)
 
                 if failed and self.config["fail_fast"]:
                     return passed, failed, skipped
@@ -336,7 +333,7 @@ class TestReporter:
     def __init__(self, config):
         self.config = config
     # A "full" run means no narrowing flags were supplied. Only then do we write test-summary.txt.
-    def _is_full_run(self):
+    def is_full_run(self):
         return not (
             self.config.get("test_specs")
             or self.config.get("filter_files")
@@ -381,7 +378,7 @@ class TestReporter:
         total = passed + failed
         percentage = round(passed * 100 / total) if total else 0
         header = f"Tests passed: {passed}/{total} ({percentage}%) ({skipped} skipped)"
-        full_run = self._is_full_run()
+        full_run = self.is_full_run()
         # If no file breakdown collected, just output header (and write header)
         if not file_results:
             if full_run:
@@ -430,7 +427,7 @@ class TestReporter:
                 status_line = f"{filename}: 0/0 (N/A)"
 
             # Generate compact test pattern
-            pattern = self._generate_test_pattern(result["test_indices"])
+            pattern = self.generate_test_pattern(result["test_indices"])
             if pattern:
                 status_line += f" [{pattern}]"
 
@@ -442,7 +439,7 @@ class TestReporter:
 
         return "\n".join(lines)
 
-    def _generate_test_pattern(self, test_indices):
+    def generate_test_pattern(self, test_indices):
         """Generate a compact pattern showing pass/fail/skip for each test."""
         if not test_indices:
             return ""
@@ -567,7 +564,7 @@ def main():
     # Integrated regression detection
     if config.get("regressions"):
         # Only meaningful for full unfiltered run
-        if not reporter._is_full_run():  # reuse logic
+        if not reporter.is_full_run():
             return
         _run_regression_check(runner, reporter)
 
@@ -584,7 +581,7 @@ def _run_regression_check(runner, reporter):
     """
     try:
         proc = subprocess.run(
-            ["git", "show", "HEAD:test-summary.txt"],
+            ["git", "show", "HEAD:test-summary.txt"],  # noqa: S607
             capture_output=True,
             text=True,
             check=False,
@@ -599,7 +596,7 @@ def _run_regression_check(runner, reporter):
     # Build current patterns mapping file -> pattern
     current_patterns = {}
     for filename, result in runner.file_results.items():
-        pattern = reporter._generate_test_pattern(result["test_indices"])  # reuse
+        pattern = reporter.generate_test_pattern(result["test_indices"])
         current_patterns[filename] = pattern
 
     # Parse baseline lines: look for lines like 'tests1.dat: 93/112 (83%) [..x..]'

@@ -82,7 +82,7 @@ class HTMLTokenizer:
         self.script_non_executable = False
         self.script_suppressed_end_once = False
         self.script_type_value = ""
-        self._pending_tokens = []  # New list for pending tokens
+        self.pending_tokens = []
 
     def debug(self, *args, indent=4):
         """Print debug message if debugging is enabled."""
@@ -109,13 +109,13 @@ class HTMLTokenizer:
 
     def tokenize(self):
         """Generate tokens from the HTML string."""
-        while self.pos < self.length or self._pending_tokens:
+        while self.pos < self.length or self.pending_tokens:
             # Yield pending tokens first
-            if self._pending_tokens:
-                token = self._pending_tokens.pop(0)
+            if self.pending_tokens:
+                token = self.pending_tokens.pop(0)
                 self.debug(f"PENDING token: {token}")
                 token.is_last_token = (
-                    self.pos >= self.last_pos and not self._pending_tokens
+                    self.pos >= self.last_pos and not self.pending_tokens
                 )
                 yield token
                 continue
@@ -306,7 +306,7 @@ class HTMLTokenizer:
                                     text_before,
                                 )
                                 # Queue end tag after emitting text
-                                self._pending_tokens.append(
+                                self.pending_tokens.append(
                                     HTMLToken("EndTag", tag_name="script"),
                                 )
                                 return HTMLToken("Character", data=text_before)
@@ -470,7 +470,7 @@ class HTMLTokenizer:
                     if current_rawtext in ("title", "textarea"):
                         text_before = self._decode_entities(text_before)
                     # Queue the end tag so both tokens are emitted
-                    self._pending_tokens.append(
+                    self.pending_tokens.append(
                         HTMLToken("EndTag", tag_name=potential_tag),
                     )
                     return HTMLToken("Character", data=text_before)
@@ -643,7 +643,7 @@ class HTMLTokenizer:
                         attributes,
                     )
                     if text_repr:
-                        self._pending_tokens.append(
+                        self.pending_tokens.append(
                             HTMLToken("Character", data=text_repr),
                         )
                     return HTMLToken(
@@ -1053,7 +1053,7 @@ class HTMLTokenizer:
         if "&" not in text:
             return text
         # Named entities that MUST have a terminating semicolon in attribute values (heuristic subset)
-        SEMICOLON_REQUIRED_IN_ATTR = {"prod"}
+        semicolon_required_in_attr = {"prod"}
 
         # Entities for which we DO decode even if followed by '=' or alnum when semicolon omitted
         # (uppercase legacy names like AElig per entities02 expectations)
@@ -1143,7 +1143,7 @@ class HTMLTokenizer:
                         result.append("&")
                         i += 1
                         continue
-                    if entity_name in SEMICOLON_REQUIRED_IN_ATTR and not has_semicolon:
+                    if entity_name in semicolon_required_in_attr and not has_semicolon:
                         result.append("&")
                         i += 1
                         continue

@@ -382,7 +382,7 @@ class DocumentStructureHandler(TagHandler):
         if parser.fragment_context:
             return
         # Always ensure html and head exist (even for frameset documents per spec)
-        parser._ensure_html_node()
+        parser.ensure_html_node()
         ensure_head(parser)
         # Only ensure body if NOT a frameset document
         if not has_root_frameset(parser.root):
@@ -415,9 +415,7 @@ class DocumentStructureHandler(TagHandler):
             if changed:
                 cur.children = merged
             # Push non-text children for processing
-            for ch in reversed(cur.children):  # reversed to process in original order depth-first
-                if ch.tag_name != "#text":
-                    stack.append(ch)
+            stack.extend(ch for ch in reversed(cur.children) if ch.tag_name != "#text")
 
 
 class TemplateHandler(TagHandler):
@@ -1332,14 +1330,14 @@ class TextHandler(TagHandler):
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
             was_initial = context.document_state == DocumentState.INITIAL
             # HTML Standard "space character" set: TAB, LF, FF, CR, SPACE (NOT all Unicode isspace())
-            HTML_SPACE = {"\t", "\n", "\f", "\r", " "}
+            html_space = {"\t", "\n", "\f", "\r", " "}
             # Find first character that is not an HTML space (replacement char is treated as data)
             first_non_space_index = None
             for i, ch in enumerate(text):
                 if ch == "\ufffd":  # replacement triggers body like any other data
                     first_non_space_index = i
                     break
-                if ch not in HTML_SPACE:
+                if ch not in html_space:
                     # Non-HTML space (even if Python str.isspace()==True, e.g. U+205F) counts as data
                     first_non_space_index = i
                     break
@@ -1972,16 +1970,16 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
                 if entry.element is not None and entry.element.tag_name == "a"
             }
             target_anchor = existing_a.element if (tag_name == "a" and existing_a and existing_a.element) else None
-            stale = []
-            for child in parent.children:
+            stale = [
+                child for child in parent.children
                 if (
                     child.tag_name == "a"
                     and child is not new_element
                     and child not in active_anchor_elements
                     and not child.children
                     and child is target_anchor
-                ):
-                    stale.append(child)
+                )
+            ]
             if stale:
                 for anchor in stale:
                     parent.remove_child(anchor)
@@ -2813,13 +2811,13 @@ class ParagraphTagHandler(TagHandler):
                 )
                 return True
             self.debug(f"Found <p> ancestor: {p_ancestor}, closing it")
-            formatting_descendants = []
-            for elem in list(context.open_elements):
+            formatting_descendants = [
+                elem for elem in list(context.open_elements)
                 if (
                     elem.tag_name in FORMATTING_ELEMENTS
                     and elem.find_ancestor("p") is p_ancestor
-                ):
-                    formatting_descendants.append(elem)
+                )
+            ]
             if p_ancestor.parent:
                 context.move_to_element(p_ancestor.parent)
             if formatting_descendants:
@@ -3109,13 +3107,13 @@ class ParagraphTagHandler(TagHandler):
                 context.open_elements.remove_element(closing_p)
             # Detach descendant formatting elements of this paragraph from the open elements stack (spec: they remain in active list
             # and will be reconstructed when needed). This enables correct wrapping for subsequent paragraphs / text runs.
-            descendant_fmt = []
-            for el in context.open_elements:
+            descendant_fmt = [
+                el for el in context.open_elements
                 if (
                     el.tag_name in FORMATTING_ELEMENTS
                     and el.find_ancestor("p") is closing_p
-                ):
-                    descendant_fmt.append(el)
+                )
+            ]
             if descendant_fmt:
                 new_stack = []
                 to_remove = set(descendant_fmt)
@@ -5061,7 +5059,7 @@ class ListTagHandler(TagHandler):
                         formatting_to_remove.append(el)  # Always remove from stack
                         # Skip cloning if el is original_parent or an ancestor of original_parent
                         is_current = el is original_parent
-                        is_ancestor = original_parent.find_ancestor(lambda n: n is el) if original_parent else False
+                        is_ancestor = original_parent.find_ancestor(lambda n, el=el: n is el) if original_parent else False
                         if not (is_current or is_ancestor):
                             formatting_descendants.append(el)
             # Ensure direct child formatting also included if not already (covers elements not on stack due to prior closure)
@@ -5073,7 +5071,7 @@ class ListTagHandler(TagHandler):
                 ):
                     # Skip cloning if ch is original_parent or ancestor of original_parent
                     is_current = ch is original_parent
-                    is_ancestor = original_parent.find_ancestor(lambda n: n is ch) if original_parent else False
+                    is_ancestor = original_parent.find_ancestor(lambda n, ch=ch: n is ch) if original_parent else False
                     if not (is_current or is_ancestor):
                         formatting_descendants.append(ch)
             # Remove formatting descendants from open elements stack (implicit close) but keep active formatting entries
@@ -7265,22 +7263,23 @@ class ForeignTagHandler(TagHandler):
                 xml_lang = attrs.pop("xml:lang", None)
                 xml_space = attrs.pop("xml:space", None)
                 xml_base = attrs.pop("xml:base", None)
-                other_xml = []
-                for k in list(attrs.keys()):
-                    if k.startswith("xml:") and k not in ("xml:lang", "xml:space", "xml:base"):
-                        other_xml.append((k, attrs.pop(k)))
+                other_xml = [
+                    (k, attrs.pop(k))
+                    for k in list(attrs.keys())
+                    if k.startswith("xml:") and k not in ("xml:lang", "xml:space", "xml:base")
+                ]
                 new_attrs = {}
                 if defn_val is not None:
                     new_attrs["definitionurl"] = defn_val
-                for k, v in node.attributes.items():
-                    if not (k in ("definitionurl", "xml:lang", "xml:space", "xml:base") or k.startswith("xml:")):
-                        new_attrs[k] = v
+                new_attrs.update({
+                    k: v for k, v in node.attributes.items()
+                    if not (k in ("definitionurl", "xml:lang", "xml:space", "xml:base") or k.startswith("xml:"))
+                })
                 if xml_lang is not None:
                     new_attrs["xml lang"] = xml_lang
                 if xml_space is not None:
                     new_attrs["xml space"] = xml_space
-                for k, v in other_xml:
-                    new_attrs[k] = v
+                new_attrs.update(dict(other_xml))
                 if xml_base is not None:
                     new_attrs["xml:base"] = xml_base
                 node.attributes = new_attrs
@@ -7296,10 +7295,8 @@ class ForeignTagHandler(TagHandler):
                     rebuilt = {}
                     if "definitionURL" in attrs:
                         rebuilt["definitionURL"] = attrs.pop("definitionURL")
-                    for k, v in xlink_attrs:
-                        rebuilt[f"xlink {k.split(':', 1)[1]}"] = v
-                    for k, v in attrs.items():
-                        rebuilt[k] = v
+                    rebuilt.update({f"xlink {k.split(':', 1)[1]}": v for k, v in xlink_attrs})
+                    rebuilt.update(attrs)
                     node.attributes = rebuilt
             for ch in node.children:
                 if ch.tag_name != "#text":

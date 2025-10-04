@@ -72,10 +72,10 @@ class ActiveFormattingElements:
         return False
 
     def _apply_noahs_ark(self, new_entry):
-        matching = []
-        for entry in self._stack:
-            if entry.matches(new_entry.element.tag_name, new_entry.element.attributes):
-                matching.append(entry)
+        matching = [
+            entry for entry in self._stack
+            if entry.matches(new_entry.element.tag_name, new_entry.element.attributes)
+        ]
         if len(matching) >= 3:
             earliest = matching[0]
             if earliest in self._stack:

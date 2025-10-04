@@ -447,17 +447,17 @@ def handle_comment(parser, context, token, fragment_context):
             body = ensure_body(parser.root, context.document_state, parser.fragment_context)
             if body:
                 context.move_to_element(body)
-    parser._handle_fragment_comment(token.data, context)
+    parser.handle_fragment_comment(token.data, context)
 
 
 def handle_start_tag(parser, context, token, fragment_context, spec):
     if spec and token.tag_name in spec.ignored_start_tags:
         return
     # Guarantee html_node exists before delegating to handlers that may reference it.
-    # Document parsing calls _ensure_html_node() before non-DOCTYPE/Comment tokens; replicate minimal
+    # Document parsing calls ensure_html_node() before non-DOCTYPE/Comment tokens; replicate minimal
     # requirement here to avoid attribute errors in early_start_preprocess hooks during fragment parsing.
     if parser.html_node is None:
-        parser._ensure_html_node()
+        parser.ensure_html_node()
     if fragment_context == "html":
         tn = token.tag_name
         if tn == "head":
@@ -574,7 +574,7 @@ def parse_fragment(parser, html):  # pragma: no cover
     treat_all_as_text = spec.treat_all_as_text if spec else False
 
     if treat_all_as_text:
-        parser.tokenizer._pending_tokens.append(HTMLToken("Character", data=html))
+        parser.tokenizer.pending_tokens.append(HTMLToken("Character", data=html))
         parser.tokenizer.pos = parser.tokenizer.length
     for token in parser.tokenizer.tokenize():
         parser.debug(f"_parse_fragment: {token}, context: {context}", indent=0)
