@@ -391,8 +391,7 @@ class TurboHTML:
                 prev_node = target_parent.children[prev_idx]
                 prev_node.text_content += text
                 return prev_node
-            new_node = Node("#text")
-            new_node.text_content = text
+            new_node = Node("#text", text_content=text)
             target_parent.insert_before(new_node, before)
             return new_node
 
@@ -407,8 +406,7 @@ class TurboHTML:
             last.text_content += text
             return last
 
-        new_node = Node("#text")
-        new_node.text_content = text
+        new_node = Node("#text", text_content=text)
         target_parent.append_child(new_node)
         if self.env_debug:
             self.debug(f"[insert_text] new text node len={len(text)} parent={target_parent.tag_name}")
@@ -442,8 +440,7 @@ class TurboHTML:
 
     def _handle_fragment_comment(self, text, context):
         """Handle comments in fragment parsing"""
-        comment_node = Node("#comment")
-        comment_node.text_content = text
+        comment_node = Node("#comment", text_content=text)
         # html fragment AFTER_HTML - attach at fragment root (siblings with head/body) per expected tree
         if (
             self.fragment_context == "html"
@@ -489,8 +486,7 @@ class TurboHTML:
                         handled = True
                         break
                 if not handled:
-                    node = Node("#comment")
-                    node.text_content = token.data
+                    node = Node("#comment", text_content=token.data)
                     context.current_parent.append_child(node)
                 continue
 

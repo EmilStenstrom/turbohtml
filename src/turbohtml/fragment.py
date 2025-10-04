@@ -534,8 +534,7 @@ def handle_character(parser, context, token, fragment_context):
     if context.content_state == ContentState.PLAINTEXT:
         if not data:
             return
-        text_node = Node("#text")
-        text_node.text_content = data
+        text_node = Node("#text", text_content=data)
         context.current_parent.append_child(text_node)
         return
     if not data:

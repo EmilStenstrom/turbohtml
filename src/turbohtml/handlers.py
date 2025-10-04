@@ -249,8 +249,7 @@ class UnifiedCommentHandler(TagHandler):
     def handle_comment(self, comment, context):
         state = context.document_state
         html = self.parser.html_node
-        node = Node("#comment")
-        node.text_content = comment
+        node = Node("#comment", text_content=comment)
         
         # INITIAL state: insert inside <html> before first non-comment/non-text, or at root
         if state == DocumentState.INITIAL:
@@ -1764,16 +1763,14 @@ class TextHandler(TagHandler):
                     if foster_parent_node.children and foster_parent_node.children[-1].tag_name == "#text" and foster_parent_node.children[-1] is not before:
                         foster_parent_node.children[-1].text_content += decoded_text
                     else:
-                        node = Node("#text")
-                        node.text_content = decoded_text
+                        node = Node("#text", text_content=decoded_text)
                         foster_parent_node.insert_before(node, before)
                 else:
                     # append fallback
                     if foster_parent_node.children and foster_parent_node.children[-1].tag_name == "#text":
                         foster_parent_node.children[-1].text_content += decoded_text
                     else:
-                        node = Node("#text")
-                        node.text_content = decoded_text
+                        node = Node("#text", text_content=decoded_text)
                         foster_parent_node.append_child(node)
             else:
                 self.parser.insert_text(decoded_text, context, parent=parent, merge=True)
@@ -9807,8 +9804,7 @@ class PlaintextHandler(SelectAwareHandler):
     def handle_start(self, token, context, has_more_content):
         if context.content_state == ContentState.PLAINTEXT:
             self.debug(f"treating tag as text: <{token.tag_name}>")
-            text_node = Node("#text")
-            text_node.text_content = f"<{token.tag_name}>"
+            text_node = Node("#text", text_content=f"<{token.tag_name}>")
             context.current_parent.append_child(text_node)
             return True
 
@@ -10022,8 +10018,7 @@ class PlaintextHandler(SelectAwareHandler):
 
     def handle_text(self, text, context):
         # Tokenizer already transformed disallowed code points into U+FFFD; just append literally.
-        node = Node("#text")
-        node.text_content = text
+        node = Node("#text", text_content=text)
         context.current_parent.append_child(node)
         if context.frameset_ok and any((not c.isspace()) and c != "\ufffd" for c in text):
             context.frameset_ok = False
@@ -10043,8 +10038,7 @@ class PlaintextHandler(SelectAwareHandler):
         if context.content_state == ContentState.PLAINTEXT:
             self.debug(f"PLAINTEXT mode: literalizing </{token.tag_name}>")
             literal = f"</{token.tag_name}>"
-            text_node = Node("#text")
-            text_node.text_content = literal
+            text_node = Node("#text", text_content=literal)
             context.current_parent.append_child(text_node)
             return True
         # If start tag was ignored inside select we also ignore its end tag (do nothing)
@@ -10081,16 +10075,14 @@ class PlaintextHandler(SelectAwareHandler):
             root_name = self.parser.root.tag_name if self.parser.root else None
             if root_name == "document-fragment":
                 self.debug("Stray </plaintext> in fragment: emitting literal text node")
-                text_node = Node("#text")
-                text_node.text_content = "</plaintext>"
+                text_node = Node("#text", text_content="</plaintext>")
                 context.current_parent.append_child(text_node)
             else:
                 self.debug("Stray </plaintext> in document: ignoring end tag (no open plaintext element)")
             return True
         # Any other end tag we claimed (shouldn't happen) literalize
         literal = f"</{token.tag_name}>"
-        text_node = Node("#text")
-        text_node.text_content = literal
+        text_node = Node("#text", text_content=literal)
         context.current_parent.append_child(text_node)
         return True
 

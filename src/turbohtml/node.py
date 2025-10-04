@@ -1,4 +1,3 @@
-
 BOUNDARY_ELEMENTS = {
     "applet",
     "caption",
@@ -38,7 +37,7 @@ class Node:
         "synthetic_stack_only",
     )
 
-    def __init__(self, tag_name, attributes=None, preserve_attr_case=False):
+    def __init__(self, tag_name, attributes=None, preserve_attr_case=False, text_content=None):
         # Instrumentation / safety: empty tag names should never be constructed.
         # If this triggers we want a loud failure with context so we can trace upstream logic.
         if tag_name is None or tag_name == "":
@@ -66,7 +65,8 @@ class Node:
             self.attributes = {}
         self.children = []
         self.parent = None
-        self.text_content = ""  # For text nodes or concatenated text in element nodes
+        # For text and comment nodes store inline text; for element nodes this may be unused
+        self.text_content = text_content if text_content is not None else ""
         self.next_sibling = None
         self.previous_sibling = None
         # Default: real DOM node (False). Fragment bootstrap may set True on ephemeral
