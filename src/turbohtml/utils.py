@@ -9,6 +9,37 @@ from turbohtml.context import DocumentState
 from turbohtml.constants import FORMATTING_ELEMENTS
 
 
+def is_in_table_cell(context):
+    """Check if current insertion point is inside a table cell (td/th)."""
+    parent = context.current_parent
+    if parent is None:
+        return False
+    if parent.tag_name in ("td", "th"):
+        return True
+    # If we're at a table element itself, we're not in a cell OF that table
+    # (even if the table is nested inside a cell of an outer table)
+    if parent.tag_name == "table":
+        return False
+    return parent.find_first_ancestor_in_tags(["td", "th"]) is not None
+
+
+def is_in_table_context(context):
+    """Check if document state is in any table insertion mode."""
+    return context.document_state in (
+        DocumentState.IN_TABLE,
+        DocumentState.IN_TABLE_BODY,
+        DocumentState.IN_ROW,
+        DocumentState.IN_CAPTION,
+    )
+
+
+def is_in_cell_or_caption(context):
+    """Check if current insertion point is inside a cell or caption."""
+    return bool(
+        context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
+    )
+
+
 def get_body(root):
     """Find existing body node in the document tree."""
     if not root:

@@ -12,7 +12,6 @@ from turbohtml.constants import (
     HTML_ELEMENTS,
     MATHML_ELEMENTS,
     MATHML_CASE_SENSITIVE_ATTRIBUTES,
-    NUMERIC_ENTITY_INVALID_SENTINEL,
     RAWTEXT_ELEMENTS,
     SPECIAL_CATEGORY_ELEMENTS,
     SVG_CASE_SENSITIVE_ATTRIBUTES,
@@ -35,6 +34,9 @@ from turbohtml.utils import (
     has_root_frameset,
     ensure_body,
     in_template_content,
+    is_in_table_cell,
+    is_in_table_context,
+    is_in_cell_or_caption,
 )
 
 
@@ -64,30 +66,6 @@ class TagHandler:
         return False
 
     # Helper predicates
-    def _is_in_template_content(self, context):
-        return in_template_content(context)
-
-    def _is_in_select(self, context):
-        return context.current_parent.is_inside_tag("select")
-
-    def _is_in_table_cell(self, context):
-        parent = context.current_parent
-        if parent is None:
-            return False
-        if parent.tag_name in ("td", "th"):
-            return True
-        # If we're at a table element itself, we're not in a cell OF that table
-        # (even if the table is nested inside a cell of an outer table)
-        if parent.tag_name == "table":
-            return False
-        return parent.find_first_ancestor_in_tags(["td", "th"]) is not None
-
-    def _move_to_parent_of_ancestor(self, context, ancestor):
-        context.move_to_ancestor_parent(ancestor)
-
-    def _should_foster_parent_in_table(self, context):
-        return context.document_state == DocumentState.IN_TABLE and not self._is_in_cell_or_caption(context)
-
     def _foster_parent_before_table(self, token, context):
         table = find_current_table(context)
         if table and table.parent:
@@ -95,19 +73,6 @@ class TagHandler:
                 token, context, mode="normal", enter=True, parent=table.parent, before=table
             )
         return None
-
-    def _is_in_table_context(self, context):
-        return context.document_state in (
-            DocumentState.IN_TABLE,
-            DocumentState.IN_TABLE_BODY,
-            DocumentState.IN_ROW,
-            DocumentState.IN_CAPTION,
-        )
-
-    def _is_in_cell_or_caption(self, context):
-        return bool(
-            context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
-        )
 
     # Default no-op behavior for dispatch predicates / handlers
     def should_handle_start(self, tag_name, context):
@@ -983,7 +948,7 @@ class TemplateAwareHandler(TagHandler):
 
     def should_handle_start(self, tag_name, context):
         # Allow some handlers even inside template content (formatting and auto-closing semantics still apply)
-        if self._is_in_template_content(context):
+        if in_template_content(context):
             # Importing class names locally avoids circular references at import time
             allowed_types = (FormattingTagHandler, AutoClosingTagHandler)
             if isinstance(self, allowed_types):
@@ -1000,7 +965,7 @@ class SelectAwareHandler(TagHandler):
     """Mixin for handlers that need to avoid handling inside select elements"""
 
     def should_handle_start(self, tag_name, context):
-        if self._is_in_select(context):
+        if context.current_parent.is_inside_tag("select"):
             return False
         return self._should_handle_start_impl(tag_name, context)
 
@@ -1031,7 +996,7 @@ class SimpleElementHandler(TagHandler):
     def handle_end(self, token, context):
         ancestor = context.current_parent.find_ancestor(token.tag_name)
         if ancestor:
-            self._move_to_parent_of_ancestor(context, ancestor)
+            context.move_to_ancestor_parent(ancestor)
         return True
 
     def _is_void_element(self, tag_name):
@@ -1103,7 +1068,7 @@ class TextHandler(TagHandler):
         if context.post_adoption_reconstruct_pending:
             if (
                 context.document_state == DocumentState.IN_BODY
-                and not self._is_in_template_content(context)
+                and not in_template_content(context)
             ):
                 self.debug("Post-adoption one-shot reconstruction before character insertion")
                 reconstruct_active_formatting_elements(self.parser, context)
@@ -1111,7 +1076,7 @@ class TextHandler(TagHandler):
         else:
             # Stale formatting fallback: if no one-shot flag but there exists a stale active formatting element
             # (entry element not on open elements stack) and we are about to insert text in body, reconstruct.
-            if context.document_state == DocumentState.IN_BODY and not self._is_in_template_content(context):
+            if context.document_state == DocumentState.IN_BODY and not in_template_content(context):
                 if context.skip_stale_reconstruct_once:
                     # Consume one-shot suppression set by complex adoption cloned-only path.
                     context.skip_stale_reconstruct_once = False
@@ -1159,7 +1124,7 @@ class TextHandler(TagHandler):
         # AFTER_HEAD: whitespace -> html root; non-whitespace forces body creation
         if (
             context.document_state == DocumentState.AFTER_HEAD
-            and not self._is_in_template_content(context)
+            and not in_template_content(context)
         ):
             if text.isspace():
                 if self.parser.html_node:
@@ -1430,7 +1395,7 @@ class TextHandler(TagHandler):
                     return True
 
         # Template content adjustments
-        if self._is_in_template_content(context):
+        if in_template_content(context):
             boundary = None
             cur = context.current_parent
             while cur:
@@ -1683,7 +1648,7 @@ class TextHandler(TagHandler):
         if not parent.children and decoded_text.startswith("\n"):
             decoded_text = decoded_text[1:]
         if decoded_text:
-            if parent and needs_foster_parenting(parent) and decoded_text.strip() and not self._is_in_template_content(context):
+            if parent and needs_foster_parenting(parent) and decoded_text.strip() and not in_template_content(context):
                 foster_parent_node, before = foster_parent(parent, context.open_elements, self.parser.root)
                 if before is not None and before.parent is foster_parent_node:
                     # Insert before table with merge semantics
@@ -1885,7 +1850,7 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
         self.debug(f"Handling <{tag_name}>, context={context}")
         restore_cell_after_adoption = (
             context.current_parent
-            if tag_name == "a" and self._is_in_table_cell(context)
+            if tag_name == "a" and is_in_table_cell(context)
             else None
         )
 
@@ -1992,7 +1957,7 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
             if reconstruct_if_needed(self.parser, context):
                 context.post_adoption_reconstruct_pending = False
 
-        if self._is_in_template_content(context):
+        if in_template_content(context):
             tableish = {"table", "thead", "tbody", "tfoot"}
             # Template content handling for formatting elements: if ancestor formatting with same tag exists
             # inside template content boundary, reuse insertion point at that ancestor; otherwise remain at current.
@@ -2028,8 +1993,8 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
             or context.current_parent.tag_name == "object"
         )
 
-        if self._is_in_table_cell(context):
-            self.debug(f"_is_in_table_cell returned True for parent={context.current_parent.tag_name}")
+        if is_in_table_cell(context):
+            self.debug(f"is_in_table_cell returned True for parent={context.current_parent.tag_name}")
             # Fragment-leading anchor relocation: In fragment contexts rooted in a row/cell where a
             # <table><tbody?> (no rows yet) precedes an <a><tr> sequence, the expected tree places
             # the <a> before the <table> inside the cell. When encountering the <a> start tag while
@@ -2175,7 +2140,7 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
             "colgroup",
         }
         if (
-            self._is_in_table_context(context)
+            is_in_table_context(context)
             and context.document_state != DocumentState.IN_CAPTION
             and context.current_parent.tag_name in tableish_containers
         ):
@@ -2319,7 +2284,7 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
             context.move_to_element(context.current_parent.parent)
 
         pending_target = locals().get("pending_insert_before")
-        if self._is_in_template_content(context):
+        if in_template_content(context):
             parent = context.current_parent
             last_child = parent.children[-1] if parent.children else None
             if last_child and last_child.tag_name == "table":
@@ -2442,7 +2407,7 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
         if boundary:
             current = context.current_parent.find_ancestor(tag_name, stop_at_boundary=True)
             if current:
-                self._move_to_parent_of_ancestor(context, current)
+                context.move_to_ancestor_parent(current)
                 return True
             if boundary.parent:
                 outer = boundary.parent.find_ancestor(tag_name)
@@ -2471,7 +2436,7 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
                 context.processing_end_tag = prev_processing
                 return True
         if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
-            self._move_to_parent_of_ancestor(context, current)
+            context.move_to_ancestor_parent(current)
             context.processing_end_tag = prev_processing
             return True
         context.move_to_element_with_fallback(current.parent, get_body(self.parser.root))
@@ -2516,13 +2481,13 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
     def _should_handle_start_impl(self, tag_name, context):
         # If we're in a select, handle all tags to prevent formatting elements
         # BUT only if we're not in template content (template elements should be handled by template handlers)
-        if self._is_in_select(context) and not self._is_in_template_content(context):
+        if context.current_parent.is_inside_tag("select") and not in_template_content(context):
             return True  # Intercept every tag inside <select>
         return tag_name in ("select", "option", "optgroup", "datalist")
 
     # Override to widen interception scope inside select (TemplateAwareHandler limits to handled_tags otherwise)
     def should_handle_start(self, tag_name, context):
-        if self._is_in_select(context) and not self._is_in_template_content(context):
+        if context.current_parent.is_inside_tag("select") and not in_template_content(context):
             # Do NOT intercept script/style so RawtextTagHandler can process them within select per spec
             if tag_name in ("script", "style"):
                 return False
@@ -2539,7 +2504,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
 
         # If we're inside template content, block select semantics entirely. The content filter
         # will represent option/optgroup/select as plain elements without promotion or relocation.
-        if self._is_in_template_content(context):
+        if in_template_content(context):
             # Inside template content, suppress select-specific behavior entirely
             return True
 
@@ -2568,7 +2533,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                     )
                     return True
             # Foster parent if in table context (but not in a cell or caption)
-            if self._should_foster_parent_in_table(context):
+            if context.document_state == DocumentState.IN_TABLE and not is_in_cell_or_caption(context):
                 self.debug("Foster parenting select out of table")
                 new_node = self._foster_parent_before_table(token, context)
                 if new_node:
@@ -2577,7 +2542,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                     return True
 
             # If we're already in a select, close it and ignore the nested select
-            if self._is_in_select(context):
+            if context.current_parent.is_inside_tag("select"):
                 self.debug(
                     "Found nested select, popping outer <select> from open elements (spec reprocess rule)"
                 )
@@ -2603,7 +2568,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         # Exception: fragment parsing with fragment_context == 'select' where we have no actual <select>
         # element on the stack and tests expect these tokens to be ignored (only option/optgroup retained).
         if (
-            self._is_in_select(context)
+            context.current_parent.is_inside_tag("select")
             and tag_name in ("input", "keygen", "textarea")
             and self.parser.fragment_context != "select"
         ):
@@ -2626,7 +2591,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                         break
             return False  # Reprocess token as normal start tag now outside select
         if (
-            self._is_in_select(context)
+            context.current_parent.is_inside_tag("select")
             and tag_name in ("input", "keygen", "textarea")
             and self.parser.fragment_context == "select"
         ):
@@ -2636,7 +2601,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             return True
 
         # If we're in a select, ignore any formatting elements
-        if self._is_in_select(context) and tag_name in FORMATTING_ELEMENTS:
+        if context.current_parent.is_inside_tag("select") and tag_name in FORMATTING_ELEMENTS:
             # Special case: inside SVG foreignObject integration point, break out of select
             # and insert formatting element in the nearest HTML context (outside the foreign subtree).
             # Delegate to ForeignTagHandler for breakout logic.
@@ -2673,7 +2638,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             self.debug(f"Ignoring formatting element {tag_name} inside select")
             return True
 
-        if self._is_in_select(context) and (
+        if context.current_parent.is_inside_tag("select") and (
             tag_name in ("svg", "math") or tag_name in MATHML_ELEMENTS
         ):
             self.debug(
@@ -2681,7 +2646,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             )
             return True
 
-        if self._is_in_select(context) and tag_name in {
+        if context.current_parent.is_inside_tag("select") and tag_name in {
             "mi",
             "mo",
             "mn",
@@ -2691,7 +2656,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             self.debug(f"Explicitly dropping MathML leaf {tag_name} inside select")
             return True
 
-        if self._is_in_select(context) and tag_name == "p":
+        if context.current_parent.is_inside_tag("select") and tag_name == "p":
             self.debug("Flattening <p> inside select (ignored start tag)")
             return True
         if tag_name == "p" and context.document_state in (
@@ -2712,7 +2677,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                 )
             return False  # Allow normal paragraph handling after relocation
 
-        if self._is_in_select(context) and tag_name in RAWTEXT_ELEMENTS:
+        if context.current_parent.is_inside_tag("select") and tag_name in RAWTEXT_ELEMENTS:
             # Ignore other rawtext containers (e.g. title, textarea, noframes) inside select; script/style fall through
             if tag_name not in ("script", "style"):
                 self.debug(f"Ignoring rawtext element {tag_name} inside select")
@@ -2723,7 +2688,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         # Spec-adjacent recovery: treat void <hr> start tag inside <select> as present (expected tree
         # retains it). We insert it rather than ignoring so the tree matches reference output. This reduces earlier
         # broad 'ignore all other tags in select' heuristic without adding persistent state.
-        if self._is_in_select(context) and tag_name == "hr":
+        if context.current_parent.is_inside_tag("select") and tag_name == "hr":
             self.debug("Emitting <hr> inside select (void element)")
             # If currently inside option/optgroup, close them implicitly by moving insertion point to ancestor select
             if context.current_parent.tag_name in ("option", "optgroup"):
@@ -2737,7 +2702,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             )
             return True
 
-        if self._is_in_select(context) and tag_name in TABLE_ELEMENTS:
+        if context.current_parent.is_inside_tag("select") and tag_name in TABLE_ELEMENTS:
             # Regression-safe refinement:
             # * Do NOT auto-pop select for every table-related tag (earlier change produced unintended
             #   table structures inside foreignObject or built tbody/tr under select – tests17 failures).
@@ -2984,7 +2949,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                 return True
 
         # If we're in a select and this is any other tag, ignore it
-        if self._is_in_select(context):
+        if context.current_parent.is_inside_tag("select"):
             self.debug(f"Ignoring {tag_name} inside select")
             return True
 
@@ -3044,7 +3009,7 @@ class ParagraphTagHandler(TagHandler):
     """Handles paragraph elements"""
 
     def should_handle_start(self, tag_name, context):
-        if self._is_in_template_content(context):
+        if in_template_content(context):
             return False
         if tag_name == "p":
             return True
@@ -3211,7 +3176,7 @@ class ParagraphTagHandler(TagHandler):
 
         if (
             token.tag_name == "p"
-            and not self._is_in_template_content(context)
+            and not in_template_content(context)
             and (
                 context.document_state
                 in (
@@ -3736,7 +3701,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 return True
         # Cell re-entry: if an end tag (not </td>/<th>) arrives while a td/th is still open on the stack but
         # current_parent drifted outside any cell, reposition to deepest open cell before normal handling.
-        if token.tag_name not in ("td", "th") and not self._is_in_template_content(context):
+        if token.tag_name not in ("td", "th") and not in_template_content(context):
             deepest_cell = None
             for el in reversed(context.open_elements._stack):
                 if el.tag_name in ("td", "th"):
@@ -3783,7 +3748,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             tag_name in ("caption", "col", "colgroup", "thead", "tbody", "tfoot")
             and self.parser.fragment_context != "colgroup"
             and context.current_context not in ("math", "svg")
-            and not self._is_in_template_content(context)
+            and not in_template_content(context)
             and not find_current_table(context)
             and context.current_parent.tag_name not in ("table", "caption")
         ):
@@ -3803,7 +3768,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 not find_current_table(context)
                 and context.current_parent.tag_name not in ("table", "caption")
                 and context.current_context not in ("math", "svg")
-                and not self._is_in_template_content(context)
+                and not in_template_content(context)
                 and not context.current_parent.find_ancestor("select")
             ):
                 last_elem = None
@@ -4380,7 +4345,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
     def _handle_cell(self, token, context):
         """Handle td/th elements"""
-        if self._is_in_template_content(context):
+        if in_template_content(context):
             self.parser.insert_element(
                 token,
                 context,
@@ -5835,7 +5800,7 @@ class FormTagHandler(TagHandler):
         new_node = self.parser.insert_element(
             token, context, mode=mode, enter=enter, push_override=(tag_name == "form")
         )
-        if tag_name == "form" and not self._is_in_template_content(context):
+        if tag_name == "form" and not in_template_content(context):
             context.form_element = new_node
 
         # No persistent pointer; dynamic detection is used instead
@@ -6250,7 +6215,7 @@ class HeadingTagHandler(SimpleElementHandler):
     ):
         # If current element itself is a heading, close it (spec: implies end tag for previous heading)
         if context.current_parent.tag_name in HEADING_ELEMENTS:
-            self._move_to_parent_of_ancestor(context, context.current_parent)
+            context.move_to_ancestor_parent(context.current_parent)
         # Do NOT climb further up to an ancestor heading; nested headings inside containers (e.g. div)
         # should remain nested (tests expect <h1><div><h3>... not breaking out of <h1>).
         return super().handle_start(token, context, has_more_content)
@@ -6908,7 +6873,7 @@ class AutoClosingTagHandler(TemplateAwareHandler):
 
     def should_handle_end(self, tag_name, context):
         # Don't handle end tags inside template content that would affect document state
-        if self._is_in_template_content(context):
+        if in_template_content(context):
             return False
 
         if tag_name in HEADING_ELEMENTS:
@@ -6984,7 +6949,7 @@ class AutoClosingTagHandler(TemplateAwareHandler):
                     f"Inside boundary element {boundary.tag_name}, staying inside"
                 )
                 # Special case: if we're in template content, stay in content
-                if self._is_in_template_content(context):
+                if in_template_content(context):
                     self.debug("Staying in template content")
                     # Don't change current_parent, stay in content
                 else:
@@ -7183,7 +7148,7 @@ class ForeignTagHandler(TagHandler):
             )
         ):
             # If we are in a cell or caption, handle normally (don't foster)
-            if not self._is_in_cell_or_caption(context):
+            if not is_in_cell_or_caption(context):
                 table = find_current_table(context)
                 if table and table.parent:
                     self.debug(
@@ -8678,7 +8643,7 @@ class HeadTagHandler(TagHandler):
 
     def should_handle_start(self, tag_name, context):
         # Do not let head element handler interfere inside template content
-        if self._is_in_template_content(context):
+        if in_template_content(context):
             return False
         # Suppress head-level interception for style/script when inside table descendants (caption/row/cell)
         if tag_name in ("style", "script"):
