@@ -41,4 +41,5 @@ ignore = [
     "C",
     "SIM",
     "ARG",
+    "ERA001",
 ]
