@@ -6747,7 +6747,7 @@ class VoidTagHandler(SelectAwareHandler):
                 ancestor = ancestor.parent
             if ancestor is not None:
                 context.move_to_element(ancestor)
-        self.parser._handle_start_tag(synth, "br", context)
+        self.parser._handle_start_tag(synth, context)
         return True
 
 

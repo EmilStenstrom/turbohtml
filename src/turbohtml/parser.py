@@ -415,13 +415,13 @@ class TurboHTML:
             self._ensure_html_node()
 
             if token.type == "StartTag":
-                self._handle_start_tag(token, token.tag_name, context)
+                self._handle_start_tag(token, context)
 
             elif token.type == "EndTag":
                 # In template fragment context, ignore the context's own end tag
                 if self.fragment_context == "template" and token.tag_name == "template":
                     continue
-                self._handle_end_tag(token, token.tag_name, context)
+                self._handle_end_tag(token, context)
 
             elif token.type == "Character":
                 data = token.data
@@ -434,8 +434,9 @@ class TurboHTML:
                             if handler.handle_text(data, context):
                                 break
 
-    def _handle_start_tag(self, token, tag_name, context):
+    def _handle_start_tag(self, token, context):
         """Handle all opening HTML tags."""
+        tag_name = token.tag_name
 
         for h in self.tag_handlers:
             if h.early_start_preprocess(token, context):
@@ -447,13 +448,12 @@ class TurboHTML:
                     return
         
         # Fallback: if no handler claimed this start tag, insert it with default behavior.
-        # Foster parenting is handled automatically by insert_element().
         self.insert_element(token, context, mode="normal", enter=not token.is_self_closing)
 
-    def _handle_end_tag(
-        self, token, tag_name, context
-    ):
+    def _handle_end_tag(self, token, context):
         """Handle all closing HTML tags (spec-aligned, no auxiliary adoption flags)."""
+        tag_name = token.tag_name
+
         # Early end-tag preprocessing (mirrors start tag path).
         for h in self.tag_handlers:
             if h.early_end_preprocess(token, context):
