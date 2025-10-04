@@ -764,7 +764,7 @@ class TemplateHandler(TagHandler):
         ):
             if context.current_parent.tag_name in {"col", "colgroup"}:
                 return True
-            elif context.current_parent.tag_name not in {"td", "th"}:
+            if context.current_parent.tag_name not in {"td", "th"}:
                 boundary2 = self._current_content_boundary(context)
                 if boundary2:
                     context.move_to_element(boundary2)
@@ -1487,7 +1487,6 @@ class TextHandler(TagHandler):
             return
 
         second = elems[-1]
-        first = elems[-2]
 
         # Only unwrap if the most recently modified element is the trailing formatting element
         if second is not context_parent or second.tag_name not in ("i", "em"):
@@ -3695,17 +3694,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             and table.parent is not None
         ):
                 # Only if no structural descendants yet (row groups / rows / caption / cols)
-                structural_tags = {
-                    "tbody",
-                    "thead",
-                    "tfoot",
-                    "tr",
-                    "td",
-                    "th",
-                    "caption",
-                    "colgroup",
-                    "col",
-                }
                 # Structural presence: real structure only if we have row/cell/caption/colgroup/col OR
                 # a section element that already contains a row/cell descendant. A sole empty tbody wrapper
                 # preceding anchors should not block relocation.
@@ -3726,7 +3714,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     # Two patterns to consider:
                     #   1. <table><a>... (anchors direct children) => move anchors out
                     #   2. <table><tbody><a>... (tbody inserted/synthetic, anchors inside, no rows yet) => move anchors out and prune empty tbody
-                    relocation_parent = table
                     candidate_children = table.children
                     tbody_wrapper = None
                     if (
@@ -4599,19 +4586,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     popped = stack.pop()
                     if popped is table_node:
                         break
-                # Drop empty formatting element residues (e.g. adoption clones) that ended up as direct table children
-                # after the adoption agency rewiring. These anchors have no children and are no longer tracked on the
-                # open-elements stack or in the active formatting list, so removing them restores the spec tree shape.
-                stale_children = []
-                for child in list(table_node.children):
-                    if (
-                        child.tag_name in FORMATTING_ELEMENTS
-                        and not child.children
-                        and not context.open_elements.contains(child)
-                    ):
-                        stale_children.append(child)
-                for stale in stale_children:
-                    pass
 
                 def _unwrap_stray_formatting(parent):
                     table_allowed = {
@@ -6750,7 +6724,6 @@ class ForeignTagHandler(TagHandler):
 
             # Handle HTML elements inside annotation-xml
             if context.current_parent.tag_name == "math annotation-xml":
-                encoding = context.current_parent.attributes.get("encoding", "").lower()
                 # Handle SVG inside annotation-xml (switch to SVG context)
                 if tag_name_lower == "svg":
                     fixed_attrs = self._fix_foreign_attribute_case(
@@ -7121,18 +7094,6 @@ class ForeignTagHandler(TagHandler):
                 elif ancestor.tag_name.startswith("math "):
                     context.current_context = "math"
             return True
-
-        # If no direct matching element but tag is annotation-xml or foreignObject, attempt targeted close
-        if (
-            tag_name in ("annotation-xml", "foreignobject")
-        ) and not suppressed_foreign_object_close:
-            special = context.current_parent.find_ancestor(
-                lambda n: (
-                    n.tag_name.endswith(tag_name)
-                    if tag_name != "foreignobject"
-                    else n.tag_name.endswith("foreignObject")
-                ),
-            )
 
         # If we didn't find a matching foreign element, but we're inside a foreign context
         # and this is a known HTML end tag, break out to HTML parsing to let HTML handlers
