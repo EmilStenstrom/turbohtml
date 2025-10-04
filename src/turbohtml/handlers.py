@@ -4817,48 +4817,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         else:
                             current_parent_for_chain = fmt_elem
                             continue
-                    if (
-                        current_parent_for_chain is foster_parent
-                        and prev_sibling
-                        and prev_sibling.tag_name == fmt_elem.tag_name
-                        and prev_sibling.attributes == fmt_elem.attributes
-                    ):
-
-                        def _fmt_descendant_has_text(node):
-                            for ch in node.children:
-                                if ch.tag_name == "#text" and ch.text_content:
-                                    return True
-                                if ch.tag_name in FORMATTING_ELEMENTS and _fmt_descendant_has_text(ch):
-                                    return True
-                            return False
-
-                        if (not is_innermost) or not _fmt_descendant_has_text(prev_sibling):
-                            if not force_sibling:
-                                if fmt_elem.tag_name == "nobr" and any(
-                                    ch.tag_name == "#text" and ch.text_content
-                                    for ch in prev_sibling.children
-                                ):
-                                    pass
-                                else:
-                                    current_parent_for_chain = prev_sibling
-                                    while (
-                                        current_parent_for_chain.children
-                                        and current_parent_for_chain.children[-1].tag_name
-                                        in FORMATTING_ELEMENTS
-                                    ):
-                                        last_child = current_parent_for_chain.children[-1]
-                                        next_idx = idx + 1
-                                        if (
-                                            next_idx < len(formatting_elements)
-                                            and last_child.tag_name
-                                            == formatting_elements[next_idx].tag_name
-                                            and last_child.attributes
-                                            == formatting_elements[next_idx].attributes
-                                        ):
-                                            current_parent_for_chain = last_child
-                                        else:
-                                            break
-                                    continue
                     if not force_sibling and (
                         current_parent_for_chain.children
                         and current_parent_for_chain.children[-1].tag_name
@@ -6102,27 +6060,6 @@ class RawtextTagHandler(SelectAwareHandler):
                         # Prefer current_parent if it is a td/th even if not on open elements stack (our implementation may not push cells)
                         if context.current_parent.tag_name in ("td", "th"):
                             candidate = context.current_parent
-                        if not candidate and not in_template_content:
-                            # Only synthesize if there is already table body context expected (avoid for fresh table)
-                            tr_existing = table.find_child_by_tag("tr")
-                            if not tr_existing and has_row_desc:
-                                tbody_token = HTMLToken("StartTag", tag_name="tbody")
-                                tbody = self.parser.insert_element(
-                                    tbody_token,
-                                    context,
-                                    mode="normal",
-                                    enter=True,
-                                    parent=table,
-                                )
-                                tr_token = HTMLToken("StartTag", tag_name="tr")
-                                tr_existing = self.parser.insert_element(
-                                    tr_token,
-                                    context,
-                                    mode="normal",
-                                    enter=True,
-                                    parent=tbody,
-                                )
-                            candidate = tr_existing
                         # If candidate is a section wrapper (tbody/thead/tfoot) keep script/style as direct child of that section
                         if candidate and candidate is not context.current_parent:
                             # Avoid moving into section if parent is already that section; always move into cell/tr/caption
