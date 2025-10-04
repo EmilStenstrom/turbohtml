@@ -1038,12 +1038,6 @@ class TextHandler(TagHandler):
 
     def handle_text(self, text, context):
         self.debug(f"handling text '{text}' in state {context.document_state}")
-        # Template content single-consumption guard: deduplicate if identical text already last child
-        # (handles double path table->content reroute)
-        if context.current_parent.tag_name == "content" and context.current_parent.children:
-            last = context.current_parent.children[-1]
-            if last.tag_name == "#text" and (last.text_content or "") == text:
-                return True
         # Stateless integration point consistency: if an SVG/MathML integration point element (foreignObject/desc/title
         # or math annotation-xml w/ HTML encoding, or MathML text integration leaves) remains open on the stack but the
         # current insertion point has drifted outside its subtree (should not normally happen unless a prior stray end
@@ -1602,22 +1596,6 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
             and restore_cell_after_adoption.parent is not None
         ):
             context.move_to_element(restore_cell_after_adoption)
-            parent_anchor = restore_cell_after_adoption.parent
-            if (
-                parent_anchor is not None
-                and parent_anchor.tag_name == "a"
-                and len(parent_anchor.children) == 1
-                and parent_anchor.children[0] is restore_cell_after_adoption
-                and parent_anchor.parent is not None
-            ):
-                container = parent_anchor.parent
-                insert_index = container.children.index(parent_anchor)
-                parent_anchor.remove_child(restore_cell_after_adoption)
-                container.insert_child_at(insert_index, restore_cell_after_adoption)
-                context.open_elements.remove_element(parent_anchor)
-                context.active_formatting_elements.remove(parent_anchor)
-                container.remove_child(parent_anchor)
-                context.move_to_element(restore_cell_after_adoption)
             table_node = restore_cell_after_adoption.find_first_ancestor_in_tags("table")
             if table_node is not None:
                 self.debug(
@@ -1951,40 +1929,6 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
                     parent.remove_child(anchor)
                 # Ensure context remains positioned on the newly inserted anchor.
                 context.move_to_element(new_element)
-        if tag_name == "nobr":
-            parent = new_element.parent
-            changed = True
-            while changed and parent:
-                changed = False
-                for ch in list(parent.children):
-                    if ch.tag_name == "nobr" and len(ch.children) == 1:
-                        only = ch.children[0]
-                        if (
-                            only.tag_name == "nobr"
-                            and (not ch.attributes)
-                            and (not only.attributes)
-                            and all(
-                                g.tag_name != "#text"
-                                or (g.text_content or "").strip() == ""
-                                for g in only.children
-                            )
-                        ):
-                            ch.remove_child(only)
-                            for gc in only.children:
-                                ch.append_child(gc)
-                            changed = True
-            cur = new_element
-            if (
-                cur.parent
-                and cur.parent.tag_name == "nobr"
-                and not cur.parent.attributes
-                and not cur.attributes
-                and len(cur.children) == 0
-            ):
-                gp = cur.parent.parent
-                if gp:
-                    cur.parent.remove_child(cur)
-                    gp.append_child(cur)
         return True
 
     def should_handle_end(self, tag_name, context):
@@ -3637,57 +3581,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
     def _handle_tr(self, token, context):
         """Handle tr element."""
         # Fragment-specific anchor relocation:
-        # Some fragment cases expect leading formatting anchors that were placed directly inside
-        # an empty <table> (before any row groups/rows) to appear *before* the table element
-        # itself. When we see the first <tr> for such a table in fragment parsing, relocate any
-        # contiguous leading <a> children out so serialization order matches expectations.
-        table = find_current_table(context)
-        if (
-            table
-            and self.parser.fragment_context is not None  # fragment parsing mode
-            and table.parent is not None
-        ):
-                # Only if no structural descendants yet (row groups / rows / caption / cols)
-                # Structural presence: real structure only if we have row/cell/caption/colgroup/col OR
-                # a section element that already contains a row/cell descendant. A sole empty tbody wrapper
-                # preceding anchors should not block relocation.
-                def _table_has_real_structure(tbl):
-                    for c in tbl.children:
-                        if c.tag_name in {"caption", "colgroup", "col"}:
-                            return True
-                        if c.tag_name in {"tr", "td", "th"}:
-                            return True
-                        if c.tag_name in {"tbody", "thead", "tfoot"}:
-                            # Check grandchildren for actual rows/cells
-                            for gc in c.children:
-                                if gc.tag_name in {"tr", "td", "th"}:
-                                    return True
-                    return False
-                has_structure = _table_has_real_structure(table)
-                if not has_structure and table.children:
-                    # Two patterns to consider:
-                    #   1. <table><a>... (anchors direct children) => move anchors out
-                    #   2. <table><tbody><a>... (tbody inserted/synthetic, anchors inside, no rows yet) => move anchors out and prune empty tbody
-                    candidate_children = table.children
-                    tbody_wrapper = None
-                    if (
-                        len(table.children) == 1
-                        and table.children[0].tag_name == "tbody"
-                        and table.children[0].children
-                    ):
-                        tbody_wrapper = table.children[0]
-                        # Ensure tbody has no structural descendants yet (only potential anchors)
-                    leading_anchors = []
-                    for ch in candidate_children:
-                        if ch.tag_name == "a":
-                            leading_anchors.append(ch)
-                        else:
-                            break
-                    if leading_anchors:
-                        # Preserve emptied tbody wrapper so subsequent <tr> appears inside it
-                        self.debug(
-                            f"Relocated {len(leading_anchors)} leading <a> element(s) before <table> in fragment (tbody_wrapper={'yes' if tbody_wrapper else 'no'})",
-                        )
         if context.current_parent.tag_name in ("tbody", "thead", "tfoot"):
             self.parser.insert_element(token, context, mode="normal", enter=True)
             return True
@@ -4383,14 +4276,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 "Foster parent children post-insert: "
                 + str([child.tag_name for child in foster_parent.children]),
             )
-
-            if table in foster_parent.children:
-                t_idx = foster_parent.children.index(table)
-                prev_idx = t_idx - 1
-                if prev_idx >= 0:
-                    candidate = foster_parent.children[prev_idx]
-                    if candidate.tag_name == "nobr" and not candidate.children:
-                        foster_parent.remove_child(candidate)
 
             if (
                 "skip_existing" in locals()
