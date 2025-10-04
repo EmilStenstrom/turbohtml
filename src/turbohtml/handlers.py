@@ -1096,17 +1096,13 @@ class TextHandler(TagHandler):
         # Stale formatting fallback: if no one-shot flag but there exists a stale active formatting element
         # (entry element not on open elements stack) and we are about to insert text in body, reconstruct.
         elif context.document_state == DocumentState.IN_BODY and not in_template_content(context):
-            if context.skip_stale_reconstruct_once:
-                # Consume one-shot suppression set by complex adoption cloned-only path.
-                context.skip_stale_reconstruct_once = False
-            else:
-                self.debug(f"Checking for stale AFE: active_formatting={[e.element.tag_name if e.element else 'marker' for e in context.active_formatting_elements]}, open_stack={[el.tag_name for el in context.open_elements._stack]}")
-                for entry in context.active_formatting_elements:
-                    el = entry.element
-                    if el and not context.open_elements.contains(el):
-                        self.debug("Stale AFE detected before text; performing reconstruction")
-                        reconstruct_active_formatting_elements(self.parser, context)
-                        break
+            self.debug(f"Checking for stale AFE: active_formatting={[e.element.tag_name if e.element else 'marker' for e in context.active_formatting_elements]}, open_stack={[el.tag_name for el in context.open_elements._stack]}")
+            for entry in context.active_formatting_elements:
+                el = entry.element
+                if el and not context.open_elements.contains(el):
+                    self.debug("Stale AFE detected before text; performing reconstruction")
+                    reconstruct_active_formatting_elements(self.parser, context)
+                    break
         # Template table duplication mitigation: if inside a <table> whose parent is 'content' and this is first
         # text directly in the table, redirect insertion to content (prevent double concat path forming FooFoo).
         if (
