@@ -388,13 +388,7 @@ class AdoptionAgencyAlgorithm:
         context.move_to_element(target)
         if formatting_element.tag_name == "font":
             wrapper_parent = fmt_parent if fmt_parent is not None else target
-            new_wrapper = self._wrap_trailing_font_content(wrapper_parent, context)
-            if new_wrapper is not None:
-                context.pending_font_wrapper_parent = None
-            elif had_table_descendant and wrapper_parent and wrapper_parent.tag_name != "document-fragment":
-                context.pending_font_wrapper_parent = wrapper_parent
-            else:
-                context.pending_font_wrapper_parent = None
+            self._wrap_trailing_font_content(wrapper_parent, context)
         context.post_adoption_reconstruct_pending = True
 
         # Trigger reconstruction if any active formatting entries are now stale
