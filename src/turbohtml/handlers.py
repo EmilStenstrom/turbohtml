@@ -1040,15 +1040,6 @@ class TextHandler(TagHandler):
                     self.debug("Stale AFE detected before text; performing reconstruction")
                     reconstruct_active_formatting_elements(self.parser, context)
                     break
-        # Template table duplication mitigation: if inside a <table> whose parent is 'content' and this is first
-        # text directly in the table, redirect insertion to content (prevent double concat path forming FooFoo).
-        if (
-            context.current_parent.tag_name == "table"
-            and context.current_parent.parent
-            and context.current_parent.parent.tag_name == "content"
-            and not any(ch.tag_name == "#text" for ch in context.current_parent.children)
-        ):
-            context.move_to_element(context.current_parent.parent)
         integration_point_tags = {
             "svg foreignObject",
             "svg desc",
@@ -3960,47 +3951,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         #   2. Split continuation when the immediately previous active/on-stack <a> already has text - create a
         #      sibling <a> for the new foster-parented text run. No generic cloning or broad continuation heuristic.
         # Collect formatting context up to foster parent; reconstruct if stale AFE entries exist.
-        def _precedes_table(node):
-            top = node
-            while top.parent is not None and top.parent is not foster_parent:
-                top = top.parent
-            if top.parent is not foster_parent:
-                return False
-            return foster_parent.children.index(top) < table_index
 
-        if context.active_formatting_elements and any(
-            entry.element is not None
-            and entry.element not in context.open_elements
-            and not _precedes_table(entry.element)
-            for entry in context.active_formatting_elements
-            if entry.element is not None
-        ):
-            # Capture children count to detect newly reconstructed wrappers later
-            pre_children = list(foster_parent.children)
-            reconstruct_active_formatting_elements(self.parser, context)
-            # Keep current_parent at reconstructed innermost formatting element (do not move back)
-            # If reconstruction appended a formatting element AFTER the table that we intend to use
-            # for wrapping this foster-parented text (common trailing digit/text segment),
-            # move that reconstructed element so that it precedes the table; then reuse it.
-            if (
-                table_index < len(foster_parent.children)
-                and foster_parent.children[table_index].tag_name == "table"
-            ):
-                # Identify latest newly reconstructed formatting element (after reconstruction current_parent points to it)
-                new_fmt = (
-                    context.current_parent
-                    if context.current_parent not in pre_children
-                    else None
-                )
-                # If it sits after the table, move it before; if it's already before, we will treat it as chain root
-                if new_fmt and new_fmt in foster_parent.children:
-                        # Do NOT increment table_index; we want text inside new_fmt (so position stays pointing at table)
-                    # Mark this element to skip duplication when building chain
-                    skip_existing = new_fmt
-                else:
-                    skip_existing = None
-            else:
-                skip_existing = None
         formatting_elements = context.current_parent.collect_ancestors_until(
             foster_parent, lambda n: n.tag_name in FORMATTING_ELEMENTS,
         )
@@ -4035,14 +3986,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             formatting_elements = list(
                 formatting_elements,
             )  # already outer->inner by contract
-            if (
-                "skip_existing" in locals()
-                and skip_existing is not None
-                and formatting_elements
-                and formatting_elements[-1] is skip_existing
-            ):
-                reused_wrapper = skip_existing
-                formatting_elements = formatting_elements[:-1]
 
         resume_anchor = context.anchor_resume_element
         if resume_anchor and resume_anchor.parent is foster_parent:
@@ -4087,7 +4030,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             prev_sibling = (
                 foster_parent.children[table_index - 1] if table_index > 0 else None
             )
-            last_created = None
             seen_run = set()
 
             if formatting_elements:
@@ -4151,7 +4093,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                             push_override=False,
                         )
                     current_parent_for_chain = new_fmt
-                    last_created = new_fmt
                     self.debug(f"Created formatting element in chain: {new_fmt}")
                     seen_run.add(fmt_elem.tag_name)
 
@@ -4168,26 +4109,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 "Foster parent children post-insert: "
                 + str([child.tag_name for child in foster_parent.children]),
             )
-
-            if (
-                "skip_existing" in locals()
-                and skip_existing is not None
-                and skip_existing is not reused_wrapper
-                and skip_existing.parent is foster_parent
-                and not skip_existing.children
-            ):
-                context.active_formatting_elements.remove(skip_existing)
-                context.open_elements.remove_element(skip_existing)
-                foster_parent.remove_child(skip_existing)
-
-            def _collapse_redundant_nobr(node):
-                if node.tag_name != "nobr":
-                    return
-
-            if last_created:
-                _collapse_redundant_nobr(last_created)
-                if last_created.parent and last_created.parent.tag_name == "nobr":
-                    _collapse_redundant_nobr(last_created.parent)
 
         else:
             self.debug("No formatting context found")
