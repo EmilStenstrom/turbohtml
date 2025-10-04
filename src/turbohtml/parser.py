@@ -443,7 +443,7 @@ class TurboHTML:
 
         for handler in self.tag_handlers:
             if handler.should_handle_start(tag_name, context):
-                if handler.handle_start(token, context, not token.is_last_token):
+                if handler.handle_start(token, context):
                     return
         
         # Fallback: if no handler claimed this start tag, insert it with default behavior.

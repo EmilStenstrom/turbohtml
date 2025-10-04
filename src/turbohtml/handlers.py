@@ -68,7 +68,7 @@ class TagHandler:
     # Default no-op behavior for dispatch predicates / handlers
     def should_handle_start(self, tag_name, context):
         return False
-    def handle_start(self, token, context, has_more_content):
+    def handle_start(self, token, context):
         return False
     def should_handle_end(self, tag_name, context):
         return False
@@ -78,7 +78,7 @@ class TagHandler:
         return False
     def handle_text(self, text, context):
         return False
-    
+
     def finalize(self, parser):
         """Post-parse tree normalization hook (default: no-op)"""
         return
@@ -87,11 +87,11 @@ class TagHandler:
 
 class UnifiedCommentHandler(TagHandler):
     """Unified comment placement handler for all document states.
-    
+
     Consolidates InitialCommentHandler, AfterHeadCommentHandler, AfterHtmlCommentHandler,
     AfterFramesetCommentHandler, and CommentPlacementHandler into a single handler with
     mode-specific logic branches.
-    
+
     Note: Does not handle CDATA sections in foreign content - those are handled by ForeignTagHandler.
     """
 
@@ -106,7 +106,7 @@ class UnifiedCommentHandler(TagHandler):
         state = context.document_state
         html = self.parser.html_node
         node = Node("#comment", text_content=comment)
-        
+
         # INITIAL state: insert inside <html> before first non-comment/non-text, or at root
         if state == DocumentState.INITIAL:
             if html and html in self.parser.root.children:
@@ -120,7 +120,7 @@ class UnifiedCommentHandler(TagHandler):
             else:
                 self.parser.root.append_child(node)
             return True
-        
+
         # AFTER_HEAD state: place before <body> if present, else append to <html>
         if state == DocumentState.AFTER_HEAD:
             if not html:
@@ -514,7 +514,7 @@ class TemplateHandler(TagHandler):
                 return True
         return tag_name in (self.IGNORED_START | self.GENERIC_AS_PLAIN)
 
-    def handle_start(self, token, context, has_more_content):
+    def handle_start(self, token, context):
         """Create template elements OR filter content inside templates."""
         tag_name = token.tag_name
         in_template_content = self._in_template_content(context)
@@ -972,7 +972,7 @@ class SimpleElementHandler(TagHandler):
         super().__init__(parser)
         self.handled_tags = handled_tags
 
-    def handle_start(self, token, context, has_more_content):
+    def handle_start(self, token, context):
         treat_as_void = self._is_void_element(token.tag_name)
         mode = "void" if treat_as_void else "normal"
         self.parser.insert_element(
@@ -1835,7 +1835,7 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
         return tag_name in FORMATTING_ELEMENTS
 
     def handle_start(
-        self, token, context, has_more_content
+        self, token, context
     ):
         tag_name = token.tag_name
         self.debug(f"Handling <{tag_name}>, context={context}")
@@ -2486,7 +2486,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         return super().should_handle_start(tag_name, context)
 
     def handle_start(
-        self, token, context, has_more_content
+        self, token, context
     ):
         tag_name = token.tag_name
         self.debug(
@@ -3020,7 +3020,7 @@ class ParagraphTagHandler(TagHandler):
         return False
 
     def handle_start(
-        self, token, context, has_more_content
+        self, token, context
     ):
         self.debug(f"handling {token}, context={context}")
         self.debug(f"Current parent: {context.current_parent}")
@@ -3843,7 +3843,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         return False
 
     def handle_start(
-        self, token, context, has_more_content
+        self, token, context
     ):
         tag_name = token.tag_name
         self.debug(f"Handling {tag_name} in table context")
@@ -5723,7 +5723,7 @@ class FormTagHandler(TagHandler):
         return tag_name in ("form", "input", "button", "textarea", "select", "label")
 
     def handle_start(
-        self, token, context, end_tag_idx
+        self, token, context
     ):
         tag_name = token.tag_name
 
@@ -5887,7 +5887,7 @@ class ListTagHandler(TagHandler):
         return tag_name in ("li", "dt", "dd")
 
     def handle_start(
-        self, token, context, has_more_content
+        self, token, context
     ):
         self.debug(f"handling {token.tag_name}")
         self.debug(f"Current parent before: {context.current_parent}")
@@ -6206,14 +6206,14 @@ class HeadingTagHandler(SimpleElementHandler):
         return tag_name in HEADING_ELEMENTS
 
     def handle_start(
-        self, token, context, has_more_content
+        self, token, context
     ):
         # If current element itself is a heading, close it (spec: implies end tag for previous heading)
         if context.current_parent.tag_name in HEADING_ELEMENTS:
             context.move_to_ancestor_parent(context.current_parent)
         # Do NOT climb further up to an ancestor heading; nested headings inside containers (e.g. div)
         # should remain nested (tests expect <h1><div><h3>... not breaking out of <h1>).
-        return super().handle_start(token, context, has_more_content)
+        return super().handle_start(token, context)
 
     def should_handle_end(self, tag_name, context):
         return tag_name in HEADING_ELEMENTS
@@ -6302,7 +6302,7 @@ class RawtextTagHandler(SelectAwareHandler):
         return super().should_handle_start(tag_name, context)
 
     def handle_start(
-        self, token, context, has_more_content
+        self, token, context
     ):
         tag_name = token.tag_name
         self.debug(f"handling {tag_name}")
@@ -6580,7 +6580,7 @@ class VoidTagHandler(SelectAwareHandler):
         return tag_name in VOID_ELEMENTS
 
     def handle_start(
-        self, token, context, end_tag_idx
+        self, token, context
     ):
         tag_name = token.tag_name
         self.debug(f"handling {tag_name}, context={context}")
@@ -6774,7 +6774,7 @@ class AutoClosingTagHandler(TemplateAwareHandler):
         )
 
     def handle_start(
-        self, token, context, end_tag_idx
+        self, token, context
     ):
         self.debug(f"Checking auto-closing rules for {token.tag_name}")
         current = context.current_parent
@@ -7587,7 +7587,7 @@ class ForeignTagHandler(TagHandler):
         return False
 
     def handle_start(
-        self, token, context, has_more_content
+        self, token, context
     ):
         tag_name = token.tag_name
         tag_name_lower = tag_name.lower()
@@ -8661,10 +8661,10 @@ class HeadTagHandler(TagHandler):
         return tag_name in HEAD_ELEMENTS
 
     def handle_start(
-        self, token, context, has_more_content
+        self, token, context
     ):
         tag_name = token.tag_name
-        self.debug(f"handling {tag_name}, has_more_content={has_more_content}")
+        self.debug(f"handling {tag_name}")
         self.debug(
             f"Current state: {context.document_state}, current_parent: {context.current_parent}"
         )
@@ -9199,7 +9199,7 @@ class FramesetTagHandler(TagHandler):
             return False
         return True
 
-    def handle_start(self, token, context, has_more_content):
+    def handle_start(self, token, context):
         tag_name = token.tag_name
         self.debug(f"handling {tag_name}")
 
@@ -9443,7 +9443,7 @@ class ImageTagHandler(TagHandler):
     def should_handle_start(self, tag_name, context):
         return tag_name in ("img", "image")
 
-    def handle_start(self, token, context, end_tag_idx):
+    def handle_start(self, token, context):
         # If we're in head, implicitly close it and switch to body
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
             body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
@@ -9477,7 +9477,7 @@ class MarqueeTagHandler(TagHandler):
     def should_handle_start(self, tag_name, context):
         return tag_name == "marquee"
 
-    def handle_start(self, token, context, has_more_content):
+    def handle_start(self, token, context):
         # Close an open paragraph first (spec: block boundary elements close <p>)
         if context.current_parent.tag_name == "p":
             context.move_to_element(
@@ -9650,7 +9650,7 @@ class PlaintextHandler(SelectAwareHandler):
         # Always intercept inside select so we can ignore (prevent fallback generic element creation)
         return True
 
-    def handle_start(self, token, context, has_more_content):
+    def handle_start(self, token, context):
         if context.content_state == ContentState.PLAINTEXT:
             self.debug(f"treating tag as text: <{token.tag_name}>")
             text_node = Node("#text", text_content=f"<{token.tag_name}>")
@@ -9938,7 +9938,7 @@ class ButtonTagHandler(TagHandler):
     def should_handle_start(self, tag_name, context):
         return tag_name == "button"
 
-    def handle_start(self, token, context, has_more_content):
+    def handle_start(self, token, context):
         self.debug(f"handling {token}, context={context}")
 
         # If there's an open button element in scope, the start tag for a new button
@@ -9988,7 +9988,7 @@ class MenuitemTagHandler(TagHandler):
     def should_handle_start(self, tag_name, context):
         return tag_name == "menuitem"
 
-    def handle_start(self, token, context, has_more_content):
+    def handle_start(self, token, context):
         tag_name = token.tag_name
         if tag_name != "menuitem":
             return False
@@ -10065,7 +10065,7 @@ class TableFosterHandler(TagHandler):
             return False
         return table_modes.should_foster_parent(tag_name, token.attributes, context, self.parser)
 
-    def handle_start(self, token, context, has_more_content):
+    def handle_start(self, token, context):
         """Foster parent residual start tags per table algorithm.
 
         Uses table_modes.should_foster_parent() to determine if element needs
@@ -10135,7 +10135,7 @@ class RubyTagHandler(TagHandler):
     def should_handle_start(self, tag_name, context):
         return tag_name in ("ruby", "rb", "rt", "rp", "rtc")
 
-    def handle_start(self, token, context, has_more_content):
+    def handle_start(self, token, context):
         tag_name = token.tag_name
         self.debug(f"handling {tag_name}")
 
