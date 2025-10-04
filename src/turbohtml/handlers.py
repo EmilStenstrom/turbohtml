@@ -1084,7 +1084,7 @@ class TextHandler(TagHandler):
                 if last.tag_name == '#text' and (last.text_content or '') == text:
                     return True
             last_sig = context.last_template_text_sig
-            sig = (id(context.current_parent), self.parser.get_token_position() or 0)
+            sig = (id(context.current_parent), self.parser.get_token_position())
             if last_sig == sig:
                 return True
             context.last_template_text_sig = sig
@@ -6791,8 +6791,7 @@ class VoidTagHandler(SelectAwareHandler):
                 ancestor = ancestor.parent
             if ancestor is not None:
                 context.move_to_element(ancestor)
-        end_idx = self.parser.get_token_position() or 0
-        self.parser._handle_start_tag(synth, "br", context, end_idx)
+        self.parser._handle_start_tag(synth, "br", context)
         return True
 
 

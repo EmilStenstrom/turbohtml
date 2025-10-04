@@ -512,7 +512,7 @@ def handle_start_tag(parser, context, token, fragment_context, spec):
         if tn in {"caption", "colgroup", "tbody", "thead", "tfoot", "tr", "td", "th"}:
             parser.debug(f"Fragment(fallback): suppressing stray table structure <{tn}>")
             return
-    parser._handle_start_tag(token, token.tag_name, context, parser.tokenizer.pos)
+    parser._handle_start_tag(token, token.tag_name, context)
 
 
 def handle_end_tag(parser, context, token, fragment_context):

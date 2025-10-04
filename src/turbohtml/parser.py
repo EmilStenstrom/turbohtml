@@ -110,6 +110,9 @@ class TurboHTML:
             None  # The token currently being processed (internal convenience)
         )
 
+        # Sequential token counter for deduplication guards (replaces tokenizer position)
+        self._token_counter = 0
+
         # Parse immediately upon construction (html string only used during parsing)
         self._parse(html)
         
@@ -127,8 +130,8 @@ class TurboHTML:
         print(f"{' ' * indent}{args[0]}", *args[1:], **kwargs)
 
     def get_token_position(self):
-        """Get current tokenizer position (for deduplication guards)."""
-        return self.tokenizer.pos if self.tokenizer else None
+        """Get current token counter (for deduplication guards)."""
+        return self._token_counter
 
     def start_rawtext_mode(self, tag_name):
         """Switch tokenizer to RAWTEXT state for the given tag."""
@@ -387,6 +390,9 @@ class TurboHTML:
 
 
         for token in self.tokenizer.tokenize():
+            # Increment token counter for deduplication tracking
+            self._token_counter += 1
+
             # Maintain previous token pointer for heuristic-free contextual decisions
             self._prev_token = self._last_token
             self._last_token = token
@@ -417,9 +423,7 @@ class TurboHTML:
             self._ensure_html_node()
 
             if token.type == "StartTag":
-                self._handle_start_tag(
-                    token, token.tag_name, context, self.tokenizer.pos
-                )
+                self._handle_start_tag(token, token.tag_name, context)
 
             elif token.type == "EndTag":
                 # In template fragment context, ignore the context's own end tag
@@ -438,9 +442,7 @@ class TurboHTML:
                             if handler.handle_text(data, context):
                                 break
 
-    def _handle_start_tag(
-        self, token, tag_name, context, end_tag_idx
-    ):
+    def _handle_start_tag(self, token, tag_name, context):
         """Handle all opening HTML tags."""
 
         for h in self.tag_handlers:
