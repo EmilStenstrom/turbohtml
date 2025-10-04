@@ -1255,6 +1255,41 @@ class HTMLTokenizer:
 
         return "".join(result)
 
+    def finalize_entities(self, root):
+        """Post-parse entity finalization: convert sentinel and strip invalid codepoint U+FFFD.
+        
+        Handles spec-required normalization after tree construction:
+        1. Convert NUMERIC_ENTITY_INVALID_SENTINEL (U+F000) → U+FFFD for invalid numeric entities
+        2. Strip U+FFFD from invalid codepoints (context-aware: preserve in script/style/plaintext/svg)
+        """
+        def preserve_replacement_chars(node):
+            """Check if U+FFFD should be preserved based on parent context"""
+            cur = node.parent
+            while cur:
+                if cur.tag_name in ("plaintext", "script", "style") or cur.tag_name.startswith("svg "):
+                    return True
+                cur = cur.parent
+            return False
+
+        def walk(node):
+            # Only process text nodes (comments preserve U+FFFD from NULL characters)
+            if node.tag_name == "#text" and node.text_content:
+                text = node.text_content
+                had_sentinel = NUMERIC_ENTITY_INVALID_SENTINEL in text
+                # Convert sentinel to U+FFFD (preserves invalid numeric entity replacement chars)
+                if had_sentinel:
+                    text = text.replace(NUMERIC_ENTITY_INVALID_SENTINEL, "\ufffd")
+                # Strip U+FFFD from invalid codepoints (not from numeric entities)
+                if "\ufffd" in text and not had_sentinel and not preserve_replacement_chars(node):
+                    text = text.replace("\ufffd", "")
+                if text != node.text_content:
+                    node.text_content = text
+            # Recurse to children
+            for child in node.children:
+                walk(child)
+        
+        walk(root)
+
     def _codepoint_to_char(self, codepoint):
         """Convert a numeric codepoint to character with HTML5 replacements."""
         # Handle invalid codepoints

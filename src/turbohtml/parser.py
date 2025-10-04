@@ -29,7 +29,6 @@ from .handlers import (
     RubyElementHandler,
     TableFosterParentHandler,
     GenericEndTagHandler,
-    PostProcessHandler,
 )
 from turbohtml.tokenizer import HTMLTokenizer
 from turbohtml.adoption import AdoptionAgencyAlgorithm
@@ -98,7 +97,6 @@ class TurboHTML:
             RubyElementHandler(self),
             TableFosterParentHandler(self),
             GenericEndTagHandler(self),
-            PostProcessHandler(self),
         ]
         self.tag_handlers = [h for h in self.tag_handlers if h is not None]
 
@@ -116,7 +114,12 @@ class TurboHTML:
 
         # Parse immediately upon construction
         self._parse()
-        # Post-parse finalization: allow handlers to perform tree normalization
+        
+        # Post-parse finalization
+        # 1. Entity handling (tokenizer responsibility: convert sentinel, strip invalid U+FFFD)
+        self.tokenizer.finalize_entities(self.root)
+        
+        # 2. Tree normalization (handler responsibility: foreign attributes, etc.)
         for handler in self.tag_handlers:
             handler.finalize(self)
 
