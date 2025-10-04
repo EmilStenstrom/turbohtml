@@ -126,6 +126,36 @@ class TurboHTML:
 
         print(f"{' ' * indent}{args[0]}", *args[1:], **kwargs)
 
+    def get_token_position(self):
+        """Get current tokenizer position (for deduplication guards)."""
+        return self.tokenizer.pos if self.tokenizer else None
+
+    def start_rawtext_mode(self, tag_name):
+        """Switch tokenizer to RAWTEXT state for the given tag."""
+        if self.tokenizer:
+            self.tokenizer.start_rawtext(tag_name)
+
+    def start_plaintext_mode(self):
+        """Switch tokenizer to PLAINTEXT mode."""
+        if self.tokenizer:
+            self.tokenizer.start_plaintext()
+
+    def is_in_rawtext_mode(self):
+        """Check if tokenizer is in RAWTEXT state."""
+        return self.tokenizer and self.tokenizer.state == "RAWTEXT"
+
+    def exit_rawtext_mode(self):
+        """Exit RAWTEXT mode and return to DATA state."""
+        if self.tokenizer and self.tokenizer.state == "RAWTEXT":
+            self.tokenizer.state = "DATA"
+            self.tokenizer.rawtext_tag = None
+
+    def replace_invalid_characters(self, text):
+        """Replace invalid characters in text (delegates to tokenizer utility)."""
+        if self.tokenizer:
+            return self.tokenizer._replace_invalid_characters(text)
+        return text
+
     def _init_dom_structure(self):
         """Initialize minimal DOM structure (document root and html element placeholder).
 
@@ -369,7 +399,6 @@ class TurboHTML:
                         self.debug(f"{handler.__class__.__name__}: handling DOCTYPE")
                         if handler.handle_doctype(token.data, context):
                             break
-                context.index = self.tokenizer.pos
                 continue
 
 
@@ -391,14 +420,12 @@ class TurboHTML:
                 self._handle_start_tag(
                     token, token.tag_name, context, self.tokenizer.pos
                 )
-                context.index = self.tokenizer.pos
 
             elif token.type == "EndTag":
                 # In template fragment context, ignore the context's own end tag
                 if self.fragment_context == "template" and token.tag_name == "template":
                     continue
                 self._handle_end_tag(token, token.tag_name, context)
-                context.index = self.tokenizer.pos
 
             elif token.type == "Character":
                 data = token.data

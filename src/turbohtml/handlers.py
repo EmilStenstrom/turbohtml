@@ -1073,7 +1073,7 @@ class TextHandler(TagHandler):
     def handle_text(self, text, context):
         self.debug(f"handling text '{text}' in state {context.document_state}")
         # Per-token duplicate guard: skip if an earlier handler already inserted this character token
-        tok_idx = context.index
+        tok_idx = self.parser.get_token_position()
         if tok_idx is not None and context._text_already_inserted_index == tok_idx:
             return True
         # Template content single-consumption guard keyed by tokenizer index + parent id
@@ -1084,7 +1084,7 @@ class TextHandler(TagHandler):
                 if last.tag_name == '#text' and (last.text_content or '') == text:
                     return True
             last_sig = context.last_template_text_sig
-            sig = (id(context.current_parent), context.index)
+            sig = (id(context.current_parent), self.parser.get_token_position() or 0)
             if last_sig == sig:
                 return True
             context.last_template_text_sig = sig
@@ -6525,7 +6525,7 @@ class RawtextTagHandler(SelectAwareHandler):
         if token.needs_rawtext and tag_name == "textarea":
             self.debug("Deferred RAWTEXT activation for <textarea>")
             context.content_state = ContentState.RAWTEXT
-            self.parser.tokenizer.start_rawtext(tag_name)
+            self.parser.start_rawtext_mode(tag_name)
         else:
             # Eager rawtext elements already placed tokenizer in RAWTEXT state; mirror parser context.
             if tag_name in RAWTEXT_ELEMENTS and tag_name != "textarea":
@@ -6791,7 +6791,7 @@ class VoidTagHandler(SelectAwareHandler):
                 ancestor = ancestor.parent
             if ancestor is not None:
                 context.move_to_element(ancestor)
-        end_idx = self.parser.tokenizer.pos if self.parser.tokenizer else context.index
+        end_idx = self.parser.get_token_position() or 0
         self.parser._handle_start_tag(synth, "br", context, end_idx)
         return True
 
@@ -7827,9 +7827,7 @@ class ForeignTagHandler(TagHandler):
                     tag_name_override=f"math {tag_name}",
                     push_override=False,
                 )
-                if self.parser.tokenizer.state == "RAWTEXT":
-                    self.parser.tokenizer.state = "DATA"
-                    self.parser.tokenizer.rawtext_tag = None
+                self.parser.exit_rawtext_mode()
                 return True
 
             # Handle MathML elements
@@ -8168,9 +8166,7 @@ class ForeignTagHandler(TagHandler):
                     push_override=False,
                 )
                 # Reset tokenizer if it entered RAWTEXT mode
-                if self.parser.tokenizer.state == "RAWTEXT":
-                    self.parser.tokenizer.state = "DATA"
-                    self.parser.tokenizer.rawtext_tag = None
+                self.parser.exit_rawtext_mode()
                 return True
 
                 # Handle case-sensitive SVG elements
@@ -8577,7 +8573,7 @@ class ForeignTagHandler(TagHandler):
         # normal character token emission.
         if inner:
             # Tokenizer always provides _replace_invalid_characters
-            inner = self.parser.tokenizer._replace_invalid_characters(inner)
+            inner = self.parser.replace_invalid_characters(inner)
 
         # Do not emit empty text for empty (or fully sanitized) CDATA blocks
         if inner == "":
@@ -9892,7 +9888,7 @@ class PlaintextHandler(SelectAwareHandler):
         self.debug("Entering PLAINTEXT content state")
         context.content_state = ContentState.PLAINTEXT
         # Switch tokenizer to PLAINTEXT so remaining input is treated as text
-        self.parser.tokenizer.start_plaintext()
+        self.parser.start_plaintext_mode()
         # If we detached an <a>, defer recreation until first PLAINTEXT character token. This avoids
         # potential later handler interference moving the insertion point before characters arrive.
         if recreate_anchor:

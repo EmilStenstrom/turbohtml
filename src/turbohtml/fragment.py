@@ -513,14 +513,12 @@ def handle_start_tag(parser, context, token, fragment_context, spec):
             parser.debug(f"Fragment(fallback): suppressing stray table structure <{tn}>")
             return
     parser._handle_start_tag(token, token.tag_name, context, parser.tokenizer.pos)
-    context.index = parser.tokenizer.pos
 
 
 def handle_end_tag(parser, context, token, fragment_context):
     if fragment_context == "template" and token.tag_name == "template":
         return
     parser._handle_end_tag(token, token.tag_name, context)
-    context.index = parser.tokenizer.pos
 
 
 def handle_character(parser, context, token, fragment_context):

@@ -37,9 +37,6 @@ class ParseContext:
     """Mutable parser state: stacks, modes, insertion point."""
 
     def __init__(self, initial_parent, debug_callback=None):
-        # Input bounds
-        self.index = 0
-
         if initial_parent is None:
             raise ValueError("ParseContext requires a valid initial parent")
         self._current_parent = initial_parent
