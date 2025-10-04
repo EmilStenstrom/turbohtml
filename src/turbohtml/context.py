@@ -84,14 +84,12 @@ class ParseContext:
         return self._current_parent
 
     def _set_current_parent(self, new_parent):
+        if new_parent is None:
+            raise ValueError("ParseContext requires a valid current parent")
+
         if new_parent != self._current_parent:
-            if self._debug:
-                old_name = (
-                    self._current_parent.tag_name if self._current_parent else "None"
-                )
-                new_name = new_parent.tag_name if new_parent else "None"
-                self._debug(f"Parent change: {old_name} -> {new_name}")
-        self._current_parent = new_parent
+            self._debug(f"Parent change: {self._current_parent.tag_name} -> {new_parent.tag_name}")
+            self._current_parent = new_parent
 
     @property
     def document_state(self):
@@ -104,10 +102,7 @@ class ParseContext:
     @content_state.setter
     def content_state(self, new_state):
         if new_state != self._content_state:
-            if self._debug:
-                self._debug(
-                    f"Content State change: {self._content_state} -> {new_state}",
-                )
+            self._debug(f"Content State change: {self._content_state} -> {new_state}")
             self._content_state = new_state
 
     # --- State transitions ---
