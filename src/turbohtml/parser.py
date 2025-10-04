@@ -133,26 +133,6 @@ class TurboHTML:
         """Get current token counter (for deduplication guards)."""
         return self._token_counter
 
-    def start_rawtext_mode(self, tag_name):
-        """Switch tokenizer to RAWTEXT state for the given tag."""
-        if self.tokenizer:
-            self.tokenizer.start_rawtext(tag_name)
-
-    def start_plaintext_mode(self):
-        """Switch tokenizer to PLAINTEXT mode."""
-        if self.tokenizer:
-            self.tokenizer.start_plaintext()
-
-    def is_in_rawtext_mode(self):
-        """Check if tokenizer is in RAWTEXT state."""
-        return self.tokenizer and self.tokenizer.state == "RAWTEXT"
-
-    def exit_rawtext_mode(self):
-        """Exit RAWTEXT mode and return to DATA state."""
-        if self.tokenizer and self.tokenizer.state == "RAWTEXT":
-            self.tokenizer.state = "DATA"
-            self.tokenizer.rawtext_tag = None
-
     def _init_dom_structure(self):
         """Initialize minimal DOM structure (document root and html element placeholder).
 
@@ -268,6 +248,24 @@ class TurboHTML:
             and not token.is_self_closing
         ):
             context.enter_element(new_node)
+
+        # Activate RAWTEXT mode if token requires it (deferred activation for elements like textarea)
+        if hasattr(token, 'needs_rawtext') and token.needs_rawtext and self.tokenizer:
+            from turbohtml.context import ContentState
+            context.content_state = ContentState.RAWTEXT
+            self.tokenizer.start_rawtext(tag_name)
+
+        # Activate PLAINTEXT mode for <plaintext> element (consumes all remaining input as text)
+        if tag_name == "plaintext" and self.tokenizer:
+            from turbohtml.context import ContentState
+            context.content_state = ContentState.PLAINTEXT
+            self.tokenizer.start_plaintext()
+
+        # Exit RAWTEXT mode when inserting foreign content (math/svg elements)
+        if tag_name.startswith(('math ', 'svg ')) and self.tokenizer and self.tokenizer.state == "RAWTEXT":
+            self.tokenizer.state = "DATA"
+            self.tokenizer.rawtext_tag = None
+
         return new_node
 
     def insert_text(

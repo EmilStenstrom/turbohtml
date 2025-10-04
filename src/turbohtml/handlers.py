@@ -6518,19 +6518,15 @@ class RawtextTagHandler(SelectAwareHandler):
             self.debug("Closing paragraph before xmp")
             context.move_up_one_level()
 
-        # Create element first; only switch tokenizer if token actually requires rawtext handling
+        # Create element first; RAWTEXT mode will be activated automatically by insert_element
+        # if token.needs_rawtext is set (deferred activation for textarea, eager for others).
         # RAWTEXT elements (script, style, title, etc.) are allowed inside table structures
         # and should not be foster-parented (spec permits them in table/tbody/etc)
         self.parser.insert_element(token, context, mode="normal", enter=True, auto_foster=False)
-        if token.needs_rawtext and tag_name == "textarea":
-            self.debug("Deferred RAWTEXT activation for <textarea>")
+
+        # Sync context content_state to match tokenizer state
+        if tag_name in RAWTEXT_ELEMENTS:
             context.content_state = ContentState.RAWTEXT
-            self.parser.start_rawtext_mode(tag_name)
-        else:
-            # Eager rawtext elements already placed tokenizer in RAWTEXT state; mirror parser context.
-            if tag_name in RAWTEXT_ELEMENTS and tag_name != "textarea":
-                self.debug(f"Eager RAWTEXT activation for <{tag_name}> (context sync)")
-                context.content_state = ContentState.RAWTEXT
         return True
 
     def should_handle_end(self, tag_name, context):
@@ -7826,7 +7822,7 @@ class ForeignTagHandler(TagHandler):
                     tag_name_override=f"math {tag_name}",
                     push_override=False,
                 )
-                self.parser.exit_rawtext_mode()
+                # RAWTEXT mode exit is handled automatically by insert_element for foreign content
                 return True
 
             # Handle MathML elements
@@ -8164,8 +8160,7 @@ class ForeignTagHandler(TagHandler):
                     preserve_attr_case=True,
                     push_override=False,
                 )
-                # Reset tokenizer if it entered RAWTEXT mode
-                self.parser.exit_rawtext_mode()
+                # RAWTEXT mode exit is handled automatically by insert_element for foreign content
                 return True
 
                 # Handle case-sensitive SVG elements
@@ -9878,10 +9873,7 @@ class PlaintextHandler(SelectAwareHandler):
                     tag_name_override="plaintext",
                     push_override=True,
                 )
-        self.debug("Entering PLAINTEXT content state")
-        context.content_state = ContentState.PLAINTEXT
-        # Switch tokenizer to PLAINTEXT so remaining input is treated as text
-        self.parser.start_plaintext_mode()
+        # PLAINTEXT content state and tokenizer mode are set automatically by insert_element
         # If we detached an <a>, defer recreation until first PLAINTEXT character token. This avoids
         # potential later handler interference moving the insertion point before characters arrive.
         if recreate_anchor:
