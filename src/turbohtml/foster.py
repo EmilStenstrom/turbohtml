@@ -22,7 +22,7 @@ TABLE_CONTEXT = {"table", "tbody", "tfoot", "thead", "tr"}
 
 def find_table_in_scope(open_elements):  # small helper, not hot path
     # Reverse iterate so we get the most recently opened table consistent with spec phrasing
-    for el in reversed(open_elements._stack):  # noqa: SLF001 (internal stack access localized)
+    for el in reversed(open_elements):
         if el.tag_name == "table":
             return el
     return None

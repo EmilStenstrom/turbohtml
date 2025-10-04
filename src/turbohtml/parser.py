@@ -288,7 +288,7 @@ class TurboHTML:
             if target_parent.tag_name in ("script", "style", "plaintext"):
                 preserve = True
             else:
-                for elem in context.open_elements._stack:
+                for elem in context.open_elements:
                     if elem.tag_name in ("script", "style", "plaintext"):
                         preserve = True
                         break

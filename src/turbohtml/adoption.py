@@ -87,6 +87,16 @@ class ActiveFormattingElements:
     def __iter__(self):
         return iter(self._stack)
 
+    def __bool__(self):
+        return bool(self._stack)
+
+    def __reversed__(self):
+        return reversed(self._stack)
+
+    def clear(self):
+        """Clear all entries from the list."""
+        self._stack.clear()
+
     def get_index(self, entry):
         for i, e in enumerate(self._stack):
             if e is entry:
@@ -144,6 +154,14 @@ class OpenElementsStack:
             if el is element:
                 return i
         return -1
+
+    def index(self, element):
+        """Get the index of an element (list-compatible method)."""
+        idx = self.index_of(element)
+        if idx == -1:
+            raise ValueError(f"{element} is not in stack")
+        return idx
+
     def remove_element(self, element):
         if element in self._stack:
             self._stack.remove(element)
@@ -155,6 +173,10 @@ class OpenElementsStack:
         idx = self.index_of(old)
         if idx != -1:
             self._stack[idx] = new
+
+    def insert(self, index, element):
+        """Insert an element at the specified index."""
+        self._stack.insert(index, element)
 
     def insert_after(self, reference, new_element):
         idx = self.index_of(reference)
@@ -220,6 +242,23 @@ class OpenElementsStack:
     def __len__(self):
         return len(self._stack)
 
+    def __reversed__(self):
+        return reversed(self._stack)
+
+    def __getitem__(self, index):
+        return self._stack[index]
+
+    def __bool__(self):
+        return bool(self._stack)
+
+    def as_list(self):
+        """Return a copy of the stack as a list."""
+        return list(self._stack)
+
+    def replace_stack(self, new_stack):
+        """Replace the entire stack with a new list of elements."""
+        self._stack = new_stack
+
 # Experimental anchor/table relocation feature flag removed (kept disabled in practice); code simplified to baseline behavior.
 
 class AdoptionAgencyAlgorithm:
@@ -239,7 +278,7 @@ class AdoptionAgencyAlgorithm:
                 stack.extend(cur.children)
 
     def _find_active_entry(self, tag_name, context):
-        stack = context.active_formatting_elements._stack
+        stack = context.active_formatting_elements
         for entry in reversed(stack):
             if entry.element is None:
                 break
@@ -280,7 +319,7 @@ class AdoptionAgencyAlgorithm:
             furthest_block = self._find_furthest_block(formatting_element, context)
             if furthest_block is None:
                 self.parser.debug(
-                    f"[adoption] simple-case for </{tag_name}> stack={[el.tag_name for el in context.open_elements._stack]}",
+                    f"[adoption] simple-case for </{tag_name}> stack={[el.tag_name for el in context.open_elements]}",
                 )
                 self._run_simple_case(formatting_entry, formatting_element, context)
                 return True
@@ -310,13 +349,13 @@ class AdoptionAgencyAlgorithm:
         idx = context.open_elements.index_of(formatting_element)
         if idx == -1:
             return None
-        for candidate in context.open_elements._stack[idx + 1 :]:
+        for candidate in context.open_elements[idx + 1 :]:
             if candidate.tag_name in SPECIAL_CATEGORY_ELEMENTS:
                 return candidate
         return None
 
     def _run_simple_case(self, formatting_entry, formatting_element, context):
-        stack = context.open_elements._stack
+        stack = context.open_elements
 
         had_table_descendant = any(
             child.tag_name == "table" for child in formatting_element.children
@@ -343,16 +382,16 @@ class AdoptionAgencyAlgorithm:
                 for entry in context.active_formatting_elements
                 if entry.element is not None
             }
-            if context.open_elements._stack:
+            if context.open_elements:
                 cleaned_stack = []
                 removed_anchor = False
-                for element in context.open_elements._stack:
+                for element in context.open_elements:
                     if element.tag_name == "a" and element not in active_anchor_elements:
                         removed_anchor = True
                         continue
                     cleaned_stack.append(element)
                 if removed_anchor:
-                    context.open_elements._stack = cleaned_stack
+                    context.open_elements.replace_stack(cleaned_stack)
                     if cleaned_stack:
                         context.move_to_element(cleaned_stack[-1])
                     else:
@@ -381,8 +420,8 @@ class AdoptionAgencyAlgorithm:
                 if target is None:
                     target = fmt_parent
         if target is None:
-            if context.open_elements._stack:
-                target = context.open_elements._stack[-1]
+            if context.open_elements:
+                target = context.open_elements[-1]
             else:
                 target = self._get_body_or_root(context)
         context.move_to_element(target)
@@ -445,19 +484,19 @@ class AdoptionAgencyAlgorithm:
 
     def reconstruct_active_formatting_elements(self, context):
         """Reconstruct active formatting elements per spec."""
-        stack = context.active_formatting_elements._stack
+        stack = context.active_formatting_elements
         if not stack:
             return
         # NOTE: Do NOT snapshot the open elements stack here; it may mutate during reconstruction decisions.
-        # Always reference context.open_elements._stack to avoid stale membership causing spurious clones.
-        open_stack = context.open_elements._stack
+        # Always reference context.open_elements to avoid stale membership causing spurious clones.
+        open_stack = context.open_elements
         # Find first (earliest after last marker) formatting entry whose element is not on the current open stack
         first_missing_index = None
         for i, entry in enumerate(stack):
             if entry.element is None:  # marker resets search
                 first_missing_index = None
                 continue
-            if entry.element not in context.open_elements._stack:
+            if entry.element not in context.open_elements:
                 first_missing_index = i
                 break
         if first_missing_index is None:
@@ -471,7 +510,7 @@ class AdoptionAgencyAlgorithm:
             context.open_elements.push(clone)
             entry.element = clone
             context.move_to_element(clone)
-            self.parser.debug(f"[reconstruct] cloned <{clone.tag_name}> new_open={[n.tag_name for n in context.open_elements._stack]}")
+            self.parser.debug(f"[reconstruct] cloned <{clone.tag_name}> new_open={[n.tag_name for n in context.open_elements]}")
 
     def _run_complex_case(self, formatting_entry, formatting_element, furthest_block, context):
         bookmark_index = context.active_formatting_elements.get_index(formatting_entry)
@@ -483,7 +522,7 @@ class AdoptionAgencyAlgorithm:
             return
 
         if formatting_index - 1 >= 0:
-            common_ancestor = context.open_elements._stack[formatting_index - 1]
+            common_ancestor = context.open_elements[formatting_index - 1]
         else:
             common_ancestor = formatting_element.parent
 
@@ -505,7 +544,7 @@ class AdoptionAgencyAlgorithm:
                 idx_current = context.open_elements.index_of(node)
                 above_index = idx_current - 1
                 node_above = (
-                    context.open_elements._stack[above_index]
+                    context.open_elements[above_index]
                     if above_index >= 0
                     else None
                 )
@@ -522,7 +561,7 @@ class AdoptionAgencyAlgorithm:
                 if context.open_elements.contains(candidate):
                     idx_candidate = context.open_elements.index_of(candidate)
                     above_candidate = (
-                        context.open_elements._stack[idx_candidate - 1]
+                        context.open_elements[idx_candidate - 1]
                         if idx_candidate - 1 >= 0
                         else None
                     )
@@ -538,7 +577,7 @@ class AdoptionAgencyAlgorithm:
                 if context.open_elements.contains(candidate):
                     idx_candidate = context.open_elements.index_of(candidate)
                     above_candidate = (
-                        context.open_elements._stack[idx_candidate - 1]
+                        context.open_elements[idx_candidate - 1]
                         if idx_candidate - 1 >= 0
                         else None
                     )
@@ -596,12 +635,12 @@ class AdoptionAgencyAlgorithm:
 
         occurrences = [
             idx
-            for idx, element in enumerate(context.open_elements._stack)
+            for idx, element in enumerate(context.open_elements)
             if element is last_node
         ]
         if len(occurrences) > 1:
             for idx in reversed(occurrences[1:]):
-                context.open_elements._stack.pop(idx)
+                context.open_elements.pop(idx)
 
         fe_clone = Node(formatting_element.tag_name, formatting_element.attributes.copy())
         for child in list(furthest_block.children):
@@ -619,10 +658,10 @@ class AdoptionAgencyAlgorithm:
             context.open_elements.remove_element(formatting_element)
         if context.open_elements.contains(furthest_block):
             fb_index = context.open_elements.index_of(furthest_block)
-            context.open_elements._stack.insert(fb_index + 1, fe_clone)
+            context.open_elements.insert(fb_index + 1, fe_clone)
 
-        if context.open_elements._stack:
-            context.move_to_element(context.open_elements._stack[-1])
+        if context.open_elements:
+            context.move_to_element(context.open_elements[-1])
 
     def _step14_place_last_node(
         self,

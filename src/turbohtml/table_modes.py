@@ -103,7 +103,7 @@ def restore_insertion_open_cell(context):
     """If a cell element (<td>/<th>) is still open on the stack but insertion point drifted
     outside it (e.g., foreign content breakout), reposition to that cell. Returns the cell or None.
     """
-    for el in reversed(context.open_elements._stack):
+    for el in reversed(context.open_elements):
         if el.tag_name in ("td", "th"):
             context.move_to_element(el)
             return el

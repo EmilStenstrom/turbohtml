@@ -389,7 +389,7 @@ def _implied_table_section_pre_token(parser, context, token):
         node = node.parent
     if not table_ancestor:
         # Consult open elements stack (fragment cases with fostered content may leave us outside)
-        for el in reversed(list(context.open_elements._stack)):
+        for el in reversed(list(context.open_elements)):
             if el.tag_name == "table":
                 table_ancestor = el
                 break

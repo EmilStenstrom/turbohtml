@@ -118,7 +118,7 @@ def find_current_table(context):
     """Find the current table element from the open elements stack when in table context."""
     # Always search open elements stack first (even in IN_BODY) so foster-parenting decisions
     # can detect an open table that the insertion mode no longer reflects (foreign breakout, etc.).
-    for element in reversed(context.open_elements._stack):
+    for element in reversed(context.open_elements):
         if element.tag_name == "table":
             return element
 
@@ -245,7 +245,7 @@ def reconstruct_if_needed(parser, context, *, force=False):
         return True
     afe = context.active_formatting_elements
     # Direct access: ActiveFormattingElements always defines _stack
-    if not afe or not afe._stack:
+    if not afe or not afe:
         return False
     # Template content skip
     cur = context.current_parent
@@ -262,8 +262,8 @@ def reconstruct_if_needed(parser, context, *, force=False):
         in_cell_or_caption = bool(context.current_parent.find_ancestor(lambda n: n.tag_name in ("td","th","caption")))
         if not in_cell_or_caption:
             return False
-    open_stack = context.open_elements._stack
-    for entry in afe._stack:
+    open_stack = context.open_elements
+    for entry in afe:
         el = entry.element
         if el is None:
             continue

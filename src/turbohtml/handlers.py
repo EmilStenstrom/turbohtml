@@ -213,7 +213,7 @@ class DocumentStructureHandler(TagHandler):
                 body_node = ensure_body(parser.root, context.document_state, parser.fragment_context)
             if body_node:
                 resume_parent = body_node
-                stack = context.open_elements._stack
+                stack = context.open_elements
                 for el in reversed(stack):
                     if el is body_node:
                         break
@@ -873,9 +873,9 @@ class TemplateHandler(TagHandler):
 
             if context.current_parent and context.current_parent.tag_name == "template":
                 template_node = context.current_parent
-                if context.open_elements._stack:
+                if context.open_elements:
                     new_stack = []
-                    for el in context.open_elements._stack:
+                    for el in context.open_elements:
                         cur = el.parent
                         keep = True
                         while cur:
@@ -885,7 +885,7 @@ class TemplateHandler(TagHandler):
                             cur = cur.parent
                         if keep:
                             new_stack.append(el)
-                    context.open_elements._stack = new_stack
+                    context.open_elements.replace_stack(new_stack)
                 if context.open_elements.contains(template_node):
                     context.open_elements.remove_element(template_node)
                 parent = template_node.parent or template_node
@@ -933,7 +933,7 @@ class GenericEndTagHandler(TagHandler):
 
     def handle_end(self, token, context):
         target = token.tag_name
-        stack = context.open_elements._stack
+        stack = context.open_elements
         if not stack:
             return True
 
@@ -1092,7 +1092,7 @@ class TextHandler(TagHandler):
         # Stale formatting fallback: if no one-shot flag but there exists a stale active formatting element
         # (entry element not on open elements stack) and we are about to insert text in body, reconstruct.
         elif context.document_state == DocumentState.IN_BODY and not in_template_content(context):
-            self.debug(f"Checking for stale AFE: active_formatting={[e.element.tag_name if e.element else 'marker' for e in context.active_formatting_elements]}, open_stack={[el.tag_name for el in context.open_elements._stack]}")
+            self.debug(f"Checking for stale AFE: active_formatting={[e.element.tag_name if e.element else 'marker' for e in context.active_formatting_elements]}, open_stack={[el.tag_name for el in context.open_elements]}")
             for entry in context.active_formatting_elements:
                 el = entry.element
                 if el and not context.open_elements.contains(el):
@@ -1522,7 +1522,7 @@ class TextHandler(TagHandler):
             another_nobr_entry = False
             current_is_nobr = context.current_parent.tag_name == "nobr"
             cur_elem = context.current_parent if current_is_nobr else None
-            for entry in context.active_formatting_elements._stack:
+            for entry in context.active_formatting_elements:
                 el = entry.element
                 if not el or el.tag_name != "nobr":
                     continue
@@ -1990,14 +1990,14 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
             reconstruct_active_formatting_elements(self.parser, context)
             self.debug("AFTER adoption simple-case for duplicate <nobr>: stacks:")
             self.debug(
-                f"    Open stack: {[e.tag_name for e in context.open_elements._stack]}",
+                f"    Open stack: {[e.tag_name for e in context.open_elements]}",
             )
             self.debug(
                 f"    Active formatting: {[e.element.tag_name for e in context.active_formatting_elements if e.element]}",
             )
             # Allow multiple <nobr> entries (no artificial pruning)
             self.debug(
-                f"Post-duplicate handling before element creation: parent={context.current_parent.tag_name}, open={[e.tag_name for e in context.open_elements._stack]}, active={[e.element.tag_name for e in context.active_formatting_elements if e.element]}",
+                f"Post-duplicate handling before element creation: parent={context.current_parent.tag_name}, open={[e.tag_name for e in context.open_elements]}, active={[e.element.tag_name for e in context.active_formatting_elements if e.element]}",
             )
 
         # Allow nested <nobr>; spec imposes no artificial nesting depth limit.
@@ -2071,7 +2071,7 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
                             # Ensure table and section wrapper are represented on the open elements stack
                             # so later row handling does not treat the upcoming <tr> as stray. This mirrors
                             # the document parsing stack shape (table -> tbody) before processing a row.
-                            stack_tags = [el.tag_name for el in context.open_elements._stack]
+                            stack_tags = [el.tag_name for el in context.open_elements]
                             if table.tag_name not in stack_tags:
                                 context.open_elements.push(table)
                             if section_wrapper.tag_name not in stack_tags:
@@ -2124,7 +2124,7 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
                         if context.document_state == DocumentState.IN_CELL:
                             context.transition_to_state(DocumentState.IN_TABLE_BODY, section)
                         # Ensure table and section are on open elements stack for subsequent row token.
-                        stack_tags = [el.tag_name for el in context.open_elements._stack]
+                        stack_tags = [el.tag_name for el in context.open_elements]
                         if table.tag_name not in stack_tags:
                             context.open_elements.push(table)
                         if section.tag_name not in stack_tags:
@@ -2166,7 +2166,7 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
             else:
                 cell = context.current_parent.find_first_ancestor_in_tags(["td", "th"])
             if not cell:
-                for el in reversed(context.open_elements._stack):
+                for el in reversed(context.open_elements):
                     if el.tag_name in ("td", "th"):
                         cell = el
                         break
@@ -2225,7 +2225,7 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
                     best_idx = -1
                     best_depth = -1
                     best_element = None
-                    for entry in context.active_formatting_elements._stack:
+                    for entry in context.active_formatting_elements:
                         candidate = entry.element
                         if candidate is None or candidate.parent is None:
                             continue
@@ -2408,7 +2408,7 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
 
         # If element on stack but not in scope -> ignore
         fmt_on_stack = None
-        for el in context.open_elements._stack:
+        for el in context.open_elements:
             if el.tag_name == tag_name:
                 fmt_on_stack = el
                 break
@@ -2596,7 +2596,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             )
             # Pop until select removed
             select_el = None
-            for el in reversed(context.open_elements._stack):
+            for el in reversed(context.open_elements):
                 if el.tag_name == "select":
                     select_el = el
                     break
@@ -2685,7 +2685,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             DocumentState.IN_CELL,
         ):
             deepest_cell = None
-            for el in reversed(context.open_elements._stack):
+            for el in reversed(context.open_elements):
                 if el.tag_name in ("td", "th"):
                     deepest_cell = el
                     break
@@ -2849,7 +2849,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                         )
                         if (
                             not context.open_elements.is_empty()
-                            and context.open_elements._stack[-1] is new_table
+                            and context.open_elements[-1] is new_table
                         ):
                             context.open_elements.pop()
                         self._pending_table_outside = new_table
@@ -3004,7 +3004,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             # Pop open elements stack up to and including the select/datalist; implicitly close option/optgroup
             target = context.current_parent.find_ancestor(tag_name)
             if not target:
-                for el in reversed(context.open_elements._stack):
+                for el in reversed(context.open_elements):
                     if el.tag_name == tag_name:
                         target = el
                         break
@@ -3075,7 +3075,7 @@ class ParagraphTagHandler(TagHandler):
         ):
             # Pop elements until the innermost open <p> is removed
             target_p = None
-            for el in reversed(context.open_elements._stack):
+            for el in reversed(context.open_elements):
                 if el.tag_name == "p":
                     target_p = el
                     break
@@ -3128,7 +3128,7 @@ class ParagraphTagHandler(TagHandler):
                 )
                 # Clear any active formatting elements inherited from outside the integration point
                 if context.active_formatting_elements:
-                    context.active_formatting_elements._stack.clear()
+                    context.active_formatting_elements.clear()
                 # Spec-consistent behaviour: a start tag <p> while a <p> is open must close the previous paragraph
                 # even inside integration points (tests expect sibling <p> elements, not nesting).
                 if context.current_parent.tag_name == "p":
@@ -3161,7 +3161,7 @@ class ParagraphTagHandler(TagHandler):
             or self.parser.foreign_handler.is_in_mathml_integration_point(context)
         ):
             if context.active_formatting_elements:
-                context.active_formatting_elements._stack.clear()
+                context.active_formatting_elements.clear()
 
         if token.tag_name != "p" and context.current_parent.tag_name == "p":
             self.debug(f"Auto-closing p due to {token.tag_name}")
@@ -3208,7 +3208,7 @@ class ParagraphTagHandler(TagHandler):
                         find_current_table(context) is not None
                         or any(
                             el.tag_name == "table"
-                            for el in context.open_elements._stack
+                            for el in context.open_elements
                         )
                     )
                     and context.current_parent.tag_name not in ("td", "th")
@@ -3292,7 +3292,7 @@ class ParagraphTagHandler(TagHandler):
                 return True
             self.debug(f"Found <p> ancestor: {p_ancestor}, closing it")
             formatting_descendants = []
-            for elem in list(context.open_elements._stack):
+            for elem in list(context.open_elements):
                 if (
                     elem.tag_name in FORMATTING_ELEMENTS
                     and elem.find_ancestor("p") is p_ancestor
@@ -3303,14 +3303,14 @@ class ParagraphTagHandler(TagHandler):
             if formatting_descendants:
                 new_stack = []
                 to_remove = set(formatting_descendants)
-                for el in context.open_elements._stack:
+                for el in context.open_elements:
                     if el in to_remove:
                         self.debug(
                             f"P-start: popping formatting descendant <{el.tag_name}> with previous paragraph",
                         )
                         continue
                     new_stack.append(el)
-                context.open_elements._stack = new_stack
+                context.open_elements.replace_stack(new_stack)
             # Mark recent paragraph closure for adoption heuristic (cleared after next non-formatting token)
             context.recent_paragraph_close = True
 
@@ -3340,7 +3340,7 @@ class ParagraphTagHandler(TagHandler):
                 pass
             else:
                 any_still_open = any(
-                    el in context.open_elements._stack for el in formatting_descendants
+                    el in context.open_elements for el in formatting_descendants
                 )
                 has_fmt_child = any(
                     c.tag_name in FORMATTING_ELEMENTS for c in new_node.children
@@ -3359,7 +3359,7 @@ class ParagraphTagHandler(TagHandler):
 
     def handle_end(self, token, context):
         self.debug(f"handling <EndTag: p>, context={context}")
-        stack = context.open_elements._stack  # direct access (performance path, attribute always present)
+        stack = context.open_elements  # direct access (performance path, attribute always present)
         has_open_p = any(el.tag_name == "p" for el in stack)
         in_body_like_states = (
             DocumentState.IN_BODY,
@@ -3537,9 +3537,9 @@ class ParagraphTagHandler(TagHandler):
             # but stale active formatting elements may exist for inline spanning cases
             # formatting entries referencing elements no longer on the open stack to avoid redundant work.
             detached_exists = False
-            for entry in context.active_formatting_elements._stack:
+            for entry in context.active_formatting_elements:
                 el = entry.element
-                if el and el not in context.open_elements._stack:
+                if el and el not in context.open_elements:
                     detached_exists = True
                     break
             if detached_exists:
@@ -3603,7 +3603,7 @@ class ParagraphTagHandler(TagHandler):
             # Detach descendant formatting elements of this paragraph from the open elements stack (spec: they remain in active list
             # and will be reconstructed when needed). This enables correct wrapping for subsequent paragraphs / text runs.
             descendant_fmt = []
-            for el in context.open_elements._stack:
+            for el in context.open_elements:
                 if (
                     el.tag_name in FORMATTING_ELEMENTS
                     and el.find_ancestor("p") is closing_p
@@ -3612,14 +3612,14 @@ class ParagraphTagHandler(TagHandler):
             if descendant_fmt:
                 new_stack = []
                 to_remove = set(descendant_fmt)
-                for el in context.open_elements._stack:
+                for el in context.open_elements:
                     if el in to_remove:
                         self.debug(
                             f"Paragraph close: detaching formatting <{el.tag_name}> for later reconstruction",
                         )
                         continue
                     new_stack.append(el)
-                context.open_elements._stack = new_stack
+                context.open_elements.replace_stack(new_stack)
                 # Trigger one-shot reconstruction for next character token so detached formatting wrappers
                 # are recreated before subsequent inline text (mirrors spec reconstruction after paragraph boundary).
                 context.post_adoption_reconstruct_pending = True
@@ -3716,7 +3716,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         # current_parent drifted outside any cell, reposition to deepest open cell before normal handling.
         if token.tag_name not in ("td", "th") and not in_template_content(context):
             deepest_cell = None
-            for el in reversed(context.open_elements._stack):
+            for el in reversed(context.open_elements):
                 if el.tag_name in ("td", "th"):
                     deepest_cell = el
                     break
@@ -3876,7 +3876,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             self.parser.fragment_context == "tr"
             and tag_name in ("td", "th")
         ):
-            stack = context.open_elements._stack
+            stack = context.open_elements
             # Find deepest currently open cell element (works even if current_parent moved elsewhere)
             cell_index = -1
             for i in range(len(stack) - 1, -1, -1):
@@ -4127,7 +4127,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             return True
 
         # Pop tbody/thead/tfoot/tr/td/th to get back to table level
-        stack = context.open_elements._stack
+        stack = context.open_elements
         table_idx = -1
         for i in range(len(stack) - 1, -1, -1):
             if stack[i] is table:
@@ -4245,7 +4245,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
         # Implicitly close colgroup if open
         if context.current_parent.tag_name == "colgroup":
-            stack = context.open_elements._stack
+            stack = context.open_elements
             if stack and stack[-1].tag_name == "colgroup":
                 stack.pop()
                 context.move_to_element(table_parent)
@@ -4506,8 +4506,8 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             reconstructed = False
             if context.active_formatting_elements and any(
                 entry.element is not None
-                and entry.element not in context.open_elements._stack
-                for entry in context.active_formatting_elements._stack
+                and entry.element not in context.open_elements
+                for entry in context.active_formatting_elements
                 if entry.element is not None
             ):
                 reconstruct_active_formatting_elements(self.parser, context)
@@ -4532,14 +4532,14 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             if (
                 last
                 and last.tag_name in FORMATTING_ELEMENTS
-                and last in context.open_elements._stack
+                and last in context.open_elements
             ):
                 # Descend only through still-open formatting elements; do not reuse closed ones for new text runs.
                 cursor = last
                 while (
                     cursor.children
                     and cursor.children[-1].tag_name in FORMATTING_ELEMENTS
-                    and cursor.children[-1] in context.open_elements._stack
+                    and cursor.children[-1] in context.open_elements
                 ):
                     cursor = cursor.children[-1]
 
@@ -4671,7 +4671,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             # become children of this block and the text nests inside them (preserves correct inline containment).
             if (
                 context.active_formatting_elements
-                and context.active_formatting_elements._stack
+                and context.active_formatting_elements
             ):
                 self.debug(
                     f"Reconstructing active formatting elements inside foster-parented <{context.current_parent.tag_name}> before text",
@@ -4685,7 +4685,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             target = block_elem
             # Prefer the most recent active formatting element that is currently a descendant of the block.
             if context.active_formatting_elements:
-                for entry in reversed(context.active_formatting_elements._stack):
+                for entry in reversed(context.active_formatting_elements):
                     node = entry.element
                     if node is None:
                         break
@@ -4806,7 +4806,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         block_container = cursor
                         break
                     cursor = cursor.parent
-                if block_container and block_container in context.open_elements._stack:
+                if block_container and block_container in context.open_elements:
                     self.debug(
                         f"Redirecting foster-parented text into adoption block <{block_container.tag_name}> wrapped by <{prev_sibling.tag_name}>",
                     )
@@ -4955,9 +4955,9 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
         if context.active_formatting_elements and any(
             entry.element is not None
-            and entry.element not in context.open_elements._stack
+            and entry.element not in context.open_elements
             and not _precedes_table(entry.element)
-            for entry in context.active_formatting_elements._stack
+            for entry in context.active_formatting_elements
             if entry.element is not None
         ):
             # Capture children count to detect newly reconstructed wrappers later
@@ -5423,7 +5423,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             table_node = find_current_table(context)
             if table_node:
                 # Pop elements from the open stack down to the table (implicitly closing tbody/tfoot/thead)
-                stack = context.open_elements._stack
+                stack = context.open_elements
                 while stack:
                     popped = stack.pop()
                     if popped is table_node:
@@ -5508,7 +5508,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 # Find any active formatting element that contained the table
                 formatting_parent = table_node.parent
                 self.debug(
-                    f"After </table> pop stack={[el.tag_name for el in context.open_elements._stack]}",
+                    f"After </table> pop stack={[el.tag_name for el in context.open_elements]}",
                 )
                 preferred_after_table_parent = None
                 if (
@@ -5630,7 +5630,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             if tag_name in ["tbody", "thead", "tfoot"]:
                 section = context.current_parent.find_ancestor(tag_name)
                 if section:
-                    stack = context.open_elements._stack
+                    stack = context.open_elements
                     found = False
                     while stack:
                         popped = stack.pop()
@@ -5643,7 +5643,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         context.transition_to_state( DocumentState.IN_TABLE)
                         return True
             elif tag_name in ["td", "th"]:
-                stack = context.open_elements._stack
+                stack = context.open_elements
                 target = None
                 for el in reversed(stack):
                     if el.tag_name == tag_name:
@@ -5659,7 +5659,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     context.transition_to_state( DocumentState.IN_ROW)
                     return True
             elif tag_name == "tr":
-                stack = context.open_elements._stack
+                stack = context.open_elements
                 target = None
                 for el in reversed(stack):
                     if el.tag_name == "tr":
@@ -5777,7 +5777,7 @@ class FormTagHandler(TagHandler):
 
     def handle_end(self, token, context):
         # Premature </form> suppression: ignore when no open form.
-        stack = context.open_elements._stack
+        stack = context.open_elements
         has_form = False
         for el in reversed(stack):
             if el.tag_name == "template":
@@ -5932,11 +5932,11 @@ class ListTagHandler(TagHandler):
             formatting_descendants = []
             formatting_to_remove = []  # Always remove from stack, even if not cloning
             if (
-                context.open_elements._stack
-                and ancestor in context.open_elements._stack
+                context.open_elements
+                and ancestor in context.open_elements
             ):
-                anc_index = context.open_elements._stack.index(ancestor)
-                for el in context.open_elements._stack[anc_index + 1 :]:
+                anc_index = context.open_elements.index(ancestor)
+                for el in context.open_elements[anc_index + 1 :]:
                     if (
                         el.find_ancestor(lambda n: n is ancestor)
                         and el.tag_name in FORMATTING_ELEMENTS
@@ -6114,7 +6114,7 @@ class ListTagHandler(TagHandler):
         """Handle end tags for li"""
         self.debug("Handling end tag for li")
 
-        stack = context.open_elements._stack
+        stack = context.open_elements
         li_index = -1
         for i in range(len(stack) - 1, -1, -1):
             if stack[i].tag_name == "li":
@@ -6193,7 +6193,7 @@ class HeadingTagHandler(SimpleElementHandler):
 
     def handle_end(self, token, context):
         tag_name = token.tag_name
-        stack = context.open_elements._stack
+        stack = context.open_elements
         if not context.open_elements.has_element_in_scope(tag_name):
             replacement = None
             for el in reversed(stack):
@@ -6324,7 +6324,7 @@ class RawtextTagHandler(SelectAwareHandler):
                         preceding = parent.children[table_index - 1]
                         if preceding.tag_name == "select":
                             if any(
-                                el is preceding for el in context.open_elements._stack
+                                el is preceding for el in context.open_elements
                             ):
                                 context.move_to_element(preceding)
                                 self.debug(
@@ -6378,7 +6378,7 @@ class RawtextTagHandler(SelectAwareHandler):
                     else:
                         # Determine candidate (do not force row creation when parent is a section like tbody—leave script there)
                         candidate = None
-                        for el in reversed(context.open_elements._stack):
+                        for el in reversed(context.open_elements):
                             if el is table:
                                 break
                             if el.tag_name in ("td", "th"):
@@ -6648,10 +6648,10 @@ class VoidTagHandler(SelectAwareHandler):
         if (
             context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_BODY)
             and context.active_formatting_elements
-            and context.active_formatting_elements._stack
+            and context.active_formatting_elements
         ):
             # Check if there are stale formatting elements (on AFE but not open)
-            for entry in context.active_formatting_elements._stack:
+            for entry in context.active_formatting_elements:
                 el = entry.element
                 if el and not context.open_elements.contains(el):
                     reconstruct_active_formatting_elements(self.parser, context)
@@ -6687,7 +6687,7 @@ class VoidTagHandler(SelectAwareHandler):
             DocumentState.IN_CAPTION,
         )
         inside_cell = any(
-            el.tag_name in ("td", "th") for el in context.open_elements._stack
+            el.tag_name in ("td", "th") for el in context.open_elements
         )
         if in_table_mode and not inside_cell:
             table = find_current_table(context)
@@ -9322,7 +9322,7 @@ class FramesetTagHandler(TagHandler):
                         )
                 # Pop the noframes element from open elements stack if present so following comment is sibling
                 target = None
-                for el in reversed(context.open_elements._stack):
+                for el in reversed(context.open_elements):
                     if el.tag_name == "noframes":
                         target = el
                         break
