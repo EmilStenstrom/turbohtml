@@ -3195,9 +3195,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 "tbody",
                 "tfoot",
             ):
-                # For section contexts encountering a first cell, synthesize an implicit <tr>
-                if frag_ctx in ("tbody", "thead", "tfoot") and tag_name in ("td", "th"):
-                    pass
                 inserted = self.parser.insert_element(token, context, mode="normal", enter=True)
                 if tag_name == "tr":
                     context.transition_to_state(DocumentState.IN_ROW, inserted)
@@ -3213,8 +3210,8 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             "colgroup": self._handle_colgroup,
             "col": self._handle_col,
             "tbody": self._handle_tbody,
-            "thead": self._handle_thead,
-            "tfoot": self._handle_tfoot,
+            "thead": self._handle_tbody,
+            "tfoot": self._handle_tbody,
             "tr": self._handle_tr,
             "td": self._handle_cell,
             "th": self._handle_cell,
@@ -3470,14 +3467,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         )
         return True
 
-    def _handle_thead(self, token, context):
-        """Handle thead element."""
-        return self._handle_tbody(token, context)  # Same logic as tbody
-
-    def _handle_tfoot(self, token, context):
-        """Handle tfoot element."""
-        return self._handle_tbody(token, context)  # Same logic as tbody
-
     def _handle_tr(self, token, context):
         """Handle tr element."""
         # Fragment-specific anchor relocation:
@@ -3493,9 +3482,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
     def _handle_cell(self, token, context):
         """Handle td/th elements."""
-        if in_template_content(context):
-            pass
-
         # If current parent is a section (thead/tbody/tfoot) and not inside a tr yet, synthesize a tr (spec step).
         if context.current_parent.tag_name in (
             "thead",
@@ -4014,14 +4000,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         else:
                             current_parent_for_chain = fmt_elem
                             continue
-                    if not force_sibling and (
-                        current_parent_for_chain.children
-                        and current_parent_for_chain.children[-1].tag_name
-                        == fmt_elem.tag_name
-                        and current_parent_for_chain.children[-1].attributes
-                        == fmt_elem.attributes
-                    ):
-                        pass
                     if (
                         fmt_elem.tag_name == "nobr"
                         and current_parent_for_chain.children
@@ -4162,23 +4140,10 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
         return True
 
-
     def handle_end(self, token, context):
         tag_name = token.tag_name
         self.debug(f"handling end tag {tag_name}")
 
-        # Table end inside formatting context handled below; no dynamic anchor cleanup needed
-        if tag_name == "table":
-            pass
-
-        # If we're in a table cell
-        cell = context.current_parent.find_ancestor(
-            lambda n: n.tag_name in ("td", "th"),
-        )
-        if cell and tag_name == "p":
-            # Create an implicit p element in the cell
-
-            pass
         if tag_name == "caption" and context.document_state == DocumentState.IN_CAPTION:
             caption = context.current_parent.find_ancestor("caption")
             if caption:
@@ -4346,10 +4311,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 context.transition_to_state( DocumentState.IN_BODY)
                 return True
 
-        elif tag_name == "a":
-            # Find the matching <a> tag
-
-            pass
         elif tag_name in TABLE_ELEMENTS:
             if tag_name in ["tbody", "thead", "tfoot"]:
                 section = context.current_parent.find_ancestor(tag_name)
@@ -4366,15 +4327,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         context.move_to_element(next_parent)
                         context.transition_to_state( DocumentState.IN_TABLE)
                         return True
-            elif tag_name in ["td", "th"]:
-                stack = context.open_elements
-                target = None
-                for el in reversed(stack):
-                    if el.tag_name == tag_name:
-                        target = el
-                        break
-                if target:
-                    pass
             elif tag_name == "tr":
                 stack = context.open_elements
                 target = None
