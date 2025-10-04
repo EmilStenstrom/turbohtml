@@ -2628,18 +2628,6 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                                 context.transition_to_state(
                                     DocumentState.IN_TABLE,
                                 )
-                            else:
-                                new_node = self.parser.insert_element(
-                                    token,
-                                    context,
-                                    parent=foster_parent,
-                                    mode="normal",
-                                    enter=True,
-                                )
-                                if tag_name == "caption":
-                                    context.transition_to_state(
-                                        DocumentState.IN_CAPTION,
-                                    )
                             self.debug(
                                 f"Foster parented {tag_name} to {foster_parent.tag_name} via insert_element: {new_node}",
                             )
@@ -7289,28 +7277,6 @@ class ForeignTagHandler(TagHandler):
                     and self.parser.fragment_context == f"math {tag_name_lower}"
                 ):
                     frag_leaf_root = True
-                if ancestor_text_ip is not None or frag_leaf_root:
-                    # Emit as HTML element (unprefixed). For a self-closing token we do NOT enter it so
-                    # following text becomes a sibling (pattern: <mi/>text not <mi>text</mi>). However, in fragment
-                    # contexts where the fragment context itself is this MathML leaf (frag_leaf_root True) tests
-                    # expect the text to nest inside the element even if self-closing syntax was used. We therefore
-                    # force enter=True for frag_leaf_root cases to push the element and nest upcoming text.
-                    self.debug(
-                        f"MathML leaf unprefix path: tag={tag_name_lower}, ancestor_text_ip={ancestor_text_ip is not None}, frag_leaf_root={frag_leaf_root}, fragment_context={self.parser.fragment_context}",
-                    )
-                    enter_flag = not token.is_self_closing
-                    self.parser.insert_element(
-                        token,
-                        context,
-                        mode="normal",
-                        enter=enter_flag,
-                        tag_name_override=tag_name_lower,
-                        attributes_override=self._fix_foreign_attribute_case(
-                            token.attributes, "math",
-                        ),
-                        push_override=enter_flag,
-                    )
-                    return True
                 self.debug(
                     f"MathML leaf kept prefixed: tag={tag_name_lower}, ancestor_text_ip={ancestor_text_ip is not None}, frag_leaf_root={frag_leaf_root}, fragment_context={self.parser.fragment_context}",
                 )
@@ -7318,20 +7284,6 @@ class ForeignTagHandler(TagHandler):
             # Handle HTML elements inside annotation-xml
             if context.current_parent.tag_name == "math annotation-xml":
                 encoding = context.current_parent.attributes.get("encoding", "").lower()
-                if encoding in ("application/xhtml+xml", "text/html"):
-                    # Keep HTML elements nested for these encodings
-                    self.parser.insert_element(
-                        token,
-                        context,
-                        mode="normal",
-                        enter=not token.is_self_closing,
-                        tag_name_override=tag_name_lower,
-                        attributes_override=self._fix_foreign_attribute_case(
-                            token.attributes, "math",
-                        ),
-                        push_override=False,
-                    )
-                    return True
                 # Handle SVG inside annotation-xml (switch to SVG context)
                 if tag_name_lower == "svg":
                     fixed_attrs = self._fix_foreign_attribute_case(
@@ -7348,26 +7300,6 @@ class ForeignTagHandler(TagHandler):
                     )
                     context.current_context = "svg"
                     return True
-
-            # Handle HTML elements inside MathML integration points (mtext, mi, mo, mn, ms)
-            mtext_ancestor = context.current_parent.find_ancestor(
-                lambda n: n.tag_name
-                in ("math mtext", "math mi", "math mo", "math mn", "math ms"),
-            )
-            if mtext_ancestor and tag_name_lower in HTML_ELEMENTS:
-                # HTML elements inside MathML integration points remain as HTML
-                self.parser.insert_element(
-                    token,
-                    context,
-                    mode="normal",
-                    enter=not token.is_self_closing,
-                    tag_name_override=tag_name_lower,
-                    attributes_override=self._fix_foreign_attribute_case(
-                        token.attributes, "math",
-                    ),
-                    push_override=False,
-                )
-                return True
 
             self.parser.insert_element(
                 token,
