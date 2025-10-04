@@ -65,15 +65,6 @@ class TagHandler:
     def handle_comment(self, comment, context):  # pragma: no cover
         return False
 
-    # Helper predicates
-    def _foster_parent_before_table(self, token, context):
-        table = find_current_table(context)
-        if table and table.parent:
-            return self.parser.insert_element(
-                token, context, mode="normal", enter=True, parent=table.parent, before=table
-            )
-        return None
-
     # Default no-op behavior for dispatch predicates / handlers
     def should_handle_start(self, tag_name, context):
         return False
@@ -2535,11 +2526,15 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             # Foster parent if in table context (but not in a cell or caption)
             if context.document_state == DocumentState.IN_TABLE and not is_in_cell_or_caption(context):
                 self.debug("Foster parenting select out of table")
-                new_node = self._foster_parent_before_table(token, context)
-                if new_node:
-                    context.enter_element(new_node)
-                    self.debug(f"Foster parented select before table: {new_node}")
-                    return True
+                table = find_current_table(context)
+                if table and table.parent:
+                    new_node = self.parser.insert_element(
+                        token, context, mode="normal", enter=True, parent=table.parent, before=table
+                    )
+                    if new_node:
+                        context.enter_element(new_node)
+                        self.debug(f"Foster parented select before table: {new_node}")
+                        return True
 
             # If we're already in a select, close it and ignore the nested select
             if context.current_parent.is_inside_tag("select"):
