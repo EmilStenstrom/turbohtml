@@ -86,14 +86,7 @@ class TagHandler:
 
 
 class UnifiedCommentHandler(TagHandler):
-    """Unified comment placement handler for all document states.
-
-    Consolidates InitialCommentHandler, AfterHeadCommentHandler, AfterHtmlCommentHandler,
-    AfterFramesetCommentHandler, and CommentPlacementHandler into a single handler with
-    mode-specific logic branches.
-
-    Note: Does not handle CDATA sections in foreign content - those are handled by ForeignTagHandler.
-    """
+    """Unified comment placement handler for all document states."""
 
     def should_handle_comment(self, comment, context):
         # Skip CDATA sections in foreign content (SVG/MathML) - let ForeignTagHandler handle them
@@ -533,7 +526,7 @@ class TemplateHandler(TagHandler):
             last = boundary.children[-1]
             if last.tag_name in {"col", "colgroup"}:
                 return True
-        return tag_name in (self.IGNORED_START | self.GENERIC_AS_PLAIN)
+        return tag_name in (self.IGNORED_START + self.GENERIC_AS_PLAIN)
 
     def handle_start(self, token, context):
         """Create template elements OR filter content inside templates."""
@@ -758,7 +751,7 @@ class TemplateHandler(TagHandler):
             "colgroup",
         }
         if context.current_parent.tag_name in tableish and token.tag_name not in (
-            self.IGNORED_START | self.GENERIC_AS_PLAIN | {"template"}
+            self.IGNORED_START + self.GENERIC_AS_PLAIN + ("template",)
         ):
             if context.current_parent.tag_name in {"col", "colgroup"}:
                 return True
