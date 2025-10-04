@@ -130,16 +130,6 @@ class TurboHTML:
 
         print(f"{' ' * indent}{args[0]}", *args[1:], **kwargs)
 
-    # --- Foreign subtree helpers ---
-    def is_plain_svg_foreign(self, context):
-        """Return True if current position is inside an <svg> subtree that is not an HTML integration point.
-
-        Table handlers and other HTML tree construction logic use this to suppress HTML
-        table scaffolding inside pure SVG subtrees. Delegates to ForeignTagHandler's
-        detection logic to maintain single source of truth for all foreign content handling.
-        """
-        return self.foreign_handler.is_plain_svg_foreign(context)
-
     # DOM Structure Methods
     def _init_dom_structure(self):
         """Initialize the basic DOM structure"""

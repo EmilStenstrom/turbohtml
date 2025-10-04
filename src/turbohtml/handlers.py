@@ -3962,7 +3962,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             "th",
             "caption",
         ):
-            if self.parser.is_plain_svg_foreign(context):
+            if self.parser.foreign_handler.is_plain_svg_foreign(context):
                 return False
             return True
         return False
@@ -4019,7 +4019,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         ):
             return True
 
-        if self.parser.is_plain_svg_foreign(context):
+        if self.parser.foreign_handler.is_plain_svg_foreign(context):
             return False
 
         if (
@@ -9342,7 +9342,7 @@ class FramesetTagHandler(TagHandler):
         if (
             tag_name == "frameset"
             and context.current_context in {"svg", "math"}
-            and self.parser.is_plain_svg_foreign(context)
+            and self.parser.foreign_handler.is_plain_svg_foreign(context)
         ):
             return False
         return True
@@ -9802,7 +9802,7 @@ class PlaintextHandler(SelectAwareHandler):
         # enter HTML PLAINTEXT mode; instead the <plaintext> tag is just another foreign element
         # with normal parsing of its (HTML) end tag token. We still handle it here so we can create
         # the element explicitly and not trigger global PLAINTEXT consumption.
-        if self.parser.is_plain_svg_foreign(context):
+        if self.parser.foreign_handler.is_plain_svg_foreign(context):
             return True
         # Always intercept inside select so we can ignore (prevent fallback generic element creation)
         return True
@@ -9836,7 +9836,7 @@ class PlaintextHandler(SelectAwareHandler):
             return True
 
         # Plain foreign SVG/MathML: create a foreign plaintext element but DO NOT switch tokenizer
-        if self.parser.is_plain_svg_foreign(context):
+        if self.parser.foreign_handler.is_plain_svg_foreign(context):
             self.debug(
                 "Plain foreign context: creating <plaintext> as foreign element (no PLAINTEXT mode)"
             )
