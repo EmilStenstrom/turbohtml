@@ -1795,19 +1795,6 @@ class TextHandler(TagHandler):
 
     def _append_text(self, text, context):
         """Helper to append text, either as new node or merged with last sibling"""
-        # Context-sensitive replacement character handling:
-        #  * In pure foreign SVG/MathML subtrees (not at an HTML integration point) we preserve
-        #    U+FFFD so explicit replacement characters remain in plain SVG cases requiring preservation
-        #    can see them.
-        #  * In normal HTML contexts and integration points (foreignObject, desc, title, annotation-xml)
-        #    expected trees omit the replacement characters produced for NUL code points; we
-        #    therefore strip them so they do not create stray empty/extra text nodes.
-        if (
-            "\ufffd" in text
-            and not self._is_plain_svg_foreign(context)
-            and context.current_parent.tag_name not in ("script", "style")
-        ):
-            text = text.replace("\ufffd", "")
         # If all text removed (became empty) nothing to do
         if text == "":
             return

@@ -115,11 +115,8 @@ class TurboHTML:
         # Parse immediately upon construction
         self._parse()
         
-        # Post-parse finalization
-        # 1. Entity handling (tokenizer responsibility: convert sentinel, strip invalid U+FFFD)
-        self.tokenizer.finalize_entities(self.root)
-        
-        # 2. Tree normalization (handler responsibility: foreign attributes, etc.)
+        # Post-parse finalization: handler tree normalization (foreign attributes, etc.)
+        # Entity finalization now happens inline in TextHandler._append_text using open_elements
         for handler in self.tag_handlers:
             handler.finalize(self)
 
@@ -367,6 +364,35 @@ class TurboHTML:
         Legacy params 'foster' & 'strip_replacement' are kept for handler API stability.
         Fostering / replacement char elision happens earlier in specialized handlers.
         """
+        from .constants import NUMERIC_ENTITY_INVALID_SENTINEL
+        
+        # Entity finalization: convert sentinel and strip invalid U+FFFD inline during text insertion.
+        had_sentinel = NUMERIC_ENTITY_INVALID_SENTINEL in text
+        if had_sentinel:
+            text = text.replace(NUMERIC_ENTITY_INVALID_SENTINEL, "\ufffd")
+        
+        # Strip U+FFFD from invalid codepoints (not from numeric entities) based on context
+        if "\ufffd" in text and not had_sentinel:
+            target_parent = parent or context.current_parent
+            preserve = False
+            
+            # Always preserve in script/style/plaintext
+            if target_parent.tag_name in ("script", "style", "plaintext"):
+                preserve = True
+            else:
+                for elem in context.open_elements._stack:
+                    if elem.tag_name in ("script", "style", "plaintext"):
+                        preserve = True
+                        break
+            
+            # Preserve in SVG content (but NOT in HTML integration points)
+            if not preserve and target_parent.tag_name.startswith("svg "):
+                if target_parent.tag_name not in ("svg foreignObject", "svg desc", "svg title"):
+                    preserve = True
+            
+            if not preserve:
+                text = text.replace("\ufffd", "")
+        
         if text == "":  # Fast path noop
             return None
 
