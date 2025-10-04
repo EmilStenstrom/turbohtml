@@ -265,43 +265,6 @@ class BodyReentryHandler(TagHandler):
                 self.debug(f"Reentered IN_BODY for <{tag}> after post-body state")
         return False
 
-class EarlyMathMLLeafFragmentEnterHandler(TagHandler):
-    """Normalize self-closing MathML leaf in fragment context so following text nests.
-
-    Fragment tests like fragment_context='math ms' with source '<ms/>X' expect 'X' to be
-    a child of <ms>. The tokenizer marks <ms/> self-closing which prevents insertion
-    logic from entering it. We clear the self-closing flag early so generic handlers
-    treat it as an entered container. Limiting strictly to fragment contexts whose root
-    is the same MathML leaf avoids altering document parsing semantics.
-    """
-
-    _LEAFS = {"mi", "mo", "mn", "ms", "mtext"}
-
-    def early_start_preprocess(self, token, context):
-        frag_ctx = self.parser.fragment_context
-        if not frag_ctx or " " not in frag_ctx:
-            return False
-        root, leaf = frag_ctx.split(" ", 1)
-        if root != "math" or leaf not in self._LEAFS:
-            return False
-        if token.tag_name != leaf:
-            return False
-        if token.is_self_closing:
-            self.debug(f"Clearing self-closing for MathML leaf fragment root <{leaf}/> to enable text nesting")
-            token.is_self_closing = False
-        return False
-
-    # Comment handling stubs (allow parser to call uniformly without hasattr checks)
-    def should_handle_comment(
-        self, comment, context
-    ):  # pragma: no cover - default
-        return False
-
-    def handle_comment(  # pragma: no cover - default
-        self, comment, context
-    ):
-        return False
-
 
 class MalformedSelectStartTagFilterHandler(TagHandler):
     """Drops malformed start tags whose tag_name still contains '<' while inside a select subtree.
@@ -7535,6 +7498,30 @@ class AutoClosingTagHandler(TemplateAwareHandler):
 
 class ForeignTagHandler(TagHandler):
     """Handles SVG and other foreign element contexts"""
+
+    _MATHML_LEAFS = {"mi", "mo", "mn", "ms", "mtext"}
+
+    def early_start_preprocess(self, token, context):
+        """Normalize self-closing MathML leaf in fragment context so following text nests.
+
+        Fragment tests like fragment_context='math ms' with source '<ms/>X' expect 'X' to be
+        a child of <ms>. The tokenizer marks <ms/> self-closing which prevents insertion
+        logic from entering it. We clear the self-closing flag early so generic handlers
+        treat it as an entered container. Limiting strictly to fragment contexts whose root
+        is the same MathML leaf avoids altering document parsing semantics.
+        """
+        frag_ctx = self.parser.fragment_context
+        if not frag_ctx or " " not in frag_ctx:
+            return False
+        root, leaf = frag_ctx.split(" ", 1)
+        if root != "math" or leaf not in self._MATHML_LEAFS:
+            return False
+        if token.tag_name != leaf:
+            return False
+        if token.is_self_closing:
+            self.debug(f"Clearing self-closing for MathML leaf fragment root <{leaf}/> to enable text nesting")
+            token.is_self_closing = False
+        return False
 
     def _fix_foreign_attribute_case(self, attributes, element_context):
         """Fix case for SVG/MathML attributes according to HTML5 spec
