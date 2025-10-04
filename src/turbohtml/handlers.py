@@ -249,7 +249,8 @@ class UnifiedCommentHandler(TagHandler):
     def handle_comment(self, comment, context):
         state = context.document_state
         html = self.parser.html_node
-        node = self.parser._create_comment_node(comment)
+        node = Node("#comment")
+        node.text_content = comment
         
         # INITIAL state: insert inside <html> before first non-comment/non-text, or at root
         if state == DocumentState.INITIAL:

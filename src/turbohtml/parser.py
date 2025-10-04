@@ -571,13 +571,6 @@ class TurboHTML:
                 if handler.handle_end(token, context):
                     return
 
-
-    # Utility for handlers to create a comment node (keeps single construction style)
-    def _create_comment_node(self, text):
-        node = Node("#comment")
-        node.text_content = text
-        return node
-
     def _merge_adjacent_text_nodes(self, node):
         """Iteratively merge adjacent sibling text nodes (non-recursive)."""
         stack = [node]
