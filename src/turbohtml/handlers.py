@@ -7281,13 +7281,7 @@ class ForeignTagHandler(TagHandler):
                         if self.parser.root.children
                         else None
                     )
-                    if frag_root and frag_root.tag_name in (
-                        "math mi",
-                        "math mo",
-                        "math mn",
-                        "math ms",
-                        "math mtext",
-                    ):
+                    if frag_root:
                         frag_leaf_root = True
                 # If fragment context explicitly names one of these (e.g. 'math ms'), treat leaf element occurrences as HTML
                 if (
@@ -7469,19 +7463,6 @@ class ForeignTagHandler(TagHandler):
                         lambda n: n.tag_name.startswith("math "),
                     )
                 ):
-                    self.parser.insert_element(
-                        token,
-                        context,
-                        mode="normal",
-                        enter=not token.is_self_closing,
-                        tag_name_override="math math",
-                        attributes_override=self._fix_foreign_attribute_case(
-                            token.attributes, "math",
-                        ),
-                        push_override=False,
-                    )
-                    if not token.is_self_closing:
-                        context.current_context = "math"
                     return True
                 # Delegate HTML (and table-related) elements to HTML handlers inside integration points
                 if tag_name_lower in HTML_ELEMENTS or tag_name_lower in (
