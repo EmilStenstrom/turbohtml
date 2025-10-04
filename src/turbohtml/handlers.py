@@ -1389,11 +1389,6 @@ class TextHandler(TagHandler):
             self.debug(f"merging with last text node '{prev_node.text_content}'")
             if text:
                 prev_node.text_content += text
-            # Post-merge sanitization for normal content
-            # Preserve U+FFFD replacement characters
-            # Remove empty node if it became empty after sanitization
-            if prev_node.text_content == "" and prev_node.parent:
-                prev_node.parent.remove_child(prev_node)
             self.debug(f"merged result '{prev_node.text_content}'")
         else:
             # Create new text node
