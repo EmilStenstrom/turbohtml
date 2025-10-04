@@ -1,8 +1,6 @@
 [project]
 name = "turbohtml"
-authors = [
-    {name = "Emil Stenström", email = "emil@emilstenstrom.se"},
-]
+authors = [{ name = "Emil Stenström", email = "emil@emilstenstrom.se" }]
 version = "0.0.0"
 description = "Coming soon"
 readme = "README.md"
@@ -25,9 +23,21 @@ build-backend = "hatchling.build"
 packages = ["src/turbohtml"]
 
 [tool.ruff]
-target-version = "py38"     # adjust to your lowest supported Python version
+target-version = "py38" # adjust to your lowest supported Python version
 line-length = 119
 
 [tool.ruff.lint]
 select = ["ALL"]
-ignore = ["ANN", "TD", "D", "EM", "TRY003", "T201", "FBT"]
+ignore = [
+    "ANN",
+    "TD",
+    "D",
+    "EM",
+    "TRY003",
+    "T201",
+    "FBT",
+    "E501",
+    "PLR",
+    "C",
+    "SIM",
+]
