@@ -244,19 +244,6 @@ TABLE_ROW_TAGS = {"tr"}
 TABLE_CELL_TAGS = {"td", "th"}
 TABLE_PRELUDE_TAGS = {"caption", "col", "colgroup"} | TABLE_SECTION_TAGS
 
-TABLE_CONTAINING_ELEMENTS = [
-    "html",
-    "body",
-    "div",
-    "form",
-    "button",
-    "ruby",
-    "td",
-    "th",
-    "math",
-    "svg",
-]
-
 HEAD_ELEMENTS = [
     "base",
     "basefont",
