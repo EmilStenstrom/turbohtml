@@ -296,9 +296,12 @@ class TurboHTML:
                         break
 
             # Preserve in SVG content (but NOT in HTML integration points)
-            if not preserve and target_parent.tag_name.startswith("svg "):
-                if target_parent.tag_name not in ("svg foreignObject", "svg desc", "svg title"):
-                    preserve = True
+            if (
+                not preserve
+                and target_parent.tag_name.startswith("svg ")
+                and target_parent.tag_name not in ("svg foreignObject", "svg desc", "svg title")
+            ):
+                preserve = True
 
             if not preserve:
                 text = text.replace("\ufffd", "")
