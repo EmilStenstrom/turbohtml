@@ -304,12 +304,12 @@ class AdoptionAgencyAlgorithm:
 
             formatting_element = formatting_entry.element
 
-            if tag_name == "a" and not context.processing_end_tag:
+            if tag_name == "a" and not context.in_end_tag_dispatch:
                 break
 
             if not context.open_elements.contains(formatting_element):
                 context.active_formatting_elements.remove_entry(formatting_entry)
-                context.post_adoption_reconstruct_pending = True
+                context.needs_reconstruction = True
                 return True
 
             if not context.open_elements.has_element_in_scope(formatting_element.tag_name):
@@ -326,7 +326,7 @@ class AdoptionAgencyAlgorithm:
 
             self._run_complex_case(formatting_entry, formatting_element, furthest_block, context)
             made_progress = True
-            context.post_adoption_reconstruct_pending = True
+            context.needs_reconstruction = True
 
         return made_progress
 
@@ -428,13 +428,13 @@ class AdoptionAgencyAlgorithm:
         if formatting_element.tag_name == "font":
             wrapper_parent = fmt_parent if fmt_parent is not None else target
             self._wrap_trailing_font_content(wrapper_parent, context)
-        context.post_adoption_reconstruct_pending = True
+        context.needs_reconstruction = True
 
         # Trigger reconstruction if any active formatting entries are now stale
         for entry in context.active_formatting_elements:
             element = entry.element
             if element and not context.open_elements.contains(element):
-                context.post_adoption_reconstruct_pending = True
+                context.needs_reconstruction = True
                 break
 
     def _wrap_trailing_font_content(self, parent, context):

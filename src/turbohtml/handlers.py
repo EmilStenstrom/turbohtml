@@ -170,10 +170,10 @@ class UnifiedCommentHandler(TagHandler):
                 root.append_child(node)
             return True
 
-        # AFTER_FRAMESET state: append inside <html> or at root depending on html_end_explicit
+        # AFTER_FRAMESET state: append inside <html> or at root depending on saw_html_end_tag
         if state == DocumentState.AFTER_FRAMESET:
-            html_end_explicit = context.html_end_explicit
-            if not html_end_explicit and html and html in self.parser.root.children:
+            saw_html_end_tag = context.saw_html_end_tag
+            if not saw_html_end_tag and html and html in self.parser.root.children:
                 html.append_child(node)
             else:
                 self.parser.root.append_child(node)
@@ -254,7 +254,7 @@ class DocumentStructureHandler(TagHandler):
         if tag == "body" and context.document_state != DocumentState.IN_FRAMESET:
             if context.frameset_ok and context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
                 context.frameset_ok = False
-            context.explicit_body = True
+            context.saw_body_start_tag = True
             body = ensure_body(parser.root, context.document_state, parser.fragment_context)
             if body:
                 for k, v in token.attributes.items():
@@ -364,8 +364,8 @@ class DocumentStructureHandler(TagHandler):
             # Record ordering if no <noframes> descendant yet: explicit </html> precedes any late <noframes>.
             html = self.parser.html_node
             if not any(ch.tag_name == "noframes" for ch in html.children):
-                context.frameset_html_end_before_noframes = True
-            context.html_end_explicit = True
+                context.saw_html_end_before_noframes = True
+            context.saw_html_end_tag = True
             if context.document_state != DocumentState.AFTER_FRAMESET:
                 context.transition_to_state(
                     DocumentState.AFTER_FRAMESET, html,
@@ -377,7 +377,7 @@ class DocumentStructureHandler(TagHandler):
         context.transition_to_state(
             DocumentState.AFTER_HTML, body or context.current_parent,
         )
-        context.html_end_explicit = True
+        context.saw_html_end_tag = True
         return True
 
     def finalize(self, parser):
@@ -1057,18 +1057,13 @@ class TextHandler(TagHandler):
 
     def handle_text(self, text, context):
         self.debug(f"handling text '{text}' in state {context.document_state}")
-        # Template content single-consumption guard keyed by tokenizer index + parent id
+        # Template content single-consumption guard: deduplicate if identical text already last child
+        # (handles double path table->content reroute)
         if context.current_parent.tag_name == "content":
-            # Deduplicate if identical text already last child (handles double path table->content reroute)
             if context.current_parent.children:
                 last = context.current_parent.children[-1]
                 if last.tag_name == "#text" and (last.text_content or "") == text:
                     return True
-            last_sig = context.last_template_text_sig
-            sig = (id(context.current_parent), self.parser.get_token_position())
-            if last_sig == sig:
-                return True
-            context.last_template_text_sig = sig
         # Stateless integration point consistency: if an SVG/MathML integration point element (foreignObject/desc/title
         # or math annotation-xml w/ HTML encoding, or MathML text integration leaves) remains open on the stack but the
         # current insertion point has drifted outside its subtree (should not normally happen unless a prior stray end
@@ -1081,14 +1076,14 @@ class TextHandler(TagHandler):
         # narrowly reproducing the spec step "reconstruct the active formatting elements" for the
         # immediately following character token without broad per‑character scanning (which caused
         # Guard against over‑cloning regressions when generalized.
-        if context.post_adoption_reconstruct_pending:
+        if context.needs_reconstruction:
             if (
                 context.document_state == DocumentState.IN_BODY
                 and not in_template_content(context)
             ):
                 self.debug("Post-adoption one-shot reconstruction before character insertion")
                 reconstruct_active_formatting_elements(self.parser, context)
-            context.post_adoption_reconstruct_pending = False
+            context.needs_reconstruction = False
         # Stale formatting fallback: if no one-shot flag but there exists a stale active formatting element
         # (entry element not on open elements stack) and we are about to insert text in body, reconstruct.
         elif context.document_state == DocumentState.IN_BODY and not in_template_content(context):
@@ -1885,11 +1880,11 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
             existing_a = context.active_formatting_elements.find("a")
             if existing_a and existing_a.element and context.open_elements.contains(existing_a.element):
                 # Duplicate <a>: run adoption once to close previous anchor per spec.
-                prev_flag = context.processing_end_tag
-                context.processing_end_tag = True
+                prev_flag = context.in_end_tag_dispatch
+                context.in_end_tag_dispatch = True
                 self.parser.adoption_agency.run_until_stable("a", context, max_runs=1)
-                context.processing_end_tag = prev_flag
-                context.post_adoption_reconstruct_pending = True
+                context.in_end_tag_dispatch = prev_flag
+                context.needs_reconstruction = True
                 adoption_ran_for_anchor = True
         if (
             adoption_ran_for_anchor
@@ -1968,9 +1963,9 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
 
         # (Duplicate <a> logic consolidated above)
         # Pending reconstruction after new adoption segmentation
-        if context.post_adoption_reconstruct_pending:
+        if context.needs_reconstruction:
             if reconstruct_if_needed(self.parser, context):
-                context.post_adoption_reconstruct_pending = False
+                context.needs_reconstruction = False
 
         if in_template_content(context):
             tableish = {"table", "thead", "tbody", "tfoot"}
@@ -2281,8 +2276,8 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
                         parent=chain_parent,
                         push_nobr_late=(tag_name == "nobr"),
                     )
-                if tag_name == "a" and context.resume_anchor_after_structure is None:
-                    context.resume_anchor_after_structure = new_element
+                if tag_name == "a" and context.anchor_resume_element is None:
+                    context.anchor_resume_element = new_element
                 if not inside_object:
                     context.active_formatting_elements.push(new_element, token)
                 return True
@@ -2396,14 +2391,14 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
         tag_name = token.tag_name
         self.debug(f"FormattingElementHandler: *** START PROCESSING END TAG </{tag_name}> ***")
         self.debug(f"FormattingElementHandler: handling end tag <{tag_name}>, context={context}")
-        prev_processing = context.processing_end_tag
-        context.processing_end_tag = True
+        prev_processing = context.in_end_tag_dispatch
+        context.in_end_tag_dispatch = True
 
         # Run adoption agency
         runs = self.parser.adoption_agency.run_until_stable(tag_name, context, max_runs=8)
         if runs > 0:
             self.debug(f"FormattingElementHandler: Adoption agency completed after {runs} run(s) for </{tag_name}>")
-            context.processing_end_tag = prev_processing
+            context.in_end_tag_dispatch = prev_processing
             return True
 
         # If element on stack but not in scope -> ignore
@@ -2414,7 +2409,7 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
                 break
         if fmt_on_stack and not context.open_elements.has_element_in_scope(tag_name):
             self.debug(f"Ignoring </{tag_name}> (not in scope)")
-            context.processing_end_tag = prev_processing
+            context.in_end_tag_dispatch = prev_processing
             return True
 
         # Boundary handling (exclude table cells)
@@ -2429,12 +2424,12 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
                 if outer:
                     context.move_to_element(boundary)
                     return True
-            context.processing_end_tag = prev_processing
+            context.in_end_tag_dispatch = prev_processing
             return True
 
         current = context.current_parent.find_ancestor(tag_name)
         if not current:
-            context.processing_end_tag = prev_processing
+            context.in_end_tag_dispatch = prev_processing
             return False
 
         entry = context.active_formatting_elements.find_element(current)
@@ -2448,14 +2443,14 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
             p_el = context.current_parent.find_ancestor("p")
             if p_el and p_el.parent == current:
                 context.move_to_element(p_el)
-                context.processing_end_tag = prev_processing
+                context.in_end_tag_dispatch = prev_processing
                 return True
         if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
             context.move_to_ancestor_parent(current)
-            context.processing_end_tag = prev_processing
+            context.in_end_tag_dispatch = prev_processing
             return True
         context.move_to_element_with_fallback(current.parent, get_body(self.parser.root))
-        context.processing_end_tag = prev_processing
+        context.in_end_tag_dispatch = prev_processing
         return True
 
 
@@ -3543,7 +3538,7 @@ class ParagraphTagHandler(TagHandler):
                     detached_exists = True
                     break
             if detached_exists:
-                context.post_adoption_reconstruct_pending = True
+                context.needs_reconstruction = True
 
             # In integration points, reconstruct immediately so following text is wrapped
             if in_svg_ip or in_math_ip:
@@ -3622,7 +3617,7 @@ class ParagraphTagHandler(TagHandler):
                 context.open_elements.replace_stack(new_stack)
                 # Trigger one-shot reconstruction for next character token so detached formatting wrappers
                 # are recreated before subsequent inline text (mirrors spec reconstruction after paragraph boundary).
-                context.post_adoption_reconstruct_pending = True
+                context.needs_reconstruction = True
             if in_svg_ip or in_math_ip:
                 reconstruct_active_formatting_elements(self.parser, context)
             context.recent_paragraph_close = True
@@ -4994,7 +4989,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         formatting_elements = context.current_parent.collect_ancestors_until(
             foster_parent, lambda n: n.tag_name in FORMATTING_ELEMENTS,
         )
-        if context.post_adoption_reconstruct_pending and formatting_elements:
+        if context.needs_reconstruction and formatting_elements:
             filtered = []
             for elem in formatting_elements:
                 top = elem
@@ -5034,7 +5029,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 reused_wrapper = skip_existing
                 formatting_elements = formatting_elements[:-1]
 
-        resume_anchor = context.resume_anchor_after_structure
+        resume_anchor = context.anchor_resume_element
         if resume_anchor and resume_anchor.parent is foster_parent:
             filtered_chain = []
             for elem in formatting_elements:
@@ -5048,7 +5043,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     elem for elem in formatting_elements if elem is not resume_anchor
                 ]
                 reused_wrapper = resume_anchor
-                context.resume_anchor_after_structure = resume_anchor
+                context.anchor_resume_element = resume_anchor
             elif reused_wrapper is None:
                 anchor_token = HTMLToken(
                     "StartTag",
@@ -5065,7 +5060,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     push_override=False,
                 )
                 context.active_formatting_elements.push(reused_wrapper, anchor_token)
-                context.resume_anchor_after_structure = reused_wrapper
+                context.anchor_resume_element = reused_wrapper
 
         self.debug(f"Found formatting elements: {formatting_elements}")
 
@@ -5089,7 +5084,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     force_sibling = fmt_elem.tag_name in seen_run or (
                         is_innermost
                         and has_text_content
-                        and context.post_adoption_reconstruct_pending
+                        and context.needs_reconstruction
                     )
                     if fmt_elem is context.current_parent:
                         if not force_sibling:
@@ -5099,7 +5094,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         if (
                             is_innermost
                             and has_text_content
-                            and context.post_adoption_reconstruct_pending
+                            and context.needs_reconstruction
                         ):
                             pass
                         else:
@@ -5308,7 +5303,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             else:
                 if (
                     foster_parent.tag_name == "nobr"
-                    and context.post_adoption_reconstruct_pending
+                    and context.needs_reconstruction
                     and any(
                         ch.tag_name == "#text" and ch.text_content
                         for ch in foster_parent.children[:table_index]
@@ -5528,7 +5523,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                                 and context.active_formatting_elements.find_element(candidate)
                             ):
                                 context.open_elements.remove_element(candidate)
-                                context.post_adoption_reconstruct_pending = True
+                                context.needs_reconstruction = True
                                 self.debug(
                                     f"Flagging reconstruction after table close for <{candidate.tag_name}>",
                                 )
@@ -5538,7 +5533,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     if preferred_after_table_parent is not None:
                         target_parent = preferred_after_table_parent
                     elif (
-                        context.post_adoption_reconstruct_pending
+                        context.needs_reconstruction
                         and context.active_formatting_elements
                     ):
                         entries_for_parent = []
@@ -9148,7 +9143,7 @@ class FramesetTagHandler(TagHandler):
                         "math math",
                     }
                     meaningful = self._frameset_body_has_meaningful_content(body, allowed_tags)
-                    explicit_body = context.explicit_body
+                    saw_body_start_tag = context.saw_body_start_tag
                     if meaningful and context.frameset_ok:
                         self.debug("Ignoring <frameset>; body already meaningful")
                         return True
@@ -9175,7 +9170,7 @@ class FramesetTagHandler(TagHandler):
                                 if ch.children and not _only_empty_containers(ch):
                                     return False
                             return True
-                        if explicit_body or not _only_empty_containers(body):
+                        if saw_body_start_tag or not _only_empty_containers(body):
                             self.debug("Ignoring root <frameset>; frameset_ok False after non-container content")
                             return True
                 self.debug("Creating root frameset")
@@ -9225,10 +9220,10 @@ class FramesetTagHandler(TagHandler):
             # siblings (frameset comment ordering requirement).
             # Determine if we need to reorder root-level comments that appeared after explicit </html>
             # but before this late <noframes>. We only perform this when html end was seen earlier before
-            # any noframes (context.frameset_html_end_before_noframes True) and the document is now in
+            # any noframes (context.saw_html_end_before_noframes True) and the document is now in
             # AFTER_FRAMESET (frameset document) OR a normal document with root-level trailing comments.
             # First <noframes>: if ordering not yet set, it must be False (</html> either absent or after this element)
-            # We do not flip frameset_html_end_before_noframes here; absence of prior True value already encodes order.
+            # We do not flip saw_html_end_before_noframes here; absence of prior True value already encodes order.
             # Place <noframes> inside <head> when we are still before or in head (non‑frameset doc) just like
             # other head rawtext containers in these tests; once a frameset root is established the element
             # becomes a descendant of frameset (handled above). This matches html5lib expectations where

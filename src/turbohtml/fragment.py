@@ -167,12 +167,12 @@ def _supp_duplicate_cell_or_initial_row(parser, context, token, fragment_context
     at_root = cp is parser.root or (cp and cp.tag_name == "document-fragment")
     if not at_root:
         return False
-    # Use context.fragment_context_ignored flag consistent with parser logic
-    if not context.fragment_context_ignored and tn in {"td", "th"}:
-        context.fragment_context_ignored = True
+    # Use context.ignored_fragment_context_tag flag consistent with parser logic
+    if not context.ignored_fragment_context_tag and tn in {"td", "th"}:
+        context.ignored_fragment_context_tag = True
         return True
-    if not context.fragment_context_ignored and tn == "tr":
-        context.fragment_context_ignored = True
+    if not context.ignored_fragment_context_tag and tn == "tr":
+        context.ignored_fragment_context_tag = True
         return True
     return False
 

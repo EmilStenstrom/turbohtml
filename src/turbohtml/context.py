@@ -45,36 +45,38 @@ class ParseContext:
         self._content_state = ContentState.NONE
         self._debug = debug_callback
         self.doctype_seen = False
-        self.frameset_ok = True  # Whether frameset still allowed
+        self.frameset_ok = True
 
-        # Adoption Agency data structures
+        # Tree construction algorithm stacks (HTML5 spec §13.2.4)
         self.active_formatting_elements = ActiveFormattingElements()
         self.open_elements = OpenElementsStack()
-        # Historical bit (single minimal flag): in a frameset document, did an explicit </html>
-        # occur before the first <noframes>? Used only for trailing comment placement.
-        self.frameset_html_end_before_noframes = False
-        # Explicit </html> end tag encountered (distinguishes pre/post html end in frameset AFTER_FRAMESET mode)
-        self.html_end_explicit = False
-        # One-shot flag: set True by adoption algorithm when it performs a restructuring so that
-        # the *next* character token in IN_BODY triggers active formatting elements reconstruction
-        # before inserting text. Cleared immediately after consumption (see TextHandler).
-        self.post_adoption_reconstruct_pending = False
-        # Fragment parsing: track whether we've already ignored the first start tag
-        # matching the fragment context element (e.g., context='td' and first <td>). The
-        # HTML fragment algorithm only skips the context element token itself; subsequent
-        # identical tags nested inside the fragment should be processed normally. We keep
-        # a simple boolean rather than counting since only the first occurrence is ignored.
-        self.fragment_context_ignored = False
-        # Anchor element to re-enter after structural element (e.g., table) handling if still open.
-        self.resume_anchor_after_structure = None
-        # Anchor reconstruction / suppression coordination flags (previously accessed via getattr)
-        self.processing_end_tag = False  # True only during end-tag handler dispatch to gate adoption agency anchor segmentation
-        self.anchor_last_reconstruct_index = None  # tokenizer position of last anchor reconstruction (duplicate suppression)
-        self.explicit_body = False  # whether a literal <body> start tag appeared (affects comment placement)
-        self.last_template_text_sig = None  # signature tuple (parent_id, index) of last template text append for duplication guard
-        # HTML Standard form element pointer: tracks the most recently opened <form> outside templates
-        # so additional <form> start tags can be ignored until the pointer is cleared.
+
+        # HTML Standard form element pointer (§4.10.3): tracks most recently opened <form>
+        # outside templates. Additional <form> tags are ignored until pointer is cleared.
         self.form_element = None
+
+        # Frameset-specific flags for trailing comment placement
+        self.saw_html_end_before_noframes = False  # Did </html> occur before first <noframes>?
+        self.saw_html_end_tag = False  # Was </html> end tag explicit (vs. implied)?
+
+        # Body start tag tracking: whether literal <body> start tag appeared (affects comment placement)
+        self.saw_body_start_tag = False
+
+        # Adoption agency temporal signal: set when adoption restructures tree to trigger
+        # active formatting element reconstruction before next character token (§13.2.6.4.8)
+        self.needs_reconstruction = False
+
+        # End tag processing gate: True during end-tag dispatch to prevent adoption agency
+        # anchor segmentation (prevents infinite recursion in edge cases)
+        self.in_end_tag_dispatch = False
+
+        # Fragment parsing one-shot: tracks if first start tag matching fragment context
+        # has been ignored (e.g., context='td' and first <td> token)
+        self.ignored_fragment_context_tag = False
+
+        # Anchor re-entry pointer: element to return to after structural element (e.g., table)
+        # handling completes, if anchor is still in open elements stack
+        self.anchor_resume_element = None
 
     # --- Properties / helpers ---
     @property
