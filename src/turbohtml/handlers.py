@@ -3070,33 +3070,6 @@ class ParagraphTagHandler(TagHandler):
                     "Inside table cell; skipping foster-parenting <p> (will insert inside cell)",
                 )
             else:
-                if context.document_state == DocumentState.IN_BODY:
-                    table = find_current_table(context)
-                    if table and table.parent and table in table.parent.children:
-                        # Ascend from current_parent until we reach a direct child of table.parent (or root)
-                        probe = context.current_parent
-                        foreign_before_table = None
-                        while (
-                            probe
-                            and probe.parent is not table.parent
-                            and probe.parent is not None
-                        ):
-                            probe = probe.parent
-                        if (
-                            probe
-                            and probe.parent is table.parent
-                            and probe.tag_name.startswith(("math ", "svg "))
-                        ):
-                            siblings = table.parent.children
-                            if probe in siblings and table in siblings:
-                                if siblings.index(probe) < siblings.index(table):
-                                    foreign_before_table = probe
-                        if foreign_before_table:
-                            self.debug(
-                                "Foster parent <p> after foreign subtree directly preceding open table",
-                            )
-                            foster_parent_element(token.tag_name, token.attributes, context, self.parser)
-                            return True
                 # Do not foster parent when inside SVG/MathML integration points
                 # Check if in integration point using centralized helpers
                 in_svg_ip = self.parser.foreign_handler.is_in_svg_integration_point(context)
@@ -4678,30 +4651,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         text, context, parent=prev_sibling, merge=True,
                     )
                 return True
-            elif prev_sibling.tag_name == "nobr":
-                # If previous <nobr> has text, create a new <nobr> for this text run
-                has_text = any(
-                    ch.tag_name == "#text"
-                    and ch.text_content
-                    and ch.text_content.strip()
-                    for ch in prev_sibling.children
-                )
-                if has_text:
-                    nobr_token = self._synth_token("nobr")
-                    new_nobr = self.parser.insert_element(
-                        nobr_token,
-                        context,
-                        mode="normal",
-                        enter=False,
-                        parent=foster_parent,
-                        before=foster_parent.children[table_index],
-                        push_override=False,
-                    )
-                    self.parser.insert_text(text, context, parent=new_nobr, merge=True)
-                    self.debug(
-                        "Created new <nobr> for foster-parented text after filled <nobr>",
-                    )
-                    return True
 
         # Anchor continuation handling (narrow): only segmentation or split cases are supported.
         # We intentionally limit behavior to:
