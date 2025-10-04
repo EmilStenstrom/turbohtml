@@ -428,8 +428,8 @@ class FramesetPreprocessHandler(TagHandler):
 class DefaultElementInsertionHandler(TagHandler):
     """Final catch-all handler: inserts any start tag not claimed earlier.
 
-    Applies foster parenting when in table modes outside cells/captions.
-    Performs active formatting reconstruction for block containers.
+    Performs active formatting reconstruction for block containers. Foster
+    parenting is now handled automatically by parser.insert_element().
     """
 
     def should_handle_start(self, tag_name, context):
@@ -438,7 +438,7 @@ class DefaultElementInsertionHandler(TagHandler):
     _RECONSTRUCT_BLOCKS = {"div", "section", "article", "center", "address", "figure", "figcaption"}
 
     def handle_start(self, token, context, has_more_content):
-        # Table foster parenting: use foster.py logic when in table context
+        # Foster parenting check: reconstruct active formatting before fostered insertion
         if needs_foster_parenting(context.current_parent):
             in_cell_or_caption = bool(
                 context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
@@ -452,23 +452,9 @@ class DefaultElementInsertionHandler(TagHandler):
                         if entry.element and not context.open_elements.contains(entry.element) and entry.element.tag_name != "nobr":
                             reconstruct_if_needed(self.parser, context)
                             break
-                # Use foster parenting module
-                foster_parent_node, before_sibling = foster_parent(
-                    context.current_parent, context.open_elements, self.parser.root
-                )
-                self.parser.insert_element(
-                    token,
-                    context,
-                    mode="normal",
-                    enter=not token.is_self_closing,
-                    parent=foster_parent_node,
-                    before=before_sibling,
-                )
-            else:
-                self.parser.insert_element(token, context, mode="normal", enter=not token.is_self_closing)
-        else:
-            # Normal insertion
-            self.parser.insert_element(token, context, mode="normal", enter=not token.is_self_closing)
+        
+        # Insert element (auto-foster parenting handled by insert_element)
+        self.parser.insert_element(token, context, mode="normal", enter=not token.is_self_closing)
         
         # Active formatting reconstruction for block containers
         if token.tag_name in self._RECONSTRUCT_BLOCKS:
@@ -791,8 +777,9 @@ class TemplateHandler(TagHandler):
                     or n.tag_name == "math"
                 ):
                     return False
+                # Template elements are allowed in table context without foster parenting
                 template_node = self.parser.insert_element(
-                    token, context, mode="normal", enter=True
+                    token, context, mode="normal", enter=True, auto_foster=False
                 )
                 content_token = self._synth_token("content")
                 self.parser.insert_element(
@@ -6896,7 +6883,9 @@ class RawtextTagHandler(SelectAwareHandler):
             context.move_up_one_level()
 
         # Create element first; only switch tokenizer if token actually requires rawtext handling
-        self.parser.insert_element(token, context, mode="normal", enter=True)
+        # RAWTEXT elements (script, style, title, etc.) are allowed inside table structures
+        # and should not be foster-parented (spec permits them in table/tbody/etc)
+        self.parser.insert_element(token, context, mode="normal", enter=True, auto_foster=False)
         if token.needs_rawtext and tag_name == "textarea":
             self.debug("Deferred RAWTEXT activation for <textarea>")
             context.content_state = ContentState.RAWTEXT

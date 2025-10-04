@@ -249,6 +249,7 @@ class TurboHTML:
         attributes_override=None,
         preserve_attr_case=False,
         push_override=None,
+        auto_foster=True,
     ):
         """Insert a start tag's element with controlled stack / current_parent semantics.
 
@@ -259,11 +260,33 @@ class TurboHTML:
 
         treat_as_void can force void behavior under normal/transient modes. All invariants
         mirror HTML tree construction: no scoped side effects hidden here.
+        
+        auto_foster: When True (default) and parent=None, automatically applies foster
+        parenting if current_parent is in table context. Set to False to bypass.
         """
         if mode not in ("normal", "transient", "void"):
             raise ValueError(f"insert_element: unknown mode '{mode}'")
+        
+        # Foster parenting: When inserting into default parent (parent=None) and in table context,
+        # spec requires insertion before the table rather than inside it (unless in cell/caption).
         target_parent = parent or context.current_parent
+        target_before = before
         tag_name = tag_name_override or token.tag_name
+        
+        if auto_foster and parent is None and before is None:
+            from turbohtml.foster import foster_parent, needs_foster_parenting
+            if needs_foster_parenting(context.current_parent):
+                # Check if we're inside a cell or caption (foster parenting doesn't apply there)
+                in_cell_or_caption = bool(
+                    context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
+                )
+                # Don't foster table-related elements or elements specifically allowed in tables (form)
+                tableish = {"table","tbody","thead","tfoot","tr","td","th","caption","colgroup","col","form"}
+                if not in_cell_or_caption and tag_name not in tableish:
+                    target_parent, target_before = foster_parent(
+                        context.current_parent, context.open_elements, self.root
+                    )
+        
         # Guard: transient mode only allowed inside template content subtrees (content under a template)
         if mode == "transient":
             cur = context.current_parent
@@ -285,8 +308,8 @@ class TurboHTML:
             attributes_override if attributes_override is not None else token.attributes
         )
         new_node = Node(tag_name, attrs, preserve_attr_case=preserve_attr_case)
-        if before and before.parent is target_parent:
-            target_parent.insert_before(new_node, before)
+        if target_before and target_before.parent is target_parent:
+            target_parent.insert_before(new_node, target_before)
         else:
             target_parent.append_child(new_node)
         # Determine effective voidness
