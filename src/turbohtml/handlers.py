@@ -1,5 +1,4 @@
 import re
-from typing import ClassVar
 
 from turbohtml import table_modes
 from turbohtml.constants import (
@@ -429,9 +428,9 @@ class TemplateHandler(TagHandler):
     """
 
     # Ignore only top-level/document-structure things inside template content
-    IGNORED_START: ClassVar = {"html", "head", "body", "frameset", "frame"}
+    IGNORED_START = ("html", "head", "body", "frameset", "frame")
     # Treat table & select related and nested template triggers as plain generics (no special algorithms)
-    GENERIC_AS_PLAIN: ClassVar = {
+    GENERIC_AS_PLAIN = (
         "table",
         "thead",
         "tbody",
@@ -446,7 +445,7 @@ class TemplateHandler(TagHandler):
         "optgroup",
         "select",
         "menu",  # Treat list containers as plain so they remain within template content
-    }
+    )
 
     def _in_template_content(self, context):
         """Check if current insertion point is inside template content."""
@@ -1514,10 +1513,10 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
     """Handles formatting elements like <b>, <i>, etc. and their reconstruction."""
 
     # Tags treated as block boundaries for deferred reconstruction logic
-    _BLOCKISH: ClassVar = {
+    _BLOCKISH = (
         "div","section","article","p","ul","ol","li","table","tr","td","th","body","html",
         "h1","h2","h3","h4","h5","h6",
-    }
+    )
 
     def early_start_preprocess(self, token, context):
         """Performs pre-start-tag formatting element reconstruction or defers it.
@@ -5934,7 +5933,7 @@ class ForeignTagHandler(TagHandler):
     Other handlers delegate to these helpers to maintain single source of truth.
     """
 
-    _MATHML_LEAFS: ClassVar = {"mi", "mo", "mn", "ms", "mtext"}
+    _MATHML_LEAFS = ("mi", "mo", "mn", "ms", "mtext")
     _SVG_INTEGRATION_POINTS = ("svg foreignObject", "svg desc", "svg title")
     _MATHML_TEXT_INTEGRATION_POINTS = ("math mtext", "math mi", "math mo", "math mn", "math ms")
 
@@ -7583,7 +7582,7 @@ class FramesetTagHandler(TagHandler):
     Manages frameset_ok flag for all tags, handles frameset/frame/noframes elements.
     """
 
-    _FRAMES_HTML_EMPTY_CONTAINERS: ClassVar = {
+    _FRAMES_HTML_EMPTY_CONTAINERS = (
         "div",
         "span",
         "article",
@@ -7593,9 +7592,9 @@ class FramesetTagHandler(TagHandler):
         "header",
         "footer",
         "main",
-    }
+    )
 
-    _BENIGN_INLINE: ClassVar = {"span", "font", "b", "i", "u", "em", "strong"}
+    _BENIGN_INLINE = ("span", "font", "b", "i", "u", "em", "strong")
 
     def early_start_preprocess(self, token, context):
         """Unified preprocessing: frameset_ok management, guards, and takeover logic."""
