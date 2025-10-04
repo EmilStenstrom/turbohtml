@@ -1100,8 +1100,6 @@ class GenericEndTagHandler(TagHandler):
     ignore the token (parse error per spec)."""
 
     def should_handle_end(self, tag_name, context):
-        if tag_name in ("html", "head", "body"):
-            return False
         return True
 
     def handle_end(self, token, context):
