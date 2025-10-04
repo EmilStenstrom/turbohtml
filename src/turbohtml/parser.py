@@ -98,7 +98,13 @@ class TurboHTML:
         for handler in self.tag_handlers:
             if isinstance(handler, TextHandler):
                 self.text_handler = handler
-                break
+            elif isinstance(handler, ForeignTagHandler):
+                self.foreign_handler = handler
+        
+        if not hasattr(self, 'text_handler'):
+            raise RuntimeError("TextHandler not found in tag_handlers")
+        if not hasattr(self, 'foreign_handler'):
+            raise RuntimeError("ForeignTagHandler not found in tag_handlers")
 
         # Track a tiny token history window for context-sensitive decisions without
         # proliferating boolean state. Only previous + current are retained.
@@ -129,12 +135,10 @@ class TurboHTML:
         """Return True if current position is inside an <svg> subtree that is not an HTML integration point.
 
         Table handlers and other HTML tree construction logic use this to suppress HTML
-        table scaffolding inside pure SVG subtrees. Delegates to TextHandler's internal
-        detection logic (historically _is_plain_svg_foreign) to keep a single source
-        of truth without reflective hasattr checks.
+        table scaffolding inside pure SVG subtrees. Delegates to ForeignTagHandler's
+        detection logic to maintain single source of truth for all foreign content handling.
         """
-        # TextHandler is always registered; rely on direct attribute (no reflection)
-        return self.text_handler._is_plain_svg_foreign(context)
+        return self.foreign_handler.is_plain_svg_foreign(context)
 
     # DOM Structure Methods
     def _init_dom_structure(self):

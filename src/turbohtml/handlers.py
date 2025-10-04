@@ -1689,24 +1689,6 @@ class TextHandler(TagHandler):
         self._append_text(text, context)
         return True
 
-    def _is_plain_svg_foreign(self, context):
-        """Return True if current parent is inside an <svg> subtree that is NOT an HTML integration point.
-
-        In such cases, HTML table-related tags (table, tbody, thead, tfoot, tr, td, th, caption, col, colgroup)
-        should NOT trigger HTML table construction; instead they are treated as raw foreign elements so the
-        resulting tree preserves nested <svg tagname> nodes instead of introducing HTML table scaffolding.
-        """
-        cur = context.current_parent
-        seen_svg = False
-        while cur:
-            if cur.tag_name.startswith("svg "):
-                seen_svg = True
-            # Any integration point breaks the foreign-only condition
-            if cur.tag_name in ("svg foreignObject", "svg desc", "svg title"):
-                return False
-            cur = cur.parent
-        return seen_svg
-
     def _append_text(self, text, context):
         """Helper to append text, either as new node or merged with last sibling"""
         # If all text removed (became empty) nothing to do
@@ -2734,33 +2716,16 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         if self._is_in_select(context) and tag_name in FORMATTING_ELEMENTS:
             # Special case: inside SVG foreignObject integration point, break out of select
             # and insert formatting element in the nearest HTML context (outside the foreign subtree).
-            in_svg_ip = context.current_context == "svg" and (
-                context.current_parent.tag_name == "svg foreignObject"
-                or context.current_parent.has_ancestor_matching(
-                    lambda n: n.tag_name == "svg foreignObject"
-                )
-            )
-            if in_svg_ip:
+            # Delegate to ForeignTagHandler for breakout logic.
+            attach, _ = self.parser.foreign_handler.get_svg_foreign_breakout_parent(context)
+            
+            if attach is not None:
                 self.debug(
                     f"In SVG integration point: emitting {tag_name} outside select"
                 )
-                # Find the ancestor just above the entire SVG subtree
-                anchor = context.current_parent
-                while anchor and not (
-                    anchor.tag_name.startswith("svg ")
-                    or anchor.tag_name == "svg foreignObject"
-                ):
-                    anchor = anchor.parent
-                if anchor is None:
+                # Fallback if no attach point found
+                if attach is None:
                     attach = self.parser._ensure_body_node(context) or self.parser.root
-                else:
-                    attach = anchor.parent
-                    while attach and attach.tag_name.startswith("svg "):
-                        attach = attach.parent
-                    if attach is None:
-                        attach = (
-                            self.parser._ensure_body_node(context) or self.parser.root
-                        )
 
                 # Instrumentation: ensure non-empty tag name for formatting element emitted outside select
                 if not tag_name:
@@ -2948,36 +2913,18 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                             )
                             return False  # Let TableTagHandler handle this
                 else:
-                    in_svg_ip = context.current_context == "svg" and (
-                        context.current_parent.tag_name == "svg foreignObject"
-                        or context.current_parent.has_ancestor_matching(
-                            lambda n: n.tag_name == "svg foreignObject"
-                        )
-                    )
-                    if in_svg_ip and tag_name == "table":
+                    # Check if in SVG integration point using centralized helper
+                    attach, _ = self.parser.foreign_handler.get_svg_foreign_breakout_parent(context)
+                    if attach is not None and tag_name == "table":
                         self.debug(
                             "In SVG integration point: emitting <table> outside select"
                         )
-                        anchor = context.current_parent
-                        while anchor and not (
-                            anchor.tag_name.startswith("svg ")
-                            or anchor.tag_name == "svg foreignObject"
-                        ):
-                            anchor = anchor.parent
-                        if anchor is None:
+                        # Fallback if no attach point found
+                        if attach is None:
                             attach = (
                                 self.parser._ensure_body_node(context)
                                 or self.parser.root
                             )
-                        else:
-                            attach = anchor.parent
-                            while attach and attach.tag_name.startswith("svg "):
-                                attach = attach.parent
-                            if attach is None:
-                                attach = (
-                                    self.parser._ensure_body_node(context)
-                                    or self.parser.root
-                                )
                         before = None
                         for i in range(len(attach.children) - 1, -1, -1):
                             if attach.children[i].tag_name == "table" and i + 1 < len(
@@ -3267,25 +3214,11 @@ class ParagraphTagHandler(TagHandler):
             # Continue to handle the new <p> normally below
 
         if token.tag_name == "p":
-            svg_ip_ancestor = context.current_parent.find_ancestor(
-                lambda n: n.tag_name in ("svg foreignObject", "svg desc", "svg title")
-            )
-            math_ip_ancestor = context.current_parent.find_ancestor(
-                lambda n: n.tag_name
-                in ("math mtext", "math mi", "math mo", "math mn", "math ms")
-            )
-            in_annotation_html = (
-                context.current_parent.tag_name == "math annotation-xml"
-                and context.current_parent.attributes.get("encoding", "").lower()
-                in ("text/html", "application/xhtml+xml")
-            )
-            if (
-                context.current_parent.tag_name
-                in ("svg foreignObject", "svg desc", "svg title")
-                or svg_ip_ancestor
-                or math_ip_ancestor
-                or in_annotation_html
-            ):
+            # Check if in SVG or MathML integration point using centralized helpers
+            in_svg_ip = self.parser.foreign_handler.is_in_svg_integration_point(context)
+            in_mathml_ip = self.parser.foreign_handler.is_in_mathml_integration_point(context)
+            
+            if in_svg_ip or in_mathml_ip:
                 self.debug(
                     "Inside SVG/MathML integration point: creating paragraph locally without closing or fostering"
                 )
@@ -3320,20 +3253,14 @@ class ParagraphTagHandler(TagHandler):
                 # insert_element already pushed onto open elements; nothing extra needed
                 return True
 
+        # Clear active formatting elements if in integration point (centralized check)
         if (
-            context.current_parent.tag_name
-            in ("svg foreignObject", "svg desc", "svg title")
-            or context.current_parent.has_ancestor_matching(
-                lambda n: n.tag_name in ("svg foreignObject", "svg desc", "svg title")
-            )
-            or context.current_parent.find_ancestor(
-                lambda n: n.tag_name
-                in ("math mtext", "math mi", "math mo", "math mn", "math ms")
-            )
-            is not None
+            self.parser.foreign_handler.is_in_svg_integration_point(context)
+            or self.parser.foreign_handler.is_in_mathml_integration_point(context)
         ):
             if context.active_formatting_elements:
                 context.active_formatting_elements._stack.clear()
+        
         if token.tag_name != "p" and context.current_parent.tag_name == "p":
             self.debug(f"Auto-closing p due to {token.tag_name}")
             # Pop stack up to and including the open paragraph (spec end tag 'p' logic)
@@ -3424,22 +3351,10 @@ class ParagraphTagHandler(TagHandler):
                             foster_parent_element(token.tag_name, token.attributes, context, self.parser)
                             return True
                 # Do not foster parent when inside SVG/MathML integration points
-                in_svg_ip = context.current_parent.tag_name in (
-                    "svg foreignObject",
-                    "svg desc",
-                    "svg title",
-                ) or context.current_parent.has_ancestor_matching(
-                    lambda n: n.tag_name
-                    in ("svg foreignObject", "svg desc", "svg title")
-                )
-                in_math_ip = context.current_parent.find_ancestor(
-                    lambda n: n.tag_name
-                    in ("math mtext", "math mi", "math mo", "math mn", "math ms")
-                ) is not None or (
-                    context.current_parent.tag_name == "math annotation-xml"
-                    and context.current_parent.attributes.get("encoding", "").lower()
-                    in ("text/html", "application/xhtml+xml")
-                )
+                # Check if in integration point using centralized helpers
+                in_svg_ip = self.parser.foreign_handler.is_in_svg_integration_point(context)
+                in_math_ip = self.parser.foreign_handler.is_in_mathml_integration_point(context)
+                
                 if in_svg_ip or in_math_ip:
                     self.debug(
                         "In integration point inside table; not foster-parenting <p>"
@@ -7196,9 +7111,102 @@ class AutoClosingTagHandler(TemplateAwareHandler):
 
 
 class ForeignTagHandler(TagHandler):
-    """Handles SVG and other foreign element contexts"""
+    """Handles SVG and other foreign element contexts.
+    
+    Centralizes all foreign content (SVG/MathML) detection and integration point logic.
+    Other handlers delegate to these helpers to maintain single source of truth.
+    """
 
     _MATHML_LEAFS = {"mi", "mo", "mn", "ms", "mtext"}
+    _SVG_INTEGRATION_POINTS = ("svg foreignObject", "svg desc", "svg title")
+    _MATHML_TEXT_INTEGRATION_POINTS = ("math mtext", "math mi", "math mo", "math mn", "math ms")
+
+    def is_plain_svg_foreign(self, context):
+        """Return True if current parent is inside an <svg> subtree that is NOT an HTML integration point.
+
+        In such cases, HTML table-related tags (table, tbody, thead, tfoot, tr, td, th, caption, col, colgroup)
+        should NOT trigger HTML table construction; instead they are treated as raw foreign elements so the
+        resulting tree preserves nested <svg tagname> nodes instead of introducing HTML table scaffolding.
+        """
+        cur = context.current_parent
+        seen_svg = False
+        while cur:
+            if cur.tag_name.startswith("svg "):
+                seen_svg = True
+            # Any integration point breaks the foreign-only condition
+            if cur.tag_name in self._SVG_INTEGRATION_POINTS:
+                return False
+            cur = cur.parent
+        return seen_svg
+
+    def is_in_svg_integration_point(self, context):
+        """Return True if current parent or ancestor is an SVG integration point (foreignObject/desc/title)."""
+        if context.current_parent.tag_name in self._SVG_INTEGRATION_POINTS:
+            return True
+        return context.current_parent.find_ancestor(
+            lambda n: n.tag_name in self._SVG_INTEGRATION_POINTS
+        ) is not None
+
+    def is_in_mathml_integration_point(self, context):
+        """Return True if in MathML text integration point or annotation-xml with HTML encoding."""
+        # Check text integration points (mtext/mi/mo/mn/ms)
+        if context.current_parent.tag_name in self._MATHML_TEXT_INTEGRATION_POINTS:
+            return True
+        if context.current_parent.find_ancestor(
+            lambda n: n.tag_name in self._MATHML_TEXT_INTEGRATION_POINTS
+        ):
+            return True
+        
+        # Check annotation-xml with HTML encoding
+        if (
+            context.current_parent.tag_name == "math annotation-xml"
+            and context.current_parent.attributes.get("encoding", "").lower()
+            in ("text/html", "application/xhtml+xml")
+        ):
+            return True
+        return context.current_parent.find_ancestor(
+            lambda n: (
+                n.tag_name == "math annotation-xml"
+                and n.attributes.get("encoding", "").lower()
+                in ("text/html", "application/xhtml+xml")
+            )
+        ) is not None
+
+    def get_svg_foreign_breakout_parent(self, context):
+        """Find parent and before node for breaking out of SVG context in select.
+        
+        Used by SelectTagHandler when inserting formatting elements inside SVG foreignObject.
+        Returns (parent, before) tuple or (None, None) if not applicable.
+        """
+        if context.current_context != "svg":
+            return None, None
+        
+        # Check if in SVG foreignObject integration point
+        in_svg_ip = (
+            context.current_parent.tag_name == "svg foreignObject"
+            or context.current_parent.has_ancestor_matching(
+                lambda n: n.tag_name == "svg foreignObject"
+            )
+        )
+        if not in_svg_ip:
+            return None, None
+        
+        # Find the ancestor just above the entire SVG subtree
+        anchor = context.current_parent
+        while anchor and not (
+            anchor.tag_name.startswith("svg ")
+            or anchor.tag_name == "svg foreignObject"
+        ):
+            anchor = anchor.parent
+        
+        if anchor is None:
+            return None, None
+        
+        attach = anchor.parent
+        while attach and attach.tag_name.startswith("svg "):
+            attach = attach.parent
+        
+        return attach, None
 
     def early_start_preprocess(self, token, context):
         """Normalize self-closing MathML leaf in fragment context so following text nests.
