@@ -7299,11 +7299,6 @@ class ForeignTagHandler(TagHandler):
                         f"MathML leaf unprefix path: tag={tag_name_lower}, ancestor_text_ip={ancestor_text_ip is not None}, frag_leaf_root={frag_leaf_root}, fragment_context={self.parser.fragment_context}",
                     )
                     enter_flag = not token.is_self_closing
-                    if frag_leaf_root:
-                        enter_flag = True
-                        if token.is_self_closing:
-                            # Mutate token so parser.insert_element allows entering (it blocks when is_self_closing=True)
-                            token.is_self_closing = False
                     self.parser.insert_element(
                         token,
                         context,
@@ -7352,19 +7347,6 @@ class ForeignTagHandler(TagHandler):
                         push_override=False,
                     )
                     context.current_context = "svg"
-                    return True
-                if tag_name_lower in HTML_ELEMENTS:
-                    self.parser.insert_element(
-                        token,
-                        context,
-                        mode="normal",
-                        enter=not token.is_self_closing,
-                        tag_name_override=tag_name_lower,
-                        attributes_override=self._fix_foreign_attribute_case(
-                            token.attributes, "math",
-                        ),
-                        push_override=False,
-                    )
                     return True
 
             # Handle HTML elements inside MathML integration points (mtext, mi, mo, mn, ms)
@@ -8027,16 +8009,6 @@ class ForeignTagHandler(TagHandler):
 class HeadTagHandler(TagHandler):
     """Handles head element and its contents."""
 
-    def _has_body_content(self, html_node):
-        """Check if body has actual content or if we just have a body element."""
-        for child in html_node.children:
-            if child.tag_name == "body":
-                # Body exists, check if it has non-whitespace content or child elements
-                return len(child.children) > 0 or (
-                    child.text_content and child.text_content.strip()
-                )
-        return False
-
     def should_handle_start(self, tag_name, context):
         # Do not let head element handler interfere inside template content
         if in_template_content(context):
@@ -8158,28 +8130,6 @@ class HeadTagHandler(TagHandler):
         # If we're in body after seeing real content
         if context.document_state == DocumentState.IN_BODY:
             self.debug("In body state with real content")
-            # Check if we're still at html level with no body content yet
-            if context.current_parent.tag_name == "html" and not self._has_body_content(
-                context.current_parent,
-            ):
-                # Head elements appearing before body content should go to head
-                head = ensure_head(self.parser)
-                if head:
-                    self.parser.insert_element(
-                        token,
-                        context,
-                        mode="normal",
-                        enter=tag_name not in VOID_ELEMENTS,
-                        parent=head,
-                        tag_name_override=tag_name,
-                        push_override=False,
-                    )
-                    self.debug(f"Added {tag_name} to head (no body content yet)")
-                    if tag_name not in VOID_ELEMENTS and tag_name in RAWTEXT_ELEMENTS:
-                        context.content_state = ContentState.RAWTEXT
-                        self.debug(f"Switched to RAWTEXT state for {tag_name}")
-                    return True
-
             # Head elements appearing after body content should stay in body
             self.parser.insert_element(
                 token,
