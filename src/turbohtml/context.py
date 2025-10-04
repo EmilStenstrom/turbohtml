@@ -79,8 +79,6 @@ class ParseContext:
         # Anchor element to re-enter after structural element (e.g., table) handling if still open.
         self.resume_anchor_after_structure = None
         # Anchor reconstruction / suppression coordination flags (previously accessed via getattr)
-        self.suppress_anchor_reconstruct_until = None  # e.g. 'address' -> suppress until address inserted then reconstruct inside it
-        self.defer_anchor_reconstruct_for_address = False  # one-shot flag to defer reconstruction until after <address> element insertion
         self.processing_end_tag = False  # True only during end-tag handler dispatch to gate adoption agency anchor segmentation
         self._text_already_inserted_index = None  # template/text duplicate guard (set by OptionTextRedirectHandler/TextHandler)
         self.anchor_last_reconstruct_index = None  # tokenizer position of last anchor reconstruction (duplicate suppression)

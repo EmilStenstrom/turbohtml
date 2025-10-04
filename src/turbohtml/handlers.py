@@ -1810,9 +1810,7 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
             return False
         # For non-blockish tags reconstruct immediately; blockish handled post element creation in parser
         if tag_name not in self._BLOCKISH:
-            # Skip reconstruction if anchor suppression active
-            if context.suppress_anchor_reconstruct_until != "address":
-                reconstruct_if_needed(self.parser, context)
+            reconstruct_if_needed(self.parser, context)
         return False
 
     def _insert_formatting_element(
