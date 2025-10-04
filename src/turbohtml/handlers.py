@@ -3152,15 +3152,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         if context.current_parent.tag_name == "svg title":
             return True
         if (
-            context.current_context == "svg"
-            and tag_name in ("thead", "tbody", "tfoot")
-            and context.current_parent.tag_name
-            in ("svg title", "svg desc", "svg foreignObject")
-            and not find_current_table(context)
-        ):
-            return True
-
-        if (
             tag_name in ("thead", "tbody", "tfoot")
             and context.current_parent.tag_name
             in ("svg title", "svg desc", "svg foreignObject")
@@ -3608,10 +3599,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             self.debug(
                 f"Inside table cell {current_cell}, appending text with formatting awareness",
             )
-            # Before deciding target, reconstruct active formatting elements if any are stale (present in AFE list
-            # but their DOM element is no longer on the open elements stack). This mirrors the body insertion mode
-            # "reconstruct active formatting elements" step that runs before inserting character tokens.
-            reconstructed = False
+            # Before deciding target, reconstruct active formatting elements if any are stale.
             if context.active_formatting_elements and any(
                 entry.element is not None
                 and entry.element not in context.open_elements
@@ -3619,18 +3607,8 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 if entry.element is not None
             ):
                 reconstruct_active_formatting_elements(self.parser, context)
-                reconstructed = True
-                # After reconstruction current_parent points at the deepest reconstructed formatting element.
-                # Don't move back to cell - use the reconstructed element as target
 
-            # Choose insertion target: deepest rightmost formatting element under the cell
-            if reconstructed:
-                # After reconstruction, current_parent is already the correct target
-                target = context.current_parent
-            else:
-                target = context.current_parent
-            # target now resolved
-            # Append or merge text at target
+            target = context.current_parent
             if (
                 target.children
                 and target.children[-1].tag_name == "#text"
@@ -4276,20 +4254,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         f"Table closed inside foreign context; staying in {formatting_parent.tag_name}",
                     )
                     context.move_to_element(formatting_parent)
-                elif (
-                    table_node
-                    and table_node.parent
-                    and (
-                        table_node.parent.tag_name.startswith("svg ")
-                        or table_node.parent.tag_name.startswith("math ")
-                        or table_node.parent.tag_name
-                        in ("svg foreignObject", "math annotation-xml")
-                    )
-                ):
-                    self.debug(
-                        f"Table parent is foreign context {table_node.parent.tag_name}; moving there instead of body",
-                    )
-                    context.move_to_element(table_node.parent)
                 elif (
                     table_node
                     and table_node.parent
