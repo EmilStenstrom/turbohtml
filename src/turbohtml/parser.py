@@ -28,7 +28,6 @@ from .handlers import (
     HeadingTagHandler,
     RubyElementHandler,
     FallbackPlacementHandler,
-    DefaultElementInsertionHandler,
     GenericEndTagHandler,
     PostProcessHandler,
 )
@@ -98,7 +97,6 @@ class TurboHTML:
             HeadingTagHandler(self),
             RubyElementHandler(self),
             FallbackPlacementHandler(self),
-            DefaultElementInsertionHandler(self),
             GenericEndTagHandler(self),
             PostProcessHandler(self),
         ]
@@ -540,6 +538,10 @@ class TurboHTML:
             if handler.should_handle_start(tag_name, context):
                 if handler.handle_start(token, context, not token.is_last_token):
                     return
+        
+        # Fallback: if no handler claimed this start tag, insert it with default behavior.
+        # Foster parenting is handled automatically by insert_element().
+        self.insert_element(token, context, mode="normal", enter=not token.is_self_closing)
 
     def _handle_end_tag(
         self, token, tag_name, context

@@ -425,50 +425,6 @@ class FramesetPreprocessHandler(TagHandler):
 
 
 
-class DefaultElementInsertionHandler(TagHandler):
-    """Final catch-all handler: inserts any start tag not claimed earlier.
-
-    Performs active formatting reconstruction for block containers. Foster
-    parenting is now handled automatically by parser.insert_element().
-    """
-
-    def should_handle_start(self, tag_name, context):
-        return True  # always last -> always claims
-
-    _RECONSTRUCT_BLOCKS = {"div", "section", "article", "center", "address", "figure", "figcaption"}
-
-    def handle_start(self, token, context, has_more_content):
-        # Foster parenting check: reconstruct active formatting before fostered insertion
-        if needs_foster_parenting(context.current_parent):
-            in_cell_or_caption = bool(
-                context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
-            )
-            tableish = {"table","tbody","thead","tfoot","tr","td","th","caption","colgroup","col"}
-            if (not in_cell_or_caption) and token.tag_name not in tableish:
-                # Reconstruct active formatting before fostered insertion
-                afe = context.active_formatting_elements
-                if afe and afe._stack:
-                    for entry in afe._stack:
-                        if entry.element and not context.open_elements.contains(entry.element) and entry.element.tag_name != "nobr":
-                            reconstruct_if_needed(self.parser, context)
-                            break
-        
-        # Insert element (auto-foster parenting handled by insert_element)
-        self.parser.insert_element(token, context, mode="normal", enter=not token.is_self_closing)
-        
-        # Active formatting reconstruction for block containers
-        if token.tag_name in self._RECONSTRUCT_BLOCKS:
-            afe = context.active_formatting_elements
-            if afe and afe._stack:
-                for entry in afe._stack:
-                    if entry.element is None:
-                        continue
-                    if (not context.open_elements.contains(entry.element)) and entry.element.tag_name != "nobr":
-                        reconstruct_if_needed(self.parser, context)
-                        break
-        return True
-
-
 class DocumentStructureHandler(TagHandler):
     """Handles document structure: <html>, <head>, <body> start tags and </html> end tag.
 
