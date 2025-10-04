@@ -1093,63 +1093,24 @@ class TemplateHandler(TagHandler):
 
 
 class GenericEndTagHandler(TagHandler):
-    """Fallback generic end tag algorithm (formerly parser._handle_default_end_tag).
+    """Fallback generic end tag algorithm per HTML5 spec 'any other end tag'.
 
-    Runs late after specific end-tag handlers. Mirrors the simplified IN BODY 'any other end tag'
-    handling used previously. Skips html/head/body and does nothing inside template content (bounded
-    closure already handled earlier in parser._handle_end_tag)."""
+    Implements the spec algorithm: walk up the stack of open elements looking for a matching
+    tag. If found, pop until popped. If a special category element is encountered first,
+    ignore the token (parse error per spec)."""
 
     def should_handle_end(self, tag_name, context):
-        # Skip special structure tags (handled elsewhere) and skip when inside template content
         if tag_name in ("html", "head", "body"):
             return False
-        # Let parser template-content branch manage bounded closure; we only act outside it
         return True
 
     def handle_end(self, token, context):
-        if token.tag_name == 'p' and self.parser.env_debug:
-            stack_tags = [el.tag_name for el in context.open_elements._stack]
-            self.debug(f"[p-end] incoming </p> current_parent={context.current_parent.tag_name} stack={stack_tags}")
-        # Foreign-context paragraph end suppression: If we encounter </p> while inside
-        # a MathML/SVG subtree that began after an open <p> element, ignore the end tag so that the
-        # paragraph continues outside the foreign content. The expected tree nests the foreign nodes
-        # inside the original <p> and treats trailing text as still within that paragraph. We detect
-        # this by: (1) target == 'p'; (2) current_parent is inside a foreign (math/svg) subtree; (3)
-        # there exists a <p> ancestor outside that foreign subtree chain. If so, we return True early.
         target = token.tag_name
-        if target == 'p':
-            # Determine if we're inside math/svg (foreign) context.
-            foreign_ancestor = None
-            probe = context.current_parent
-            while probe and probe.tag_name not in ('html','body','document-fragment'):
-                if probe.tag_name.startswith('math ') or probe.tag_name.startswith('svg ') or probe.tag_name in ('math','svg'):
-                    foreign_ancestor = probe
-                probe = probe.parent
-            if foreign_ancestor is not None:
-                # Look for an open <p> ancestor ABOVE the foreign ancestor.
-                p_above = False
-                cur = foreign_ancestor.parent
-                while cur and cur.tag_name not in ('html','body','document-fragment'):
-                    if cur.tag_name == 'p':
-                        p_above = True
-                        break
-                    cur = cur.parent
-                if p_above:
-                    # Synthesize a nested <p> and enter it so subsequent text becomes its child (expected tree tests19:82).
-                    deepest = context.current_parent
-                    new_p = Node('p')
-                    deepest.append_child(new_p)
-                    # Push onto open elements stack to mirror normal start tag behavior for <p>.
-                    context.open_elements.push(new_p)
-                    context.move_to_element(new_p)
-                    self.debug("GenericEndTagHandler: created and entered nested <p> inside foreign subtree; ignoring </p> (tests19:82)")
-                    return True
         stack = context.open_elements._stack
         if not stack:
             return True
-        if target in ("html", "head", "body"):
-            return True
-        # Walk upward looking for match; abort if special element encountered first
+        
+        # Spec: Walk up stack looking for matching tag; abort if special element encountered first
         i_index = len(stack) - 1
         found_index = -1
         while i_index >= 0:
@@ -1158,15 +1119,12 @@ class GenericEndTagHandler(TagHandler):
                 found_index = i_index
                 break
             if node.tag_name in SPECIAL_CATEGORY_ELEMENTS:
-                # Encountered special before finding target -> ignore token
-                self.debug(
-                    f"GenericEndTagHandler: special ancestor <{node.tag_name}> before </{target}>; ignoring"
-                )
                 return True
             i_index -= 1
+        
         if found_index == -1:
-            self.debug(f"GenericEndTagHandler: </{target}> not open; ignoring")
             return True
+        
         # Pop until target popped
         while stack:
             popped = stack.pop()
