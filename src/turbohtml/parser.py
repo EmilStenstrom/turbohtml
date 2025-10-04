@@ -30,7 +30,6 @@ from .handlers import (
     FallbackPlacementHandler,
     DefaultElementInsertionHandler,
     GenericEndTagHandler,
-    StructureSynthesisHandler,
     PostProcessHandler,
 )
 from turbohtml.tokenizer import HTMLTokenizer
@@ -101,7 +100,6 @@ class TurboHTML:
             FallbackPlacementHandler(self),
             DefaultElementInsertionHandler(self),
             GenericEndTagHandler(self),
-            StructureSynthesisHandler(self),
             PostProcessHandler(self),
         ]
         self.tag_handlers = [h for h in self.tag_handlers if h is not None]

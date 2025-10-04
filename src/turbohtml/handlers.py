@@ -337,34 +337,6 @@ class UnifiedCommentHandler(TagHandler):
         return True
 
 
-class StructureSynthesisHandler(TagHandler):
-    """Finalization handler ensuring minimal document structure and performing normalization.
-
-    Responsibilities formerly in parser tail:
-      * Ensure html node appended
-      * Ensure head (before body) and body exist (unless frameset document)
-      * Transition state to IN_BODY if body synthesized
-      * Merge adjacent text nodes (normalization)
-    """
-
-    def finalize(self, parser):
-        # Skip structure synthesis for fragment parsing
-        if parser.fragment_context:
-            return
-        # html/head/body synthesis (unless root frameset)
-        # Use parser internal helpers; they manage creation order.
-        if not parser._has_root_frameset():
-            parser._ensure_html_node()
-            ensure_head(parser)
-            body = parser._get_body_node() or parser._ensure_body_node(
-                ParseContext(len(parser.html), parser.html_node, debug_callback=parser.debug)
-            )
-            # We do not mutate the original parse context's state here; final state is not used post-finalize.
-            _ = body
-        # Merge adjacent text nodes
-        parser._merge_adjacent_text_nodes(parser.root)
-
-
 class FramesetPreprocessHandler(TagHandler):
     """Unified frameset preprocessing (frameset_ok, takeover, guard).
 
@@ -540,6 +512,7 @@ class DocumentStructureHandler(TagHandler):
     - Implicit head/body transitions for non-head content
     - Attribute merging for duplicate structure tags
     - Re-entering IN_BODY from AFTER_BODY/AFTER_HTML states
+    - Post-parse finalization: ensure html/head/body exist, merge adjacent text nodes
     """
 
     def early_start_preprocess(self, token, context):
@@ -683,6 +656,22 @@ class DocumentStructureHandler(TagHandler):
         )
         context.html_end_explicit = True
         return True
+
+    def finalize(self, parser):
+        """Post-parse finalization: ensure minimal document structure and merge adjacent text nodes."""
+        # Skip structure synthesis for fragment parsing
+        if parser.fragment_context:
+            return
+        # html/head/body synthesis (unless root frameset)
+        if not parser._has_root_frameset():
+            parser._ensure_html_node()
+            ensure_head(parser)
+            body = parser._get_body_node() or parser._ensure_body_node(
+                ParseContext(len(parser.html), parser.html_node, debug_callback=parser.debug)
+            )
+            _ = body
+        # Merge adjacent text nodes
+        parser._merge_adjacent_text_nodes(parser.root)
 
 
 class TemplateHandler(TagHandler):
