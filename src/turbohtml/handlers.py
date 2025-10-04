@@ -428,8 +428,8 @@ class FramesetPreprocessHandler(TagHandler):
 class DefaultElementInsertionHandler(TagHandler):
     """Final catch-all handler: inserts any start tag not claimed earlier.
 
-    Removes need for parser._handle_start_tag fallback block. Assumes all
-    structural/suppression logic already executed in earlier handlers.
+    Applies foster parenting when in table modes outside cells/captions.
+    Performs active formatting reconstruction for block containers.
     """
 
     def should_handle_start(self, tag_name, context):
@@ -438,68 +438,48 @@ class DefaultElementInsertionHandler(TagHandler):
     _RECONSTRUCT_BLOCKS = {"div", "section", "article", "center", "address", "figure", "figcaption"}
 
     def handle_start(self, token, context, has_more_content):
-        # Foster parenting for generic non-table elements when in table insertion modes but not inside a cell/caption.
-        # Foreign fragment MathML leaf fix: treat self-closing math leaf (<ms/>, <mglyph/>, <malignmark/>) as normal container
-        # by clearing is_self_closing flag so text that follows becomes its child (expected indentation/structure tests).
-        if self.parser.fragment_context and context.current_context == "math":
-            if token.tag_name in ("ms","mglyph","malignmark") and token.is_self_closing:
-                token.is_self_closing = False  # force enter
-        if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
+        # Table foster parenting: use foster.py logic when in table context
+        if needs_foster_parenting(context.current_parent):
             in_cell_or_caption = bool(
                 context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
             )
             tableish = {"table","tbody","thead","tfoot","tr","td","th","caption","colgroup","col"}
             if (not in_cell_or_caption) and token.tag_name not in tableish:
-                table = self.parser.find_current_table(context)
-                if table and table.parent:
-                    # If an active formatting element is missing before a fostered insertion, reconstruct first
-                    afe = context.active_formatting_elements
-                    if afe and afe._stack:
-                        for entry in afe._stack:
-                            if entry.element and not context.open_elements.contains(entry.element) and entry.element.tag_name != "nobr":
-                                reconstruct_if_needed(self.parser, context)
-                                break
-                    self.parser.insert_element(
-                        token,
-                        context,
-                        mode="normal",
-                        enter=not token.is_self_closing,
-                        parent=table.parent,
-                        before=table,
-                    )
-                else:
-                    self.parser.insert_element(token, context, mode="normal", enter=not token.is_self_closing)
+                # Reconstruct active formatting before fostered insertion
+                afe = context.active_formatting_elements
+                if afe and afe._stack:
+                    for entry in afe._stack:
+                        if entry.element and not context.open_elements.contains(entry.element) and entry.element.tag_name != "nobr":
+                            reconstruct_if_needed(self.parser, context)
+                            break
+                # Use foster parenting module
+                foster_parent_node, before_sibling = foster_parent(
+                    context.current_parent, context.open_elements, self.parser.root
+                )
+                self.parser.insert_element(
+                    token,
+                    context,
+                    mode="normal",
+                    enter=not token.is_self_closing,
+                    parent=foster_parent_node,
+                    before=before_sibling,
+                )
             else:
                 self.parser.insert_element(token, context, mode="normal", enter=not token.is_self_closing)
         else:
-            # Normal path
+            # Normal insertion
             self.parser.insert_element(token, context, mode="normal", enter=not token.is_self_closing)
-        # Perform reconstruction only for selected block containers when active formatting elements are missing.
+        
+        # Active formatting reconstruction for block containers
         if token.tag_name in self._RECONSTRUCT_BLOCKS:
             afe = context.active_formatting_elements
             if afe and afe._stack:
                 for entry in afe._stack:
                     if entry.element is None:
                         continue
-                    # Suppress reconstruction for address when anchor suppression active; we'll handle sibling
-                    if token.tag_name == 'address' and context.suppress_anchor_reconstruct_until == 'address':
-                        break
                     if (not context.open_elements.contains(entry.element)) and entry.element.tag_name != "nobr":
                         reconstruct_if_needed(self.parser, context)
                         break
-        # Perform deferred anchor reconstruction inside newly inserted <address> element
-        if token.tag_name == 'address' and context.defer_anchor_reconstruct_for_address:
-            # Move insertion to parent to make reconstructed anchor a child of the same parent (sibling of <address>)
-            parent = context.current_parent.parent if context.current_parent else None
-            if parent:
-                context.move_to_element(parent)
-            reconstruct_if_needed(self.parser, context, force=True)
-            context.defer_anchor_reconstruct_for_address = False
-        # New suppression-based deferred reconstruction
-        if token.tag_name == 'address' and context.suppress_anchor_reconstruct_until == 'address':
-            # Reconstruct anchor inside address (first anchor inside address) then leave insertion inside address.
-            reconstruct_if_needed(self.parser, context, force=True)
-            context.suppress_anchor_reconstruct_until = None
         return True
 
 
