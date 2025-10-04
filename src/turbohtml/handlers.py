@@ -1053,7 +1053,7 @@ class TemplateAwareHandler(TagHandler):
         # Allow some handlers even inside template content (formatting and auto-closing semantics still apply)
         if self._is_in_template_content(context):
             # Importing class names locally avoids circular references at import time
-            allowed_types = (FormattingElementHandler, AutoClosingTagHandler)
+            allowed_types = (FormattingTagHandler, AutoClosingTagHandler)
             if isinstance(self, allowed_types):
                 return self._should_handle_start_impl(tag_name, context)
             return False
@@ -1882,7 +1882,7 @@ class TextHandler(TagHandler):
         return text
 
 
-class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
+class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
     """Handles formatting elements like <b>, <i>, etc. and their reconstruction."""
 
     # Tags treated as block boundaries for deferred reconstruction logic
@@ -6792,7 +6792,7 @@ class RawtextTagHandler(SelectAwareHandler):
         return True
 
 
-class VoidElementHandler(SelectAwareHandler):
+class VoidTagHandler(SelectAwareHandler):
     """Handles void elements that can't have children"""
 
     def _should_handle_start_impl(self, tag_name, context):
@@ -8764,7 +8764,7 @@ class ForeignTagHandler(TagHandler):
         adjust_foreign(root)
 
 
-class HeadElementHandler(TagHandler):
+class HeadTagHandler(TagHandler):
     """Handles head element and its contents"""
 
     def _has_body_content(self, html_node):
@@ -9615,7 +9615,7 @@ class ImageTagHandler(TagHandler):
         return True
 
 
-class BoundaryElementHandler(TagHandler):
+class BoundaryTagHandler(TagHandler):
     """Handles marquee boundary element & related formatting closures"""
 
     def should_handle_start(self, tag_name, context):
@@ -10135,7 +10135,7 @@ class ButtonTagHandler(TagHandler):
         return True
 
 
-class MenuitemElementHandler(TagHandler):
+class MenuitemTagHandler(TagHandler):
     """Handles menuitem elements with special behaviors"""
 
     def should_handle_start(self, tag_name, context):
@@ -10209,7 +10209,7 @@ class MenuitemElementHandler(TagHandler):
         return True
 
 
-class TableFosterParentHandler(TagHandler):
+class TableFosterHandler(TagHandler):
     """Foster parents unclaimed elements in table context per HTML5 algorithm."""
 
     def should_handle_start(self, tag_name, context):
@@ -10283,7 +10283,7 @@ def foster_parent_element(tag_name, attributes, context, parser):
 
     
 
-class RubyElementHandler(TagHandler):
+class RubyTagHandler(TagHandler):
     """Handles ruby annotation elements & auto-closing"""
 
     def should_handle_start(self, tag_name, context):
