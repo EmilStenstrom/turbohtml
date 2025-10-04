@@ -1364,21 +1364,7 @@ class TextHandler(TagHandler):
                 # popped by the paragraph end (e.g. <p>1<s><b>2</p>3...) are reconstructed so that
                 # following text is wrapped (spec: reconstruct active formatting elements algorithm).
                 if elems and elems[-1].tag_name == "table":
-                    afe_debug = []
-                    if context.active_formatting_elements:
-                        for entry in context.active_formatting_elements:
-                            if entry.element is None:
-                                afe_debug.append("(placeholder)")
-                            else:
-                                afe_debug.append(
-                                    entry.element.tag_name
-                                    + (
-                                        "*"
-                                        if context.open_elements.contains(entry.element)
-                                        else "-closed"
-                                    ),
-                                )
-                    self.debug(f"Trailing text after table: AFE entries={afe_debug}")
+                    self.debug("Trailing text after table")
                 afe = context.active_formatting_elements
                 need_reconstruct = False
                 if afe and not afe.is_empty():
@@ -2658,9 +2644,6 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                                 f"Foster parented {tag_name} to {foster_parent.tag_name} via insert_element: {new_node}",
                             )
                             return True
-                        self.debug(
-                            f"No simple foster parent found for {tag_name}, delegating to TableTagHandler",
-                        )
                         return False  # Let TableTagHandler handle this
                 else:
                     # Check if in SVG integration point using centralized helper
@@ -6021,21 +6004,8 @@ class RawtextTagHandler(SelectAwareHandler):
                             candidate = context.current_parent
                         # If candidate is a section wrapper (tbody/thead/tfoot) keep script/style as direct child of that section
                         if candidate and candidate is not context.current_parent:
-                            # Avoid moving into section if parent is already that section; always move into cell/tr/caption
-                            if candidate.tag_name in (
-                                "td",
-                                "th",
-                                "tr",
-                                "caption",
-                            ) or context.current_parent.tag_name not in (
-                                "tbody",
-                                "thead",
-                                "tfoot",
-                            ):
-                                context.move_to_element(candidate)
-                                self.debug(
-                                    f"Adjusted insertion point to <{candidate.tag_name}> for rawtext {tag_name}",
-                                )
+                            context.move_to_element(candidate)
+
                 # Determine if we already have an open cell/row/caption we should descend into
                 # Priority: td/th > tr > caption
 
@@ -7246,9 +7216,6 @@ class ForeignTagHandler(TagHandler):
                     "math ms",
                 ]
                 if context.current_parent.tag_name in auto_close_elements:
-                    self.debug(
-                        f"Auto-closing {context.current_parent.tag_name} for {tag_name_lower}",
-                    )
                     if context.current_parent.parent:
                         context.move_up_one_level()
 
@@ -7500,31 +7467,6 @@ class ForeignTagHandler(TagHandler):
                     )
                     and not context.current_parent.find_ancestor(
                         lambda n: n.tag_name.startswith("math "),
-                    )
-                ):
-                    self.parser.insert_element(
-                        token,
-                        context,
-                        mode="normal",
-                        enter=not token.is_self_closing,
-                        tag_name_override="math math",
-                        attributes_override=self._fix_foreign_attribute_case(
-                            token.attributes, "math",
-                        ),
-                        push_override=False,
-                    )
-                    if not token.is_self_closing:
-                        context.current_context = "math"
-                    return True
-                # Relaxed condition: allow math root when ancestor is annotation-xml (not an existing math root)
-                if (
-                    tag_name_lower == "math"
-                    and context.current_parent.has_ancestor_matching(
-                        lambda n: n.tag_name == "svg foreignObject",
-                    )
-                    and not context.current_parent.find_ancestor(
-                        lambda n: n.tag_name.startswith("math ")
-                        and n.tag_name.split(" ", 1)[1] == "math",
                     )
                 ):
                     self.parser.insert_element(
