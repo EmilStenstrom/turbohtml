@@ -60,9 +60,7 @@ class TurboHTML:
         self.html = html
         self.fragment_context = fragment_context
 
-        # Reset all state for each new parser instance
         self._init_dom_structure()
-        # Initialize legacy adoption agency (new experimental version removed)
         self.adoption_agency = AdoptionAgencyAlgorithm(self)
 
         # Initialize tag handlers in deterministic order
@@ -116,8 +114,7 @@ class TurboHTML:
         # Parse immediately upon construction
         self._parse()
         
-        # Post-parse finalization: handler tree normalization (foreign attributes, etc.)
-        # Entity finalization now happens inline in TextHandler._append_text using open_elements
+        # Post-parse finalization
         for handler in self.tag_handlers:
             handler.finalize(self)
 
@@ -130,36 +127,25 @@ class TurboHTML:
 
         print(f"{' ' * indent}{args[0]}", *args[1:], **kwargs)
 
-    # DOM Structure Methods
     def _init_dom_structure(self):
         """Initialize the basic DOM structure"""
         if self.fragment_context:
-            # For fragment parsing, create a simplified structure
             self.root = Node("document-fragment")
-            # Don't create html/head/body structure for fragments
             self.html_node = None
         else:
-            # Regular document parsing
             self.root = Node("document")
-            # Create but don't append html node yet
             self.html_node = Node("html")
-
-            # Always create head node
             head = Node("head")
             self.html_node.append_child(head)
 
     def _ensure_html_node(self):
         """Materialize <html> into the root if not already present (document mode only)."""
-        # Skip for fragment parsing (fragment root is a synthetic document-fragment)
         if self.fragment_context:
             return
         if self.html_node not in self.root.children:
             self.root.append_child(self.html_node)
 
-    # Head access helpers removed – handlers synthesize/locate head directly when necessary.
-
-
-    def _get_body_node(self):  # minimal body lookup for handlers
+    def _get_body_node(self):
         if self.fragment_context:
             return None
         if not self.html_node:
@@ -172,7 +158,6 @@ class TurboHTML:
     def _has_root_frameset(self):
         """Return True if <html> (when present) has a direct <frameset> child.
 
-        Micro-optimized with a generator expression; no behavior change.
         """
         return bool(
             self.html_node
@@ -182,25 +167,20 @@ class TurboHTML:
     def _ensure_body_node(self, context):
         """Return existing <body> or create one (unless frameset/fragment constraints block it)."""
         if self.fragment_context:
-            # Special case: html fragment context should create document structure
             if self.fragment_context == "html":
-                # Create head and body in the fragment
                 head = None
                 body = None
 
-                # Look for existing head/body in fragment
                 for child in self.root.children:
                     if child.tag_name == "head":
                         head = child
                     elif child.tag_name == "body":
                         body = child
 
-                # Create head if it doesn't exist
                 if not head:
                     head = Node("head")
                     self.root.append_child(head)
 
-                # Create body if it doesn't exist
                 if not body:
                     body = Node("body")
                     self.root.append_child(body)
@@ -216,7 +196,6 @@ class TurboHTML:
             self.html_node.append_child(body)
         return body
 
-    # --- Standardized element insertion helpers ---
     def insert_element(
         self,
         token,
@@ -315,7 +294,6 @@ class TurboHTML:
             context.enter_element(new_node)
         return new_node
 
-    # --- Centralized text insertion helper ---
     def insert_text(
         self,
         text,
@@ -329,8 +307,6 @@ class TurboHTML:
     ):
         """Insert character data performing standard merge with preceding text node.
 
-        Legacy params 'foster' & 'strip_replacement' are kept for handler API stability.
-        Fostering / replacement char elision happens earlier in specialized handlers.
         """
         from .constants import NUMERIC_ENTITY_INVALID_SENTINEL
         
@@ -365,17 +341,10 @@ class TurboHTML:
             return None
 
         target_parent = parent or context.current_parent
-        # Template content duplication guard (debug-aware): if consecutive calls on same character index into
-        # a template 'content' subtree with identical text, skip second merge to avoid FooFoo. We rely on
-        # context.last_template_text_index tracking in TextHandler; here we add a secondary safeguard.
-        if self.env_debug and target_parent and target_parent.tag_name == 'content':
-            self.debug(f"[insert_text] parent=content text='{text}' idx={context.index}")
-        # Robust duplication suppression for template content: if last child is identical text AND
-        # tokenizer index (when available) is unchanged since that node was appended, skip.
+        # Template content duplication suppression
         if target_parent.tag_name == 'content' and target_parent.children:
             last = target_parent.children[-1]
             if last.tag_name == '#text' and last.text_content == text:
-                # Heuristic: treat immediate identical text append as duplication artifact.
                 return last
         if target_parent is None:
             return None
@@ -413,7 +382,6 @@ class TurboHTML:
         return new_node
 
 
-    # DOM traversal helper methods
     def find_current_table(self, context):
         """Find the current table element from the open elements stack when in table context."""
         # Always search open elements stack first (even in IN_BODY) so foster-parenting decisions
@@ -430,7 +398,6 @@ class TurboHTML:
             current = current.parent
         return None
 
-    # Main Parsing Methods
     def _parse(self):
         """Entry point selecting document vs fragment strategy."""
         if self.fragment_context:
@@ -456,10 +423,6 @@ class TurboHTML:
         context = ParseContext(len(self.html), self.html_node, debug_callback=self.debug)
         self.tokenizer = HTMLTokenizer(self.html)
 
-        # if self.env_debug:
-        #     # Create debug tokenizer with same debug setting
-        #     debug_tokenizer = HTMLTokenizer(self.html, debug=self.env_debug)
-        #     self.debug(f"TOKENS: {list(debug_tokenizer.tokenize())}", indent=0)
 
         for token in self.tokenizer.tokenize():
             # Maintain previous token pointer for heuristic-free contextual decisions
@@ -477,7 +440,6 @@ class TurboHTML:
                 context.index = self.tokenizer.pos
                 continue
 
-            # (Former malformed start-tag suppression moved to MalformedSelectStartTagFilterHandler)
 
             if token.type == "Comment":
                 handled = False
