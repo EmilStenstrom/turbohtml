@@ -325,6 +325,11 @@ class DocumentStructureHandler(TagHandler):
                 body = parser._ensure_body_node(context)
                 if body:
                     context.transition_to_state(DocumentState.IN_BODY, body)
+        elif tag in HEAD_ELEMENTS and context.document_state == DocumentState.INITIAL:
+            # Head element in INITIAL state: ensure head exists and transition to IN_HEAD
+            head = ensure_head(parser)
+            if head:
+                context.transition_to_state(DocumentState.IN_HEAD, head)
         return False
 
     def should_handle_end(self, tag_name, context):
@@ -393,10 +398,11 @@ class DocumentStructureHandler(TagHandler):
         # Skip structure synthesis for fragment parsing
         if parser.fragment_context:
             return
-        # html/head/body synthesis (unless root frameset)
+        # Always ensure html and head exist (even for frameset documents per spec)
+        parser._ensure_html_node()
+        ensure_head(parser)
+        # Only ensure body if NOT a frameset document
         if not parser._has_root_frameset():
-            parser._ensure_html_node()
-            ensure_head(parser)
             body = parser._get_body_node() or parser._ensure_body_node(
                 ParseContext(len(parser.html), parser.html_node, debug_callback=parser.debug)
             )
@@ -9017,8 +9023,9 @@ class HeadTagHandler(TagHandler):
         if context.document_state == DocumentState.IN_HEAD:
             context.transition_to_state(DocumentState.AFTER_HEAD, self.parser.html_node)
         elif context.document_state == DocumentState.INITIAL:
-            # Stray </head> in INITIAL: treat as an early head closure so subsequent whitespace is preserved
-            # under the html element (expected tree for malformed sequence '</head> <head>').
+            # Stray </head> in INITIAL: ensure head exists first, then treat as early head closure
+            # so subsequent whitespace is preserved under the html element.
+            ensure_head(self.parser)
             context.transition_to_state(DocumentState.AFTER_HEAD, self.parser.html_node)
         # Move insertion point to html node so following body content is correctly placed.
         if self.parser.html_node:

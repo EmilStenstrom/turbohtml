@@ -128,15 +128,16 @@ class TurboHTML:
         print(f"{' ' * indent}{args[0]}", *args[1:], **kwargs)
 
     def _init_dom_structure(self):
-        """Initialize the basic DOM structure"""
+        """Initialize minimal DOM structure (document root and html element placeholder).
+
+        Full structure (head/body) is ensured during parsing and in finalize().
+        """
         if self.fragment_context:
             self.root = Node("document-fragment")
             self.html_node = None
         else:
             self.root = Node("document")
             self.html_node = Node("html")
-            head = Node("head")
-            self.html_node.append_child(head)
 
     def _ensure_html_node(self):
         """Materialize <html> into the root if not already present (document mode only)."""
