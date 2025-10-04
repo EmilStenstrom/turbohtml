@@ -72,7 +72,6 @@ def reconstruct_if_needed(parser, context, *, force=False):
             return True
     return False
 
-# --- Lightweight structural utilities (extracted from parser) ---
 def get_head(parser):
     html_node = parser.html_node
     if not html_node or parser.fragment_context:
@@ -107,7 +106,6 @@ def ensure_head(parser):
         html_node.insert_child_at(insert_index, head)
     return head
 
-# --- Template / integration point utilities (migrated from parser) ---
 def in_template_content(context):
     p = context.current_parent
     if not p:
@@ -136,7 +134,6 @@ def in_integration_point(context):
     return False
 
 
-## ParserInterface Protocol removed (runtime typing stripped)
 
 class TagHandler:
     """Base class for tag-specific handling logic (full feature set)."""
@@ -1258,8 +1255,6 @@ class TextHandler(TagHandler):
         # triggering body/table salvage heuristics. This preserves correct subtree placement
         # Handles post-body <math><mi>foo</mi> cases where text must remain within foreign subtree.
         if context.current_context in ("math", "svg"):
-            # Revert previously aggressive MathML paragraph synthesis (caused spurious <p> nodes inside MathML).
-            # Only perform wrapping when an explicit flag is set by a prior handler (not yet implemented) – disabled for now.
             if text:
                 self._append_text(text, context)
             return True
@@ -1400,11 +1395,8 @@ class TextHandler(TagHandler):
                     any(e.tag_name == "nobr" for e in elems)
                     and (not elems or elems[-1].tag_name != "nobr")
                 )
-                # New: if trailing text follows a table and there exists an active formatting element
-                # whose DOM node is no longer open (was foster‑parented / adoption removed) we must
-                # reconstruct before appending so the text is wrapped. This mirrors spec
-                # "reconstruct active formatting elements" step before inserting character tokens
-                # in the body insertion mode.
+                # If trailing text follows a table and active formatting elements
+                # are no longer in open stack, reconstruct before inserting text tokens
                 need_reconstruct_after_table = False
                 if (
                     elems
@@ -1583,7 +1575,6 @@ class TextHandler(TagHandler):
         #   - There is no existing adjacent emphasis sibling already capturing text.
         # This runs BEFORE _append_text so the appended text lands inside the new wrapper.
 
-        # --- Inline/text-placement adjustments (structural heuristics) ---
         # 1. If about to insert leading whitespace while current insertion point is an empty
         #    formatting element inside a table cell, promote insertion to cell so the space
         #    becomes a sibling (avoid creating empty formatting element that only contains space).
@@ -1691,7 +1682,6 @@ class TextHandler(TagHandler):
 
     def _append_text(self, text, context):
         """Helper to append text, either as new node or merged with last sibling"""
-        # If all text removed (became empty) nothing to do
         if text == "":
             return
 
@@ -1782,9 +1772,6 @@ class TextHandler(TagHandler):
 
     def _normalize_trailing_formatting(self, context):
         """Unwrap trailing <i>/<em> if identical formatting already exists in prior sibling.
-        
-        This is the logic formerly in TextNormalizationHandler, now integrated directly
-        into TextHandler to eliminate a separate handler pass.
         """
         context_parent = context.current_parent
         if not context_parent:
@@ -1855,7 +1842,7 @@ class TextHandler(TagHandler):
         
         if self.parser.env_debug:
             self.parser.debug(
-                f"Unwrapped trailing <{second.tag_name}> into text (integrated normalization)"
+                f"Unwrapped trailing <{second.tag_name}> into text"
             )
 
     def _decode_html_entities(self, text):
@@ -2061,7 +2048,6 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
                 if 0 <= cur_index < tbl_index
                 else ("after" if cur_index > tbl_index else "unknown")
             )
-            # Removed verbose fmt-start-debug logging (non-spec diagnostic)
 
         # (Duplicate <a> logic consolidated above)
         # Pending reconstruction after new adoption segmentation
@@ -2096,7 +2082,6 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
             self.debug(
                 f"Post-duplicate handling before element creation: parent={context.current_parent.tag_name}, open={[e.tag_name for e in context.open_elements._stack]}, active={[e.element.tag_name for e in context.active_formatting_elements if e.element]}"
             )
-            # Removed unused complex structural adjustment for duplicate <nobr> segmentation
 
         # Allow nested <nobr>; spec imposes no artificial nesting depth limit.
 
@@ -2497,7 +2482,7 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
         prev_processing = context.processing_end_tag
         context.processing_end_tag = True
 
-        # Run adoption agency (legacy)
+        # Run adoption agency
         runs = self.parser.adoption_agency.run_until_stable(tag_name, context, max_runs=8)
         if runs > 0:
             self.debug(f"FormattingElementHandler: Adoption agency completed after {runs} run(s) for </{tag_name}>")
@@ -2659,7 +2644,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                 self.debug(
                     "Found nested select, popping outer <select> from open elements (spec reprocess rule)"
                 )
-                # Pop stack until outer select removed (implicitly closing any option/optgroup inside)
+                # Pop stack until outer select removed
                 while not context.open_elements.is_empty():
                     popped = context.open_elements.pop()
                     if popped.tag_name == "select":
@@ -2728,7 +2713,6 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                 if attach is None:
                     attach = self.parser._ensure_body_node(context) or self.parser.root
 
-                # Instrumentation: ensure non-empty tag name for formatting element emitted outside select
                 if not tag_name:
                     # Defensive: This should never happen; capture stacks indirectly via raising after logging.
                     self.debug(
@@ -2841,7 +2825,6 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                 self.debug(
                     f"Popping <select> before processing table structural tag <{tag_name}> in table context"
                 )
-                # Pop until select removed (close option/optgroup descendants)
                 while not context.open_elements.is_empty():
                     popped = context.open_elements.pop()
                     if popped is select_ancestor:
@@ -3071,7 +3054,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         return False
 
     def _find_foster_parent_for_table_element_in_current_table(self, table, table_tag):
-        """Greatly simplified: only distinguish row/ cell vs others (unused detailed heuristics removed)."""
+        """Find foster parent for table element within current table."""
         if table_tag == "tr":
             # Find last tbody/thead/tfoot else None
             for child in reversed(table.children):
@@ -3170,7 +3153,7 @@ class ParagraphTagHandler(TagHandler):
             and context.open_elements.has_element_in_button_scope("p")
             and context.current_parent.tag_name != "p"
         ):
-            # Pop elements until the innermost open <p> is removed (standard </p> processing)
+            # Pop elements until the innermost open <p> is removed
             target_p = None
             for el in reversed(context.open_elements._stack):
                 if el.tag_name == "p":
@@ -3234,7 +3217,6 @@ class ParagraphTagHandler(TagHandler):
                     # earlier <p>, also popping any formatting elements above it so they
                     # do not leak into the new paragraph.
                     closing_p = context.current_parent
-                    # Pop open elements until the paragraph is removed
                     while not context.open_elements.is_empty():
                         popped = context.open_elements.pop()
                         if popped == closing_p:
@@ -3246,8 +3228,7 @@ class ParagraphTagHandler(TagHandler):
                         body = self.parser._ensure_body_node(context)
                         context.move_to_element(body)
                     # Remove paragraph element from DOM (it should remain; we do not remove it)
-                    # Ensure active formatting elements referencing popped nodes above p are unaffected
-                    # (they were removed from stack only; active formatting entries may persist per spec)
+                    # Active formatting elements referencing popped nodes above p remain unaffected
                 new_node = self.parser.insert_element(
                     token, context, mode="normal", enter=True
                 )
@@ -3431,9 +3412,8 @@ class ParagraphTagHandler(TagHandler):
 
         # Conditional reconstruction: If starting a new <p> after closing a previous one AND formatting
         # descendants were popped (none still open), restore formatting context so nested font / inline chains persist.
-        # Avoid unconditional reconstruction (prevents duplicate single-level inline wrapper cases) by checking
-        # that none of the previously popped formatting descendants remain open and the new paragraph has
-        # no formatting child yet.
+        # Avoid unconditional reconstruction by checking that none of the
+        # previously popped formatting descendants remain open
         if token.tag_name == "p" and p_ancestor and formatting_descendants:
             # Skip reconstruction for a single simple inline formatting element to avoid creating a duplicate wrapper.
             if len(formatting_descendants) == 1 and formatting_descendants[0].tag_name in {"b","i","em","strong","u"}:
@@ -3633,11 +3613,8 @@ class ParagraphTagHandler(TagHandler):
                 if context.open_elements.contains(closing_p):
                     context.open_elements.remove_element(closing_p)
 
-            # Paragraph boundary heuristic: If the last complex adoption performed no structural
-            # changes (no cloned/removed formatting elements) we may still have stale active formatting
-            # entries that need reconstruction to mirror legacy tree shapes for pure segmentation
-            # cases (e.g. inline <a>/<nobr> spanning paragraph end). Force a one-shot reconstruction
-            # so the next inline/text token rewraps content correctly. Guard with presence of any
+            # Force reconstruction when adoption performed no structural changes
+            # but stale active formatting elements may exist for inline spanning cases
             # formatting entries referencing elements no longer on the open stack to avoid redundant work.
             if context.last_complex_adoption_no_structural_change and context.active_formatting_elements._stack:
                 detached_exists = False
@@ -4588,7 +4565,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             return False
 
         self.debug(f"handling text '{text}' in {context}")
-        # (Former env_debug conditional removed)
         # Safety: if inside select subtree, do not process here
         if context.current_parent.find_ancestor(
             lambda n: n.tag_name in ("select", "option", "optgroup")
@@ -5502,7 +5478,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
         return True
 
-    # duplicate should_handle_end removed (earlier definition in class is canonical)
 
     def handle_end(self, token, context):
         tag_name = token.tag_name
@@ -5559,7 +5534,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         context.active_formatting_elements.remove_entry(entry)
                     table_node.remove_child(stale)
                     self.debug(
-                        f"Removed empty formatting residue <{stale.tag_name}> from <table>"
+                        f"Removed empty formatting residue <{stale.tag_name}> from table"
                     )
 
                 def _unwrap_stray_formatting(parent):
@@ -5601,7 +5576,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                                 context.active_formatting_elements.remove_entry(entry)
                             parent.remove_child(child)
                             self.debug(
-                                f"Removed empty formatting residue <{child.tag_name}> from <{parent.tag_name}>"
+                                f"Removed empty formatting residue <{child.tag_name}> from {parent.tag_name}"
                             )
 
                 _unwrap_stray_formatting(table_node)
@@ -5823,7 +5798,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         ]
                     ):
                         self.debug(
-                            "DOCTYPE is legacy - using quirks mode (no foster parenting)"
+                            "DOCTYPE is legacy - using quirks mode"
                         )
                         return False
 
@@ -5862,7 +5837,6 @@ class FormTagHandler(TagHandler):
 
         # Spec: if a form element is already open (and not in template), ignore additional <form> start tags.
         if tag_name == "form":
-            # Clear stale pointer if the referenced form node was removed from the tree.
             if context.form_element is not None and context.form_element.parent is None:
                 context.form_element = None
             # HTML Standard maintains a form element pointer; here we derive the effect structurally.
@@ -5934,7 +5908,7 @@ class FormTagHandler(TagHandler):
         return tag_name == "form"
 
     def handle_end(self, token, context):
-        # Premature </form> suppression (migrated from early_end_preprocess): ignore when no open form.
+        # Premature </form> suppression: ignore when no open form.
         stack = context.open_elements._stack
         has_form = False
         for el in reversed(stack):
@@ -6403,8 +6377,6 @@ class HeadingTagHandler(SimpleElementHandler):
 class RawtextTagHandler(SelectAwareHandler):
     """Handles rawtext elements like script, style, title, etc.
     
-    Also includes early suppression of any start tags while in RAWTEXT content state
-    (formerly RawtextStartTagIgnoreHandler).
     """
 
     def early_start_preprocess(self, token, context):
@@ -7089,7 +7061,6 @@ class AutoClosingTagHandler(TemplateAwareHandler):
 
             # Pop the block element from the open elements stack if present (simple closure)
             if context.open_elements.contains(current):
-                # Pop until we've removed 'current'
                 while not context.open_elements.is_empty():
                     popped = context.open_elements.pop()
                     if popped is current:
@@ -7729,8 +7700,6 @@ class ForeignTagHandler(TagHandler):
         tag_name = token.tag_name
         tag_name_lower = tag_name.lower()
 
-        # Note: previously forced MathML leaf self-closing tokens (mi/mo/mn/ms/mtext) to behave as containers.
-        # Removed to align closer with baseline expectations for tests9 regression case.
 
         if self._handle_foreign_foster_parenting(token, context):
             return True
@@ -9451,9 +9420,7 @@ class FramesetTagHandler(TagHandler):
 
         elif tag_name == "noframes":
             self.debug("Creating noframes element")
-            # Late <noframes> after a root frameset: ensure any previously buffered post-</html>
-            # comments (stored while waiting to see if a trailing <noframes> would appear) are
-            # flushed AFTER we insert this element so that they appear following it as root
+            # Late <noframes> after a root frameset
             # siblings (frameset comment ordering requirement).
             # Determine if we need to reorder root-level comments that appeared after explicit </html>
             # but before this late <noframes>. We only perform this when html end was seen earlier before
@@ -9901,8 +9868,7 @@ class PlaintextHandler(SelectAwareHandler):
         recreated_anchor_attrs = None
         if a_entry:
             a_el = a_entry.element
-            # Even if a_el is no longer on the open elements stack (e.g. paragraph ancestor popping removed it),
-            # we still recreate a fresh <a> inside <plaintext> per expected tree in tests19:101.
+            # Recreate a fresh <a> inside <plaintext> per expected tree
             if a_el:
                 recreated_anchor_attrs = a_el.attributes.copy() if a_el.attributes else {}
             recreate_anchor = True
@@ -10127,7 +10093,6 @@ class ButtonTagHandler(TagHandler):
     def handle_end(self, token, context):
         button = context.current_parent.find_ancestor("button")
         if button:
-            # Pop elements until the matching button is removed
             while not context.open_elements.is_empty():
                 popped = context.open_elements.pop()
                 if popped is button:
@@ -10244,7 +10209,6 @@ class TableFosterHandler(TagHandler):
         return False
 
 
-# --- Foster parenting primitive (extracted from parser._foster_parent_element) ---
 def foster_parent_element(tag_name, attributes, context, parser):
     """Foster parent an element outside of table context.
 
