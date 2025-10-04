@@ -3607,12 +3607,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             return False
 
         self.debug(f"handling text '{text}' in {context}")
-        # Safety: if inside select subtree, do not process here
-        if context.current_parent.find_ancestor(
-            lambda n: n.tag_name in ("select", "option", "optgroup"),
-        ):
-            return False
-
         # If we're inside a caption, handle text directly
         if context.document_state == DocumentState.IN_CAPTION:
             self.parser.insert_text(
@@ -3649,12 +3643,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 target = context.current_parent
             else:
                 target = context.current_parent
-            # If current_parent is not inside the cell (rare), fall back to cell
-            if (
-                not target.find_ancestor(lambda n: n is current_cell)
-                and target is not current_cell
-            ):
-                target = current_cell
             # target now resolved
             # Append or merge text at target
             if (
@@ -3795,15 +3783,8 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         break
             # If target is still the block, but its last child is a formatting element that is open, descend to the
             # deepest rightmost open formatting descendant so upcoming text nests inside the inline wrapper.
-            if target is block_elem and block_elem.children:
-                candidate = block_elem.children[-1]
-                if (
-                    candidate.tag_name in FORMATTING_ELEMENTS
-                    and context.open_elements.contains(candidate)
-                ):
             # If we still ended up targeting the block and an active <a> exists but wasn't reconstructed into it,
             # perform a one-time reconstruction so the upcoming text can reuse that anchor wrapper.
-                    pass
             if (
                 target is block_elem
                 and context.active_formatting_elements
@@ -3928,22 +3909,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                             f"Created continuation formatting wrapper <{new_wrapper.tag_name}> before table",
                         )
                         return True
-            elif prev_sibling.tag_name in (
-                "div",
-                "p",
-                "section",
-                "article",
-                "blockquote",
-                "li",
-            ):
-                self.debug(
-                    f"Appending foster-parented text into previous block container <{prev_sibling.tag_name}>",
-                )
-                # Merge with its last text child if present
-                self.parser.insert_text(
-                    text, context, parent=prev_sibling, merge=True,
-                )
-                return True
 
         # Anchor continuation handling (narrow): only segmentation or split cases are supported.
         # We intentionally limit behavior to:
