@@ -4,8 +4,7 @@ from turbohtml.adoption import ActiveFormattingElements, OpenElementsStack
 
 
 class DocumentState(Enum):
-    """Enumerates document parser states for clarity and safety (head, body...).
-    """
+    """Enumerates document parser states for clarity and safety (head, body...)."""
 
     INITIAL = auto()
     IN_HEAD = auto()
@@ -23,8 +22,7 @@ class DocumentState(Enum):
 
 
 class ContentState(Enum):
-    """Enumerates content parser states for clarity and safety (rawtext...).
-    """
+    """Enumerates content parser states for clarity and safety (rawtext...)."""
 
     NONE = auto()
     RAWTEXT = auto()
@@ -36,7 +34,8 @@ class ParseContext:
 
     def __init__(self, initial_parent, debug_callback=None):
         if initial_parent is None:
-            raise ValueError("ParseContext requires a valid initial parent")
+            msg = "ParseContext requires a valid initial parent"
+            raise ValueError(msg)
         self._current_parent = initial_parent
         self.current_context = None  # e.g. 'math' / 'svg'
 
@@ -85,7 +84,8 @@ class ParseContext:
 
     def _set_current_parent(self, new_parent):
         if new_parent is None:
-            raise ValueError("ParseContext requires a valid current parent")
+            msg = "ParseContext requires a valid current parent"
+            raise ValueError(msg)
 
         if new_parent != self._current_parent:
             self._debug(f"Parent change: {self._current_parent.tag_name} -> {new_parent.tag_name}")

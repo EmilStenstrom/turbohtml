@@ -25,7 +25,7 @@ ATTR_RE = re.compile(
 
 
 class HTMLToken:
-    """Represents a token in the HTML stream"""
+    """Represents a token in the HTML stream."""
 
     def __init__(
         self,
@@ -85,13 +85,13 @@ class HTMLTokenizer:
         self._pending_tokens = []  # New list for pending tokens
 
     def debug(self, *args, indent=4):
-        """Print debug message if debugging is enabled"""
+        """Print debug message if debugging is enabled."""
         if not self.env_debug:
             return
         print(f"{' ' * indent}{args[0]}", *args[1:])
 
     def start_rawtext(self, tag_name):
-        """Switch to RAWTEXT state for the given tag"""
+        """Switch to RAWTEXT state for the given tag."""
         self.state = "RAWTEXT"
         self.rawtext_tag = tag_name
         self.buffer = []
@@ -108,7 +108,7 @@ class HTMLTokenizer:
         self.temp_buffer = []
 
     def tokenize(self):
-        """Generate tokens from the HTML string"""
+        """Generate tokens from the HTML string."""
         while self.pos < self.length or self._pending_tokens:
             # Yield pending tokens first
             if self._pending_tokens:
@@ -158,7 +158,7 @@ class HTMLTokenizer:
                 break
 
     def _tokenize_rawtext(self):
-        """Tokenize content in RAWTEXT state"""
+        """Tokenize content in RAWTEXT state."""
         self.debug(
             f"_tokenize_rawtext: pos={self.pos}, next_chars={self.html[self.pos : self.pos + 10]!r}",
         )
@@ -171,7 +171,7 @@ class HTMLTokenizer:
         return self._tokenize_regular_rawtext()
 
     def _tokenize_script_content(self):
-        """Handle script content with HTML5 comment rules"""
+        """Handle script content with HTML5 comment rules."""
         # Look for </script> but respect comment context
         if self.html.startswith("</", self.pos):
             self.debug("  found </: checking for script end tag")
@@ -415,12 +415,10 @@ class HTMLTokenizer:
         if tag_end >= len(after):
             return False
         following = after[tag_end]
-        if following in " /\t\n\r\f>":
-            return True
-        return False
+        return following in " /\t\n\r\x0c>"
 
     def _tokenize_regular_rawtext(self):
-        """Handle regular RAWTEXT elements (non-script)"""
+        """Handle regular RAWTEXT elements (non-script)."""
         if self.html.startswith("</", self.pos):
             self.debug("  found </: looking for end tag")
             tag_start = self.pos + 2
@@ -502,7 +500,7 @@ class HTMLTokenizer:
         return None
 
     def _try_tag(self):
-        """Try to match a tag at current position"""
+        """Try to match a tag at current position."""
         if not self.html.startswith("<", self.pos):
             return None
 
@@ -791,7 +789,7 @@ class HTMLTokenizer:
         return HTMLToken("Character", data="<")
 
     def _try_text(self):
-        """Try to match text at current position"""
+        """Try to match text at current position."""
         if self.pos >= self.length:
             return None
 
@@ -858,7 +856,7 @@ class HTMLTokenizer:
 
     def _parse_attributes(self, attr_string):
         if self.env_debug:
-            print(f"[DEBUG] Raw attribute string: '{attr_string}'")
+            pass
         """Parse attributes from a string using the ATTR_RE pattern"""
         self.debug(f"Parsing attributes: {attr_string[:50]}...")
         attr_string = attr_string.strip()  # Remove only leading/trailing whitespace
@@ -898,9 +896,7 @@ class HTMLTokenizer:
                 if raw.startswith("//"):
                     # Example: //problem/6869687 -> expected attributes 6869687="" and problem="" (reverse order)
                     parts = [p for p in raw.split("/") if p]
-                    parts = list(
-                        reversed(parts),
-                    )  # Reverse order for double-slash scheme style
+                    parts.reverse()  # Reverse order for double-slash scheme style
                 else:
                     # Single leading slash path: /x/y/z -> x, y, z in natural order
                     parts = [p for p in raw.split("/") if p]
@@ -933,7 +929,7 @@ class HTMLTokenizer:
         cleaned = re.sub(r'\S+?=""', "", attr_string)
         # Debug: print parsed attributes for inspection
         if self.env_debug:
-            print(f"[DEBUG] Parsed attributes: {attributes}")
+            pass
         # Split on whitespace to get each attribute chunk
         for part in cleaned.strip().split():
             if "=" in part:
@@ -945,7 +941,7 @@ class HTMLTokenizer:
         return attributes
 
     def _handle_comment(self):
-        """Handle comment according to HTML5 spec"""
+        """Handle comment according to HTML5 spec."""
         self.debug(f"_handle_comment: pos={self.pos}, state={self.state}")
         self.pos += 4  # Skip <!--
         start = self.pos
@@ -997,7 +993,7 @@ class HTMLTokenizer:
         return HTMLToken("Comment", data=comment_text)
 
     def _handle_bogus_comment(self, from_end_tag=False):
-        """Handle bogus comment according to HTML5 spec"""
+        """Handle bogus comment according to HTML5 spec."""
         self.debug(
             f"_handle_bogus_comment: pos={self.pos}, state={self.state}, from_end_tag={from_end_tag}",
         )

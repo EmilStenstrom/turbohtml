@@ -52,7 +52,7 @@ class TurboHTML:
         """Args:
         html: The HTML string to parse
         debug: Whether to enable debug prints
-        fragment_context: Context element for fragment parsing (e.g., 'td', 'tr')
+        fragment_context: Context element for fragment parsing (e.g., 'td', 'tr').
 
         """
         self.env_debug = debug
@@ -98,9 +98,11 @@ class TurboHTML:
                 self.foreign_handler = handler
 
         if not hasattr(self, "text_handler"):
-            raise RuntimeError("TextHandler not found in tag_handlers")
+            msg = "TextHandler not found in tag_handlers"
+            raise RuntimeError(msg)
         if not hasattr(self, "foreign_handler"):
-            raise RuntimeError("ForeignTagHandler not found in tag_handlers")
+            msg = "ForeignTagHandler not found in tag_handlers"
+            raise RuntimeError(msg)
 
         # Sequential token counter for deduplication guards (replaces tokenizer position)
         self._token_counter = 0
@@ -118,8 +120,8 @@ class TurboHTML:
     def debug(self, *args, indent=4, **kwargs):
         if not self.env_debug:
             return
-
         print(f"{' ' * indent}{args[0]}", *args[1:], **kwargs)
+
 
     def get_token_position(self):
         """Get current token counter (for deduplication guards)."""
@@ -174,7 +176,8 @@ class TurboHTML:
         parenting if current_parent is in table context. Set to False to bypass.
         """
         if mode not in ("normal", "transient", "void"):
-            raise ValueError(f"insert_element: unknown mode '{mode}'")
+            msg = f"insert_element: unknown mode '{mode}'"
+            raise ValueError(msg)
 
         # Foster parenting: When inserting into default parent (parent=None) and in table context,
         # spec requires insertion before the table rather than inside it (unless in cell/caption).
@@ -210,8 +213,9 @@ class TurboHTML:
                     break
                 cur = cur.parent
             if not in_template_content and tag_name != "content":
+                msg = f"insert_element: transient mode outside template content (tag={tag_name}) not permitted; current_parent={context.current_parent.tag_name}"
                 raise ValueError(
-                    f"insert_element: transient mode outside template content (tag={tag_name}) not permitted; current_parent={context.current_parent.tag_name}",
+                    msg,
                 )
         attrs = (
             attributes_override if attributes_override is not None else token.attributes
@@ -223,10 +227,7 @@ class TurboHTML:
             target_parent.append_child(new_node)
         # Determine effective voidness
         is_void = False
-        if mode == "void":
-            is_void = True
-        else:
-            is_void = treat_as_void or token.tag_name in VOID_ELEMENTS
+        is_void = True if mode == "void" else treat_as_void or token.tag_name in VOID_ELEMENTS
 
         if mode == "normal" and not is_void:
             do_push = True if push_override is None else push_override
@@ -269,9 +270,7 @@ class TurboHTML:
         before=None,
         merge=True,
     ):
-        """Insert character data performing standard merge with preceding text node.
-
-        """
+        """Insert character data performing standard merge with preceding text node."""
         from .constants import NUMERIC_ENTITY_INVALID_SENTINEL
 
         # Entity finalization: convert sentinel and strip invalid U+FFFD inline during text insertion.
@@ -356,7 +355,7 @@ class TurboHTML:
             self._parse_document(html)
 
     def _handle_fragment_comment(self, text, context):
-        """Handle comments in fragment parsing"""
+        """Handle comments in fragment parsing."""
         comment_node = Node("#comment", text_content=text)
         # html fragment AFTER_HTML - attach at fragment root (siblings with head/body) per expected tree
         if (
@@ -433,9 +432,8 @@ class TurboHTML:
                 return
 
         for handler in self.tag_handlers:
-            if handler.should_handle_start(tag_name, context):
-                if handler.handle_start(token, context):
-                    return
+            if handler.should_handle_start(tag_name, context) and handler.handle_start(token, context):
+                return
 
         # Fallback: if no handler claimed this start tag, insert it with default behavior.
         self.insert_element(token, context, mode="normal", enter=not token.is_self_closing)
@@ -451,6 +449,5 @@ class TurboHTML:
 
         # Try tag handlers first
         for handler in self.tag_handlers:
-            if handler.should_handle_end(tag_name, context):
-                if handler.handle_end(token, context):
-                    return
+            if handler.should_handle_end(tag_name, context) and handler.handle_end(token, context):
+                return

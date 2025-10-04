@@ -159,7 +159,8 @@ class OpenElementsStack:
         """Get the index of an element (list-compatible method)."""
         idx = self.index_of(element)
         if idx == -1:
-            raise ValueError(f"{element} is not in stack")
+            msg = f"{element} is not in stack"
+            raise ValueError(msg)
         return idx
 
     def remove_element(self, element):
@@ -339,9 +340,8 @@ class AdoptionAgencyAlgorithm:
         """
         runs = 0
         # With the internal spec loop implemented inside run_algorithm, one invocation is sufficient.
-        if self.should_run_adoption(tag_name, context):
-            if self.run_algorithm(tag_name, context):
-                runs = 1
+        if self.should_run_adoption(tag_name, context) and self.run_algorithm(tag_name, context):
+            runs = 1
         return runs
 
     # --- Spec helpers ---
@@ -357,7 +357,7 @@ class AdoptionAgencyAlgorithm:
     def _run_simple_case(self, formatting_entry, formatting_element, context):
         stack = context.open_elements
 
-        had_table_descendant = any(
+        any(
             child.tag_name == "table" for child in formatting_element.children
         )
 
@@ -414,16 +414,13 @@ class AdoptionAgencyAlgorithm:
                         target = candidate
                         break
                     tag = candidate.tag_name
-                    if tag.startswith("svg ") or tag.startswith("math ") or tag in {"svg", "math", "math annotation-xml"}:
+                    if tag.startswith(("svg ", "math ")) or tag in {"svg", "math", "math annotation-xml"}:
                         break
                     candidate = candidate.parent
                 if target is None:
                     target = fmt_parent
         if target is None:
-            if context.open_elements:
-                target = context.open_elements[-1]
-            else:
-                target = self._get_body_or_root(context)
+            target = context.open_elements[-1] if context.open_elements else self._get_body_or_root(context)
         context.move_to_element(target)
         if formatting_element.tag_name == "font":
             wrapper_parent = fmt_parent if fmt_parent is not None else target
@@ -469,7 +466,7 @@ class AdoptionAgencyAlgorithm:
         return new_wrapper
 
     def _get_body_or_root(self, context):
-        """Get the body element or fallback to root"""
+        """Get the body element or fallback to root."""
         body_node = None
         # Get HTML node from parser instead of context
         html_node = self.parser.html_node

@@ -1,4 +1,4 @@
-"""HTML5 Element Constants
+"""HTML5 Element Constants.
 
 This module defines constants used for HTML5 parsing according to the WHATWG spec.
 Elements are organized into lists to maintain consistent iteration order while

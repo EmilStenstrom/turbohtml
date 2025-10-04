@@ -17,16 +17,14 @@ class Node:
     - attributes: dict of tag attributes
     - children: list of child Nodes
     - parent: reference to parent Node (or None for root)
-    - next_sibling/previous_sibling: references to adjacent nodes in the tree
+    - next_sibling/previous_sibling: references to adjacent nodes in the tree.
     """
 
     __slots__ = (
-        "tag_name",
         "attributes",
         "children",
-        "parent",
-        "text_content",
         "next_sibling",
+        "parent",
         "previous_sibling",
         # Flag for stack-only synthetic nodes (not part of DOM tree). These nodes may be
         # pushed onto the open elements stack during fragment parsing to emulate required
@@ -34,14 +32,17 @@ class Node:
         # actual fragment DOM. They are pruned after parsing. Keeping this in __slots__
         # prevents AttributeError when fragment bootstrap logic marks nodes.
         "synthetic_stack_only",
+        "tag_name",
+        "text_content",
     )
 
     def __init__(self, tag_name, attributes=None, preserve_attr_case=False, text_content=None):
         # Instrumentation / safety: empty tag names should never be constructed.
         # If this triggers we want a loud failure with context so we can trace upstream logic.
         if tag_name is None or tag_name == "":
+            msg = "Empty tag_name passed to Node constructor (bug: tokenization or handler produced blank tag)"
             raise ValueError(
-                "Empty tag_name passed to Node constructor (bug: tokenization or handler produced blank tag)",
+                msg,
             )
         self.tag_name = tag_name
         if attributes:
@@ -75,8 +76,9 @@ class Node:
     def append_child(self, child):
         # Check for circular reference before adding
         if self._would_create_circular_reference(child):
+            msg = f"Adding {child.tag_name} as child of {self.tag_name} would create circular reference"
             raise ValueError(
-                f"Adding {child.tag_name} as child of {self.tag_name} would create circular reference",
+                msg,
             )
 
         if child.parent:
@@ -99,7 +101,7 @@ class Node:
         self.children.append(child)
 
     def _would_create_circular_reference(self, child):
-        """Check if adding child would create a circular reference"""
+        """Check if adding child would create a circular reference."""
         # Check if self is a descendant of child
         current = self
         visited = set()
@@ -119,7 +121,7 @@ class Node:
         return False
 
     def insert_child_at(self, index, child):
-        """Insert a child at the specified index"""
+        """Insert a child at the specified index."""
         if child.parent:
             # Remove from old location
             if child.previous_sibling:
@@ -337,7 +339,7 @@ class Node:
         return None
 
     def last_child_is_text(self):
-        """Check if the last child is a text node"""
+        """Check if the last child is a text node."""
         return self.children and self.children[-1].tag_name == "#text"
 
     def is_inside_tag(self, tag_name):
@@ -398,7 +400,7 @@ class Node:
         return ancestors
 
     def move_up_while_in_tags(self, tags):
-        """Move up the tree while current node has tag in the given list"""
+        """Move up the tree while current node has tag in the given list."""
         if isinstance(tags, str):
             tags = [tags]
         current = self
@@ -410,7 +412,7 @@ class Node:
         return current
 
     def has_ancestor_matching(self, predicate):
-        """Check if any ancestor matches the given predicate"""
+        """Check if any ancestor matches the given predicate."""
         current = self.parent
         while current:
             if predicate(current):

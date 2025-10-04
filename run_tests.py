@@ -74,7 +74,7 @@ class TestResult:
 
 
 def compare_outputs(expected, actual):
-    """Compare expected and actual outputs, normalizing whitespace"""
+    """Compare expected and actual outputs, normalizing whitespace."""
 
     def normalize(text: str) -> str:
         return "\n".join(line.rstrip() for line in text.strip().splitlines())
@@ -91,7 +91,7 @@ class TestRunner:
 
     def _natural_sort_key(self, path):
         """Convert string to list of string and number chunks for natural sorting
-        "z23a" -> ["z", 23, "a"]
+        "z23a" -> ["z", 23, "a"].
         """
 
         def convert(text):
@@ -102,7 +102,7 @@ class TestRunner:
         return [convert(c) for c in re.split("([0-9]+)", str(path))]
 
     def _parse_dat_file(self, path):
-        """Parse a .dat file into a list of TestCase objects"""
+        """Parse a .dat file into a list of TestCase objects."""
         content = path.read_text(encoding="utf-8")
         tests = []
 
@@ -134,7 +134,7 @@ class TestRunner:
         return tests
 
     def _parse_single_test(self, lines):
-        """Parse a single test from a list of lines"""
+        """Parse a single test from a list of lines."""
         data = []
         errors = []
         document = []
@@ -170,7 +170,7 @@ class TestRunner:
         return None
 
     def _should_run_test(self, filename, index, test):
-        """Determine if a test should be run based on configuration"""
+        """Determine if a test should be run based on configuration."""
         # Skip script-dependent tests since HTML parsers don't execute JavaScript
         if test.script_directive in ("script-on", "script-off"):
             return False
@@ -195,31 +195,22 @@ class TestRunner:
             if not any(include in test.data for include in self.config["filter_html"]):
                 return False
 
-        if self.config["exclude_errors"]:
-            if any(
-                exclude in error
-                for exclude in self.config["exclude_errors"]
-                for error in test.errors
-            ):
-                return False
+        if self.config["exclude_errors"] and any(
+            exclude in error
+            for exclude in self.config["exclude_errors"]
+            for error in test.errors
+        ):
+            return False
 
-        if self.config["filter_errors"]:
-            if not any(
-                include in error
-                for include in self.config["filter_errors"]
-                for error in test.errors
-            ):
-                return False
-
-        return True
+        return not (self.config["filter_errors"] and not any(include in error for include in self.config["filter_errors"] for error in test.errors))
 
     def load_tests(self):
-        """Load and filter test files based on configuration"""
+        """Load and filter test files based on configuration."""
         test_files = self._collect_test_files()
         return [(path, self._parse_dat_file(path)) for path in test_files]
 
     def _collect_test_files(self):
-        """Collect and filter .dat files based on configuration"""
+        """Collect and filter .dat files based on configuration."""
         files = list(self.test_dir.rglob("*.dat"))
 
         if self.config["exclude_files"]:
@@ -243,7 +234,7 @@ class TestRunner:
         return sorted(files, key=self._natural_sort_key)
 
     def run(self):
-        """Run all tests and return (passed, failed, skipped) counts"""
+        """Run all tests and return (passed, failed, skipped) counts."""
         passed = failed = skipped = 0
 
         for file_path, tests in self.load_tests():
@@ -272,8 +263,6 @@ class TestRunner:
                         file_test_indices.append(("fail", i))
                         self._handle_failure(file_path, i, result)
                 except Exception:
-                    print(f"\nError in test {file_path.name}:{i}")
-                    print(f"Input HTML:\n{test.data}\n")
                     raise  # Re-raise the exception to show the full traceback
 
                 if failed and self.config["fail_fast"]:
@@ -339,7 +328,6 @@ class TestRunner:
     def _handle_failure(self, file_path, test_index, result):
         """Handle test failure - print report based on verbosity (>=1)."""
         if self.config["verbosity"] >= 1 and not self.config["quiet"]:
-            print(f"\nTest failed in {file_path.name}:{test_index}")
             TestReporter(self.config).print_test_result(result)
 
 
@@ -398,7 +386,6 @@ class TestReporter:
             if full_run:
                 Path("test-summary.txt").write_text(header)
             # No leading newline needed; progress indicators are disabled.
-            print(header)
             return
         detailed = self._generate_detailed_summary(header, file_results)
         # Persist only for full runs
@@ -412,7 +399,7 @@ class TestReporter:
             print(detailed)
 
     def _generate_detailed_summary(self, overall_summary, file_results):
-        """Generate a detailed summary with per-file breakdown"""
+        """Generate a detailed summary with per-file breakdown."""
         lines = [overall_summary, ""]
 
     # Sort files naturally (tests1.dat, tests2.dat, etc.)
@@ -456,7 +443,7 @@ class TestReporter:
         return "\n".join(lines)
 
     def _generate_test_pattern(self, test_indices):
-        """Generate a compact pattern showing pass/fail/skip for each test"""
+        """Generate a compact pattern showing pass/fail/skip for each test."""
         if not test_indices:
             return ""
 
@@ -465,7 +452,7 @@ class TestReporter:
 
         # Always show the actual pattern with ., x, and s
         pattern = ""
-        for status, idx in sorted_tests:
+        for status, _idx in sorted_tests:
             if status == "pass":
                 pattern += "."
             elif status == "fail":
@@ -581,7 +568,6 @@ def main():
     if config.get("regressions"):
         # Only meaningful for full unfiltered run
         if not reporter._is_full_run():  # reuse logic
-            print("\n[regressions] Skipping: run was filtered (need full suite).")
             return
         _run_regression_check(runner, reporter)
 
@@ -603,16 +589,13 @@ def _run_regression_check(runner, reporter):
     try:
         proc = subprocess.run(
             ["git", "show", "HEAD:test-summary.txt"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             check=False,
         )
     except FileNotFoundError:
-        print("\n[regressions] git not found; skipping regression analysis.")
         return
     if proc.returncode != 0 or not proc.stdout.strip():
-        print("\n[regressions] No baseline test-summary.txt in HEAD; skipping.")
         return
 
     baseline_text = proc.stdout

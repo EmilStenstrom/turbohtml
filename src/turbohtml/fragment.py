@@ -143,9 +143,7 @@ def _supp_duplicate_section_wrapper(parser, context, token, fragment_context):
     if token.tag_name != fragment_context:
         return False
     # Only suppress when still at the synthetic fragment root (no element parent yet)
-    if context.current_parent and context.current_parent.tag_name == "document-fragment":
-        return True
-    return False
+    return bool(context.current_parent and context.current_parent.tag_name == "document-fragment")
 
 def _supp_duplicate_cell_or_initial_row(parser, context, token, fragment_context):
     """Suppress first context-matching cell tag (td/th) or initial stray <tr> in td/th fragment.
@@ -195,12 +193,8 @@ def _supp_fragment_nonhtml_structure(parser, context, token, fragment_context):
         return True
     if tn == "body":
         has_body = any(ch.tag_name == "body" for ch in parser.root.children)
-        if not has_body:
-            return True
-        return False
-    if tn in {"caption", "colgroup", "tbody", "thead", "tfoot", "tr", "td", "th"}:
-        return True
-    return False
+        return bool(not has_body)
+    return tn in {"caption", "colgroup", "tbody", "thead", "tfoot", "tr", "td", "th"}
 
 def _supp_fragment_legacy_context(parser, context, token, fragment_context):
     """Aggregate remaining legacy suppression logic previously in parser._should_ignore_fragment_start_tag.
@@ -237,10 +231,7 @@ def _fragment_table_preprocess(parser, context, token, fragment_context):
     # Table fragment structural insertion (implicit tbody / root-level table section placement)
     if table_modes.fragment_table_insert(tag, token, context, parser):
         return True
-    if table_modes.fragment_table_section_insert(tag, token, context, parser):
-        return True
-
-    return False
+    return bool(table_modes.fragment_table_section_insert(tag, token, context, parser))
 
 
 def _fragment_colgroup_col_handler(parser, context, token, fragment_context):
