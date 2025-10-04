@@ -381,23 +381,6 @@ class TurboHTML:
             self.debug(f"[insert_text] new text node len={len(text)} parent={target_parent.tag_name}")
         return new_node
 
-
-    def find_current_table(self, context):
-        """Find the current table element from the open elements stack when in table context."""
-        # Always search open elements stack first (even in IN_BODY) so foster-parenting decisions
-        # can detect an open table that the insertion mode no longer reflects (foreign breakout, etc.).
-        for element in reversed(context.open_elements._stack):
-            if element.tag_name == "table":
-                return element
-
-        # Fallback: traverse ancestors from current parent (rare recovery)
-        current = context.current_parent
-        while current:
-            if current.tag_name == "table":
-                return current
-            current = current.parent
-        return None
-
     def _parse(self):
         """Entry point selecting document vs fragment strategy."""
         if self.fragment_context:

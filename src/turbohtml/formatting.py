@@ -70,7 +70,8 @@ def reconstruct_active_formatting_elements(parser, context):
             DocumentState.IN_TABLE_BODY,
             DocumentState.IN_ROW,
         ):
-            table_node = parser.find_current_table(context)
+            from .utils import find_current_table
+            table_node = find_current_table(context)
             inside_table_subtree = False
             cur_parent = context.current_parent
             while cur_parent:
