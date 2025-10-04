@@ -315,22 +315,6 @@ class TurboHTML:
             context.enter_element(new_node)
         return new_node
 
-    # --- Text node helper ---
-    def create_text_node(self, text):
-        """Create a new text node with the given text content.
-
-        Centralizes the common pattern:
-            node = Node("#text"); node.text_content = text
-
-        No insertion or merging logic is performed here – callers remain
-        responsible for appending/merging according to context (e.g. RAWTEXT
-        vs normal content, foster parenting, etc.). Keeping this lean avoids
-        hidden side effects and preserves deterministic control in handlers.
-        """
-        n = Node("#text")
-        n.text_content = text
-        return n
-
     # --- Centralized text insertion helper ---
     def insert_text(
         self,
@@ -407,7 +391,8 @@ class TurboHTML:
                 prev_node = target_parent.children[prev_idx]
                 prev_node.text_content += text
                 return prev_node
-            new_node = self.create_text_node(text)
+            new_node = Node("#text")
+            new_node.text_content = text
             target_parent.insert_before(new_node, before)
             return new_node
 
@@ -422,7 +407,8 @@ class TurboHTML:
             last.text_content += text
             return last
 
-        new_node = self.create_text_node(text)
+        new_node = Node("#text")
+        new_node.text_content = text
         target_parent.append_child(new_node)
         if self.env_debug:
             self.debug(f"[insert_text] new text node len={len(text)} parent={target_parent.tag_name}")
@@ -450,12 +436,9 @@ class TurboHTML:
     def _parse(self):
         """Entry point selecting document vs fragment strategy."""
         if self.fragment_context:
-            self._parse_fragment()
+            parse_fragment(self)
         else:
             self._parse_document()
-
-    def _parse_fragment(self):
-        parse_fragment(self)
 
     def _handle_fragment_comment(self, text, context):
         """Handle comments in fragment parsing"""

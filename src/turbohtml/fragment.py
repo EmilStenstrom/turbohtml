@@ -10,6 +10,7 @@ behaviour or test‑specific logic resides here.
 from .context import DocumentState, ContentState, ParseContext
 from .constants import RAWTEXT_ELEMENTS
 from .node import Node
+from .node import Node
 from .tokenizer import HTMLTokenizer, HTMLToken
 from . import table_modes
 
@@ -533,7 +534,8 @@ def handle_character(parser, context, token, fragment_context):
     if context.content_state == ContentState.PLAINTEXT:
         if not data:
             return
-        text_node = parser.create_text_node(data)
+        text_node = Node("#text")
+        text_node.text_content = data
         context.current_parent.append_child(text_node)
         return
     if not data:

@@ -1764,14 +1764,17 @@ class TextHandler(TagHandler):
                     if foster_parent_node.children and foster_parent_node.children[-1].tag_name == "#text" and foster_parent_node.children[-1] is not before:
                         foster_parent_node.children[-1].text_content += decoded_text
                     else:
-                        node = self.parser.create_text_node(decoded_text)
+                        node = Node("#text")
+                        node.text_content = decoded_text
                         foster_parent_node.insert_before(node, before)
                 else:
                     # append fallback
                     if foster_parent_node.children and foster_parent_node.children[-1].tag_name == "#text":
                         foster_parent_node.children[-1].text_content += decoded_text
                     else:
-                        foster_parent_node.append_child(self.parser.create_text_node(decoded_text))
+                        node = Node("#text")
+                        node.text_content = decoded_text
+                        foster_parent_node.append_child(node)
             else:
                 self.parser.insert_text(decoded_text, context, parent=parent, merge=True)
 
@@ -10019,7 +10022,8 @@ class PlaintextHandler(SelectAwareHandler):
 
     def handle_text(self, text, context):
         # Tokenizer already transformed disallowed code points into U+FFFD; just append literally.
-        node = self.parser.create_text_node(text)
+        node = Node("#text")
+        node.text_content = text
         context.current_parent.append_child(node)
         if context.frameset_ok and any((not c.isspace()) and c != "\ufffd" for c in text):
             context.frameset_ok = False
