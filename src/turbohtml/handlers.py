@@ -377,34 +377,6 @@ class DocumentStructureHandler(TagHandler):
         if not has_root_frameset(parser.root):
             body = get_body(parser.root) or ensure_body(parser.root, DocumentState.INITIAL, parser.fragment_context)
             _ = body
-        # Merge adjacent text nodes
-        self._merge_adjacent_text_nodes(parser.root)
-
-    def _merge_adjacent_text_nodes(self, node):
-        """Iteratively merge adjacent sibling text nodes (non-recursive)."""
-        stack = [node]
-        while stack:
-            cur = stack.pop()
-            if not cur.children:
-                continue
-            merged = []
-            pending_text = None
-            changed = False
-            for ch in cur.children:
-                if ch.tag_name == "#text":
-                    if pending_text is None:
-                        pending_text = ch
-                        merged.append(ch)
-                    else:
-                        pending_text.text_content += ch.text_content
-                        changed = True
-                else:
-                    pending_text = None
-                    merged.append(ch)
-            if changed:
-                cur.children = merged
-            # Push non-text children for processing
-            stack.extend(ch for ch in reversed(cur.children) if ch.tag_name != "#text")
 
 
 class TemplateHandler(TagHandler):
@@ -1398,6 +1370,7 @@ class TextHandler(TagHandler):
             )
             if node is not None:
                 self.debug(f"created node with content '{node.text_content}'")
+
     def _handle_pre_text(
         self, text, context, parent,
     ):
@@ -1416,48 +1389,7 @@ class TextHandler(TagHandler):
             if not (parent and needs_foster_parenting(parent) and decoded_text.strip() and not in_template_content(context)):
                 self.parser.insert_text(decoded_text, context, parent=parent, merge=True)
 
-        # Text normalization: unwrap trailing formatting elements to reduce redundant nesting
-        self._normalize_trailing_formatting(context)
-
         return True
-
-    def _normalize_trailing_formatting(self, context):
-        """Unwrap trailing <i>/<em> if identical formatting already exists in prior sibling."""
-        context_parent = context.current_parent
-        if not context_parent:
-            return
-
-        # Climb to nearest block container
-        block_tags = ("p", "div", "section", "article", "body")
-        block = context_parent
-        while block and block.tag_name not in block_tags:
-            block = block.parent
-        if not block:
-            return
-
-        # Need at least two element (non-text) children
-        elems = [ch for ch in block.children if ch.tag_name != "#text"]
-        if len(elems) < 2:
-            return
-
-        second = elems[-1]
-
-        # Only unwrap if the most recently modified element is the trailing formatting element
-        if second is not context_parent or second.tag_name not in ("i", "em"):
-            return
-        if second.attributes or not second.children:
-            return
-        if not all(ch.tag_name == "#text" for ch in second.children):
-            return
-
-
-
-        # Perform unwrap: move text children of second after it then remove the element
-
-        if self.parser.env_debug:
-            self.parser.debug(
-                f"Unwrapped trailing <{second.tag_name}> into text",
-            )
 
     def _decode_html_entities(self, text):
         """Decode numeric HTML entities."""
@@ -2906,24 +2838,6 @@ class ParagraphTagHandler(TagHandler):
                     f"Inserted implicit empty <p> before table inside paragraph {paragraph_ancestor}",
                 )
                 return True
-            # If the table was foster-parented after a paragraph, create empty <p> in original paragraph
-            if (
-                table.parent
-                and table.previous_sibling
-                and table.previous_sibling.tag_name == "p"
-            ):
-                original_paragraph = table.previous_sibling
-                # Only synthesize an additional paragraph if the original paragraph is effectively empty.
-                contains_content = False
-                for child in original_paragraph.children:
-                    if child.tag_name != "#text":
-                        contains_content = True
-                        break
-                    if child.text_content and child.text_content.strip():
-                        contains_content = True
-                        break
-                if not contains_content:
-                    return True
 
         # Standard behavior: Find nearest p ancestor and move up to its parent
         if context.current_parent.tag_name == "p":
@@ -3750,23 +3664,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 and target is not current_cell
             ):
                 target = current_cell
-            # Find the last formatting element descendant at the end of the cell
-            last = current_cell.children[-1] if current_cell.children else None
-            if (
-                last
-                and last.tag_name in FORMATTING_ELEMENTS
-                and last in context.open_elements
-            ):
-                # Descend only through still-open formatting elements; do not reuse closed ones for new text runs.
-                cursor = last
-                while (
-                    cursor.children
-                    and cursor.children[-1].tag_name in FORMATTING_ELEMENTS
-                    and cursor.children[-1] in context.open_elements
-                ):
-                    cursor = cursor.children[-1]
-
-                target = cursor
             # target now resolved
             # Append or merge text at target
             if (
