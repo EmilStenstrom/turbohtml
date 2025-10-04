@@ -69,9 +69,6 @@ class ParseContext:
         # identical tags nested inside the fragment should be processed normally. We keep
         # a simple boolean rather than counting since only the first occurrence is ignored.
         self.fragment_context_ignored = False
-        # Index of last character token processed inside template content to prevent duplicate consumption
-        # (used for nested template/table duplication guard).
-        self.last_template_text_index = -1
         # Anchor element to re-enter after structural element (e.g., table) handling if still open.
         self.resume_anchor_after_structure = None
         # Anchor reconstruction / suppression coordination flags (previously accessed via getattr)
