@@ -47,14 +47,12 @@ class TurboHTML:
     def __init__(
         self,
         html,
-        handle_foreign_elements=True,
         debug=False,
         fragment_context=None,
     ):
         """
         Args:
             html: The HTML string to parse
-            handle_foreign_elements: Whether to handle SVG/MathML elements
             debug: Whether to enable debug prints
             fragment_context: Context element for fragment parsing (e.g., 'td', 'tr')
         """
@@ -77,7 +75,7 @@ class TurboHTML:
             SelectTagHandler(self),  # must precede table handling to suppress table tokens inside <select>
             TableTagHandler(self),
             UnifiedCommentHandler(self),
-            ForeignTagHandler(self) if handle_foreign_elements else None,
+            ForeignTagHandler(self),
             ParagraphTagHandler(self),
             AutoClosingTagHandler(self),
             MenuitemTagHandler(self),
@@ -96,7 +94,6 @@ class TurboHTML:
             TableFosterHandler(self),
             GenericEndTagHandler(self),
         ]
-        self.tag_handlers = [h for h in self.tag_handlers if h is not None]
 
         for handler in self.tag_handlers:
             if isinstance(handler, TextHandler):
