@@ -1,5 +1,8 @@
 import argparse
+import re
 import signal
+import subprocess
+import sys
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -96,8 +99,6 @@ class TestRunner:
 
         def convert(text):
             return int(text) if text.isdigit() else text.lower()
-
-        import re
 
         return [convert(c) for c in re.split("([0-9]+)", str(path))]
 
@@ -403,7 +404,6 @@ class TestReporter:
         lines = [overall_summary, ""]
 
     # Sort files naturally (tests1.dat, tests2.dat, etc.)
-        import re
 
         def natural_sort_key(filename):
             return [
@@ -582,10 +582,6 @@ def _run_regression_check(runner, reporter):
       - pattern extension where new char is 'x'
     Exit code: 1 if regressions found, else 0.
     """
-    import re
-    import subprocess
-    import sys
-
     try:
         proc = subprocess.run(
             ["git", "show", "HEAD:test-summary.txt"],
