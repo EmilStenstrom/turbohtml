@@ -132,14 +132,8 @@ class UnifiedCommentHandler(TagHandler):
                 html.append_child(node)
             return True
 
-        # AFTER_BODY state OR post-body IN_BODY reentry: place as sibling of <body> under <html>
-        if state == DocumentState.AFTER_BODY or (
-            state == DocumentState.IN_BODY and self.parser._prev_token is not None and (
-                (self.parser._prev_token.type == "EndTag" and self.parser._prev_token.tag_name == "body") or
-                (self.parser._prev_token.type == "Character" and self.parser._prev_token.data is not None and
-                 self.parser._prev_token.data.strip() == "")
-            )
-        ):
+        # AFTER_BODY state: place as sibling of <body> under <html>
+        if state == DocumentState.AFTER_BODY:
             body_node = get_body(self.parser.root)
             if not html:
                 return False
@@ -292,9 +286,47 @@ class DocumentStructureHandler(TagHandler):
         return False
 
     def should_handle_end(self, tag_name, context):
-        return tag_name == "html"
+        return tag_name in ("html", "body")
 
     def handle_end(self, token, context):
+        tag_name = token.tag_name
+
+        if tag_name == "body":
+            # Stray </body> transitions to AFTER_BODY state only in valid contexts
+            # (not inside table insertion modes where it should be ignored)
+            # This allows subsequent head elements like <meta>/<title> to be placed in a synthesized body
+            # per spec parse error recovery
+            if context.document_state in (
+                DocumentState.IN_TABLE,
+                DocumentState.IN_TABLE_BODY,
+                DocumentState.IN_ROW,
+                DocumentState.IN_CELL,
+                DocumentState.IN_CAPTION,
+            ):
+                # Ignore </body> in table contexts (spec: parse error, ignore)
+                self.debug("Ignoring </body> in table insertion mode")
+                return True
+
+            # In fragment mode, ignore </body> entirely (no state transition)
+            if self.parser.fragment_context:
+                self.debug("Ignoring </body> in fragment mode")
+                return True
+
+            self.debug("handling </body>, transitioning to AFTER_BODY state")
+            body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
+            # Preserve insertion point if it's under body (for whitespace continuity),
+            # otherwise fall back to body element.
+            target_parent = context.current_parent
+            if target_parent and body:
+                # Check if current_parent is a descendant of body
+                if not target_parent.find_ancestor(lambda n: n is body):
+                    target_parent = body
+            else:
+                target_parent = body if body else self.parser.html_node
+            context.transition_to_state(DocumentState.AFTER_BODY, target_parent)
+            return True
+
+        # Handle </html>
         self.debug(f"handling </html>, current state: {context.document_state}")
 
         # Ignore </html> entirely while any table-related insertion mode is active. The HTML Standard
@@ -1187,8 +1219,9 @@ class TextHandler(TagHandler):
             DocumentState.AFTER_BODY,
             DocumentState.AFTER_HTML,
         ):
-            # If foreign root (math/svg) will follow, we want its preceding character data coerced into body.
-            # For simplicity, always append AFTER_BODY character data straight into body (not preserving current_parent)
+            # Spec: process whitespace as in IN_BODY (use current insertion point).
+            # If current_parent is under body, continue inserting there for text continuity.
+            # Otherwise, insert into body.
             body = get_body(self.parser.root) or ensure_body(
                 self.parser.root,
                 context.document_state,
@@ -1196,15 +1229,24 @@ class TextHandler(TagHandler):
             )
             if not body:
                 return True
-            # Suppress leading text that will be duplicated by later reconstruction of foreign subtree text (<mi>foo)</mi>)
-            # Heuristic: if text consists only of concatenated identifiers (letters) without whitespace and next token is '<math>', skip.
-            # We cannot peek next token easily here; so only suppress if text is empty/whitespace.
             if not text:
                 return True
+
+            # Check if current_parent is under body by checking open elements stack.
+            # If current_parent is in the stack (still open under body), use it for continuity.
+            # Otherwise, fall back to body.
+            target = context.current_parent
+            if target and body:
+                if not context.open_elements.contains(target):
+                    target = body
+            else:
+                target = body
+
+            # Insert at target location
             prev_parent = context.current_parent
-            context.move_to_element(body)
+            context.move_to_element(target)
             self._append_text(text, context)
-            context.move_to_element(prev_parent if prev_parent else body)
+            context.move_to_element(prev_parent if prev_parent else target)
             return True
 
         # RAWTEXT handled earlier by RawtextTextHandler
@@ -5732,62 +5774,20 @@ class FormTagHandler(TagHandler):
             body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
             context.transition_to_state( DocumentState.IN_BODY, body)
 
-        # Spec: if a form element is already open (and not in template), ignore additional <form> start tags.
+        # Spec: single form constraint - form element pointer determines if new <form> is allowed.
+        # The pointer is the source of truth; if cleared (None), new forms are permitted even if
+        # form elements remain structurally open (e.g., after ignored </form> in table mode).
         if tag_name == "form":
+            # Clean up stale pointer if form was removed from tree
             if context.form_element is not None and context.form_element.parent is None:
                 context.form_element = None
-            # HTML Standard maintains a form element pointer; here we derive the effect structurally.
-            # Suppress a new <form> if an existing one is open outside templates, except in a specific
-            # malformed recovery: a premature </form> was just ignored inside table insertion modes and
-            # the current insertion point is the table element whose ancestral form remains open.
-            in_table_mode = context.document_state in (
-                DocumentState.IN_TABLE,
-                DocumentState.IN_TABLE_BODY,
-                DocumentState.IN_ROW,
-                DocumentState.IN_CELL,
-                DocumentState.IN_CAPTION,
-            )
-            existing_form = context.form_element
-            if existing_form is None:
-                for el in reversed(context.open_elements._stack):
-                    if el.tag_name == "template":
-                        break
-                    if el.tag_name == "form":
-                        existing_form = el
-                        break
-                    if el.tag_name in ("html", "#document"):
-                        break
-            if existing_form:
-                allow_nested_recovery = False
-                if (
-                    in_table_mode
-                    and context.current_parent.tag_name == "table"
-                    and (
-                        self.parser._prev_token is not None
-                        and self.parser._prev_token.type == "EndTag"
-                        and self.parser._prev_token.tag_name == "form"
-                        and self.parser._prev_token.ignored_end_tag  # deterministic attribute on tokens
-                    )
-                ):
-                    # Confirm that the existing form is an ancestor of the current table (structural recovery condition)
-                    cur = context.current_parent.parent
-                    while (
-                        cur
-                        and cur is not existing_form
-                        and cur.tag_name not in ("html", "#document")
-                    ):
-                        cur = cur.parent
-                    if cur is existing_form:
-                        allow_nested_recovery = True
-                if allow_nested_recovery:
-                    self.debug(
-                        "Allowing nested <form> after ignored premature </form> inside table (structural recovery)"
-                    )
-                else:
-                    self.debug(
-                        "Ignoring <form>; open form exists (single form constraint)"
-                    )
-                    return True
+
+            # Check form_element pointer - this is the spec's single source of truth
+            if context.form_element is not None:
+                self.debug(
+                    "Ignoring <form>; open form exists (single form constraint)"
+                )
+                return True
 
         # Create and append the new node via unified insertion
         mode = "void" if tag_name == "input" else "normal"
@@ -5846,7 +5846,9 @@ class FormTagHandler(TagHandler):
                 self.debug(
                     "Ignoring </form> inside table insertion mode (form remains open)"
                 )
-                token.ignored_end_tag = True
+                # Clear form pointer so subsequent <form> in table can be accepted (spec recovery)
+                if context.form_element is form_el:
+                    context.form_element = None
                 token.ignored_end_tag = True
                 return True
         # General malformed case: if the form element is not the current element, ignore (premature end)
@@ -6728,9 +6730,7 @@ class VoidTagHandler(SelectAwareHandler):
                 br.parent = parent
                 return True
 
-        # Otherwise defer to the parser's normal start-tag handling so foreign
-        # content breakout logic mirrors <br> start tokens.
-        synth = HTMLToken("StartTag", tag_name="br", attributes={})
+        # Otherwise just create a <br> element directly
         if context.current_parent.tag_name.startswith(("svg ", "math ")):
             ancestor = context.current_parent.parent
             while (
@@ -6747,7 +6747,10 @@ class VoidTagHandler(SelectAwareHandler):
                 ancestor = ancestor.parent
             if ancestor is not None:
                 context.move_to_element(ancestor)
-        self.parser._handle_start_tag(synth, context)
+
+        # Create <br> element directly (void element, no children)
+        br_token = HTMLToken("StartTag", tag_name="br", attributes={})
+        self.parser.insert_element(br_token, context, mode="void", enter=False)
         return True
 
 
@@ -8680,42 +8683,6 @@ class HeadTagHandler(TagHandler):
                     f"Current parent's children: {[c.tag_name for c in context.current_parent.children]}"
                 )
 
-        # Demotion heuristic (spec-aligned recovery w.r.t. project expectations): if a metadata element
-        # (meta/title) immediately follows a stray </body> end tag before any actual <body> element has
-        # been started, tests expect it to appear inside a synthesized body rather than re-populating
-        # <head>. We detect this via the parser's previous token pointer instead of adding a persistent
-        # flag (avoid extra parse state). This only triggers when no <body> element exists yet so later
-        # legitimate metadata (after a real body) still follows standard AFTER_BODY handling.
-        if (
-            tag_name in ("meta", "title")
-            and self.parser._prev_token is not None
-            and self.parser._prev_token.type == "EndTag"
-            and self.parser._prev_token.tag_name == "body"
-            and not get_body(self.parser.root)
-        ):
-            body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
-            if body:
-                self.debug(
-                    f"<#{tag_name}> immediately after stray </body>: placing into synthesized body"
-                )
-                new_node = self.parser.insert_element(
-                    token,
-                    context,
-                    mode="normal",
-                    enter=tag_name not in VOID_ELEMENTS,
-                    parent=body,
-                    tag_name_override=tag_name,
-                    push_override=False,
-                )
-                if context.document_state != DocumentState.IN_BODY:
-                    context.transition_to_state( DocumentState.IN_BODY, body)
-                if tag_name == "title":
-                    # Switch to RAWTEXT so following character tokens become title text children (not siblings)
-                    context.content_state = ContentState.RAWTEXT
-                    # Ensure we remain inside the title element for its text; open_elements push already done.
-                    context.move_to_element(new_node)
-                return True
-
         # Special handling for template elements
         if tag_name == "template":
             return self._handle_template_start(token, context)
@@ -8915,22 +8882,9 @@ class HeadTagHandler(TagHandler):
 
         # Add template to the appropriate parent
         if context.document_state == DocumentState.IN_BODY:
-            # If we're in body after seeing real content
-            if context.current_parent.tag_name == "html" and not self._has_body_content(
-                context.current_parent
-            ):
-                # Template appearing before body content should go to head
-                head = self.parser._ensure_head_node()
-                if head:
-                    head.append_child(template_node)  # already created
-                    self.debug("Added template to head (no body content yet)")
-                else:
-                    context.current_parent.append_child(template_node)
-                    self.debug("Added template to current parent (head not available)")
-            else:
-                # Template appearing after body content should stay in body
-                context.current_parent.append_child(template_node)
-                self.debug("Added template to body")
+            # Template appearing in body context stays in body
+            context.current_parent.append_child(template_node)
+            self.debug("Added template to body")
         elif context.document_state == DocumentState.INITIAL:
             # Template at document start should go to head
             head = ensure_head(self.parser)
@@ -10060,10 +10014,13 @@ class TableFosterHandler(TagHandler):
     """Foster parents unclaimed elements in table context per HTML5 algorithm."""
 
     def should_handle_start(self, tag_name, context):
-        token = self.parser._last_token
-        if not token or token.type != "StartTag":
-            return False
-        return table_modes.should_foster_parent(tag_name, token.attributes, context, self.parser)
+        # Check if we're in table context where foster parenting might apply
+        # Actual foster-parenting decision happens in handle_start with full token
+        return context.document_state in (
+            DocumentState.IN_TABLE,
+            DocumentState.IN_TABLE_BODY,
+            DocumentState.IN_ROW,
+        )
 
     def handle_start(self, token, context):
         """Foster parent residual start tags per table algorithm.

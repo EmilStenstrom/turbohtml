@@ -103,19 +103,12 @@ class TurboHTML:
         if not hasattr(self, 'foreign_handler'):
             raise RuntimeError("ForeignTagHandler not found in tag_handlers")
 
-        # Track a tiny token history window for context-sensitive decisions without
-        # proliferating boolean state. Only previous + current are retained.
-        self._prev_token = None  # The token processed in the prior loop iteration
-        self._last_token = (
-            None  # The token currently being processed (internal convenience)
-        )
-
         # Sequential token counter for deduplication guards (replaces tokenizer position)
         self._token_counter = 0
 
         # Parse immediately upon construction (html string only used during parsing)
         self._parse(html)
-        
+
         # Post-parse finalization
         for handler in self.tag_handlers:
             handler.finalize(self)
@@ -177,19 +170,19 @@ class TurboHTML:
 
         treat_as_void can force void behavior under normal/transient modes. All invariants
         mirror HTML tree construction: no scoped side effects hidden here.
-        
+
         auto_foster: When True (default) and parent=None, automatically applies foster
         parenting if current_parent is in table context. Set to False to bypass.
         """
         if mode not in ("normal", "transient", "void"):
             raise ValueError(f"insert_element: unknown mode '{mode}'")
-        
+
         # Foster parenting: When inserting into default parent (parent=None) and in table context,
         # spec requires insertion before the table rather than inside it (unless in cell/caption).
         target_parent = parent or context.current_parent
         target_before = before
         tag_name = tag_name_override or token.tag_name
-        
+
         if auto_foster and parent is None and before is None:
             from turbohtml.foster import foster_parent, needs_foster_parenting
             if needs_foster_parenting(context.current_parent):
@@ -203,7 +196,7 @@ class TurboHTML:
                     target_parent, target_before = foster_parent(
                         context.current_parent, context.open_elements, self.root
                     )
-        
+
         # Guard: transient mode only allowed inside template content subtrees (content under a template)
         if mode == "transient":
             cur = context.current_parent
@@ -283,17 +276,17 @@ class TurboHTML:
 
         """
         from .constants import NUMERIC_ENTITY_INVALID_SENTINEL
-        
+
         # Entity finalization: convert sentinel and strip invalid U+FFFD inline during text insertion.
         had_sentinel = NUMERIC_ENTITY_INVALID_SENTINEL in text
         if had_sentinel:
             text = text.replace(NUMERIC_ENTITY_INVALID_SENTINEL, "\ufffd")
-        
+
         # Strip U+FFFD from invalid codepoints (not from numeric entities) based on context
         if "\ufffd" in text and not had_sentinel:
             target_parent = parent or context.current_parent
             preserve = False
-            
+
             # Always preserve in script/style/plaintext
             if target_parent.tag_name in ("script", "style", "plaintext"):
                 preserve = True
@@ -302,15 +295,15 @@ class TurboHTML:
                     if elem.tag_name in ("script", "style", "plaintext"):
                         preserve = True
                         break
-            
+
             # Preserve in SVG content (but NOT in HTML integration points)
             if not preserve and target_parent.tag_name.startswith("svg "):
                 if target_parent.tag_name not in ("svg foreignObject", "svg desc", "svg title"):
                     preserve = True
-            
+
             if not preserve:
                 text = text.replace("\ufffd", "")
-        
+
         if text == "":  # Fast path noop
             return None
 
@@ -385,9 +378,6 @@ class TurboHTML:
             # Increment token counter for deduplication tracking
             self._token_counter += 1
 
-            # Maintain previous token pointer for heuristic-free contextual decisions
-            self._prev_token = self._last_token
-            self._last_token = token
             self.debug(f"_parse: {token}, context: {context}", indent=0)
 
             if token.type == "DOCTYPE":
@@ -415,13 +405,13 @@ class TurboHTML:
             self._ensure_html_node()
 
             if token.type == "StartTag":
-                self._handle_start_tag(token, context)
+                self.handle_start_tag(token, context)
 
             elif token.type == "EndTag":
                 # In template fragment context, ignore the context's own end tag
                 if self.fragment_context == "template" and token.tag_name == "template":
                     continue
-                self._handle_end_tag(token, context)
+                self.handle_end_tag(token, context)
 
             elif token.type == "Character":
                 data = token.data
@@ -434,7 +424,7 @@ class TurboHTML:
                             if handler.handle_text(data, context):
                                 break
 
-    def _handle_start_tag(self, token, context):
+    def handle_start_tag(self, token, context):
         """Handle all opening HTML tags."""
         tag_name = token.tag_name
 
@@ -446,11 +436,11 @@ class TurboHTML:
             if handler.should_handle_start(tag_name, context):
                 if handler.handle_start(token, context):
                     return
-        
+
         # Fallback: if no handler claimed this start tag, insert it with default behavior.
         self.insert_element(token, context, mode="normal", enter=not token.is_self_closing)
 
-    def _handle_end_tag(self, token, context):
+    def handle_end_tag(self, token, context):
         """Handle all closing HTML tags (spec-aligned, no auxiliary adoption flags)."""
         tag_name = token.tag_name
 

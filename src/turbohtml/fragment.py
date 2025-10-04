@@ -512,13 +512,13 @@ def handle_start_tag(parser, context, token, fragment_context, spec):
         if tn in {"caption", "colgroup", "tbody", "thead", "tfoot", "tr", "td", "th"}:
             parser.debug(f"Fragment(fallback): suppressing stray table structure <{tn}>")
             return
-    parser._handle_start_tag(token, context)
+    parser.handle_start_tag(token, context)
 
 
 def handle_end_tag(parser, context, token, fragment_context):
     if fragment_context == "template" and token.tag_name == "template":
         return
-    parser._handle_end_tag(token, context)
+    parser.handle_end_tag(token, context)
 
 
 def handle_character(parser, context, token, fragment_context):
@@ -585,8 +585,6 @@ def parse_fragment(parser, html):  # pragma: no cover
         parser.tokenizer._pending_tokens.append(HTMLToken("Character", data=html))
         parser.tokenizer.pos = parser.tokenizer.length
     for token in parser.tokenizer.tokenize():
-        parser._prev_token = parser._last_token
-        parser._last_token = token
         parser.debug(f"_parse_fragment: {token}, context: {context}", indent=0)
         if pre_hooks:
             for hook in pre_hooks:
