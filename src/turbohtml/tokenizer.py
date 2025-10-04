@@ -191,14 +191,14 @@ class HTMLTokenizer:
                 # The next character after the tag name determines if this could be an end tag token.
                 # End tag *candidate* ONLY if the next char is whitespace, '/', or '>' (HTML Standard - script data end tag name state).
                 # IMPORTANT: EOF directly after "</script" (no whitespace) is NOT a candidate and must be treated as literal text
-                # so that the substring "</script" is emitted (tests16: ...</SCRIPT EOF). A trailing space ("</script ") *is* a
-                # candidate; if EOF occurs before the closing '>' that partial tag is dropped (no text emitted) producing the
-                # expected empty script element (tests16: ...</SCRIPT <EOF with expected-named-closing-tag-but-got-eof errors).
+                # so that the substring "</script" is emitted. A trailing space ("</script ") *is* a
+                # candidate; if EOF occurs before the closing '>' that partial tag is dropped (no text emitted) producing an
+                # empty script element.
                 if i < self.length and (self.html[i].isspace() or self.html[i] in "/>"):
                     # Look ahead for a '>' that would terminate this candidate BEFORE another '</script'
                     # starts. If another '</script' appears first, treat the current sequence as literal
                     # text (deferring honoring decision to a later candidate) so we don't conflate multiple
-                    # partial candidates into one large fragment (tests16: multiple '</script ' sequences).
+                    # partial candidates into one large fragment.
                     lower_tail = self.html[i:].lower()
                     next_candidate_rel = lower_tail.find("</script")
                     next_gt_rel = lower_tail.find(">")

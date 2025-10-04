@@ -54,9 +54,8 @@ class ParseContext:
         # outside templates. Additional <form> tags are ignored until pointer is cleared.
         self.form_element = None
 
-        # Frameset-specific flags for trailing comment placement
-        self.saw_html_end_before_noframes = False  # Did </html> occur before first <noframes>?
-        self.saw_html_end_tag = False  # Was </html> end tag explicit (vs. implied)?
+        # Frameset-specific flag: Was </html> end tag explicit (vs. implied)?
+        self.saw_html_end_tag = False
 
         # Body start tag tracking: whether literal <body> start tag appeared (affects comment placement)
         self.saw_body_start_tag = False

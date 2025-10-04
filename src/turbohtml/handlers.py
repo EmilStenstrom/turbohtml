@@ -349,10 +349,7 @@ class DocumentStructureHandler(TagHandler):
             self.debug(
                 "Root <frameset> present - ignoring </html> (stay AFTER_FRAMESET, no body)",
             )
-            # Record ordering if no <noframes> descendant yet: explicit </html> precedes any late <noframes>.
             html = self.parser.html_node
-            if not any(ch.tag_name == "noframes" for ch in html.children):
-                context.saw_html_end_before_noframes = True
             context.saw_html_end_tag = True
             if context.document_state != DocumentState.AFTER_FRAMESET:
                 context.transition_to_state(
@@ -2117,7 +2114,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             return True
 
         if tag_name in ("select", "datalist"):
-            # If direct child of table before any row group/caption, foster-parent select BEFORE table (tests18:28/29 expectation)
+            # If direct child of table before any row group/caption, foster-parent select BEFORE table
             if context.current_parent.tag_name == "table":
                 table = context.current_parent
                 # Check for existing row/caption descendants; only foster if none
@@ -2279,8 +2276,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             # script/style: allow RawtextTagHandler to handle (return False)
             return False
 
-        # Handle <hr> inside <select>: per webkit02.dat tests, <hr> should be inserted as a void element
-        # inside select (not ignored). This is a recovery behavior expected by the test suite.
+        # Handle <hr> inside <select>: insert as void element inside select (not ignored)
         if context.current_parent.is_inside_tag("select") and tag_name == "hr":
             self.debug("Emitting <hr> inside select (void element)")
             # If currently inside option/optgroup, close them implicitly by moving insertion point to ancestor select
@@ -2296,9 +2292,8 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             return True
 
         if context.current_parent.is_inside_tag("select") and tag_name in TABLE_ELEMENTS:
-            # Regression-safe refinement:
-            # * Do NOT auto-pop select for every table-related tag (earlier change produced unintended
-            #   table structures inside foreignObject or built tbody/tr under select - tests17 failures).
+            # Do NOT auto-pop select for every table-related tag (can produce unintended
+            #   table structures inside foreignObject or tbody/tr under select).
             # * When in a table insertion mode already (e.g. select nested inside an open table cell),
             #   allow foster-parenting logic below to operate.
             # * When inside an SVG foreignObject integration point, emit <table> outside the select subtree
@@ -3056,7 +3051,7 @@ class ParagraphTagHandler(TagHandler):
                             push_override=False,
                             parent=context.current_parent,
                         )
-                        self.debug("Synthesized empty <p> inside foreign subtree; preserving outer paragraph (tests19:82)")
+                        self.debug("Synthesized empty <p> inside foreign subtree; preserving outer paragraph")
                         return True
 
         p_ancestor = context.current_parent.find_ancestor("p")
@@ -5345,7 +5340,7 @@ class RawtextTagHandler(SelectAwareHandler):
                     "Inside <select>: skipping table relocation for rawtext element",
                 )
             else:
-                # Preceding open <select> sibling before <table> case (tests18:28/29):
+                # Preceding open <select> sibling before <table> case:
                 # If a <select> was foster-parented immediately before the <table> and remains open, subsequent rawtext
                 # tokens still belong inside that <select>. If current_parent is the table and its immediate previous
                 # sibling is an open <select>, move insertion into the select and bypass table relocation.
@@ -7331,9 +7326,8 @@ class HeadTagHandler(TagHandler):
                 # Only style/script should be treated as early rawtext inside table. Title/textarea should be fostered.
                 if tag_name in ("style", "script"):
                     # Special case: if current_parent is a foster-parented <select> immediately before the table,
-                    # keep the rawtext element INSIDE that <select> (tests18:28/29). This mirrors normal insertion
-                    # point behavior: select is still open and current_parent points at it. Previous logic rerouted
-                    # to the table, which misplaced <script>.
+                    # keep the rawtext element INSIDE that <select>. This mirrors normal insertion
+                    # point behavior: select is still open and current_parent points at it.
                     if context.current_parent.tag_name == "select" or context.current_parent.tag_name in ("tbody", "thead", "tfoot"):
                         container = context.current_parent
                     else:
@@ -7787,12 +7781,6 @@ class FramesetTagHandler(TagHandler):
             self.debug("Creating noframes element")
             # Late <noframes> after a root frameset
             # siblings (frameset comment ordering requirement).
-            # Determine if we need to reorder root-level comments that appeared after explicit </html>
-            # but before this late <noframes>. We only perform this when html end was seen earlier before
-            # any noframes (context.saw_html_end_before_noframes True) and the document is now in
-            # AFTER_FRAMESET (frameset document) OR a normal document with root-level trailing comments.
-            # First <noframes>: if ordering not yet set, it must be False (</html> either absent or after this element)
-            # We do not flip saw_html_end_before_noframes here; absence of prior True value already encodes order.
             # Place <noframes> inside <head> when we are still before or in head (non-frameset doc) just like
             # other head rawtext containers in these tests; once a frameset root is established the element
             # becomes a descendant of frameset (handled above). This matches html5lib expectations where
@@ -8176,9 +8164,8 @@ class PlaintextHandler(SelectAwareHandler):
             context.transition_to_state( DocumentState.IN_BODY, body)
 
         # Close an open paragraph; <plaintext> is a block. BUT if the paragraph is inside a <button>
-        # we want <plaintext> to become a descendant of the button (test regression tests20:34 expects
-        # <plaintext> nested under <button>). So we only close the paragraph; we do NOT move insertion
-        # point further up past a button ancestor.
+        # we want <plaintext> to become a descendant of the button. So we only close the paragraph;
+        # we do NOT move insertion point further up past a button ancestor.
         if context.current_parent.tag_name == "p":
             # Special-case: if the <p> directly contains a <button> and <plaintext> follows that button
             # start tag immediately, do NOT close the paragraph yet; allow <plaintext> to be created
@@ -8194,7 +8181,7 @@ class PlaintextHandler(SelectAwareHandler):
             p_anc = context.current_parent.find_ancestor("p")
             if p_anc:
                 # If we're currently inside a <button> that is itself inside the <p>, we KEEP the paragraph
-                # open so that plaintext can become a descendant of the button (tests20:34 expectation).
+                # open so that plaintext can become a descendant of the button.
                 if not (
                     context.current_parent.tag_name == "button"
                     and context.current_parent.parent is p_anc
