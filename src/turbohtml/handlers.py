@@ -521,54 +521,6 @@ class FramesetPreprocessHandler(TagHandler):
 
 
 
-class FormattingReconstructionPreludeHandler(TagHandler):
-    """Performs pre-start-tag formatting element reconstruction or defers it.
-
-    Extracted from parser._handle_start_tag to keep the parser lean. Mirrors the HTML5 spec
-    "reconstruct the active formatting elements" algorithm invocation conditions while avoiding
-    speculative reconstruction in table insertion modes where it would incorrectly nest formatting
-    elements under table structures.
-
-    Semantics preserved:
-      * Skip entirely inside template content (handled separately)
-      * In table insertion modes (IN_TABLE / IN_TABLE_BODY / IN_ROW) only reconstruct when the
-        current insertion point is inside a cell/caption; otherwise defer until appropriate
-      * Outside those table modes, reconstruct immediately for non-blockish tags; for blockish tags
-        compute whether a deferred reconstruction is required (missing non-nobr active formatting
-        entry still needing reconstruction) and set transient context._deferred_block_reconstruct
-        so the parser's default block insertion path can perform reconstruction inside the new block.
-    """
-
-    # Tags treated as block boundaries for deferred reconstruction logic
-    _BLOCKISH = {
-        "div","section","article","p","ul","ol","li","table","tr","td","th","body","html",
-        "h1","h2","h3","h4","h5","h6"
-    }
-
-    def early_start_preprocess(self, token, context):
-        # Deferred anchor reconstruction after address segmentation: now handled post element insertion
-        # in DefaultElementInsertionHandler so the new anchor becomes a child of <address> rather than a sibling.
-        if in_template_content(context):
-            return False
-        tag_name = token.tag_name
-        if tag_name in HEAD_ELEMENTS and tag_name not in {"style", "script", "title"}:
-            return False
-        in_table_modes = context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW)
-        in_cell_or_caption = bool(
-            context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
-        )
-        if in_table_modes and not in_cell_or_caption:
-            return False
-        # For non-blockish tags reconstruct immediately; blockish handled post element creation in parser
-        if tag_name not in self._BLOCKISH:
-            # Skip reconstruction if anchor suppression active
-            if context.suppress_anchor_reconstruct_until != 'address':
-                reconstruct_if_needed(self.parser, context)
-        return False
-
-
-
-
 class DefaultElementInsertionHandler(TagHandler):
     """Final catch-all handler: inserts any start tag not claimed earlier.
 
@@ -2218,7 +2170,44 @@ class TextHandler(TagHandler):
 
 
 class FormattingElementHandler(TemplateAwareHandler, SelectAwareHandler):
-    """Handles formatting elements like <b>, <i>, etc."""
+    """Handles formatting elements like <b>, <i>, etc. and their reconstruction."""
+
+    # Tags treated as block boundaries for deferred reconstruction logic
+    _BLOCKISH = {
+        "div","section","article","p","ul","ol","li","table","tr","td","th","body","html",
+        "h1","h2","h3","h4","h5","h6"
+    }
+
+    def early_start_preprocess(self, token, context):
+        """Performs pre-start-tag formatting element reconstruction or defers it.
+
+        Mirrors the HTML5 spec "reconstruct the active formatting elements" algorithm
+        invocation conditions while avoiding speculative reconstruction in table insertion
+        modes where it would incorrectly nest formatting elements under table structures.
+
+        Semantics:
+          * Skip entirely inside template content (handled separately)
+          * In table insertion modes (IN_TABLE / IN_TABLE_BODY / IN_ROW) only reconstruct
+            when the current insertion point is inside a cell/caption; otherwise defer
+          * Outside those table modes, reconstruct immediately for non-blockish tags
+        """
+        if in_template_content(context):
+            return False
+        tag_name = token.tag_name
+        if tag_name in HEAD_ELEMENTS and tag_name not in {"style", "script", "title"}:
+            return False
+        in_table_modes = context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW)
+        in_cell_or_caption = bool(
+            context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
+        )
+        if in_table_modes and not in_cell_or_caption:
+            return False
+        # For non-blockish tags reconstruct immediately; blockish handled post element creation in parser
+        if tag_name not in self._BLOCKISH:
+            # Skip reconstruction if anchor suppression active
+            if context.suppress_anchor_reconstruct_until != 'address':
+                reconstruct_if_needed(self.parser, context)
+        return False
 
     def _insert_formatting_element(
         self,
