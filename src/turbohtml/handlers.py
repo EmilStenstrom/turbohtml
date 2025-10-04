@@ -1355,29 +1355,6 @@ class TextHandler(TagHandler):
                 return True
             return True  # Ignore pure HTML space in INITIAL
 
-        # Narrow misnested inline split heuristic (text-phase) for pattern:
-        #   <b><p><i>... </b> <space>ItalicText
-        # After adoption agency a <b> clone may own <i> but following text with a leading
-        # Leading space after adoption case should appear inside its own <i> sibling (structural mis-nesting outcome)
-        # (misnested list/table edge-case). We only trigger when:
-        #   - Current insertion parent is the immediate parent of a <b> whose last descendant is an <i>
-        #   - Incoming text starts with a single space and contains a non-space character
-        #   - There is no existing adjacent emphasis sibling already capturing text.
-        # This runs BEFORE _append_text so the appended text lands inside the new wrapper.
-
-        # 1. If about to insert leading whitespace while current insertion point is an empty
-        #    formatting element inside a table cell, promote insertion to cell so the space
-        #    becomes a sibling (avoid creating empty formatting element that only contains space).
-        if (
-            context.current_parent.tag_name in FORMATTING_ELEMENTS
-            and not context.current_parent.children
-            and text
-            and text[0].isspace()
-            and context.current_parent.parent
-            and context.current_parent.parent.tag_name in ("td", "th")
-        ):
-            context.move_to_element(context.current_parent.parent)
-
         # Append text directly per spec.
         if self.parser.env_debug and text.strip():
             self.debug(f"[char-insert] parent={context.current_parent.tag_name} text='{text[:20]}'")
@@ -2302,9 +2279,8 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             # script/style: allow RawtextTagHandler to handle (return False)
             return False
 
-        # Spec-adjacent recovery: treat void <hr> start tag inside <select> as present (expected tree
-        # retains it). We insert it rather than ignoring so the tree matches reference output. This reduces earlier
-        # broad 'ignore all other tags in select' heuristic without adding persistent state.
+        # Handle <hr> inside <select>: per webkit02.dat tests, <hr> should be inserted as a void element
+        # inside select (not ignored). This is a recovery behavior expected by the test suite.
         if context.current_parent.is_inside_tag("select") and tag_name == "hr":
             self.debug("Emitting <hr> inside select (void element)")
             # If currently inside option/optgroup, close them implicitly by moving insertion point to ancestor select
@@ -2823,8 +2799,6 @@ class ParagraphTagHandler(TagHandler):
                         continue
                     new_stack.append(el)
                 context.open_elements.replace_stack(new_stack)
-            # Mark recent paragraph closure for adoption heuristic (cleared after next non-formatting token)
-            context.recent_paragraph_close = True
 
         # Check if we're inside a container element
         container_ancestor = context.current_parent.find_ancestor(
@@ -3045,7 +3019,6 @@ class ParagraphTagHandler(TagHandler):
             # In integration points, reconstruct immediately so following text is wrapped
             if in_svg_ip or in_math_ip:
                 reconstruct_active_formatting_elements(self.parser, context)
-            context.recent_paragraph_close = True
             return True
 
         # Foreign-subtree stray </p>: If current insertion point is inside a foreign
@@ -3122,7 +3095,6 @@ class ParagraphTagHandler(TagHandler):
                 context.needs_reconstruction = True
             if in_svg_ip or in_math_ip:
                 reconstruct_active_formatting_elements(self.parser, context)
-            context.recent_paragraph_close = True
             return True
 
         # HTML5 spec: If no p element is in scope, check for special contexts
@@ -6470,10 +6442,7 @@ class ForeignTagHandler(TagHandler):
         ):
             return True
 
-        # Math fragment figure heuristic: in fragment contexts rooted at 'math math' or
-        # 'math annotation-xml' (non HTML-encoded) a solitary <figure> should remain MathML
-        # (<math figure>) per foreign-fragment expectations.
-        return bool(tag_name.lower() == "figure" and context.current_context is None and self.parser.fragment_context and self.parser.fragment_context.startswith("math ") and self.parser.fragment_context not in ("math mi", "math mo", "math mn", "math ms", "math mtext"))
+        return False
 
     def handle_start(
         self, token, context,
