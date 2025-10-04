@@ -29,17 +29,5 @@ target-version = "py38"     # adjust to your lowest supported Python version
 line-length = 119
 
 [tool.ruff.lint]
-select = [
-    # pycodestyle
-    "E",
-    # Pyflakes
-    "F",
-    # pyupgrade
-    "UP",
-    # flake8-bugbear
-    "B",
-    # flake8-simplify
-    "SIM",
-    # isort
-    "I",
-]
+select = ["ALL"]
+ignore = ["ANN", "TD", "D", "EM", "TRY003"]
