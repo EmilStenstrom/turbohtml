@@ -1,44 +1,43 @@
 """TurboHTML parser (type annotations removed)."""
 
-from turbohtml.context import ParseContext, DocumentState
-from turbohtml.handlers import (
-    DoctypeHandler,
-    TemplateHandler,
-    DocumentStructureHandler,
-    PlaintextHandler,
-    FramesetTagHandler,
-    SelectTagHandler,
-    TableTagHandler,
-    UnifiedCommentHandler,
-    ForeignTagHandler,
-    ParagraphTagHandler,
-    AutoClosingTagHandler,
-    MenuitemTagHandler,
-    ListTagHandler,
-    HeadTagHandler,
-    ButtonTagHandler,
-    VoidTagHandler,
-    RawtextTagHandler,
-    MarqueeTagHandler,
-    FormattingTagHandler,
-    ImageTagHandler,
-    TextHandler,
-    FormTagHandler,
-    HeadingTagHandler,
-    RubyTagHandler,
-    TableFosterHandler,
-    GenericEndTagHandler,
-)
-from turbohtml.tokenizer import HTMLTokenizer
 from turbohtml.adoption import AdoptionAgencyAlgorithm
-from turbohtml.fragment import parse_fragment
-from turbohtml.node import Node
 from turbohtml.constants import VOID_ELEMENTS
+from turbohtml.context import DocumentState, ParseContext
+from turbohtml.fragment import parse_fragment
+from turbohtml.handlers import (
+    AutoClosingTagHandler,
+    ButtonTagHandler,
+    DoctypeHandler,
+    DocumentStructureHandler,
+    ForeignTagHandler,
+    FormattingTagHandler,
+    FormTagHandler,
+    FramesetTagHandler,
+    GenericEndTagHandler,
+    HeadingTagHandler,
+    HeadTagHandler,
+    ImageTagHandler,
+    ListTagHandler,
+    MarqueeTagHandler,
+    MenuitemTagHandler,
+    ParagraphTagHandler,
+    PlaintextHandler,
+    RawtextTagHandler,
+    RubyTagHandler,
+    SelectTagHandler,
+    TableFosterHandler,
+    TableTagHandler,
+    TemplateHandler,
+    TextHandler,
+    UnifiedCommentHandler,
+    VoidTagHandler,
+)
+from turbohtml.node import Node
+from turbohtml.tokenizer import HTMLTokenizer
 
 
 class TurboHTML:
-    """
-    Main parser interface.
+    """Main parser interface.
     Instantiation with an HTML string immediately parses into an in‑memory tree
     rooted at `self.root`. Public surface is intentionally small; most spec logic
     lives in handlers and predicate helpers for determinism and testability.
@@ -50,11 +49,11 @@ class TurboHTML:
         debug=False,
         fragment_context=None,
     ):
-        """
-        Args:
-            html: The HTML string to parse
-            debug: Whether to enable debug prints
-            fragment_context: Context element for fragment parsing (e.g., 'td', 'tr')
+        """Args:
+        html: The HTML string to parse
+        debug: Whether to enable debug prints
+        fragment_context: Context element for fragment parsing (e.g., 'td', 'tr')
+
         """
         self.env_debug = debug
         self.fragment_context = fragment_context
@@ -97,10 +96,10 @@ class TurboHTML:
                 self.text_handler = handler
             elif isinstance(handler, ForeignTagHandler):
                 self.foreign_handler = handler
-        
-        if not hasattr(self, 'text_handler'):
+
+        if not hasattr(self, "text_handler"):
             raise RuntimeError("TextHandler not found in tag_handlers")
-        if not hasattr(self, 'foreign_handler'):
+        if not hasattr(self, "foreign_handler"):
             raise RuntimeError("ForeignTagHandler not found in tag_handlers")
 
         # Sequential token counter for deduplication guards (replaces tokenizer position)
@@ -188,13 +187,13 @@ class TurboHTML:
             if needs_foster_parenting(context.current_parent):
                 # Check if we're inside a cell or caption (foster parenting doesn't apply there)
                 in_cell_or_caption = bool(
-                    context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
+                    context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption")),
                 )
                 # Don't foster table-related elements or elements specifically allowed in tables (form)
                 tableish = {"table","tbody","thead","tfoot","tr","td","th","caption","colgroup","col","form"}
                 if not in_cell_or_caption and tag_name not in tableish:
                     target_parent, target_before = foster_parent(
-                        context.current_parent, context.open_elements, self.root
+                        context.current_parent, context.open_elements, self.root,
                     )
 
         # Guard: transient mode only allowed inside template content subtrees (content under a template)
@@ -212,7 +211,7 @@ class TurboHTML:
                 cur = cur.parent
             if not in_template_content and tag_name != "content":
                 raise ValueError(
-                    f"insert_element: transient mode outside template content (tag={tag_name}) not permitted; current_parent={context.current_parent.tag_name}"
+                    f"insert_element: transient mode outside template content (tag={tag_name}) not permitted; current_parent={context.current_parent.tag_name}",
                 )
         attrs = (
             attributes_override if attributes_override is not None else token.attributes
@@ -243,7 +242,7 @@ class TurboHTML:
             context.enter_element(new_node)
 
         # Activate RAWTEXT mode if token requires it (deferred activation for elements like textarea)
-        if hasattr(token, 'needs_rawtext') and token.needs_rawtext and self.tokenizer:
+        if hasattr(token, "needs_rawtext") and token.needs_rawtext and self.tokenizer:
             from turbohtml.context import ContentState
             context.content_state = ContentState.RAWTEXT
             self.tokenizer.start_rawtext(tag_name)
@@ -255,7 +254,7 @@ class TurboHTML:
             self.tokenizer.start_plaintext()
 
         # Exit RAWTEXT mode when inserting foreign content (math/svg elements)
-        if tag_name.startswith(('math ', 'svg ')) and self.tokenizer and self.tokenizer.state == "RAWTEXT":
+        if tag_name.startswith(("math ", "svg ")) and self.tokenizer and self.tokenizer.state == "RAWTEXT":
             self.tokenizer.state = "DATA"
             self.tokenizer.rawtext_tag = None
 
@@ -309,9 +308,9 @@ class TurboHTML:
 
         target_parent = parent or context.current_parent
         # Template content duplication suppression
-        if target_parent.tag_name == 'content' and target_parent.children:
+        if target_parent.tag_name == "content" and target_parent.children:
             last = target_parent.children[-1]
-            if last.tag_name == '#text' and last.text_content == text:
+            if last.tag_name == "#text" and last.text_content == text:
                 return last
         if target_parent is None:
             return None
@@ -419,7 +418,7 @@ class TurboHTML:
                     for handler in self.tag_handlers:
                         if handler.should_handle_text(data, context):
                             self.debug(
-                                f"{handler.__class__.__name__}: handling {token}, context={context}"
+                                f"{handler.__class__.__name__}: handling {token}, context={context}",
                             )
                             if handler.handle_text(data, context):
                                 break

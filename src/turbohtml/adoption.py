@@ -1,19 +1,22 @@
 """Adoption Agency Algorithm (HTML5 tree construction: formatting element adoption).
 
 Implementation focuses on spec steps; comments describe intent (why) rather than history.
-All static type annotations removed (runtime only)."""
+All static type annotations removed (runtime only).
+"""
 
-from .node import Node
 from turbohtml.constants import (
     FORMATTING_ELEMENTS,
     SPECIAL_CATEGORY_ELEMENTS,
 )
 from turbohtml.foster import foster_parent, needs_foster_parenting
+from turbohtml.node import Node
+
 
 class FormattingElementEntry:
     """Entry in the active formatting elements stack.
 
-    Marker entries have element == None (scope boundaries for tables/templates)."""
+    Marker entries have element == None (scope boundaries for tables/templates).
+    """
 
     __slots__ = ("element", "token")
 
@@ -94,10 +97,8 @@ class ActiveFormattingElements:
         return len(self._stack)
 
     def insert_at_index(self, index, element, token):
-        if index < 0:
-            index = 0
-        if index > len(self._stack):
-            index = len(self._stack)
+        index = max(index, 0)
+        index = min(index, len(self._stack))
         entry = FormattingElementEntry(element, token)
         self._stack.insert(index, entry)
         if len(self._stack) > self._max_size:
@@ -279,7 +280,7 @@ class AdoptionAgencyAlgorithm:
             furthest_block = self._find_furthest_block(formatting_element, context)
             if furthest_block is None:
                 self.parser.debug(
-                    f"[adoption] simple-case for </{tag_name}> stack={[el.tag_name for el in context.open_elements._stack]}"
+                    f"[adoption] simple-case for </{tag_name}> stack={[el.tag_name for el in context.open_elements._stack]}",
                 )
                 self._run_simple_case(formatting_entry, formatting_element, context)
                 return True
@@ -449,8 +450,7 @@ class AdoptionAgencyAlgorithm:
                     break
         if body_node:
             return body_node
-        else:
-            return self.parser.root
+        return self.parser.root
 
     def reconstruct_active_formatting_elements(self, context):
         """Reconstruct active formatting elements per spec."""
@@ -620,10 +620,8 @@ class AdoptionAgencyAlgorithm:
 
         formatting_token = formatting_entry.token
         context.active_formatting_elements.remove_entry(formatting_entry)
-        if bookmark_index < 0:
-            bookmark_index = 0
-        if bookmark_index > len(context.active_formatting_elements):
-            bookmark_index = len(context.active_formatting_elements)
+        bookmark_index = max(bookmark_index, 0)
+        bookmark_index = min(bookmark_index, len(context.active_formatting_elements))
         context.active_formatting_elements.insert_at_index(bookmark_index, fe_clone, formatting_token)
 
         if context.open_elements.contains(formatting_element):

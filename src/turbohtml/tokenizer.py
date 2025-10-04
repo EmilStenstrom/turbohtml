@@ -1,11 +1,12 @@
+import html  # Add to top of file
 import re
-from .constants import (
-    RAWTEXT_ELEMENTS,
+
+from turbohtml.constants import (
     HTML5_NUMERIC_REPLACEMENTS,
     NUMERIC_ENTITY_INVALID_SENTINEL,
+    RAWTEXT_ELEMENTS,
     VOID_ELEMENTS,
 )
-import html  # Add to top of file
 
 # NUMERIC_ENTITY_INVALID_SENTINEL imported from constants (see constants.NUMERIC_ENTITY_INVALID_SENTINEL)
 
@@ -19,7 +20,7 @@ TAG_OPEN_RE = re.compile(r"<(!?)(/)?([^\s/>]+)([^>]*)>")
 # - Lookahead now also permits a trailing '/' so constructs like id='foo'/ are tokenized as id="foo" with a
 #   separate trailing slash considered by self-closing detection logic instead of being folded into the value.
 ATTR_RE = re.compile(
-    r'([^\s=/>]+)(?:\s*=\s*"([^"]*)"|\s*=\s*\'([^\']*)\'|\s*=\s*([^>\s]+)|)(?=\s|$|/|>)'
+    r'([^\s=/>]+)(?:\s*=\s*"([^"]*)"|\s*=\s*\'([^\']*)\'|\s*=\s*([^>\s]+)|)(?=\s|$|/|>)',
 )
 
 
@@ -62,8 +63,7 @@ class HTMLToken:
 
 
 class HTMLTokenizer:
-    """
-    HTML5 tokenizer that generates tokens from an HTML string.
+    """HTML5 tokenizer that generates tokens from an HTML string.
     Maintains compatibility with existing parser logic while providing
     a cleaner separation of concerns.
     """
@@ -121,7 +121,7 @@ class HTMLTokenizer:
                 continue
 
             self.debug(
-                f"tokenize: pos={self.pos}, state={self.state}, char={self.html[self.pos]!r}"
+                f"tokenize: pos={self.pos}, state={self.state}, char={self.html[self.pos]!r}",
             )
             if self.state == "DATA":
                 token = self._try_tag() or self._try_text()
@@ -160,7 +160,7 @@ class HTMLTokenizer:
     def _tokenize_rawtext(self):
         """Tokenize content in RAWTEXT state"""
         self.debug(
-            f"_tokenize_rawtext: pos={self.pos}, next_chars={self.html[self.pos : self.pos + 10]!r}"
+            f"_tokenize_rawtext: pos={self.pos}, next_chars={self.html[self.pos : self.pos + 10]!r}",
         )
 
         # Special handling for script elements
@@ -216,7 +216,7 @@ class HTMLTokenizer:
                             if (
                                 not self.script_suppressed_end_once
                                 and self._in_escaped_script_comment(
-                                    self.script_content + text_chunk
+                                    self.script_content + text_chunk,
                                 )
                             ):
                                 self.script_suppressed_end_once = True
@@ -259,16 +259,16 @@ class HTMLTokenizer:
                             rest = self.html[end_tag_close + 1 :].lower()
                             if "</script" in rest:
                                 self.debug(
-                                    "  escaped pattern: deferring current </script> (another later)"
+                                    "  escaped pattern: deferring current </script> (another later)",
                                 )
                                 honor = False
                             else:
                                 self.debug(
-                                    "  escaped pattern: last candidate </script> will terminate script"
+                                    "  escaped pattern: last candidate </script> will terminate script",
                                 )
                         if honor:
                             self.debug(
-                                "  honoring script end tag (attributes ignored if any)"
+                                "  honoring script end tag (attributes ignored if any)",
                             )
                             self.pos = end_tag_close + 1
                             self.state = "DATA"
@@ -278,7 +278,7 @@ class HTMLTokenizer:
                             self.script_suppressed_end_once = False
                             if text_before:
                                 text_before = self._replace_invalid_characters(
-                                    text_before
+                                    text_before,
                                 )
                                 return HTMLToken("Character", data=text_before)
                             return HTMLToken("EndTag", tag_name="script")
@@ -287,12 +287,12 @@ class HTMLTokenizer:
                         text_before = self.html[self.pos : tag_start - 2]
                         full_content = self.script_content + text_before
                         honor_if_complete = self._should_honor_script_end_tag(
-                            full_content
+                            full_content,
                         )
                         if honor_if_complete:
                             # Treat as implicit end (close script) without including partial tag text.
                             self.debug(
-                                "  implicit script end on partial </script (no '>') honoring closure"
+                                "  implicit script end on partial </script (no '>') honoring closure",
                             )
                             # Emit preceding text (if any) then end tag.
                             self.pos = self.length
@@ -303,11 +303,11 @@ class HTMLTokenizer:
                             self.script_suppressed_end_once = False
                             if text_before:
                                 text_before = self._replace_invalid_characters(
-                                    text_before
+                                    text_before,
                                 )
                                 # Queue end tag after emitting text
                                 self._pending_tokens.append(
-                                    HTMLToken("EndTag", tag_name="script")
+                                    HTMLToken("EndTag", tag_name="script"),
                                 )
                                 return HTMLToken("Character", data=text_before)
                             return HTMLToken("EndTag", tag_name="script")
@@ -345,8 +345,7 @@ class HTMLTokenizer:
         return None
 
     def _should_honor_script_end_tag(self, script_content):
-        """
-        Determine if a </script> tag should end the script based on HTML5 script parsing rules.
+        """Determine if a </script> tag should end the script based on HTML5 script parsing rules.
 
         HTML5 spec section 13.2.5.3: Script data state and escaped states
         """
@@ -373,11 +372,11 @@ class HTMLTokenizer:
             if not self.script_suppressed_end_once:
                 self.script_suppressed_end_once = True
                 self.debug(
-                    "  suppressing FIRST end tag inside <!-- <script pattern (no --> yet)"
+                    "  suppressing FIRST end tag inside <!-- <script pattern (no --> yet)",
                 )
                 return False
             self.debug(
-                "  already suppressed once in <!-- <script pattern; honoring end tag"
+                "  already suppressed once in <!-- <script pattern; honoring end tag",
             )
 
         # Otherwise honor
@@ -434,7 +433,7 @@ class HTMLTokenizer:
                 i += 1
 
             self.debug(
-                f"  potential_tag={potential_tag!r}, rawtext_tag={self.rawtext_tag!r}"
+                f"  potential_tag={potential_tag!r}, rawtext_tag={self.rawtext_tag!r}",
             )
 
             # Skip whitespace
@@ -474,7 +473,7 @@ class HTMLTokenizer:
                         text_before = self._decode_entities(text_before)
                     # Queue the end tag so both tokens are emitted
                     self._pending_tokens.append(
-                        HTMLToken("EndTag", tag_name=potential_tag)
+                        HTMLToken("EndTag", tag_name=potential_tag),
                     )
                     return HTMLToken("Character", data=text_before)
                 # No preceding text: emit end tag directly
@@ -508,7 +507,7 @@ class HTMLTokenizer:
             return None
 
         self.debug(
-            f"_try_tag: pos={self.pos}, state={self.state}, next_chars={self.html[self.pos : self.pos + 10]!r}"
+            f"_try_tag: pos={self.pos}, state={self.state}, next_chars={self.html[self.pos : self.pos + 10]!r}",
         )
 
         # HTML5 spec: In the data state, after a '<' we only start tag / markup parsing if the next
@@ -635,36 +634,35 @@ class HTMLTokenizer:
                 # Return appropriate token
                 if is_end_tag:
                     return HTMLToken("EndTag", tag_name=tag_name)
-                else:
-                    # Suppress element emission for unterminated start tag at EOF with no attribute content (e.g. <di EOF)
-                    if unclosed_to_eof and not attributes.strip():
-                        self.debug(
-                            "Discarding unterminated start tag at EOF (no element, no text)"
-                        )
-                        return HTMLToken("Character", data="")
-                    if unclosed_to_eof and attributes.strip():
-                        text_repr = self._serialize_malformed_attribute_chunk(
-                            attributes
-                        )
-                        if text_repr:
-                            self._pending_tokens.append(
-                                HTMLToken("Character", data=text_repr)
-                            )
-                        return HTMLToken(
-                            "StartTag",
-                            tag_name=tag_name,
-                            attributes={},
-                            is_self_closing=False,
-                        )
-                    is_self_closing, attrs = (
-                        self._parse_attributes_and_check_self_closing(attributes)
+                # Suppress element emission for unterminated start tag at EOF with no attribute content (e.g. <di EOF)
+                if unclosed_to_eof and not attributes.strip():
+                    self.debug(
+                        "Discarding unterminated start tag at EOF (no element, no text)",
                     )
+                    return HTMLToken("Character", data="")
+                if unclosed_to_eof and attributes.strip():
+                    text_repr = self._serialize_malformed_attribute_chunk(
+                        attributes,
+                    )
+                    if text_repr:
+                        self._pending_tokens.append(
+                            HTMLToken("Character", data=text_repr),
+                        )
                     return HTMLToken(
                         "StartTag",
                         tag_name=tag_name,
-                        attributes=attrs,
-                        is_self_closing=is_self_closing,
+                        attributes={},
+                        is_self_closing=False,
                     )
+                is_self_closing, attrs = (
+                    self._parse_attributes_and_check_self_closing(attributes)
+                )
+                return HTMLToken(
+                    "StartTag",
+                    tag_name=tag_name,
+                    attributes=attrs,
+                    is_self_closing=is_self_closing,
+                )
 
         # Handle normal closed tags
         if match:
@@ -675,7 +673,7 @@ class HTMLTokenizer:
             # start tag is suppressed (EOF-in-attribute-value) so no element is emitted.
             if attributes:
                 dbl = attributes.count('"') - attributes.count(
-                    '\\"'
+                    '\\"',
                 )  # naive count; escape sequences minimal in tests
                 sgl = attributes.count("'") - attributes.count("\\'")
                 unbalanced = (dbl % 2 != 0) or (sgl % 2 != 0)
@@ -698,14 +696,13 @@ class HTMLTokenizer:
                         if quote:
                             if ch == quote:
                                 quote = None
-                        else:
-                            if ch in ('"', "'"):
-                                quote = ch
-                            elif ch == ">":
-                                break
+                        elif ch in ('"', "'"):
+                            quote = ch
+                        elif ch == ">":
+                            break
                         scan += 1
                     full_attr_sub = attributes + "".join(
-                        extra[:-1] if extra and extra[-1] == ">" else extra
+                        extra[:-1] if extra and extra[-1] == ">" else extra,
                     )
                     # Rebuild a synthetic match context using extended substring
                     self.pos = scan + 1 if scan < self.length else self.length
@@ -713,9 +710,7 @@ class HTMLTokenizer:
                     # Suppress emission if EOF reached while still inside quoted attribute value OR if we saw
                     # an unbalanced quote sequence that consumed other tag open markers (inner '<') without
                     # ever closing; treat as entirely bogus to avoid partial attribute name creation.
-                    if quote is not None and self.pos >= self.length:
-                        suppressed = True
-                    elif quote is not None and saw_inner_lt:
+                    if (quote is not None and self.pos >= self.length) or (quote is not None and saw_inner_lt):
                         suppressed = True
                     if suppressed:
                         # If suppressed void-like element, consume to EOF so no residual tokens are produced
@@ -728,7 +723,7 @@ class HTMLTokenizer:
             else:
                 self.pos += len(match.group(0))
             self.debug(
-                f"Found tag: bang={bang}, is_end_tag={is_end_tag}, tag_name={tag_name}, attributes={attributes}"
+                f"Found tag: bang={bang}, is_end_tag={is_end_tag}, tag_name={tag_name}, attributes={attributes}",
             )
 
             # Malformed <code> patterns are not specially cased; attribute tails are handled uniformly.
@@ -771,7 +766,7 @@ class HTMLTokenizer:
                 # All other end tags with attributes are emitted as EndTag tokens with attributes ignored.
                 if tag_name.lower() == "br" and attributes and attributes.strip():
                     self.debug(
-                        f"Legacy quirk: treating </br ...> as <br>: </{tag_name} {attributes.strip()}>"
+                        f"Legacy quirk: treating </br ...> as <br>: </{tag_name} {attributes.strip()}>",
                     )
                     return HTMLToken(
                         "StartTag",
@@ -780,17 +775,16 @@ class HTMLTokenizer:
                         is_self_closing=True,
                     )
                 return HTMLToken("EndTag", tag_name=tag_name)
-            else:
-                is_self_closing, attrs = self._parse_attributes_and_check_self_closing(
-                    attributes
-                )
-                return HTMLToken(
-                    "StartTag",
-                    tag_name=tag_name,
-                    attributes=attrs,
-                    is_self_closing=is_self_closing,
-                    needs_rawtext=deferred_rawtext,
-                )
+            is_self_closing, attrs = self._parse_attributes_and_check_self_closing(
+                attributes,
+            )
+            return HTMLToken(
+                "StartTag",
+                tag_name=tag_name,
+                attributes=attrs,
+                is_self_closing=is_self_closing,
+                needs_rawtext=deferred_rawtext,
+            )
         # If we get here, we found a < that isn't part of a valid tag
         self.debug("No valid tag found, treating as character")
         self.pos += 1
@@ -823,10 +817,9 @@ class HTMLTokenizer:
         return HTMLToken("Character", data=decoded)
 
     def _parse_attributes_and_check_self_closing(
-        self, attr_string
+        self, attr_string,
     ):
-        """
-        Parse attributes and determine if tag is self-closing.
+        """Parse attributes and determine if tag is self-closing.
 
         Returns (is_self_closing, attributes_dict)
         """
@@ -906,16 +899,16 @@ class HTMLTokenizer:
                     # Example: //problem/6869687 -> expected attributes 6869687="" and problem="" (reverse order)
                     parts = [p for p in raw.split("/") if p]
                     parts = list(
-                        reversed(parts)
+                        reversed(parts),
                     )  # Reverse order for double-slash scheme style
                 else:
                     # Single leading slash path: /x/y/z -> x, y, z in natural order
                     parts = [p for p in raw.split("/") if p]
-                return {p: "" for p in parts}
+                return dict.fromkeys(parts, "")
             # Fallback: whitespace-separated boolean attributes
             self.debug("Whitespace-separated boolean attributes")
             parts = [p for p in raw.split() if p]
-            return {part: "" for part in parts}
+            return dict.fromkeys(parts, "")
 
         # Try regex first
         matches = ATTR_RE.findall(attr_string)
@@ -980,7 +973,7 @@ class HTMLTokenizer:
                 self.pos += 3  # Skip -->
                 return HTMLToken("Comment", data=comment_text)
             # Handle --!> ending (spec says to ignore the !)
-            elif (
+            if (
                 self.pos + 3 < self.length
                 and self.html[self.pos : self.pos + 2] == "--"
                 and self.html[self.pos + 2] == "!"
@@ -1006,7 +999,7 @@ class HTMLTokenizer:
     def _handle_bogus_comment(self, from_end_tag=False):
         """Handle bogus comment according to HTML5 spec"""
         self.debug(
-            f"_handle_bogus_comment: pos={self.pos}, state={self.state}, from_end_tag={from_end_tag}"
+            f"_handle_bogus_comment: pos={self.pos}, state={self.state}, from_end_tag={from_end_tag}",
         )
         # Special handling for <![CDATA[ ... ]]> so that foreign content handler can convert it to text
         if self.html.startswith("<![CDATA[", self.pos):
@@ -1022,12 +1015,11 @@ class HTMLTokenizer:
                 if inner.endswith("]]"):
                     return HTMLToken("Comment", data=f"[CDATA[{inner} ")
                 return HTMLToken("Comment", data=f"[CDATA[{inner}")
-            else:
-                inner = self.html[start_pos:end]
-                self.pos = end + 3  # skip ']]>'
-                # Apply character replacement for consistency with normal text tokens
-                inner = self._replace_invalid_characters(inner)
-                return HTMLToken("Comment", data=f"[CDATA[{inner}]]")
+            inner = self.html[start_pos:end]
+            self.pos = end + 3  # skip ']]>'
+            # Apply character replacement for consistency with normal text tokens
+            inner = self._replace_invalid_characters(inner)
+            return HTMLToken("Comment", data=f"[CDATA[{inner}]]")
         # For <?, include the ? in the comment
         if self.html.startswith("<?", self.pos):
             start = self.pos + 1  # Only skip <
@@ -1178,10 +1170,7 @@ class HTMLTokenizer:
 
             # NULL character: HTML5 tokenizer emits U+FFFD (parse error). We keep it here;
             # context-aware sanitization (dropping in some normal data contexts) happens later in TextHandler.
-            if codepoint == 0x00:
-                result.append("\ufffd")
-            # Replace other control characters that should be replaced
-            elif codepoint in (
+            if codepoint == 0x00 or codepoint in (
                 0x01,
                 0x02,
                 0x03,
@@ -1210,13 +1199,7 @@ class HTMLTokenizer:
                 0x1E,
                 0x1F,
                 0x7F,
-            ):
-                result.append("\ufffd")
-            # Replace surrogates (should not appear in valid UTF-8)
-            elif 0xD800 <= codepoint <= 0xDFFF:
-                result.append("\ufffd")
-            # Replace non-characters
-            elif codepoint in (
+            ) or 0xD800 <= codepoint <= 0xDFFF or codepoint in (
                 0xFDD0,
                 0xFDD1,
                 0xFDD2,
@@ -1249,10 +1232,7 @@ class HTMLTokenizer:
                 0xFDED,
                 0xFDEE,
                 0xFDEF,
-            ):
-                result.append("\ufffd")
-            # Replace other non-characters ending in FFFE/FFFF
-            elif (codepoint & 0xFFFF) in (0xFFFE, 0xFFFF):
+            ) or (codepoint & 0xFFFF) in (0xFFFE, 0xFFFF):
                 result.append("\ufffd")
             else:
                 result.append(char)
@@ -1276,8 +1256,7 @@ class HTMLTokenizer:
         # Handle special cases
         if codepoint == 0x10FFFE:
             return "\U0010fffe"
-        elif codepoint == 0x10FFFF:
+        if codepoint == 0x10FFFF:
             return "\U0010ffff"
-        else:
-            # codepoint already validated to be within Unicode range and not surrogate; direct conversion
-            return chr(codepoint)
+        # codepoint already validated to be within Unicode range and not surrogate; direct conversion
+        return chr(codepoint)

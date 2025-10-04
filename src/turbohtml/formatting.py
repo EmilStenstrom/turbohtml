@@ -6,9 +6,9 @@ invoke the public function here instead of a parser method.
 """
 from __future__ import annotations
 
-from .node import Node
-from .context import DocumentState
-from .constants import FORMATTING_ELEMENTS
+from turbohtml.constants import FORMATTING_ELEMENTS
+from turbohtml.context import DocumentState
+from turbohtml.node import Node
 
 
 def reconstruct_active_formatting_elements(parser, context):
@@ -61,7 +61,7 @@ def reconstruct_active_formatting_elements(parser, context):
             context.open_elements.push(context.current_parent)
             if parser.env_debug:
                 parser.debug(
-                    f"Reconstructed (reused) formatting element {context.current_parent.tag_name} (empty reuse)"
+                    f"Reconstructed (reused) formatting element {context.current_parent.tag_name} (empty reuse)",
                 )
             continue
         clone = Node(entry.element.tag_name, entry.element.attributes.copy())
@@ -108,7 +108,7 @@ def reconstruct_active_formatting_elements(parser, context):
         entry.element = clone
         context.move_to_element(clone)
         # Track anchor reconstruction index for immediate re-adoption suppression. We only care about <a>.
-        if clone.tag_name == 'a':
+        if clone.tag_name == "a":
             context.anchor_last_reconstruct_index = context.index
             context.anchor_suppress_once_done = False
         if parser.env_debug:

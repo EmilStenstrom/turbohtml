@@ -35,6 +35,7 @@ def foster_parent(target_parent, open_elements, root):
         target_parent: Current insertion parent (context.current_parent)
         open_elements: OpenElementsStack instance
         root: Root document node (fallback)
+
     """
     table = find_table_in_scope(open_elements)
     if not table:

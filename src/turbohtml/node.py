@@ -12,8 +12,7 @@ BOUNDARY_ELEMENTS = {
 
 
 class Node:
-    """
-    Represents a DOM-like node.
+    """Represents a DOM-like node.
     - tag_name: e.g., 'div', 'p', etc. Use '#text' for text nodes.
     - attributes: dict of tag attributes
     - children: list of child Nodes
@@ -42,7 +41,7 @@ class Node:
         # If this triggers we want a loud failure with context so we can trace upstream logic.
         if tag_name is None or tag_name == "":
             raise ValueError(
-                "Empty tag_name passed to Node constructor (bug: tokenization or handler produced blank tag)"
+                "Empty tag_name passed to Node constructor (bug: tokenization or handler produced blank tag)",
             )
         self.tag_name = tag_name
         if attributes:
@@ -77,7 +76,7 @@ class Node:
         # Check for circular reference before adding
         if self._would_create_circular_reference(child):
             raise ValueError(
-                f"Adding {child.tag_name} as child of {self.tag_name} would create circular reference"
+                f"Adding {child.tag_name} as child of {self.tag_name} would create circular reference",
             )
 
         if child.parent:
@@ -213,8 +212,7 @@ class Node:
             content = self.text_content if self.text_content is not None else ""
             if content.strip():
                 return f"| <!DOCTYPE {content}>"
-            else:
-                return "| <!DOCTYPE >"
+            return "| <!DOCTYPE >"
 
         # Start with the tag name
         result = f"| {' ' * indent}<{self.tag_name}>"
@@ -237,9 +235,7 @@ class Node:
                     or self.tag_name.startswith("math ")
                 ):
                     prefix, local = key.split(":", 1)
-                    if prefix == "xml" and local in ("lang", "space"):
-                        display_key = f"{prefix} {local}"
-                    elif prefix in ("xlink", "xmlns") and local:
+                    if (prefix == "xml" and local in ("lang", "space")) or (prefix in ("xlink", "xmlns") and local):
                         display_key = f"{prefix} {local}"
                     else:
                         display_key = key
@@ -259,8 +255,10 @@ class Node:
         Args:
             tag_name_or_predicate: Tag name or callable that takes a Node and returns bool
             stop_at_boundary: If True, stop searching at boundary elements (HTML5 scoping rules)
+
         Returns:
             The matching ancestor Node or None if not found
+
         """
         current = self
         while current:
@@ -279,6 +277,7 @@ class Node:
 
         Args:
             child: The Node to remove
+
         """
         if child not in self.children:
             return
@@ -301,8 +300,10 @@ class Node:
         Args:
             tag_name_or_predicate: Tag name or callable that takes a Node and returns bool
             stop_at: Node to stop searching at (exclusive - won't check this node)
+
         Returns:
             The matching ancestor Node or None if not found before stop_at
+
         """
         current = self
         while current and current != stop_at:
@@ -320,8 +321,10 @@ class Node:
         Args:
             tag_names: Single tag name or list of tag names to match
             stop_at: Optional node to stop searching at (exclusive)
+
         Returns:
             The first matching ancestor Node or None if not found
+
         """
         if isinstance(tag_names, str):
             tag_names = [tag_names]
@@ -344,6 +347,7 @@ class Node:
             tag_name: Tag name to check for
         Returns:
             True if inside the tag, False otherwise
+
         """
         return self.find_ancestor(tag_name) is not None
 
@@ -354,6 +358,7 @@ class Node:
             tag_name: Tag name to search for
         Returns:
             First matching child or None if not found
+
         """
         for child in self.children:
             if child.tag_name == tag_name:
@@ -367,6 +372,7 @@ class Node:
             tag_name: Tag name to search for
         Returns:
             Last matching child or None if not found
+
         """
         for child in reversed(self.children):
             if child.tag_name == tag_name:
@@ -381,6 +387,7 @@ class Node:
             predicate: Optional filter function - only nodes matching this are included
         Returns:
             List of matching ancestors ordered outermost->innermost (rootward first, nearest last)
+
         """
         ancestors = []
         current = self

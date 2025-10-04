@@ -13,14 +13,14 @@ implements the spec transitions. For now we expose:
 
 Each function mirrors logic currently embedded in parser._handle_start_tag.
 """
-from .context import DocumentState
-from .node import Node
-from .constants import (
-    TABLE_SECTION_TAGS,
-    TABLE_ROW_TAGS,
+from turbohtml.constants import (
     TABLE_CELL_TAGS,
     TABLE_PRELUDE_TAGS,
+    TABLE_ROW_TAGS,
+    TABLE_SECTION_TAGS,
 )
+from turbohtml.context import DocumentState
+from turbohtml.node import Node
 
 # Elements treated specially in table mode when deciding foster parenting.
 # Mirrors exclusions in parser._handle_start_tag condition.
@@ -101,7 +101,8 @@ def should_foster_parent(tag_name, attrs, context, parser):
 
 def restore_insertion_open_cell(context):
     """If a cell element (<td>/<th>) is still open on the stack but insertion point drifted
-    outside it (e.g., foreign content breakout), reposition to that cell. Returns the cell or None."""
+    outside it (e.g., foreign content breakout), reposition to that cell. Returns the cell or None.
+    """
     for el in reversed(context.open_elements._stack):
         if el.tag_name in ("td", "th"):
             context.move_to_element(el)
@@ -110,13 +111,13 @@ def restore_insertion_open_cell(context):
 
 
 __all__ = [
-    "should_foster_parent",
-    "fragment_table_insert",
-    "fragment_table_section_insert",
-    "TABLE_SECTION_TAGS",
-    "TABLE_ROW_TAGS",
     "TABLE_CELL_TAGS",
     "TABLE_PRELUDE_TAGS",
+    "TABLE_ROW_TAGS",
+    "TABLE_SECTION_TAGS",
+    "fragment_table_insert",
+    "fragment_table_section_insert",
+    "should_foster_parent",
 ]
 
 

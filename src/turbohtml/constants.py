@@ -10,6 +10,7 @@ Usage:
 References:
     - https://html.spec.whatwg.org/multipage/syntax.html#void-elements
     - https://html.spec.whatwg.org/multipage/syntax.html#optional-tags
+
 """
 
 # HTML Element Sets

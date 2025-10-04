@@ -4,8 +4,7 @@ from turbohtml.adoption import ActiveFormattingElements, OpenElementsStack
 
 
 class DocumentState(Enum):
-    """
-    Enumerates document parser states for clarity and safety (head, body...).
+    """Enumerates document parser states for clarity and safety (head, body...).
     """
 
     INITIAL = auto()
@@ -24,8 +23,7 @@ class DocumentState(Enum):
 
 
 class ContentState(Enum):
-    """
-    Enumerates content parser states for clarity and safety (rawtext...).
+    """Enumerates content parser states for clarity and safety (rawtext...).
     """
 
     NONE = auto()
@@ -122,7 +120,7 @@ class ParseContext:
         if new_state != self._content_state:
             if self._debug:
                 self._debug(
-                    f"Content State change: {self._content_state} -> {new_state}"
+                    f"Content State change: {self._content_state} -> {new_state}",
                 )
             self._content_state = new_state
 
@@ -133,7 +131,7 @@ class ParseContext:
         if new_state != self._document_state:
             if self._debug:
                 self._debug(
-                    f"Document State change: {self._document_state} -> {new_state}"
+                    f"Document State change: {self._document_state} -> {new_state}",
                 )
             self._document_state = new_state
 

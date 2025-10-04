@@ -4,9 +4,9 @@ Helper functions used across multiple modules (handlers, formatting, etc.)
 that don't belong to any specific domain (foster parenting, formatting, adoption).
 """
 
-from turbohtml.node import Node
-from turbohtml.context import DocumentState
 from turbohtml.constants import FORMATTING_ELEMENTS
+from turbohtml.context import DocumentState
+from turbohtml.node import Node
 
 
 def is_in_table_cell(context):
@@ -36,7 +36,7 @@ def is_in_table_context(context):
 def is_in_cell_or_caption(context):
     """Check if current insertion point is inside a cell or caption."""
     return bool(
-        context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption"))
+        context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption")),
     )
 
 
@@ -71,7 +71,7 @@ def has_root_frameset(root):
             break
     return bool(
         html_node
-        and any(ch.tag_name == "frameset" for ch in html_node.children)
+        and any(ch.tag_name == "frameset" for ch in html_node.children),
     )
 
 
@@ -97,8 +97,7 @@ def ensure_body(root, document_state, fragment_context=None):
                 root.append_child(body)
 
             return body
-        else:
-            return None
+        return None
     if document_state == DocumentState.IN_FRAMESET:
         return None
     body = get_body(root)
@@ -182,7 +181,7 @@ def reconstruct_active_formatting_elements(parser, context):
             context.open_elements.push(context.current_parent)
             if parser.env_debug:
                 parser.debug(
-                    f"Reconstructed (reused) formatting element {context.current_parent.tag_name} (empty reuse)"
+                    f"Reconstructed (reused) formatting element {context.current_parent.tag_name} (empty reuse)",
                 )
             continue
         clone = Node(entry.element.tag_name, entry.element.attributes.copy())
@@ -228,7 +227,7 @@ def reconstruct_active_formatting_elements(parser, context):
         entry.element = clone
         context.move_to_element(clone)
         # Track anchor reconstruction index for immediate re-adoption suppression. We only care about <a>.
-        if clone.tag_name == 'a':
+        if clone.tag_name == "a":
             context.anchor_last_reconstruct_index = parser.get_token_position()
             context.anchor_suppress_once_done = False
         if parser.env_debug:
@@ -255,7 +254,7 @@ def reconstruct_if_needed(parser, context, *, force=False):
     # Template content skip
     cur = context.current_parent
     while cur:
-        if cur.tag_name == 'content' and cur.parent and cur.parent.tag_name == 'template':
+        if cur.tag_name == "content" and cur.parent and cur.parent.tag_name == "template":
             return False
         cur = cur.parent
     # Table mode cell/caption restriction
@@ -264,7 +263,7 @@ def reconstruct_if_needed(parser, context, *, force=False):
         DocumentState.IN_TABLE_BODY,
         DocumentState.IN_ROW,
     ):
-        in_cell_or_caption = bool(context.current_parent.find_ancestor(lambda n: n.tag_name in ('td','th','caption')))
+        in_cell_or_caption = bool(context.current_parent.find_ancestor(lambda n: n.tag_name in ("td","th","caption")))
         if not in_cell_or_caption:
             return False
     open_stack = context.open_elements._stack

@@ -1,9 +1,10 @@
-from turbohtml import TurboHTML
 import argparse
-from io import StringIO
-from contextlib import redirect_stdout
-from pathlib import Path
 import signal
+from contextlib import redirect_stdout
+from io import StringIO
+from pathlib import Path
+
+from turbohtml import TurboHTML
 
 # Minimal Unix-friendly fix: if stdout is a pipe and the reader (e.g. `head`) closes early,
 # writes would raise BrokenPipeError at interpreter shutdown. Reset SIGPIPE so the process
@@ -20,10 +21,11 @@ except (
 
 class TestCase:
     """Container for a single tree-construction test case (typing removed)."""
+
     __slots__ = [
         "data",
-        "errors",
         "document",
+        "errors",
         "fragment_context",
         "script_directive",
     ]
@@ -44,13 +46,14 @@ class TestCase:
 
 class TestResult:
     """Result object for a single test (typing removed)."""
+
     __slots__ = [
-        "passed",
-        "input_html",
-        "expected_errors",
-        "expected_output",
         "actual_output",
         "debug_output",
+        "expected_errors",
+        "expected_output",
+        "input_html",
+        "passed",
     ]
 
     def __init__(
@@ -146,15 +149,14 @@ class TestRunner:
                     script_directive = directive
                 else:
                     mode = directive
-            else:
-                if mode == "data":
-                    data.append(line)
-                elif mode == "errors":
-                    errors.append(line)
-                elif mode == "document":
-                    document.append(line)
-                elif mode == "document-fragment":
-                    fragment_context = line.strip()
+            elif mode == "data":
+                data.append(line)
+            elif mode == "errors":
+                errors.append(line)
+            elif mode == "document":
+                document.append(line)
+            elif mode == "document-fragment":
+                fragment_context = line.strip()
 
         if data or document:
             return TestCase(
@@ -315,7 +317,7 @@ class TestRunner:
             f = StringIO()
             with redirect_stdout(f):
                 parser = TurboHTML(
-                    test.data, debug=True, fragment_context=test.fragment_context
+                    test.data, debug=True, fragment_context=test.fragment_context,
                 )
                 actual_tree = parser.root.to_test_format()
             debug_output = f.getvalue()
@@ -477,7 +479,7 @@ class TestReporter:
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "-x", "--fail-fast", action="store_true", help="Break on first test failure"
+        "-x", "--fail-fast", action="store_true", help="Break on first test failure",
     )
     parser.add_argument(
         "--test-specs",
@@ -594,9 +596,9 @@ def _run_regression_check(runner, reporter):
       - pattern extension where new char is 'x'
     Exit code: 1 if regressions found, else 0.
     """
+    import re
     import subprocess
     import sys
-    import re
 
     try:
         proc = subprocess.run(

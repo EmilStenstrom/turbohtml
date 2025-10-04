@@ -7,19 +7,20 @@ apply suppressions, dispatch token handlers, then run post‑hooks. No heuristic
 behaviour or test‑specific logic resides here.
 """
 
-from .context import DocumentState, ContentState, ParseContext
-from .constants import RAWTEXT_ELEMENTS
-from .node import Node
-from .tokenizer import HTMLTokenizer, HTMLToken
-from . import table_modes
-from .utils import ensure_body
+from turbohtml import table_modes
+from turbohtml.constants import RAWTEXT_ELEMENTS
+from turbohtml.context import ContentState, DocumentState, ParseContext
+from turbohtml.node import Node
+from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
+from turbohtml.utils import ensure_body
+
 
 class FragmentSpec:
     __slots__ = (
-        "name",
         "ignored_start_tags",
-        "pre_token_hooks",
+        "name",
         "post_pass_hooks",
+        "pre_token_hooks",
         "suppression_predicates",
         "treat_all_as_text",
     )
@@ -82,7 +83,7 @@ def _supp_malformed_select_like(parser, context, token, fragment_context):
     if context.current_parent.tag_name in ("select", "option", "optgroup"):
         return True
     anc = context.current_parent.find_ancestor(
-        lambda n: n.tag_name in ("select", "option", "optgroup")
+        lambda n: n.tag_name in ("select", "option", "optgroup"),
     )
     return anc is not None
 
@@ -224,40 +225,40 @@ def _supp_fragment_legacy_context(parser, context, token, fragment_context):
 
 def _fragment_table_preprocess(parser, context, token, fragment_context):
     """Fragment table structural insertion suppression predicate.
-    
+
     Handles table fragment structural insertion via table_modes helpers.
     Returns True if token was handled and should be suppressed.
     """
     if token.type != "StartTag":
         return False
-    
+
     tag = token.tag_name
-    
+
     # Table fragment structural insertion (implicit tbody / root-level table section placement)
     if table_modes.fragment_table_insert(tag, token, context, parser):
         return True
     if table_modes.fragment_table_section_insert(tag, token, context, parser):
         return True
-    
+
     return False
 
 
 def _fragment_colgroup_col_handler(parser, context, token, fragment_context):
     """Colgroup fragment: only admit <col> elements, handle them specially.
-    
+
     Returns True if token was handled and should be suppressed.
     """
     if fragment_context != "colgroup":
         return False
     if token.type != "StartTag":
         return False
-    
+
     tag = token.tag_name
-    
+
     # Only allow <col> in colgroup fragment
     if tag != "col":
         return True  # suppress non-col tags
-    
+
     # Insert <col> directly at fragment root
     col = Node("col", token.attributes)
     context.current_parent.append_child(col)
@@ -426,7 +427,7 @@ def _implied_table_section_pre_token(parser, context, token):
 
 ### Note:
 # Nested table row placement inside fragment table sections is handled directly in
-# table_modes.fragment_table_section_insert (nearest section ancestor). 
+# table_modes.fragment_table_section_insert (nearest section ancestor).
 
 # Register implied section hook for table-related fragment contexts
 for ctx_name in ("html", "table", "tbody", "thead", "tfoot", "td", "th", "tr"):
@@ -547,7 +548,7 @@ def handle_character(parser, context, token, fragment_context):
     for handler in parser.tag_handlers:
         if handler.should_handle_text(data, context):
             parser.debug(
-                f"{handler.__class__.__name__}: handling {token}, context={context}"
+                f"{handler.__class__.__name__}: handling {token}, context={context}",
             )
             if handler.handle_text(data, context):
                 break
