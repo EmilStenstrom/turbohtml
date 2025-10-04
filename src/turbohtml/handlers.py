@@ -228,43 +228,6 @@ class TagHandler:
         return
 
 
-class BodyReentryHandler(TagHandler):
-    """Handle re-entering IN_BODY from AFTER_BODY / AFTER_HTML states.
-
-    Restores behavior that was previously in parser: when content appears after </body>
-    but before </html>, we move the insertion point back into the body (deepest still
-    open descendant) and transition to IN_BODY so subsequent handlers treat it as
-    normal body content.
-    """
-
-    def early_start_preprocess(self, token, context):
-        tag = token.tag_name
-        if context.document_state in (DocumentState.AFTER_BODY, DocumentState.AFTER_HTML) and tag not in ("html", "body"):
-            body_node = self.parser._get_body_node()
-            if not body_node:
-                body_node = self.parser._ensure_body_node(context)
-            if body_node:
-                resume_parent = body_node
-                stack = context.open_elements._stack
-                for el in reversed(stack):
-                    if el is body_node:
-                        break
-                    # verify 'el' still attached under body
-                    cur = el
-                    attached = False
-                    while cur:
-                        if cur is body_node:
-                            attached = True
-                            break
-                        cur = cur.parent
-                    if attached:
-                        resume_parent = el
-                        break
-                context.move_to_element(resume_parent)
-                context.transition_to_state(DocumentState.IN_BODY, resume_parent)
-                self.debug(f"Reentered IN_BODY for <{tag}> after post-body state")
-        return False
-
 
 class UnifiedCommentHandler(TagHandler):
     """Unified comment placement handler for all document states.
@@ -568,18 +531,48 @@ class DefaultElementInsertionHandler(TagHandler):
         return True
 
 
-class SpecialElementHandler(TagHandler):
-    """Handles special root structure elements: html, head, body (and implicit head/body transitions).
+class DocumentStructureHandler(TagHandler):
+    """Handles document structure: <html>, <head>, <body> start tags and </html> end tag.
 
-    Extracted from parser._handle_special_element to shrink parser. Implemented as an
-    early_start_preprocess hook so it runs before generic start-tag dispatch while still
-    permitting frameset handler participation (we return False for a root <frameset> so the
-    frameset-specific handler can run).
+    Unified handler managing root structure lifecycle:
+    - Start tags (<html>, <head>, <body>) via early_start_preprocess
+    - End tag (</html>) via should_handle_end/handle_end
+    - Implicit head/body transitions for non-head content
+    - Attribute merging for duplicate structure tags
+    - Re-entering IN_BODY from AFTER_BODY/AFTER_HTML states
     """
 
     def early_start_preprocess(self, token, context):
         tag = token.tag_name
         parser = self.parser
+        
+        # Re-entry logic: when content appears after </body> but before </html>, move insertion
+        # point back into the body (deepest still open descendant) and transition to IN_BODY
+        if context.document_state in (DocumentState.AFTER_BODY, DocumentState.AFTER_HTML) and tag not in ("html", "body"):
+            body_node = parser._get_body_node()
+            if not body_node:
+                body_node = parser._ensure_body_node(context)
+            if body_node:
+                resume_parent = body_node
+                stack = context.open_elements._stack
+                for el in reversed(stack):
+                    if el is body_node:
+                        break
+                    # verify 'el' still attached under body
+                    cur = el
+                    attached = False
+                    while cur:
+                        if cur is body_node:
+                            attached = True
+                            break
+                        cur = cur.parent
+                    if attached:
+                        resume_parent = el
+                        break
+                context.move_to_element(resume_parent)
+                context.transition_to_state(DocumentState.IN_BODY, resume_parent)
+                self.debug(f"Reentered IN_BODY for <{tag}> after post-body state")
+        
         # Skip inside template content; template content handler governs structure there
         if in_template_content(context):
             return False
@@ -629,6 +622,68 @@ class SpecialElementHandler(TagHandler):
                 if body:
                     context.transition_to_state(DocumentState.IN_BODY, body)
         return False
+
+    def should_handle_end(self, tag_name, context):
+        return tag_name == "html"
+
+    def handle_end(self, token, context):
+        self.debug(f"handling </html>, current state: {context.document_state}")
+
+        # Ignore </html> entirely while any table-related insertion mode is active. The HTML Standard
+        # treats a stray </html> as a parse error that is otherwise ignored; accepting it prematurely
+        # while a table (or its sections/rows/cells) remains open causes subsequent character tokens
+        # to append after the table instead of being foster‑parented before it. By deferring the
+        # AFTER_HTML transition until after leaving table modes we preserve correct ordering of text
+        # preceding trailing table content (tables01.dat regression). This has no effect on well‑formed
+        # documents where </html> appears after the table has been fully closed.
+        if context.document_state in (
+            DocumentState.IN_TABLE,
+            DocumentState.IN_TABLE_BODY,
+            DocumentState.IN_ROW,
+            DocumentState.IN_CELL,
+            DocumentState.IN_CAPTION,
+        ):
+            self.debug(
+                "Ignoring </html> in active table insertion mode (defer AFTER_HTML transition)"
+            )
+            return True
+
+        # If we're in head, implicitly close it
+        if context.document_state == DocumentState.IN_HEAD:
+            self.debug("Closing head and switching to body")
+            body = self.parser._ensure_body_node(context)
+            if body:
+                self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
+
+        # After processing </html>, keep insertion point at body (if present) so stray trailing whitespace/text
+        # tokens become body children, but transition to AFTER_HTML so subsequent stray <head> is ignored.
+        # If we already re-entered IN_BODY earlier due to stray text (parse error recovery) and encounter another
+        # </html>, we STILL transition again to AFTER_HTML so that following comments return to document level
+        # (html5lib expectation in sequences like </html> x <!--c--> </html> <!--d--> where c is in body, d is root).
+        # Frameset documents never synthesize a body; keep insertion mode at AFTER_FRAMESET.
+        if self.parser._has_root_frameset():
+            self.debug(
+                "Root <frameset> present – ignoring </html> (stay AFTER_FRAMESET, no body)"
+            )
+            # Record ordering if no <noframes> descendant yet: explicit </html> precedes any late <noframes>.
+            html = self.parser.html_node
+            if not any(ch.tag_name == "noframes" for ch in html.children):
+                context.frameset_html_end_before_noframes = True
+            context.html_end_explicit = True
+            if context.document_state != DocumentState.AFTER_FRAMESET:
+                self.parser.transition_to_state(
+                    context, DocumentState.AFTER_FRAMESET, html
+                )
+            return True
+        body = self.parser._get_body_node() or self.parser._ensure_body_node(context)
+        if body:
+            context.move_to_element(body)
+        self.parser.transition_to_state(
+            context, DocumentState.AFTER_HTML, body or context.current_parent
+        )
+        context.html_end_explicit = True
+        return True
+
 
 class TemplateHandler(TagHandler):
     """Unified template element handling: auto-enter content, create templates, filter content.
@@ -9276,89 +9331,6 @@ class HeadElementHandler(TagHandler):
         self.debug(f"handling comment '{comment}' in RAWTEXT mode")
         # In RAWTEXT mode, treat comments as text
         return self.handle_text(comment, context)
-
-
-class HtmlTagHandler(TagHandler):
-    """Handles html element"""
-
-    def should_handle_start(self, tag_name, context):
-        return tag_name == "html"
-
-    def handle_start(self, token, context, has_more_content):
-        self.debug("handling start tag")
-        # Spec: For a second <html> start tag, merge only attributes that are not already present.
-        html_node = self.parser.html_node
-        if html_node:
-            if not html_node.attributes:
-                html_node.attributes.update(token.attributes)
-            else:
-                for k, v in token.attributes.items():
-                    if k not in html_node.attributes:
-                        html_node.attributes[k] = v
-        return True
-
-    def should_handle_end(self, tag_name, context):
-        return tag_name == "html"
-
-    def handle_end(self, token, context):
-        self.debug(f"handling end tag, current state: {context.document_state}")
-
-        # Ignore </html> entirely while any table-related insertion mode is active. The HTML Standard
-        # treats a stray </html> as a parse error that is otherwise ignored; accepting it prematurely
-        # while a table (or its sections/rows/cells) remains open causes subsequent character tokens
-        # to append after the table instead of being foster‑parented before it. By deferring the
-        # AFTER_HTML transition until after leaving table modes we preserve correct ordering of text
-        # preceding trailing table content (tables01.dat regression). This has no effect on well‑formed
-        # documents where </html> appears after the table has been fully closed.
-        if context.document_state in (
-            DocumentState.IN_TABLE,
-            DocumentState.IN_TABLE_BODY,
-            DocumentState.IN_ROW,
-            DocumentState.IN_CELL,
-            DocumentState.IN_CAPTION,
-        ):
-            self.debug(
-                "Ignoring </html> in active table insertion mode (defer AFTER_HTML transition)"
-            )
-            return True
-
-        # If we're in head, implicitly close it
-        if context.document_state == DocumentState.IN_HEAD:
-            self.debug("Closing head and switching to body")
-            body = self.parser._ensure_body_node(context)
-            if body:
-                self.parser.transition_to_state(context, DocumentState.IN_BODY, body)
-
-        # After processing </html>, keep insertion point at body (if present) so stray trailing whitespace/text
-        # tokens become body children, but transition to AFTER_HTML so subsequent stray <head> is ignored.
-        # If we already re-entered IN_BODY earlier due to stray text (parse error recovery) and encounter another
-        # </html>, we STILL transition again to AFTER_HTML so that following comments return to document level
-        # (html5lib expectation in sequences like </html> x <!--c--> </html> <!--d--> where c is in body, d is root).
-        # Frameset documents never synthesize a body; keep insertion mode at AFTER_FRAMESET.
-        if self.parser._has_root_frameset():
-            self.debug(
-                "Root <frameset> present – ignoring </html> (stay AFTER_FRAMESET, no body)"
-            )
-            # Record ordering if no <noframes> descendant yet: explicit </html> precedes any late <noframes>.
-            html = self.parser.html_node
-            if not any(ch.tag_name == "noframes" for ch in html.children):
-                context.frameset_html_end_before_noframes = True
-            context.html_end_explicit = True
-            if context.document_state != DocumentState.AFTER_FRAMESET:
-                self.parser.transition_to_state(
-                    context, DocumentState.AFTER_FRAMESET, html
-                )
-            return True
-        body = self.parser._get_body_node() or self.parser._ensure_body_node(context)
-        if body:
-            context.move_to_element(body)
-        self.parser.transition_to_state(
-            context, DocumentState.AFTER_HTML, body or context.current_parent
-        )
-        context.html_end_explicit = True
-        # Explicit </html> presence inferred from token history (no persistent flag set).
-
-        return True
 
 
 class FramesetTagHandler(TagHandler):
