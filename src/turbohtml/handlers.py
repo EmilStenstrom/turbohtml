@@ -817,35 +817,6 @@ class TemplateContentAutoEnterHandler(TagHandler):
                     context.move_to_element(content)
         return False
 
-class NullParentRecoveryEndHandler(TagHandler):
-    """Recover from a None current_parent before end tag handling.
-
-    The parser previously inlined a fallback in `_handle_end_tag` that:
-      * If `context.current_parent` is None and not in frameset mode, ensured a <body> (document)
-        or reset the insertion point to the fragment root (fragment parsing) before dispatching
-        end tag handlers.
-
-    We move that logic here to keep the parser core free of structural conditional code.
-    This handler runs early in the end-tag phase; if it performs recovery it simply
-    re-establishes `current_parent` and returns False so normal end-tag handlers proceed.
-    """
-
-    def early_end_preprocess(self, token, context):
-        if context.current_parent is not None:
-            return False
-        if context.document_state == DocumentState.IN_FRAMESET:
-            return False
-        # Fragment mode: move to fragment root
-        if self.parser.fragment_context:
-            context.move_to_element(self.parser.root)
-            self.debug("Restored insertion point to fragment root for end tag recovery")
-            return False
-        # Document mode: ensure <body> exists and move there
-        body = self.parser._ensure_body_node(context)
-        if body:
-            context.move_to_element(body)
-            self.debug("Synthesized/moved to <body> for end tag recovery")
-        return False
 
 
 class GenericEndTagHandler(TagHandler):
@@ -863,8 +834,6 @@ class GenericEndTagHandler(TagHandler):
         return True
 
     def handle_end(self, token, context):
-        if not context.current_parent:
-            return True
         if token.tag_name == 'p' and self.parser.env_debug:
             stack_tags = [el.tag_name for el in context.open_elements._stack]
             self.debug(f"[p-end] incoming </p> current_parent={context.current_parent.tag_name} stack={stack_tags}")
@@ -9274,17 +9243,16 @@ class HeadElementHandler(TagHandler):
                     context.move_to_element(head)
 
             # Create and append the new element
-            if context.current_parent is not None:
-                self.parser.insert_element(
-                    token,
-                    context,
-                    mode="normal",
-                    enter=tag_name not in VOID_ELEMENTS,
-                    tag_name_override=tag_name,
-                    push_override=False,
-                )
-                self.debug(f"Added {tag_name} to {context.current_parent.tag_name}")
-                if tag_name not in VOID_ELEMENTS and tag_name in RAWTEXT_ELEMENTS:
+            self.parser.insert_element(
+                token,
+                context,
+                mode="normal",
+                enter=tag_name not in VOID_ELEMENTS,
+                tag_name_override=tag_name,
+                push_override=False,
+            )
+            self.debug(f"Added {tag_name} to {context.current_parent.tag_name}")
+            if tag_name not in VOID_ELEMENTS and tag_name in RAWTEXT_ELEMENTS:
                     context.content_state = ContentState.RAWTEXT
                     self.debug(f"Switched to RAWTEXT state for {tag_name}")
             else:
@@ -10658,8 +10626,7 @@ class RubyElementHandler(TagHandler):
         ruby_ancestor = context.current_parent.find_ancestor("ruby")
         closed_any = False
         while (
-            context.current_parent is not None
-            and context.current_parent is not ruby_ancestor
+            context.current_parent is not ruby_ancestor
             and context.current_parent.tag_name in elements_to_close
         ):
             self.debug(

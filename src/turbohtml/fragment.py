@@ -78,8 +78,6 @@ def _supp_malformed_select_like(parser, context, token, fragment_context):
     tag_name = token.tag_name
     if "<" not in tag_name:
         return False
-    if not context.current_parent:
-        return False
     if context.current_parent.tag_name in ("select", "option", "optgroup"):
         return True
     anc = context.current_parent.find_ancestor(
@@ -526,11 +524,6 @@ def handle_end_tag(parser, context, token, fragment_context):
 
 def handle_character(parser, context, token, fragment_context):
     data = token.data
-    # Defensive: in certain foreign / minimal fragments before first element insertion the
-    # current_parent can still be None (synthetic root not yet established). Drop characters
-    # until a proper parent exists. This mirrors earlier guard that lived in experimental code.
-    if context.current_parent is None:
-        return
     if (
         context.current_parent.tag_name == "listing"
         and not context.current_parent.children

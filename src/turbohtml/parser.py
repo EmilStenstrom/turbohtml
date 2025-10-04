@@ -17,7 +17,6 @@ from .handlers import (
     FramesetTagHandler,
     SelectTagHandler,
     TableTagHandler,
-    NullParentRecoveryEndHandler,
     UnifiedCommentHandler,
     ForeignTagHandler,
     ParagraphTagHandler,
@@ -97,7 +96,6 @@ class TurboHTML:
             FramesetTagHandler(self),
             SelectTagHandler(self),  # must precede table handling to suppress table tokens inside <select>
             TableTagHandler(self),
-            NullParentRecoveryEndHandler(self),  # ensures current_parent before end tag handling
             UnifiedCommentHandler(self),
             ForeignTagHandler(self) if handle_foreign_elements else None,
             ParagraphTagHandler(self),
@@ -492,10 +490,9 @@ class TurboHTML:
                         handled = True
                         break
                 if not handled:
-                    parent = context.current_parent or self.root
                     node = Node("#comment")
                     node.text_content = token.data
-                    parent.append_child(node)
+                    context.current_parent.append_child(node)
                 continue
 
             # Ensure html node is in tree before processing any non-DOCTYPE/Comment token
@@ -537,7 +534,6 @@ class TurboHTML:
         for handler in self.tag_handlers:
             if handler.should_handle_start(tag_name, context):
                 if handler.handle_start(token, context, not token.is_last_token):
-                    # <listing> initial newline suppression handled structurally during character token stage
                     return
 
     def _handle_end_tag(
@@ -548,15 +544,11 @@ class TurboHTML:
         for h in self.tag_handlers:
             if h.early_end_preprocess(token, context):
                 return
-        # Create body node if needed and not in frameset mode
 
         # Try tag handlers first
         for handler in self.tag_handlers:
             if handler.should_handle_end(tag_name, context):
                 if handler.handle_end(token, context):
-                    # Ensure current_parent is never None in fragment mode
-                    if self.fragment_context and not context.current_parent:
-                        context.move_to_element(self.root)
                     return
 
 
