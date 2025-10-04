@@ -3989,13 +3989,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
         resume_anchor = context.anchor_resume_element
         if resume_anchor and resume_anchor.parent is foster_parent:
-            filtered_chain = []
-            for elem in formatting_elements:
-                if elem.tag_name == "a" and elem is not resume_anchor:
-                    continue
-                filtered_chain.append(elem)
-            formatting_elements = filtered_chain
-
             if resume_anchor in formatting_elements:
                 formatting_elements = [
                     elem for elem in formatting_elements if elem is not resume_anchor
@@ -5261,7 +5254,6 @@ class VoidTagHandler(SelectAwareHandler):
                 table = find_current_table(context)
                 if table and table.parent:
                     foster_parent = table.parent
-                    foster_parent.children.index(table)
                     # Insert before the table using centralized helper (void mode avoids stack/enter side-effects)
                     self.parser.insert_element(
                         token,
@@ -5309,16 +5301,6 @@ class VoidTagHandler(SelectAwareHandler):
 
         # nobr segmentation alignment: if we are about to insert a <br> and there exists a stale
         # <nobr> formatting entry (present in AFE but not on the open elements stack), reconstruct
-        # first so the <br> nests under the expected nobr wrapper (matching spec tree shapes in
-        # adoption/nobr edge tests). This is a narrow check (no global scan) and only applies to 'br'.
-        if tag_name == "br":
-            afe = context.active_formatting_elements
-            for entry in afe:
-                el = entry.element
-                if el and el.tag_name == "nobr" and not context.open_elements.contains(el):
-                    reconstruct_active_formatting_elements(self.parser, context)
-                    break
-        # No font-splitting heuristic: rely on standard reconstruction timing.
         # Use centralized insertion helper for consistency. Mode 'void' ensures the element
         # is not pushed onto the open elements stack and we do not enter it.
         self.parser.insert_element(token, context, mode="void", enter=False)
@@ -5760,7 +5742,6 @@ class ForeignTagHandler(TagHandler):
                     self.debug(
                         f"Foster parenting foreign element <{tag_name}> before table",
                     )
-                    table.parent.children.index(table)
 
                     # Create the new node via unified insertion (no push onto open elements stack)
                     if tag_name_lower == "math":
@@ -5920,7 +5901,6 @@ class ForeignTagHandler(TagHandler):
             # Check if we need to foster parent before exiting foreign context
             if table and table.parent and not in_caption_or_cell:
                 # Foster parent the HTML element before the table
-                table.parent.children.index(table)
                 self.debug(
                     f"Foster parenting HTML element <{tag_name_lower}> before table",
                 )
@@ -7057,7 +7037,7 @@ class HeadTagHandler(TagHandler):
                 )
                 parent_for_foster = table.parent or context.current_parent
                 before = table if table in parent_for_foster.children else None
-                new_node = self.parser.insert_element(
+                self.parser.insert_element(
                     token,
                     context,
                     mode="normal",
@@ -7067,9 +7047,6 @@ class HeadTagHandler(TagHandler):
                     tag_name_override=tag_name,
                     push_override=False,
                 )
-                # Defensive: if insertion ended up inside <table> (implementation drift), relocate before table.
-                if new_node.parent and new_node.parent.tag_name == "table":
-                    pass
                 if tag_name not in VOID_ELEMENTS and tag_name in RAWTEXT_ELEMENTS:
                     context.content_state = ContentState.RAWTEXT
                 return True
@@ -7254,11 +7231,7 @@ class FramesetTagHandler(TagHandler):
         """Unified preprocessing: frameset_ok management, guards, and takeover logic."""
         tag = token.tag_name
 
-        # Phase 1: Suppress stray <frame> before any root <frameset>
-        if tag == "frame" and not has_root_frameset(self.parser.root) and context.frameset_ok:
-            return True
-
-        # Phase 2: frameset_ok management (applies to ALL tags)
+        # Phase 1: frameset_ok management (applies to ALL tags)
         if context.frameset_ok:
             benign = {
                 "frameset","frame","noframes","param","source","track","base","basefont","bgsound","link","meta","script","style","title","svg","math",
@@ -7288,7 +7261,7 @@ class FramesetTagHandler(TagHandler):
             if tag not in benign and not _foreign_root_wrapper_benign() and tag != "p":
                 context.frameset_ok = False
 
-        # Phase 3: Frameset takeover (purge benign body when <frameset> encountered)
+        # Phase 2: Frameset takeover (purge benign body when <frameset> encountered)
         if tag == "frameset" and context.frameset_ok and context.document_state in (
             DocumentState.INITIAL, DocumentState.IN_HEAD, DocumentState.IN_BODY, DocumentState.AFTER_HEAD,
         ):
@@ -7316,7 +7289,7 @@ class FramesetTagHandler(TagHandler):
                     if self.parser.html_node:
                         context.move_to_element(self.parser.html_node)
 
-        # Phase 4: Guard against non-frameset content after frameset established
+        # Phase 3: Guard against non-frameset content after frameset established
         if has_root_frameset(self.parser.root) and context.document_state in (
             DocumentState.IN_FRAMESET, DocumentState.AFTER_FRAMESET,
         ) and tag not in ("frameset", "frame", "noframes", "html"):
