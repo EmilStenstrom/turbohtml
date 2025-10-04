@@ -268,7 +268,7 @@ class AdoptionAgencyAlgorithm:
 
     # Deterministic descendant iterator used by text normalization (handlers) to inspect
     # formatting subtrees without relying on reflective attribute probing. Kept simple
-    # and allocation‑light (explicit stack) to preserve hot path performance.
+    # and allocation-light (explicit stack) to preserve hot path performance.
     def _iter_descendants(self, node):  # pragma: no cover - traversal utility
         stack = list(node.children)
         while stack:
