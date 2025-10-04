@@ -13,6 +13,7 @@ from .node import Node
 from .node import Node
 from .tokenizer import HTMLTokenizer, HTMLToken
 from . import table_modes
+from .utils import ensure_body
 
 class FragmentSpec:
     __slots__ = (
@@ -452,7 +453,7 @@ def handle_comment(parser, context, token, fragment_context):
     if fragment_context == "html":
         frameset_root = any(ch.tag_name == "frameset" for ch in parser.root.children)
         if not frameset_root:
-            body = parser._ensure_body_node(context)
+            body = ensure_body(parser.root, context.document_state, parser.fragment_context)
             if body:
                 context.move_to_element(body)
     parser._handle_fragment_comment(token.data, context)
@@ -470,14 +471,14 @@ def handle_start_tag(parser, context, token, fragment_context, spec):
         tn = token.tag_name
         if tn == "head":
             # Ensure head/body exist (acceptable parity with previous behavior)
-            parser._ensure_body_node(context)  # may create both head/body
+            ensure_body(parser.root, context.document_state, parser.fragment_context)  # may create both head/body
             head = next((c for c in parser.root.children if c.tag_name == "head"), None)
             if head:
                 context.move_to_element(head)
                 context.transition_to_state(DocumentState.IN_HEAD, head)
             return
         if tn == "body":
-            body = parser._ensure_body_node(context)
+            body = ensure_body(parser.root, context.document_state, parser.fragment_context)
             if body:
                 for k, v in token.attributes.items():
                     if k not in body.attributes:
@@ -493,7 +494,7 @@ def handle_start_tag(parser, context, token, fragment_context, spec):
             context.transition_to_state(DocumentState.IN_FRAMESET, frameset)
             return
         if context.document_state not in (DocumentState.IN_FRAMESET, DocumentState.AFTER_FRAMESET):
-            body = parser._ensure_body_node(context)
+            body = ensure_body(parser.root, context.document_state, parser.fragment_context)
             if body and context.document_state != DocumentState.IN_BODY:
                 context.move_to_element(body)
                 context.transition_to_state(DocumentState.IN_BODY, body)
@@ -542,7 +543,7 @@ def handle_character(parser, context, token, fragment_context):
     if fragment_context == "html":
         frameset_root = any(ch.tag_name == "frameset" for ch in parser.root.children)
         if not frameset_root:
-            body = parser._ensure_body_node(context)
+            body = ensure_body(parser.root, context.document_state, parser.fragment_context)
             if body and context.document_state != DocumentState.IN_BODY:
                 context.move_to_element(body)
                 context.transition_to_state(DocumentState.IN_BODY, body)

@@ -9,6 +9,81 @@ from turbohtml.context import DocumentState
 from turbohtml.constants import FORMATTING_ELEMENTS
 
 
+def get_body(root):
+    """Find existing body node in the document tree."""
+    if not root:
+        return None
+    # Find html node first
+    html_node = None
+    for child in root.children:
+        if child.tag_name == "html":
+            html_node = child
+            break
+    if not html_node:
+        return None
+    # Find body in html node
+    for child in html_node.children:
+        if child.tag_name == "body":
+            return child
+    return None
+
+
+def has_root_frameset(root):
+    """Return True if <html> (when present) has a direct <frameset> child."""
+    if not root:
+        return False
+    # Find html node first
+    html_node = None
+    for child in root.children:
+        if child.tag_name == "html":
+            html_node = child
+            break
+    return bool(
+        html_node
+        and any(ch.tag_name == "frameset" for ch in html_node.children)
+    )
+
+
+def ensure_body(root, document_state, fragment_context=None):
+    """Return existing <body> or create one (unless frameset/fragment constraints block it)."""
+    if fragment_context:
+        if fragment_context == "html":
+            head = None
+            body = None
+
+            for child in root.children:
+                if child.tag_name == "head":
+                    head = child
+                elif child.tag_name == "body":
+                    body = child
+
+            if not head:
+                head = Node("head")
+                root.append_child(head)
+
+            if not body:
+                body = Node("body")
+                root.append_child(body)
+
+            return body
+        else:
+            return None
+    if document_state == DocumentState.IN_FRAMESET:
+        return None
+    body = get_body(root)
+    if not body:
+        # Find html node to append body to
+        html_node = None
+        for child in root.children:
+            if child.tag_name == "html":
+                html_node = child
+                break
+        if html_node:
+            body = Node("body")
+            html_node.append_child(body)
+    return body
+
+
 def find_current_table(context):
     """Find the current table element from the open elements stack when in table context."""
     # Always search open elements stack first (even in IN_BODY) so foster-parenting decisions

@@ -31,6 +31,9 @@ from turbohtml.utils import (
     reconstruct_active_formatting_elements,
     get_head,
     ensure_head,
+    get_body,
+    has_root_frameset,
+    ensure_body,
     in_template_content,
 )
 
@@ -166,22 +169,22 @@ class UnifiedCommentHandler(TagHandler):
         if state == DocumentState.AFTER_HEAD:
             if not html:
                 return False
-            body = self.parser._get_body_node()
+            body = get_body(self.parser.root)
             if body and body.parent is html:
                 html.insert_before(node, body)
             else:
                 html.append_child(node)
             return True
-        
+
         # AFTER_BODY state OR post-body IN_BODY reentry: place as sibling of <body> under <html>
         if state == DocumentState.AFTER_BODY or (
             state == DocumentState.IN_BODY and self.parser._prev_token is not None and (
                 (self.parser._prev_token.type == "EndTag" and self.parser._prev_token.tag_name == "body") or
-                (self.parser._prev_token.type == "Character" and self.parser._prev_token.data is not None and 
+                (self.parser._prev_token.type == "Character" and self.parser._prev_token.data is not None and
                  self.parser._prev_token.data.strip() == "")
             )
         ):
-            body_node = self.parser._get_body_node()
+            body_node = get_body(self.parser.root)
             if not html:
                 return False
             if html not in self.parser.root.children:
@@ -195,10 +198,10 @@ class UnifiedCommentHandler(TagHandler):
             else:
                 html.append_child(node)
             return True
-        
+
         # AFTER_HTML state: append to <body> if conditions met, else at root
         if state == DocumentState.AFTER_HTML:
-            body = self.parser._get_body_node()
+            body = get_body(self.parser.root)
             root = self.parser.root
             if body:
                 text_nodes = [ch for ch in body.children if ch.tag_name == "#text" and ch.text_content is not None]
@@ -216,7 +219,7 @@ class UnifiedCommentHandler(TagHandler):
             else:
                 root.append_child(node)
             return True
-        
+
         # AFTER_FRAMESET state: append inside <html> or at root depending on html_end_explicit
         if state == DocumentState.AFTER_FRAMESET:
             html_end_explicit = context.html_end_explicit
@@ -225,7 +228,7 @@ class UnifiedCommentHandler(TagHandler):
             else:
                 self.parser.root.append_child(node)
             return True
-        
+
         # Fallback: append at current parent or root
         if context.current_parent:
             context.current_parent.append_child(node)
@@ -251,13 +254,13 @@ class DocumentStructureHandler(TagHandler):
     def early_start_preprocess(self, token, context):
         tag = token.tag_name
         parser = self.parser
-        
+
         # Re-entry logic: when content appears after </body> but before </html>, move insertion
         # point back into the body (deepest still open descendant) and transition to IN_BODY
         if context.document_state in (DocumentState.AFTER_BODY, DocumentState.AFTER_HTML) and tag not in ("html", "body"):
-            body_node = parser._get_body_node()
+            body_node = get_body(parser.root)
             if not body_node:
-                body_node = parser._ensure_body_node(context)
+                body_node = ensure_body(parser.root, context.document_state, parser.fragment_context)
             if body_node:
                 resume_parent = body_node
                 stack = context.open_elements._stack
@@ -278,7 +281,7 @@ class DocumentStructureHandler(TagHandler):
                 context.move_to_element(resume_parent)
                 context.transition_to_state(DocumentState.IN_BODY, resume_parent)
                 self.debug(f"Reentered IN_BODY for <{tag}> after post-body state")
-        
+
         # Skip inside template content; template content handler governs structure there
         if in_template_content(context):
             return False
@@ -289,7 +292,7 @@ class DocumentStructureHandler(TagHandler):
                 if k not in parser.html_node.attributes:
                     parser.html_node.attributes[k] = v
             context.move_to_element(parser.html_node)
-            if parser._has_root_frameset():
+            if has_root_frameset(parser.root):
                 return True
             return True
         # <head>
@@ -302,7 +305,7 @@ class DocumentStructureHandler(TagHandler):
             if context.frameset_ok and context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
                 context.frameset_ok = False
             context.explicit_body = True
-            body = parser._ensure_body_node(context)
+            body = ensure_body(parser.root, context.document_state, parser.fragment_context)
             if body:
                 for k, v in token.attributes.items():
                     if k not in body.attributes:
@@ -318,11 +321,11 @@ class DocumentStructureHandler(TagHandler):
             and context.document_state != DocumentState.IN_FRAMESET
         ):
             if context.document_state == DocumentState.INITIAL:
-                body = parser._ensure_body_node(context)
+                body = ensure_body(parser.root, context.document_state, parser.fragment_context)
                 if body:
                     context.transition_to_state(DocumentState.IN_BODY, body)
             elif context.current_parent == get_head(parser):
-                body = parser._ensure_body_node(context)
+                body = ensure_body(parser.root, context.document_state, parser.fragment_context)
                 if body:
                     context.transition_to_state(DocumentState.IN_BODY, body)
         elif tag in HEAD_ELEMENTS and context.document_state == DocumentState.INITIAL:
@@ -360,7 +363,7 @@ class DocumentStructureHandler(TagHandler):
         # If we're in head, implicitly close it
         if context.document_state == DocumentState.IN_HEAD:
             self.debug("Closing head and switching to body")
-            body = self.parser._ensure_body_node(context)
+            body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
             if body:
                 context.transition_to_state( DocumentState.IN_BODY, body)
 
@@ -370,7 +373,7 @@ class DocumentStructureHandler(TagHandler):
         # </html>, we STILL transition again to AFTER_HTML so that following comments return to document level
         # (html5lib expectation in sequences like </html> x <!--c--> </html> <!--d--> where c is in body, d is root).
         # Frameset documents never synthesize a body; keep insertion mode at AFTER_FRAMESET.
-        if self.parser._has_root_frameset():
+        if has_root_frameset(self.parser.root):
             self.debug(
                 "Root <frameset> present – ignoring </html> (stay AFTER_FRAMESET, no body)"
             )
@@ -384,7 +387,7 @@ class DocumentStructureHandler(TagHandler):
                     DocumentState.AFTER_FRAMESET, html
                 )
             return True
-        body = self.parser._get_body_node() or self.parser._ensure_body_node(context)
+        body = get_body(self.parser.root) or ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
         if body:
             context.move_to_element(body)
         context.transition_to_state(
@@ -402,10 +405,8 @@ class DocumentStructureHandler(TagHandler):
         parser._ensure_html_node()
         ensure_head(parser)
         # Only ensure body if NOT a frameset document
-        if not parser._has_root_frameset():
-            body = parser._get_body_node() or parser._ensure_body_node(
-                ParseContext(len(parser.html), parser.html_node, debug_callback=parser.debug)
-            )
+        if not has_root_frameset(parser.root):
+            body = get_body(parser.root) or ensure_body(parser.root, ParseContext(len(parser.html), parser.html_node, debug_callback=parser.debug).document_state, parser.fragment_context)
             _ = body
         # Merge adjacent text nodes
         self._merge_adjacent_text_nodes(parser.root)
@@ -441,7 +442,7 @@ class DocumentStructureHandler(TagHandler):
 
 class TemplateHandler(TagHandler):
     """Unified template element handling: auto-enter content, create templates, filter content.
-    
+
     Consolidates TemplateContentAutoEnterHandler, TemplateTagHandler, and TemplateContentFilterHandler.
     Handles all aspects of <template> element behavior:
     - Auto-enter 'content' node when inserting under template (early preprocessing)
@@ -528,7 +529,7 @@ class TemplateHandler(TagHandler):
         """Handle <template> tags OR filter content inside templates."""
         # Check if inside template content for filtering logic
         in_template_content = self._in_template_content(context)
-        
+
         if tag_name == "template":
             # Always handle top-level templates (not in foreign context, not nested in content)
             if context.current_context in ("math", "svg"):
@@ -540,7 +541,7 @@ class TemplateHandler(TagHandler):
                 # Nested template inside template content - handle via content filtering
                 return True
             return True
-        
+
         # Filter other content inside templates
         if not in_template_content:
             return False
@@ -561,7 +562,7 @@ class TemplateHandler(TagHandler):
         """Create template elements OR filter content inside templates."""
         tag_name = token.tag_name
         in_template_content = self._in_template_content(context)
-        
+
         # Handle <template> elements
         if tag_name == "template":
             # Nested template inside template content - use simplified creation
@@ -589,7 +590,7 @@ class TemplateHandler(TagHandler):
                     parent=template_node,
                 )
                 return True
-            
+
             # Top-level template - full creation logic
             if context.document_state in (
                 DocumentState.IN_FRAMESET,
@@ -837,7 +838,7 @@ class TemplateHandler(TagHandler):
                     cur = cur.parent
                 return False
             return True
-        
+
         if not self._in_template_content(context):
             return False
         if context.current_context in ("math", "svg"):
@@ -860,7 +861,7 @@ class TemplateHandler(TagHandler):
     def handle_end(self, token, context):
         """Close template elements OR filter end tags inside templates."""
         tag_name = token.tag_name
-        
+
         if tag_name == "template":
             if context.document_state in (
                 DocumentState.IN_FRAMESET,
@@ -909,7 +910,7 @@ class TemplateHandler(TagHandler):
 
         if token.tag_name in self.IGNORED_START or token.tag_name == "select":
             return True
-        
+
         boundary = self._current_content_boundary(context)
         cursor = context.current_parent
         found = None
@@ -950,7 +951,7 @@ class GenericEndTagHandler(TagHandler):
         stack = context.open_elements._stack
         if not stack:
             return True
-        
+
         # Spec: Walk up stack looking for matching tag; abort if special element encountered first
         i_index = len(stack) - 1
         found_index = -1
@@ -962,10 +963,10 @@ class GenericEndTagHandler(TagHandler):
             if node.tag_name in SPECIAL_CATEGORY_ELEMENTS:
                 return True
             i_index -= 1
-        
+
         if found_index == -1:
             return True
-        
+
         # Pop until target popped
         while stack:
             popped = stack.pop()
@@ -1167,7 +1168,7 @@ class TextHandler(TagHandler):
                         text, context, parent=self.parser.html_node, merge=True
                     )
                 return True
-            body = self.parser._ensure_body_node(context)
+            body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
             context.transition_to_state( DocumentState.IN_BODY, body)
             # Move insertion to body BEFORE appending so body precedes text in serialization
             context.move_to_element(body)
@@ -1232,8 +1233,11 @@ class TextHandler(TagHandler):
         ):
             # If foreign root (math/svg) will follow, we want its preceding character data coerced into body.
             # For simplicity, always append AFTER_BODY character data straight into body (not preserving current_parent)
-            body = self.parser._get_body_node() or self.parser._ensure_body_node(
-                context
+            body = get_body(self.parser.root) or ensure_body(
+                self.parser.root,
+                self.parser.html_node,
+                context,
+                self.parser.fragment_context
             )
             if not body:
                 return True
@@ -1377,7 +1381,7 @@ class TextHandler(TagHandler):
                     reconstruct_active_formatting_elements(self.parser, context)
                     self._append_text(text, context)
                     body_node = (
-                        self.parser._ensure_body_node(context) or context.current_parent
+                        ensure_body(self.parser.root, context.document_state, self.parser.fragment_context) or context.current_parent
                     )
                     context.move_to_element(body_node)
                     return True
@@ -1483,7 +1487,7 @@ class TextHandler(TagHandler):
                     head = ensure_head(self.parser)
                     context.move_to_element(head)
                     self._append_text(text[:first_non_space_index], context)
-                body = self.parser._ensure_body_node(context)
+                body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
                 context.transition_to_state( DocumentState.IN_BODY, body)
                 # Append the non-space (or full text if INITIAL) to body
                 self._append_text(
@@ -1626,7 +1630,7 @@ class TextHandler(TagHandler):
             context.frameset_ok = False
         # Guard: avoid duplicating the same trailing text when processing characters after </body>
         if context.document_state == DocumentState.AFTER_BODY:
-            body = self.parser._get_body_node()
+            body = get_body(self.parser.root)
             if (
                 body
                 and context.current_parent is body
@@ -2471,7 +2475,7 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
             self._move_to_parent_of_ancestor(context, current)
             context.processing_end_tag = prev_processing
             return True
-        context.move_to_element_with_fallback(current.parent, self.parser._get_body_node())
+        context.move_to_element_with_fallback(current.parent, get_body(self.parser.root))
         context.processing_end_tag = prev_processing
         return True
 
@@ -2645,7 +2649,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                 )
                 # Fallback if no attach point found
                 if attach is None:
-                    attach = self.parser._ensure_body_node(context) or self.parser.root
+                    attach = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context) or self.parser.root
 
                 if not tag_name:
                     # Defensive: This should never happen; capture stacks indirectly via raising after logging.
@@ -2840,7 +2844,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                         # Fallback if no attach point found
                         if attach is None:
                             attach = (
-                                self.parser._ensure_body_node(context)
+                                ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
                                 or self.parser.root
                             )
                         before = None
@@ -2930,7 +2934,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                     if closing_option.parent:
                         context.move_to_element(closing_option.parent)
                     else:
-                        parent_body = self.parser._ensure_body_node(context)
+                        parent_body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
                         if parent_body:
                             context.move_to_element(parent_body)
                 # Ensure insertion at select/datalist level (flatten misnested optgroup nesting)
@@ -3072,7 +3076,7 @@ class ParagraphTagHandler(TagHandler):
             table_ancestor = context.current_parent.find_ancestor("table")
             if table_ancestor and not context.open_elements.contains(table_ancestor):
                 body_node = (
-                    self.parser._get_body_node() or self.parser._ensure_body_node(context)
+                    get_body(self.parser.root) or ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
                 )
                 if body_node:
                     context.move_to_element(body_node)
@@ -3102,7 +3106,7 @@ class ParagraphTagHandler(TagHandler):
                 if target_p.parent:
                     context.move_to_element(target_p.parent)
                 else:
-                    body = self.parser._ensure_body_node(context)
+                    body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
                     context.move_to_element(body)
             # Continue with normal handling of the triggering start tag (return False so other handler runs)
             return False
@@ -3127,7 +3131,7 @@ class ParagraphTagHandler(TagHandler):
             if closing_p.parent:
                 context.move_to_element(closing_p.parent)
             else:
-                body = self.parser._ensure_body_node(context)
+                body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
                 context.move_to_element(body)
             # Continue to handle the new <p> normally below
 
@@ -3159,7 +3163,7 @@ class ParagraphTagHandler(TagHandler):
                     if closing_p.parent:
                         context.move_to_element(closing_p.parent)
                     else:
-                        body = self.parser._ensure_body_node(context)
+                        body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
                         context.move_to_element(body)
                     # Remove paragraph element from DOM (it should remain; we do not remove it)
                     # Active formatting elements referencing popped nodes above p remain unaffected
@@ -3188,7 +3192,7 @@ class ParagraphTagHandler(TagHandler):
             if closing_p.parent:
                 context.move_to_element(closing_p.parent)
             else:
-                body = self.parser._ensure_body_node(context)
+                body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
                 context.move_to_element(body)
             return False  # Let the original handler handle the new tag
 
@@ -3203,7 +3207,7 @@ class ParagraphTagHandler(TagHandler):
             return True
 
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
-            body = self.parser._ensure_body_node(context)
+            body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
             context.transition_to_state( DocumentState.IN_BODY, body)
 
         if (
@@ -3540,7 +3544,7 @@ class ParagraphTagHandler(TagHandler):
             if closing_p.parent:
                 context.move_up_one_level()
             else:
-                body = self.parser._ensure_body_node(context)
+                body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
                 context.move_to_element(body)
             # Pop the paragraph element from the open elements stack to reflect closure
             if context.open_elements.contains(closing_p):
@@ -3612,7 +3616,7 @@ class ParagraphTagHandler(TagHandler):
             if closing_p.parent:
                 context.move_to_element(closing_p.parent)
             else:
-                body = self.parser._ensure_body_node(context)
+                body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
                 context.move_to_element(body)
             # Remove the paragraph element from the open elements stack
             if context.open_elements.contains(closing_p):
@@ -4044,7 +4048,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         """Handle table element"""
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
             self.debug("Implicitly closing head and switching to body")
-            body = self.parser._ensure_body_node(context)
+            body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
             context.transition_to_state( DocumentState.IN_BODY, body)
 
         # If we're in table context and current_parent is a foster-parented formatting element, close it
@@ -4091,7 +4095,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     self.debug("Empty <p> before <table> standards; close then sibling")
                     parent = paragraph_node.parent
                     if parent is None:
-                        body = self.parser._ensure_body_node(context)
+                        body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
                         context.move_to_element(body)
                     else:
                         context.move_to_element(parent)
@@ -4105,7 +4109,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     if context.current_parent.parent:
                         context.move_up_one_level()
                     else:
-                        body = self.parser._ensure_body_node(context)
+                        body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
                         context.move_to_element(body)
                 else:
                     self.debug("Quirks mode: keep table inside non-empty <p>")
@@ -5629,7 +5633,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     context.move_to_element(table_node.parent)
                 else:
                     # Try to get body node, but fall back to root in fragment contexts
-                    body_node = self.parser._ensure_body_node(context)
+                    body_node = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
                     if body_node:
                         context.move_to_element(body_node)
                     else:
@@ -5643,7 +5647,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             # Find the matching <a> tag
             a_element = context.current_parent.find_ancestor("a")
             if a_element:
-                body = self.parser._get_body_node()
+                body = get_body(self.parser.root)
                 context.move_to_element_with_fallback(
                     a_element.parent, find_current_table(context) or body
                 ) or self.parser.html_node
@@ -5661,7 +5665,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                             found = True
                             break
                     if found:
-                        next_parent = stack[-1] if stack else self.parser._ensure_body_node(context) or self.parser.root
+                        next_parent = stack[-1] if stack else ensure_body(self.parser.root, context.document_state, self.parser.fragment_context) or self.parser.root
                         context.move_to_element(next_parent)
                         context.transition_to_state( DocumentState.IN_TABLE)
                         return True
@@ -5677,7 +5681,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         popped = stack.pop()
                         if popped is target:
                             break
-                    next_parent = stack[-1] if stack else self.parser._ensure_body_node(context) or self.parser.root
+                    next_parent = stack[-1] if stack else ensure_body(self.parser.root, context.document_state, self.parser.fragment_context) or self.parser.root
                     context.move_to_element(next_parent)
                     context.transition_to_state( DocumentState.IN_ROW)
                     return True
@@ -5693,7 +5697,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         popped = stack.pop()
                         if popped is target:
                             break
-                    next_parent = stack[-1] if stack else self.parser._ensure_body_node(context) or self.parser.root
+                    next_parent = stack[-1] if stack else ensure_body(self.parser.root, context.document_state, self.parser.fragment_context) or self.parser.root
                     context.move_to_element(next_parent)
                     context.transition_to_state( DocumentState.IN_TABLE_BODY)
                     return True
@@ -5766,7 +5770,7 @@ class FormTagHandler(TagHandler):
 
         # If we're in head, implicitly close it and switch to body
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
-            body = self.parser._ensure_body_node(context)
+            body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
             context.transition_to_state( DocumentState.IN_BODY, body)
 
         # Spec: if a form element is already open (and not in template), ignore additional <form> start tags.
@@ -5932,7 +5936,7 @@ class ListTagHandler(TagHandler):
 
         # If we're in head, implicitly close it and switch to body
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
-            body = self.parser._ensure_body_node(context)
+            body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
             context.transition_to_state( DocumentState.IN_BODY, body)
 
         # Handle dd/dt elements
@@ -6089,7 +6093,7 @@ class ListTagHandler(TagHandler):
                 context.move_to_element(parent)
             else:
                 self.debug("No list parent found, moving to body")
-                body = self.parser._get_body_node()
+                body = get_body(self.parser.root)
                 context.move_to_element_with_fallback(body, self.parser.html_node)
         elif context.current_parent.tag_name == "menuitem":
             # Stay inside menuitem so first li becomes its child (do not move out)
@@ -6166,7 +6170,7 @@ class ListTagHandler(TagHandler):
                 context.move_to_element(dt_dd_ancestor.parent)
             else:
                 self.debug("No dl parent found, moving to body")
-                body = self.parser._get_body_node()
+                body = get_body(self.parser.root)
                 context.move_to_element_with_fallback(body, self.parser.html_node)
             return True
         self.debug(f"No matching {tag_name} found")
@@ -6223,7 +6227,7 @@ class ListTagHandler(TagHandler):
                 context.move_to_element(matching_container.parent)
             else:
                 self.debug("Moving to parent")
-                body = self.parser._get_body_node()
+                body = get_body(self.parser.root)
                 context.move_to_element_with_fallback(
                     matching_container.parent, body
                 ) or self.parser.html_node
@@ -6570,7 +6574,7 @@ class RawtextTagHandler(SelectAwareHandler):
                 self.debug("Returned to NONE content state")
             else:
                 # Fallback to body if no parent
-                body = self.parser._ensure_body_node(context)
+                body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
                 context.move_to_element(body)
                 context.content_state = ContentState.NONE
                 self.debug("Fallback to body, NONE content state")
@@ -6937,7 +6941,7 @@ class AutoClosingTagHandler(TemplateAwareHandler):
             tr = context.current_parent.find_ancestor("tr")
             if tr:
                 # Close everything up to the tr
-                body = self.parser._get_body_node()
+                body = get_body(self.parser.root)
                 context.move_to_element_with_fallback(
                     tr.parent, body
                 ) or self.parser.html_node
@@ -7001,7 +7005,7 @@ class AutoClosingTagHandler(TemplateAwareHandler):
                         break
             # Move insertion point to its parent (or body fallback)
             context.move_to_element_with_fallback(
-                current.parent, self.parser._get_body_node()
+                current.parent, get_body(self.parser.root)
             )
             # Formatting reconstruction will occur automatically on the next start tag; no extra state.
             return True
@@ -7388,7 +7392,7 @@ class ForeignTagHandler(TagHandler):
                         context.move_to_element(target)
                 else:
                     # In document parsing, ensure body exists and move there
-                    body = self.parser._ensure_body_node(context)
+                    body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
                     if body:
                         context.move_to_element(body)
             return False  # Let other handlers process this element
@@ -8492,7 +8496,7 @@ class ForeignTagHandler(TagHandler):
                 # Delegate unhandled foreign end tag to HTML handlers
                 prev_foreign = context.current_context
                 context.current_context = None
-                body = self.parser._ensure_body_node(context)
+                body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
                 if body:
                     context.move_to_element(body)
                 if self.parser.fragment_context and prev_foreign in ("svg", "math"):
@@ -8744,9 +8748,9 @@ class HeadTagHandler(TagHandler):
             and self.parser._prev_token is not None
             and self.parser._prev_token.type == "EndTag"
             and self.parser._prev_token.tag_name == "body"
-            and not self.parser._get_body_node()
+            and not get_body(self.parser.root)
         ):
-            body = self.parser._ensure_body_node(context)
+            body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
             if body:
                 self.debug(
                     f"<#{tag_name}> immediately after stray </body>: placing into synthesized body"
@@ -8893,7 +8897,7 @@ class HeadTagHandler(TagHandler):
                 DocumentState.AFTER_BODY,
                 DocumentState.AFTER_HTML,
             ):
-                body = self.parser._get_body_node() or self.parser._ensure_body_node(context)
+                body = get_body(self.parser.root) or ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
                 if body:
                     self.debug(f"Late <{tag_name}> after body/html: placing into body")
                     self.parser.insert_element(token, context, mode="normal", enter=tag_name not in VOID_ELEMENTS, parent=body, tag_name_override=tag_name, push_override=False)
@@ -9121,7 +9125,7 @@ class FramesetTagHandler(TagHandler):
         tag = token.tag_name
 
         # Phase 1: Suppress stray <frame> before any root <frameset>
-        if tag == "frame" and not self.parser._has_root_frameset() and context.frameset_ok:
+        if tag == "frame" and not has_root_frameset(self.parser.root) and context.frameset_ok:
             return True
 
         # Phase 2: frameset_ok management (applies to ALL tags)
@@ -9134,7 +9138,7 @@ class FramesetTagHandler(TagHandler):
             if tag == "div" and context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
                 benign = benign | {"div"}
             def _foreign_root_wrapper_benign():
-                body = self.parser._get_body_node()
+                body = get_body(self.parser.root)
                 if not body or len(body.children) != 1:
                     return False
                 root = body.children[0]
@@ -9159,7 +9163,7 @@ class FramesetTagHandler(TagHandler):
         if tag == "frameset" and context.frameset_ok and context.document_state in (
             DocumentState.INITIAL, DocumentState.IN_HEAD, DocumentState.IN_BODY, DocumentState.AFTER_HEAD
         ):
-            body = self.parser._get_body_node()
+            body = get_body(self.parser.root)
             if body:
                 def benign(node):
                     if node.tag_name == "#comment":
@@ -9184,7 +9188,7 @@ class FramesetTagHandler(TagHandler):
                         context.move_to_element(self.parser.html_node)
 
         # Phase 4: Guard against non-frameset content after frameset established
-        if self.parser._has_root_frameset() and context.document_state in (
+        if has_root_frameset(self.parser.root) and context.document_state in (
             DocumentState.IN_FRAMESET, DocumentState.AFTER_FRAMESET
         ):
             if tag not in ("frameset", "frame", "noframes", "html"):
@@ -9194,7 +9198,7 @@ class FramesetTagHandler(TagHandler):
         return False
 
     def _trim_body_leading_space(self):
-        body = self.parser._get_body_node()
+        body = get_body(self.parser.root)
         if not body or not body.children:
             return
         first = body.children[0]
@@ -9260,7 +9264,7 @@ class FramesetTagHandler(TagHandler):
             if not self.parser.html_node:
                 return False
             if not context.current_parent.find_ancestor("frameset"):
-                body = self.parser._get_body_node()
+                body = get_body(self.parser.root)
                 if body:
                     allowed_tags = {
                         "base",
@@ -9313,7 +9317,7 @@ class FramesetTagHandler(TagHandler):
                             self.debug("Ignoring root <frameset>; frameset_ok False after non-container content")
                             return True
                 self.debug("Creating root frameset")
-                body = self.parser._get_body_node()
+                body = get_body(self.parser.root)
                 if body and body.parent:
                     body.parent.remove_child(body)
                 frameset_node = self.parser.insert_element(
@@ -9376,7 +9380,7 @@ class FramesetTagHandler(TagHandler):
                     DocumentState.AFTER_HEAD,
                 )
                 and not context.current_parent.find_ancestor("frameset")
-                and not self.parser._has_root_frameset()
+                and not has_root_frameset(self.parser.root)
             ):
                 head = ensure_head(self.parser)
                 parent = head if head else parent
@@ -9429,7 +9433,7 @@ class FramesetTagHandler(TagHandler):
                 # we treat the document as frameset even when <noframes> is a sibling under <html>.
                 if (
                     parent and parent.tag_name == "frameset"
-                ) or self.parser._has_root_frameset():
+                ) or has_root_frameset(self.parser.root):
                     # Maintain AFTER_FRAMESET (or IN_FRAMESET if still inside frameset subtree) without creating body
                     if parent and parent.tag_name == "frameset":
                         context.move_to_element(parent)
@@ -9444,8 +9448,8 @@ class FramesetTagHandler(TagHandler):
                     if parent:
                         context.move_to_element(parent)
                     body = (
-                        self.parser._get_body_node()
-                        or self.parser._ensure_body_node(context)
+                        get_body(self.parser.root)
+                        or ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
                     )
                     if body:
                         context.move_to_element(body)
@@ -9471,11 +9475,11 @@ class FramesetTagHandler(TagHandler):
                 # For non-root frameset documents (no root <frameset>), subsequent comments should be direct
                 # siblings under the document node (expected tree shows <!-- abc --> aligned with <noframes>,
                 # not indented as its child). Move insertion to document root to produce comment as sibling.
-                if not self.parser._has_root_frameset():
+                if not has_root_frameset(self.parser.root):
                     # Non-frameset document: subsequent character/comment tokens belong in <body>
                     body = (
-                        self.parser._get_body_node()
-                        or self.parser._ensure_body_node(context)
+                        get_body(self.parser.root)
+                        or ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
                     )
                     if body:
                         context.move_to_element(body)
@@ -9499,7 +9503,7 @@ class ImageTagHandler(TagHandler):
     def handle_start(self, token, context, end_tag_idx):
         # If we're in head, implicitly close it and switch to body
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
-            body = self.parser._ensure_body_node(context)
+            body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
             context.transition_to_state( DocumentState.IN_BODY, body)
 
         # Always create as "img" regardless of input tag using unified insertion (void semantics)
@@ -9758,7 +9762,7 @@ class PlaintextHandler(SelectAwareHandler):
             DocumentState.AFTER_HEAD,
             DocumentState.AFTER_BODY,
         ):
-            body = self.parser._ensure_body_node(context)
+            body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
             context.transition_to_state( DocumentState.IN_BODY, body)
 
         # Close an open paragraph; <plaintext> is a block. BUT if the paragraph is inside a <button>
@@ -10123,7 +10127,7 @@ class TableFosterHandler(TagHandler):
 
     def handle_start(self, token, context, has_more_content):
         """Foster parent residual start tags per table algorithm.
-        
+
         Uses table_modes.should_foster_parent() to determine if element needs
         fostering before table. Allows ParagraphTagHandler to manage cell re-entry.
         """
@@ -10183,7 +10187,7 @@ def foster_parent_element(tag_name, attributes, context, parser):
     context.move_to_element(new_node)
     context.open_elements.push(new_node)
 
-    
+
 
 class RubyTagHandler(TagHandler):
     """Handles ruby annotation elements & auto-closing"""
@@ -10198,7 +10202,7 @@ class RubyTagHandler(TagHandler):
         # If in head, switch to body
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
             self.debug("Implicitly closing head and switching to body for ruby element")
-            body = self.parser._ensure_body_node(context)
+            body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
             context.transition_to_state( DocumentState.IN_BODY, body)
 
         # Auto-closing

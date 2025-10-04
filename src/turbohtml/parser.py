@@ -1,7 +1,7 @@
 """TurboHTML parser (type annotations removed)."""
 
 from turbohtml.context import ParseContext, DocumentState
-from .handlers import (
+from turbohtml.handlers import (
     DoctypeHandler,
     TemplateHandler,
     DocumentStructureHandler,
@@ -31,9 +31,9 @@ from .handlers import (
 )
 from turbohtml.tokenizer import HTMLTokenizer
 from turbohtml.adoption import AdoptionAgencyAlgorithm
-from .fragment import parse_fragment
+from turbohtml.fragment import parse_fragment
 from turbohtml.node import Node
-from .constants import VOID_ELEMENTS
+from turbohtml.constants import VOID_ELEMENTS
 
 
 class TurboHTML:
@@ -145,57 +145,6 @@ class TurboHTML:
             return
         if self.html_node not in self.root.children:
             self.root.append_child(self.html_node)
-
-    def _get_body_node(self):
-        if self.fragment_context:
-            return None
-        if not self.html_node:
-            return None
-        for child in self.html_node.children:
-            if child.tag_name == "body":
-                return child
-        return None
-
-    def _has_root_frameset(self):
-        """Return True if <html> (when present) has a direct <frameset> child.
-
-        """
-        return bool(
-            self.html_node
-            and any(ch.tag_name == "frameset" for ch in self.html_node.children)
-        )
-
-    def _ensure_body_node(self, context):
-        """Return existing <body> or create one (unless frameset/fragment constraints block it)."""
-        if self.fragment_context:
-            if self.fragment_context == "html":
-                head = None
-                body = None
-
-                for child in self.root.children:
-                    if child.tag_name == "head":
-                        head = child
-                    elif child.tag_name == "body":
-                        body = child
-
-                if not head:
-                    head = Node("head")
-                    self.root.append_child(head)
-
-                if not body:
-                    body = Node("body")
-                    self.root.append_child(body)
-
-                return body
-            else:
-                return None
-        if context.document_state == DocumentState.IN_FRAMESET:
-            return None
-        body = self._get_body_node()
-        if not body:
-            body = Node("body")
-            self.html_node.append_child(body)
-        return body
 
     def insert_element(
         self,
