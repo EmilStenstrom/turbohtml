@@ -1500,93 +1500,7 @@ class TextHandler(TagHandler):
         ):
             context.move_to_element(context.current_parent.parent)
 
-        # No non-spec inline wrapper duplication heuristics (before/after table); rely on spec reconstruction
-        # alone should govern when formatting elements reappear.
-
-        # Whitespace handling deferred to tokenizer and spec rules (no additional trimming here).
-        # Malformed <code> sequences are treated as plain text per spec.
-        # Unified <nobr> segmentation logic.
-        # Goal: ensure trailing text runs create a fresh <nobr> wrapper only when an existing active formatting
-        # <nobr> entry is stale (not on the open stack) OR when the current <nobr> contains non-text children
-        # and another distinct <nobr> entry exists (necessitating sibling segmentation).
-        if context.active_formatting_elements:
-            has_stale_nobr = False
-            another_nobr_entry = False
-            current_is_nobr = context.current_parent.tag_name == "nobr"
-            cur_elem = context.current_parent if current_is_nobr else None
-            for entry in context.active_formatting_elements:
-                el = entry.element
-                if not el or el.tag_name != "nobr":
-                    continue
-                if not context.open_elements.contains(el):
-                    has_stale_nobr = True
-                if current_is_nobr and el is not cur_elem:
-                    another_nobr_entry = True
-                if has_stale_nobr and (another_nobr_entry or not current_is_nobr):
-                    break
-
-            if has_stale_nobr:
-                last_child = (
-                    context.current_parent.children[-1]
-                    if context.current_parent.children
-                    else None
-                )
-                reuse_trailing_empty = (
-                    last_child
-                    and last_child.tag_name == "nobr"
-                    and not last_child.children
-                )
-                if not reuse_trailing_empty:
-                    restore_target = None
-                    if (
-                        current_is_nobr
-                        and any(
-                            ch.tag_name != "#text"
-                            for ch in context.current_parent.children
-                        )
-                        and context.current_parent.parent is not None
-                    ):
-                        restore_target = context.current_parent.parent
-                        context.move_to_element(restore_target)
-                    reconstruct_active_formatting_elements(self.parser, context)
-                    self._append_text(text, context)
-                    if restore_target is not None:
-                        context.move_to_element(restore_target)
-                    return True
-
-            # Sibling segmentation case: current <nobr> has non-text child(ren), no text yet, and another entry exists.
-            if (
-                current_is_nobr
-                and text
-                and not any(
-                    ch.tag_name == "#text" for ch in context.current_parent.children
-                )
-                and any(
-                    ch.tag_name != "#text" for ch in context.current_parent.children
-                )
-                and another_nobr_entry
-            ):
-
-                parent = (
-                    cur_elem.parent
-                    if cur_elem and cur_elem.parent
-                    else context.current_parent
-                )
-                if parent and cur_elem.parent:
-                    synth = HTMLToken("StartTag", tag_name="nobr", attributes={})
-                    new_elem = self.parser.insert_element(
-                        synth,
-                        context,
-                        parent=cur_elem.parent,
-                        mode="normal",
-                        enter=True,
-                        push_override=True,
-                    )
-                    context.move_to_element(new_elem)
-                    self._append_text(text, context)
-                    context.move_to_element(new_elem.parent)
-                    return True
-        # Append text directly; no additional wrapper-splitting heuristics.
+        # Append text directly per spec.
         if self.parser.env_debug and text.strip():
             self.debug(f"[char-insert] parent={context.current_parent.tag_name} text='{text[:20]}'")
         self._append_text(text, context)
@@ -2063,59 +1977,6 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
                                 context.open_elements.push(table)
                             if section_wrapper.tag_name not in stack_tags:
                                 context.open_elements.push(section_wrapper)
-                        return True
-            # Second‑chance relocation when current_parent is a bare section wrapper (<tbody>, <thead>, <tfoot>)
-            # under an otherwise empty table inside a fragment cell context.
-            if (
-                tag_name == "a"
-                and context.current_parent.tag_name in ("tbody", "thead", "tfoot")
-                and self.parser.fragment_context in ("tr", "td", "th", "tbody", "thead", "tfoot")
-            ):
-                section = context.current_parent
-                table = (
-                    section.parent
-                    if section.parent and section.parent.tag_name == "table"
-                    else None
-                )
-                if table and table.parent and table.parent.tag_name in ("td", "th"):
-                    def _has_real_structure_section(tbl, sec):
-                        for ch in tbl.children:
-                            if ch is sec:
-                                # Only count as structure if sec already has row/cell
-                                if any(gc.tag_name in {"tr", "td", "th"} for gc in sec.children):
-                                    return True
-                                continue
-                            if ch.tag_name in {"caption", "colgroup", "col", "tr", "td", "th"}:
-                                return True
-                            if ch.tag_name in {"tbody", "thead", "tfoot"}:
-                                for gc in ch.children:
-                                    if gc.tag_name in {"tr", "td", "th"}:
-                                        return True
-                        return False
-                    if not _has_real_structure_section(table, section):
-                        cell = table.parent
-                        self.debug(
-                            "Fragment anchor-before-table (section wrapper): promoting <a> before <table>",
-                        )
-                        new_element = self._insert_formatting_element(
-                            token,
-                            context,
-                            parent=cell,
-                            before=table,
-                            push_nobr_late=(tag_name == "nobr"),
-                        )
-                        if not inside_object:
-                            context.active_formatting_elements.push(new_element, token)
-                        # Keep insertion point at the (still present) section wrapper and update insertion mode.
-                        context.move_to_element(section)
-                        if context.document_state == DocumentState.IN_CELL:
-                            context.transition_to_state(DocumentState.IN_TABLE_BODY, section)
-                        # Ensure table and section are on open elements stack for subsequent row token.
-                        stack_tags = [el.tag_name for el in context.open_elements]
-                        if table.tag_name not in stack_tags:
-                            context.open_elements.push(table)
-                        if section.tag_name not in stack_tags:
-                            context.open_elements.push(section)
                         return True
             self.debug(
                 "Inside table cell, inserting formatting element via unified helper",
@@ -3931,44 +3792,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 elif tag_name in ("thead", "tbody", "tfoot"):
                     context.transition_to_state(DocumentState.IN_TABLE_BODY, inserted)
                 return True
-            parent_tag = (
-                context.current_parent.tag_name if context.current_parent else ""
-            )
-            direct_emit_allowed = parent_tag in (
-                "document",
-                "document-fragment",
-                "body",
-            ) and tag_name in (
-                "td",
-                "th",
-                "tr",
-            )
-            if direct_emit_allowed:
-                if tag_name == "tr" and (
-                    not self.parser.fragment_context
-                    or self.parser.fragment_context == "table"
-                ):
-                    fake_tbody = self._synth_token("tbody")
-                    tbody_node = self.parser.insert_element(
-                        fake_tbody, context, mode="normal", enter=True,
-                    )
-                    fake_tr = self._synth_token("tr")
-                    tr_node = self.parser.insert_element(
-                        fake_tr, context, mode="normal", enter=True, parent=tbody_node,
-                    )
-                    if token.attributes:
-                        tr_node.attributes.update(token.attributes)
-                    return True
-                fake_token = HTMLToken(
-                    "StartTag", tag_name=tag_name, attributes=token.attributes,
-                )
-                self.parser.insert_element(
-                    fake_token, context, mode="normal", enter=True,
-                )
-                return True
-            table_token = self._synth_token("table")
-            self.parser.insert_element(table_token, context, mode="normal", enter=True)
-            context.transition_to_state( DocumentState.IN_TABLE)
 
         # Handle each element type
         handlers = {
@@ -4781,40 +4604,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         block_container = cursor
                         break
                     cursor = cursor.parent
-                if block_container and block_container in context.open_elements:
-                    self.debug(
-                        f"Redirecting foster-parented text into adoption block <{block_container.tag_name}> wrapped by <{prev_sibling.tag_name}>",
-                    )
-                    target = block_container
-                    if (
-                        target.children
-                        and target.children[-1].tag_name in FORMATTING_ELEMENTS
-                    ):
-                        inner = target.children[-1]
-                        while (
-                            inner.children
-                            and inner.children[-1].tag_name in FORMATTING_ELEMENTS
-                        ):
-                            inner = inner.children[-1]
-                        if (
-                            inner.children
-                            and inner.children[-1].tag_name == "#text"
-                        ):
-                            inner.children[-1].text_content += text
-                        else:
-                            self.parser.insert_text(
-                                text, context, parent=inner, merge=True,
-                            )
-                    elif (
-                        target.children
-                        and target.children[-1].tag_name == "#text"
-                    ):
-                        target.children[-1].text_content += text
-                    else:
-                        self.parser.insert_text(
-                            text, context, parent=target, merge=True,
-                        )
-                    return True
                 if (
                     block_container is None
                     and context.active_formatting_elements
