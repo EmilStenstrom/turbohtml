@@ -511,31 +511,3 @@ class TurboHTML:
             if handler.should_handle_end(tag_name, context):
                 if handler.handle_end(token, context):
                     return
-
-    def _merge_adjacent_text_nodes(self, node):
-        """Iteratively merge adjacent sibling text nodes (non-recursive)."""
-        stack = [node]
-        while stack:
-            cur = stack.pop()
-            if not cur.children:
-                continue
-            merged = []
-            pending_text = None
-            changed = False
-            for ch in cur.children:
-                if ch.tag_name == "#text":
-                    if pending_text is None:
-                        pending_text = ch
-                        merged.append(ch)
-                    else:
-                        pending_text.text_content += ch.text_content
-                        changed = True
-                else:
-                    pending_text = None
-                    merged.append(ch)
-            if changed:
-                cur.children = merged
-            # Push non-text children for processing
-            for ch in reversed(cur.children):  # reversed to process in original order depth-first
-                if ch.tag_name != "#text":
-                    stack.append(ch)
