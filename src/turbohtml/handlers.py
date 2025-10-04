@@ -8782,6 +8782,86 @@ class ForeignTagHandler(TagHandler):
             )
         return True
 
+    def finalize(self, parser):
+        """Normalize MathML attributes and adjust SVG/MathML foreign attributes per HTML5 spec."""
+        root = parser.root
+        if root is None:
+            return
+
+        # Spec: Normalize MathML case-sensitive attributes
+        def normalize_mathml(node):
+            parts = node.tag_name.split()
+            local = parts[-1] if parts else node.tag_name
+            is_mathml = local in MATHML_ELEMENTS or node.tag_name.startswith("math ")
+            if is_mathml and node.attributes:
+                new_attrs = {}
+                for k, v in node.attributes.items():
+                    kl = k.lower()
+                    if kl in MATHML_CASE_SENSITIVE_ATTRIBUTES:
+                        new_attrs[MATHML_CASE_SENSITIVE_ATTRIBUTES[kl]] = v
+                    else:
+                        new_attrs[kl] = v
+                node.attributes = new_attrs
+            for ch in node.children:
+                if ch.tag_name != "#text":
+                    normalize_mathml(ch)
+
+        normalize_mathml(root)
+
+        # Spec: Adjust foreign (SVG/MathML) xlink: and xml: attributes per HTML5 spec
+        def adjust_foreign(node):
+            parts = node.tag_name.split()
+            local = parts[-1] if parts else node.tag_name
+            is_svg = node.tag_name.startswith("svg ") or local == "svg"
+            is_math = node.tag_name.startswith("math ") or local == "math"
+            if is_svg and node.attributes:
+                attrs = dict(node.attributes)
+                defn_val = attrs.pop("definitionurl", None)
+                xml_lang = attrs.pop("xml:lang", None)
+                xml_space = attrs.pop("xml:space", None)
+                xml_base = attrs.pop("xml:base", None)
+                other_xml = []
+                for k in list(attrs.keys()):
+                    if k.startswith("xml:") and k not in ("xml:lang", "xml:space", "xml:base"):
+                        other_xml.append((k, attrs.pop(k)))
+                new_attrs = {}
+                if defn_val is not None:
+                    new_attrs["definitionurl"] = defn_val
+                for k, v in node.attributes.items():
+                    if not (k in ("definitionurl", "xml:lang", "xml:space", "xml:base") or k.startswith("xml:")):
+                        new_attrs[k] = v
+                if xml_lang is not None:
+                    new_attrs["xml lang"] = xml_lang
+                if xml_space is not None:
+                    new_attrs["xml space"] = xml_space
+                for k, v in other_xml:
+                    new_attrs[k] = v
+                if xml_base is not None:
+                    new_attrs["xml:base"] = xml_base
+                node.attributes = new_attrs
+            elif is_math and node.attributes:
+                attrs = dict(node.attributes)
+                if "definitionurl" in attrs and "definitionURL" not in attrs:
+                    attrs["definitionURL"] = attrs.pop("definitionurl")
+                xlink_attrs = [(k, v) for k, v in attrs.items() if k.startswith("xlink:")]
+                if xlink_attrs:
+                    for k, _ in xlink_attrs:
+                        del attrs[k]
+                    xlink_attrs.sort(key=lambda kv: kv[0].split(":", 1)[1])
+                    rebuilt = {}
+                    if "definitionURL" in attrs:
+                        rebuilt["definitionURL"] = attrs.pop("definitionURL")
+                    for k, v in xlink_attrs:
+                        rebuilt[f"xlink {k.split(':', 1)[1]}"] = v
+                    for k, v in attrs.items():
+                        rebuilt[k] = v
+                    node.attributes = rebuilt
+            for ch in node.children:
+                if ch.tag_name != "#text":
+                    adjust_foreign(ch)
+
+        adjust_foreign(root)
+
 
 class HeadElementHandler(TagHandler):
     """Handles head element and its contents"""
@@ -10318,12 +10398,10 @@ class RubyElementHandler(TagHandler):
         return True
 
 class PostProcessHandler(TagHandler):
-    """Spec-required post-parse normalization.
+    """Spec-required post-parse normalization for invalid numeric entities.
 
-    Performs only HTML5-spec-mandated transformations:
-    1. Convert invalid numeric entity sentinel → U+FFFD
-    2. Normalize MathML case-sensitive attributes
-    3. Adjust SVG/MathML xlink:/xml: attributes per spec
+    Converts the NUMERIC_ENTITY_INVALID_SENTINEL (U+F000) to U+FFFD and
+    strips U+FFFD characters from invalid codepoints (HTML5 spec requirement).
     """
 
     def finalize(self, parser):
@@ -10356,77 +10434,3 @@ class PostProcessHandler(TagHandler):
                 walk_replacement(c)
 
         walk_replacement(root)
-
-        # Spec: Normalize MathML case-sensitive attributes
-        def normalize_mathml(node):
-            parts = node.tag_name.split()
-            local = parts[-1] if parts else node.tag_name
-            is_mathml = local in MATHML_ELEMENTS or node.tag_name.startswith("math ")
-            if is_mathml and node.attributes:
-                new_attrs = {}
-                for k, v in node.attributes.items():
-                    kl = k.lower()
-                    if kl in MATHML_CASE_SENSITIVE_ATTRIBUTES:
-                        new_attrs[MATHML_CASE_SENSITIVE_ATTRIBUTES[kl]] = v
-                    else:
-                        new_attrs[kl] = v
-                node.attributes = new_attrs
-            for ch in node.children:
-                if ch.tag_name != "#text":
-                    normalize_mathml(ch)
-
-        normalize_mathml(root)
-
-        # Spec: Adjust foreign (SVG/MathML) xlink: and xml: attributes per HTML5 spec
-        def adjust_foreign(node):
-            parts = node.tag_name.split()
-            local = parts[-1] if parts else node.tag_name
-            is_svg = node.tag_name.startswith("svg ") or local == "svg"
-            is_math = node.tag_name.startswith("math ") or local == "math"
-            if is_svg and node.attributes:
-                attrs = dict(node.attributes)
-                defn_val = attrs.pop("definitionurl", None)
-                xml_lang = attrs.pop("xml:lang", None)
-                xml_space = attrs.pop("xml:space", None)
-                xml_base = attrs.pop("xml:base", None)
-                other_xml = []
-                for k in list(attrs.keys()):
-                    if k.startswith("xml:") and k not in ("xml:lang", "xml:space", "xml:base"):
-                        other_xml.append((k, attrs.pop(k)))
-                new_attrs = {}
-                if defn_val is not None:
-                    new_attrs["definitionurl"] = defn_val
-                for k, v in node.attributes.items():
-                    if not (k in ("definitionurl", "xml:lang", "xml:space", "xml:base") or k.startswith("xml:")):
-                        new_attrs[k] = v
-                if xml_lang is not None:
-                    new_attrs["xml lang"] = xml_lang
-                if xml_space is not None:
-                    new_attrs["xml space"] = xml_space
-                for k, v in other_xml:
-                    new_attrs[k] = v
-                if xml_base is not None:
-                    new_attrs["xml:base"] = xml_base
-                node.attributes = new_attrs
-            elif is_math and node.attributes:
-                attrs = dict(node.attributes)
-                if "definitionurl" in attrs and "definitionURL" not in attrs:
-                    attrs["definitionURL"] = attrs.pop("definitionurl")
-                xlink_attrs = [(k, v) for k, v in attrs.items() if k.startswith("xlink:")]
-                if xlink_attrs:
-                    for k, _ in xlink_attrs:
-                        del attrs[k]
-                    xlink_attrs.sort(key=lambda kv: kv[0].split(":", 1)[1])
-                    rebuilt = {}
-                    if "definitionURL" in attrs:
-                        rebuilt["definitionURL"] = attrs.pop("definitionURL")
-                    for k, v in xlink_attrs:
-                        rebuilt[f"xlink {k.split(':', 1)[1]}"] = v
-                    for k, v in attrs.items():
-                        rebuilt[k] = v
-                    node.attributes = rebuilt
-            for ch in node.children:
-                if ch.tag_name != "#text":
-                    adjust_foreign(ch)
-
-        adjust_foreign(root)
