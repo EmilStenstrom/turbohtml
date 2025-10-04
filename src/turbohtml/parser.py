@@ -4,7 +4,6 @@ from turbohtml.context import ParseContext, DocumentState
 from .handlers import (
     DoctypeHandler,
     TemplateContentAutoEnterHandler,
-    MalformedSelectStartTagFilterHandler,
     SpecialElementHandler,
     FormattingReconstructionPreludeHandler,
     TemplateTagHandler,
@@ -82,7 +81,6 @@ class TurboHTML:
         self.tag_handlers = [
             DoctypeHandler(self),
             TemplateContentAutoEnterHandler(self),
-            MalformedSelectStartTagFilterHandler(self),
             SpecialElementHandler(self),
             FormattingReconstructionPreludeHandler(self),
             TemplateTagHandler(self),

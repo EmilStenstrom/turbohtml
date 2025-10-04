@@ -266,35 +266,6 @@ class BodyReentryHandler(TagHandler):
         return False
 
 
-class MalformedSelectStartTagFilterHandler(TagHandler):
-    """Drops malformed start tags whose tag_name still contains '<' while inside a select subtree.
-
-    This logic previously lived inline in the parser loop. Keeping it here preserves deterministic
-    suppression without heuristic branching elsewhere. It only triggers for tokens the tokenizer
-    surfaced as StartTag tokens but whose raw tag name retained a '<', indicating malformed input.
-    We restrict scope to select/option/optgroup subtrees (matching prior behavior) so that outside
-    select contexts malformed names still flow through normal handler logic (or other recovery paths).
-    """
-
-    def early_start_preprocess(self, token, context):
-        if token.type != "StartTag":
-            return False
-        if "<" not in token.tag_name:
-            return False
-        # Determine if we are inside select/option/optgroup subtree
-        cur = context.current_parent
-        inside = False
-        while cur:
-            if cur.tag_name in ("select", "option", "optgroup"):
-                inside = True
-                break
-            cur = cur.parent
-        if not inside:
-            return False
-        self.debug(f"Suppressing malformed start tag <{token.tag_name}> inside select subtree")
-        return True
-
-
 class UnifiedCommentHandler(TagHandler):
     """Unified comment placement handler for all document states.
     
@@ -2910,6 +2881,30 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         # formatting elements can be positioned before it if required. Replaces prior
         # dynamic context attribute monkey patching.
         self._pending_table_outside = None
+
+    def early_start_preprocess(self, token, context):
+        """Drops malformed start tags whose tag_name still contains '<' while inside a select subtree.
+
+        This suppresses malformed tokens that the tokenizer surfaced as StartTag tokens but whose
+        raw tag name retained a '<', indicating malformed input. We restrict scope to select/option/optgroup
+        subtrees so that outside select contexts malformed names flow through normal handler logic.
+        """
+        if token.type != "StartTag":
+            return False
+        if "<" not in token.tag_name:
+            return False
+        # Determine if we are inside select/option/optgroup subtree
+        cur = context.current_parent
+        inside = False
+        while cur:
+            if cur.tag_name in ("select", "option", "optgroup"):
+                inside = True
+                break
+            cur = cur.parent
+        if not inside:
+            return False
+        self.debug(f"Suppressing malformed start tag <{token.tag_name}> inside select subtree")
+        return True
 
     def _should_handle_start_impl(self, tag_name, context):
         # If we're in a select, handle all tags to prevent formatting elements
