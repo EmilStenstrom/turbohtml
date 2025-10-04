@@ -4264,19 +4264,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     formatting_parent
                     and formatting_parent.tag_name in FORMATTING_ELEMENTS
                 ):
-                    if (
-                        table_node.parent is formatting_parent
-                        and context.active_formatting_elements
-                    ):
-                        table_idx = formatting_parent.children.index(table_node)
-                        if table_idx > 0:
-                            candidate = formatting_parent.children[table_idx - 1]
-                            if (
-                                candidate.tag_name in FORMATTING_ELEMENTS
-                                and context.open_elements.contains(candidate)
-                                and context.active_formatting_elements.find_element(candidate)
-                            ):
-                                pass
                     target_parent = formatting_parent
                     if preferred_after_table_parent is not None:
                         target_parent = preferred_after_table_parent
@@ -7905,11 +7892,6 @@ class PlaintextHandler(SelectAwareHandler):
         if recreate_anchor:
             # Immediate recreation inside <plaintext> without deferred flag.
             attrs = recreated_anchor_attrs or {}
-            # Ensure insertion point is plaintext element
-            if context.current_parent.tag_name != "plaintext":
-                pt = context.current_parent.find_ancestor("plaintext")
-                if pt:
-                    context.move_to_element(pt)
             if context.current_parent.tag_name == "plaintext":
                 existing_child_anchor = next(
                     (ch for ch in context.current_parent.children if ch.tag_name == "a"),
