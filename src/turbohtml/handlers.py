@@ -485,8 +485,6 @@ class DocumentStructureHandler(TagHandler):
         if tag == "head":
             head = ensure_head(parser)
             context.transition_to_state(DocumentState.IN_HEAD, head)
-            if context.document_state != DocumentState.IN_FRAMESET:
-                _ = parser._ensure_body_node(context)
             return True
         # <body>
         if tag == "body" and context.document_state != DocumentState.IN_FRAMESET:
@@ -10320,10 +10318,12 @@ class RubyElementHandler(TagHandler):
         return True
 
 class PostProcessHandler(TagHandler):
-    """Final tree normalization executed after parsing completes.
+    """Spec-required post-parse normalization.
 
-    Moves prior parser._post_process_tree logic into a handler 'finalize' hook to
-    keep the parser slimmer. Runs after all other handlers.
+    Performs only HTML5-spec-mandated transformations:
+    1. Convert invalid numeric entity sentinel → U+FFFD
+    2. Normalize MathML case-sensitive attributes
+    3. Adjust SVG/MathML xlink:/xml: attributes per spec
     """
 
     def finalize(self, parser):
@@ -10331,25 +10331,24 @@ class PostProcessHandler(TagHandler):
         if root is None:
             return
 
-        def preserve(node):
+        # Spec: Replace invalid numeric entity sentinel with U+FFFD and strip invalid codepoint replacements
+        def preserve_replacement_chars(node):
+            """Check if U+FFFD should be preserved (script/style/plaintext/svg contexts)"""
             cur = node.parent
-            svg = False
             while cur:
-                tn = cur.tag_name
-                if tn == "plaintext" or tn in ("script", "style"):
+                if cur.tag_name in ("plaintext", "script", "style") or cur.tag_name.startswith("svg "):
                     return True
-                if tn.startswith("svg "):
-                    svg = True
                 cur = cur.parent
-            return svg
+            return False
 
         def walk_replacement(node):
             if node.tag_name == "#text" and node.text_content:
                 text = node.text_content
-                had = NUMERIC_ENTITY_INVALID_SENTINEL in text
-                if had:
+                had_sentinel = NUMERIC_ENTITY_INVALID_SENTINEL in text
+                if had_sentinel:
                     text = text.replace(NUMERIC_ENTITY_INVALID_SENTINEL, "\ufffd")
-                if ("\ufffd" in text) and (not had) and (not preserve(node)):
+                # Strip U+FFFD that came from invalid codepoints (not from numeric entities)
+                if "\ufffd" in text and not had_sentinel and not preserve_replacement_chars(node):
                     text = text.replace("\ufffd", "")
                 if text != node.text_content:
                     node.text_content = text
@@ -10358,6 +10357,7 @@ class PostProcessHandler(TagHandler):
 
         walk_replacement(root)
 
+        # Spec: Normalize MathML case-sensitive attributes
         def normalize_mathml(node):
             parts = node.tag_name.split()
             local = parts[-1] if parts else node.tag_name
@@ -10377,32 +10377,7 @@ class PostProcessHandler(TagHandler):
 
         normalize_mathml(root)
 
-        def collapse_formatting(node):
-            i = 0
-            while i < len(node.children) - 1:
-                a = node.children[i]
-                b = node.children[i + 1]
-                if (
-                    a.tag_name in FORMATTING_ELEMENTS
-                    and b.tag_name == a.tag_name
-                    and a.attributes == b.attributes
-                    and len(a.children) == 1
-                    and a.children[0] is b
-                    and not any(ch.tag_name == "#text" for ch in a.children)
-                ):
-                    grandchildren = list(b.children)
-                    for gc in grandchildren:
-                        b.remove_child(gc)
-                        a.append_child(gc)
-                    node.remove_child(b)
-                    continue
-                i += 1
-            for ch in node.children:
-                if ch.tag_name != "#text":
-                    collapse_formatting(ch)
-
-        collapse_formatting(root)
-
+        # Spec: Adjust foreign (SVG/MathML) xlink: and xml: attributes per HTML5 spec
         def adjust_foreign(node):
             parts = node.tag_name.split()
             local = parts[-1] if parts else node.tag_name
@@ -10455,51 +10430,3 @@ class PostProcessHandler(TagHandler):
                     adjust_foreign(ch)
 
         adjust_foreign(root)
-
-        html = parser.html_node if not parser.fragment_context else None
-        if html and len(html.children) >= 3 and html.children and html.children[0].tag_name == "head":
-            body_index = None
-            for i, ch in enumerate(html.children):
-                if ch.tag_name == "body":
-                    body_index = i
-                    break
-            if body_index is not None and body_index + 1 < len(html.children):
-                after = html.children[body_index + 1]
-                if (
-                    after.tag_name == "#text"
-                    and after.text_content is not None
-                    and after.text_content.strip() == ""
-                ):
-                    between_ok = True
-                    for mid in html.children[1:body_index]:
-                        if not (
-                            mid.tag_name == "#text"
-                            and mid.text_content is not None
-                            and mid.text_content.strip() == ""
-                        ):
-                            between_ok = False
-                            break
-                    if between_ok:
-                        ws_nodes = []
-                        j = body_index + 1
-                        while (
-                            j < len(html.children)
-                            and html.children[j].tag_name == "#text"
-                            and html.children[j].text_content is not None
-                            and html.children[j].text_content.strip() == ""
-                        ):
-                            ws_nodes.append(html.children[j])
-                            j += 1
-                        for n in ws_nodes:
-                            html.remove_child(n)
-                        insert_at = 1
-                        while (
-                            insert_at < len(html.children)
-                            and html.children[insert_at].tag_name == "#text"
-                            and html.children[insert_at].text_content is not None
-                            and html.children[insert_at].text_content.strip() == ""
-                        ):
-                            insert_at += 1
-                        for offset, n in enumerate(ws_nodes):
-                            html.children.insert(insert_at + offset, n)
-                            n.parent = html
