@@ -479,36 +479,6 @@ class AdoptionAgencyAlgorithm:
             return body_node
         return self.parser.root
 
-    def reconstruct_active_formatting_elements(self, context):
-        """Reconstruct active formatting elements per spec."""
-        stack = context.active_formatting_elements
-        if not stack:
-            return
-        # NOTE: Do NOT snapshot the open elements stack here; it may mutate during reconstruction decisions.
-        # Always reference context.open_elements to avoid stale membership causing spurious clones.
-        open_stack = context.open_elements
-        # Find first (earliest after last marker) formatting entry whose element is not on the current open stack
-        first_missing_index = None
-        for i, entry in enumerate(stack):
-            if entry.element is None:  # marker resets search
-                first_missing_index = None
-                continue
-            if entry.element not in context.open_elements:
-                first_missing_index = i
-                break
-        if first_missing_index is None:
-            return
-        self.parser.debug(f"[reconstruct] start missing_index={first_missing_index} afe={[e.element.tag_name if e.element else 'MARK' for e in stack]} open={[n.tag_name for n in open_stack]}")
-        for entry in list(stack[first_missing_index:]):
-            if entry.element is None or entry.element in open_stack:
-                continue
-            clone = Node(entry.element.tag_name, entry.element.attributes.copy())
-            context.current_parent.append_child(clone)
-            context.open_elements.push(clone)
-            entry.element = clone
-            context.move_to_element(clone)
-            self.parser.debug(f"[reconstruct] cloned <{clone.tag_name}> new_open={[n.tag_name for n in context.open_elements]}")
-
     def _run_complex_case(self, formatting_entry, formatting_element, furthest_block, context):
         bookmark_index = context.active_formatting_elements.get_index(formatting_entry)
         if bookmark_index == -1:
