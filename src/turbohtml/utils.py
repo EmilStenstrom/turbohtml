@@ -223,21 +223,3 @@ def in_template_content(context):
             return True
         cur = cur.parent
     return False
-
-
-def in_integration_point(context):
-    """Check if the current insertion point is in an HTML integration point.
-
-    HTML integration points allow HTML content inside foreign (SVG/MathML) contexts.
-    """
-    cur = context.current_parent
-    while cur:
-        if cur.tag_name in ("svg foreignObject", "svg desc", "svg title"):
-            return True
-        if cur.tag_name == "math annotation-xml" and cur.attributes and any(
-            attr.name.lower() == "encoding" and attr.value.lower() in ("text/html", "application/xhtml+xml")
-            for attr in cur.attributes
-        ):
-            return True
-        cur = cur.parent
-    return False
