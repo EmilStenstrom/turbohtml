@@ -226,9 +226,6 @@ def reconstruct_active_formatting_elements(parser, context):
         context.open_elements.push(clone)
         entry.element = clone
         context.move_to_element(clone)
-        # Track anchor reconstruction index for immediate re-adoption suppression. We only care about <a>.
-        if clone.tag_name == "a":
-            context.anchor_last_reconstruct_index = parser.get_token_position()
         if parser.env_debug:
             parser.debug(f"Reconstructed formatting element {clone.tag_name}")
 
