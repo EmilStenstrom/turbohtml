@@ -1,8 +1,9 @@
 """TurboHTML parser (type annotations removed)."""
 
 from turbohtml.adoption import AdoptionAgencyAlgorithm
-from turbohtml.constants import VOID_ELEMENTS
-from turbohtml.context import DocumentState, ParseContext
+from turbohtml.constants import NUMERIC_ENTITY_INVALID_SENTINEL, VOID_ELEMENTS
+from turbohtml.context import ContentState, DocumentState, ParseContext
+from turbohtml.foster import foster_parent, needs_foster_parenting
 from turbohtml.fragment import parse_fragment
 from turbohtml.handlers import (
     AutoClosingTagHandler,
@@ -186,7 +187,6 @@ class TurboHTML:
         tag_name = tag_name_override or token.tag_name
 
         if auto_foster and parent is None and before is None:
-            from turbohtml.foster import foster_parent, needs_foster_parenting
             if needs_foster_parenting(context.current_parent):
                 # Check if we're inside a cell or caption (foster parenting doesn't apply there)
                 in_cell_or_caption = bool(
@@ -244,13 +244,11 @@ class TurboHTML:
 
         # Activate RAWTEXT mode if token requires it (deferred activation for elements like textarea)
         if hasattr(token, "needs_rawtext") and token.needs_rawtext and self.tokenizer:
-            from turbohtml.context import ContentState
             context.content_state = ContentState.RAWTEXT
             self.tokenizer.start_rawtext(tag_name)
 
         # Activate PLAINTEXT mode for <plaintext> element (consumes all remaining input as text)
         if tag_name == "plaintext" and self.tokenizer:
-            from turbohtml.context import ContentState
             context.content_state = ContentState.PLAINTEXT
             self.tokenizer.start_plaintext()
 
@@ -271,7 +269,6 @@ class TurboHTML:
         merge=True,
     ):
         """Insert character data performing standard merge with preceding text node."""
-        from .constants import NUMERIC_ENTITY_INVALID_SENTINEL
 
         # Entity finalization: convert sentinel and strip invalid U+FFFD inline during text insertion.
         had_sentinel = NUMERIC_ENTITY_INVALID_SENTINEL in text
