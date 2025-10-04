@@ -1,10 +1,10 @@
 """Fragment parsing helpers.
 
 `parse_fragment(parser)` drives fragment parsing for a specific context element.
-`FragmentSpec` declares per‑context ignore sets, suppression predicates, and
-optional pre/post hooks. The main loop is intentionally flat: run pre‑hooks,
-apply suppressions, dispatch token handlers, then run post‑hooks. No heuristic
-behaviour or test‑specific logic resides here.
+`FragmentSpec` declares per-context ignore sets, suppression predicates, and
+optional pre/post hooks. The main loop is intentionally flat: run pre-hooks,
+apply suppressions, dispatch token handlers, then run post-hooks. No heuristic
+behaviour or test-specific logic resides here.
 """
 
 from turbohtml import table_modes
@@ -128,7 +128,7 @@ def _supp_duplicate_section_wrapper(parser, context, token, fragment_context):
     expectations treat that token as ignored (parse error recorded separately) rather than
     generating an additional nested section. We restrict suppression to the synthetic fragment
     root level to avoid swallowing legitimate nested sections deeper in the tree (rare but
-    spec‑permitted in some malformed inputs).
+    spec-permitted in some malformed inputs).
 
     Conditions:
       - token is a StartTag
@@ -401,9 +401,9 @@ def _implied_table_section_pre_token(parser, context, token):
         context.move_to_element(last_section)
         return
 
-    # No existing section – create implied tbody under the table ancestor (or at current parent if it *is* table)
+    # No existing section - create implied tbody under the table ancestor (or at current parent if it *is* table)
     attach_parent = table_ancestor
-    # (Instrumentation removed) – earlier debug printed table children when synthesizing tbody.
+    # (Instrumentation removed) - earlier debug printed table children when synthesizing tbody.
     tbody = Node("tbody")
     # Insert before first <tr> child to preserve ordering if such a row already slipped in.
     for i, ch in enumerate(attach_parent.children):
@@ -562,8 +562,8 @@ def parse_fragment(parser, html):  # pragma: no cover
         parser.html_node = html_node
     # NOTE: Earlier experimental synthetic stack seeding (table/tbody/tr) for td/th/tr fragment
     # contexts was removed after introducing regressions (innerHTML pass rate drop). Any required
-    # implied section or row alignment now handled via pre‑token hooks and normal insertion logic
-    # without seeding non‑DOM ancestors.
+    # implied section or row alignment now handled via pre-token hooks and normal insertion logic
+    # without seeding non-DOM ancestors.
 
     # Cache spec attributes locally (minor attribute lookup reduction in hot loop)
     pre_hooks = spec.pre_token_hooks if spec and spec.pre_token_hooks else ()

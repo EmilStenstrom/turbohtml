@@ -39,7 +39,7 @@ from turbohtml.tokenizer import HTMLTokenizer
 
 class TurboHTML:
     """Main parser interface.
-    Instantiation with an HTML string immediately parses into an in‑memory tree
+    Instantiation with an HTML string immediately parses into an in-memory tree
     rooted at `self.root`. Public surface is intentionally small; most spec logic
     lives in handlers and predicate helpers for determinism and testability.
     """

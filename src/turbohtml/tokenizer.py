@@ -13,7 +13,7 @@ from turbohtml.constants import (
 TAG_OPEN_RE = re.compile(r"<(!?)(/)?([^\s/>]+)([^>]*)>")
 # Attribute name: any run of characters excluding whitespace, '=', '/', '>' (allows '<', quotes, backticks, backslashes)
 # NOTE: We allow '>' inside quoted attribute values; initial regex match may terminate early at a '>' inside quotes.
-# We post‑process below when attribute quotes are unbalanced to continue scanning until the real closing '>'.
+# We post-process below when attribute quotes are unbalanced to continue scanning until the real closing '>'.
 # Attribute parsing regex:
 # - Attribute name: one or more non whitespace/=/> characters
 # - Optional value: = followed by double-quoted, single-quoted, or unquoted run (up to whitespace, '>', or '/')
@@ -189,7 +189,7 @@ class HTMLTokenizer:
             # If potential tag is script, check for end tag conditions per HTML5 script data / escaped states.
             if potential_tag == "script":
                 # The next character after the tag name determines if this could be an end tag token.
-                # End tag *candidate* ONLY if the next char is whitespace, '/', or '>' (HTML Standard – script data end tag name state).
+                # End tag *candidate* ONLY if the next char is whitespace, '/', or '>' (HTML Standard - script data end tag name state).
                 # IMPORTANT: EOF directly after "</script" (no whitespace) is NOT a candidate and must be treated as literal text
                 # so that the substring "</script" is emitted (tests16: ...</SCRIPT EOF). A trailing space ("</script ") *is* a
                 # candidate; if EOF occurs before the closing '>' that partial tag is dropped (no text emitted) producing the

@@ -1,4 +1,5 @@
 import re
+from typing import ClassVar
 
 from turbohtml import table_modes
 from turbohtml.constants import (
@@ -323,9 +324,9 @@ class DocumentStructureHandler(TagHandler):
         # Ignore </html> entirely while any table-related insertion mode is active. The HTML Standard
         # treats a stray </html> as a parse error that is otherwise ignored; accepting it prematurely
         # while a table (or its sections/rows/cells) remains open causes subsequent character tokens
-        # to append after the table instead of being foster‑parented before it. By deferring the
+        # to append after the table instead of being foster-parented before it. By deferring the
         # AFTER_HTML transition until after leaving table modes we preserve correct ordering of text
-        # preceding trailing table content (tables01.dat regression). This has no effect on well‑formed
+        # preceding trailing table content (tables01.dat regression). This has no effect on well-formed
         # documents where </html> appears after the table has been fully closed.
         if context.document_state in (
             DocumentState.IN_TABLE,
@@ -354,7 +355,7 @@ class DocumentStructureHandler(TagHandler):
         # Frameset documents never synthesize a body; keep insertion mode at AFTER_FRAMESET.
         if has_root_frameset(self.parser.root):
             self.debug(
-                "Root <frameset> present – ignoring </html> (stay AFTER_FRAMESET, no body)",
+                "Root <frameset> present - ignoring </html> (stay AFTER_FRAMESET, no body)",
             )
             # Record ordering if no <noframes> descendant yet: explicit </html> precedes any late <noframes>.
             html = self.parser.html_node
@@ -430,9 +431,9 @@ class TemplateHandler(TagHandler):
     """
 
     # Ignore only top-level/document-structure things inside template content
-    IGNORED_START = {"html", "head", "body", "frameset", "frame"}
+    IGNORED_START: ClassVar = {"html", "head", "body", "frameset", "frame"}
     # Treat table & select related and nested template triggers as plain generics (no special algorithms)
-    GENERIC_AS_PLAIN = {
+    GENERIC_AS_PLAIN: ClassVar = {
         "table",
         "thead",
         "tbody",
@@ -1062,12 +1063,12 @@ class TextHandler(TagHandler):
         # tag was swallowed), re-enter the deepest such integration point so trailing character data stays inside.
         # Transient routing sentinel logic inlined here.
 
-        # One‑shot post‑adoption reconstruction: if the adoption agency algorithm executed on the
+        # One-shot post-adoption reconstruction: if the adoption agency algorithm executed on the
         # previous token (end tag of a formatting element) it sets a transient flag on the context.
-        # Consume that flag here (only once) and perform reconstruction before inserting this text –
+        # Consume that flag here (only once) and perform reconstruction before inserting this text -
         # narrowly reproducing the spec step "reconstruct the active formatting elements" for the
-        # immediately following character token without broad per‑character scanning (which caused
-        # Guard against over‑cloning regressions when generalized.
+        # immediately following character token without broad per-character scanning (which caused
+        # Guard against over-cloning regressions when generalized.
         if context.needs_reconstruction:
             if (
                 context.document_state == DocumentState.IN_BODY
@@ -1280,7 +1281,7 @@ class TextHandler(TagHandler):
                     )
                     context.move_to_element(body_node)
                     return True
-                # Before short‑circuiting append, ensure any active formatting elements that were
+                # Before short-circuiting append, ensure any active formatting elements that were
                 # popped by the paragraph end (e.g. <p>1<s><b>2</p>3...) are reconstructed so that
                 # following text is wrapped (spec: reconstruct active formatting elements algorithm).
                 if elems and elems[-1].tag_name == "table":
@@ -1515,7 +1516,7 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
     """Handles formatting elements like <b>, <i>, etc. and their reconstruction."""
 
     # Tags treated as block boundaries for deferred reconstruction logic
-    _BLOCKISH = {
+    _BLOCKISH: ClassVar = {
         "div","section","article","p","ul","ol","li","table","tr","td","th","body","html",
         "h1","h2","h3","h4","h5","h6",
     }
@@ -2331,7 +2332,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         if context.current_parent.is_inside_tag("select") and tag_name in TABLE_ELEMENTS:
             # Regression-safe refinement:
             # * Do NOT auto-pop select for every table-related tag (earlier change produced unintended
-            #   table structures inside foreignObject or built tbody/tr under select – tests17 failures).
+            #   table structures inside foreignObject or built tbody/tr under select - tests17 failures).
             # * When in a table insertion mode already (e.g. select nested inside an open table cell),
             #   allow foster-parenting logic below to operate.
             # * When inside an SVG foreignObject integration point, emit <table> outside the select subtree
@@ -4027,7 +4028,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             "article",
             "blockquote",
         ):
-            # We're already inside a foster‑parented block (common after paragraph fostering around tables).
+            # We're already inside a foster-parented block (common after paragraph fostering around tables).
             # Before appending text, attempt to reconstruct active formatting elements so that any <a>/<b>/<i>/etc.
             # become children of this block and the text nests inside them (preserves correct inline containment).
             if (
@@ -4214,7 +4215,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         # Anchor continuation handling (narrow): only segmentation or split cases are supported.
         # We intentionally limit behavior to:
         #   1. Segmentation clone when an active <a> exists elsewhere but wasn't reconstructed inside a fostered block.
-        #   2. Split continuation when the immediately previous active/on-stack <a> already has text – create a
+        #   2. Split continuation when the immediately previous active/on-stack <a> already has text - create a
         #      sibling <a> for the new foster-parented text run. No generic cloning or broad continuation heuristic.
         # Collect formatting context up to foster parent; reconstruct if stale AFE entries exist.
         def _precedes_table(node):
@@ -5935,7 +5936,7 @@ class ForeignTagHandler(TagHandler):
     Other handlers delegate to these helpers to maintain single source of truth.
     """
 
-    _MATHML_LEAFS = {"mi", "mo", "mn", "ms", "mtext"}
+    _MATHML_LEAFS: ClassVar = {"mi", "mo", "mn", "ms", "mtext"}
     _SVG_INTEGRATION_POINTS = ("svg foreignObject", "svg desc", "svg title")
     _MATHML_TEXT_INTEGRATION_POINTS = ("math mtext", "math mi", "math mo", "math mn", "math ms")
 
@@ -7371,7 +7372,7 @@ class HeadTagHandler(TagHandler):
             if table:
                 # Only style/script should be treated as early rawtext inside table. Title/textarea should be fostered.
                 if tag_name in ("style", "script"):
-                    # Special case: if current_parent is a foster‑parented <select> immediately before the table,
+                    # Special case: if current_parent is a foster-parented <select> immediately before the table,
                     # keep the rawtext element INSIDE that <select> (tests18:28/29). This mirrors normal insertion
                     # point behavior: select is still open and current_parent points at it. Previous logic rerouted
                     # to the table, which misplaced <script>.
@@ -7585,7 +7586,7 @@ class FramesetTagHandler(TagHandler):
     Manages frameset_ok flag for all tags, handles frameset/frame/noframes elements.
     """
 
-    _FRAMES_HTML_EMPTY_CONTAINERS = {
+    _FRAMES_HTML_EMPTY_CONTAINERS: ClassVar = {
         "div",
         "span",
         "article",
@@ -7597,7 +7598,7 @@ class FramesetTagHandler(TagHandler):
         "main",
     }
 
-    _BENIGN_INLINE = {"span", "font", "b", "i", "u", "em", "strong"}
+    _BENIGN_INLINE: ClassVar = {"span", "font", "b", "i", "u", "em", "strong"}
 
     def early_start_preprocess(self, token, context):
         """Unified preprocessing: frameset_ok management, guards, and takeover logic."""
@@ -7766,7 +7767,7 @@ class FramesetTagHandler(TagHandler):
                     # Conditional override: if frameset_ok is already False BUT body still has no meaningful
                     # content AND every child is an empty benign container (div/span/section/article/etc.),
                     # permit takeover (pattern: <div><frameset>). Do NOT override for void/replaced content
-                    # (br/img/input/wbr) – those should commit to a body per tests (e.g. <br><frameset> expects body).
+                    # (br/img/input/wbr) - those should commit to a body per tests (e.g. <br><frameset> expects body).
                     if not context.frameset_ok and not meaningful:
                         benign_containers = self._FRAMES_HTML_EMPTY_CONTAINERS
                         def _only_empty_containers(node):
@@ -7834,7 +7835,7 @@ class FramesetTagHandler(TagHandler):
             # AFTER_FRAMESET (frameset document) OR a normal document with root-level trailing comments.
             # First <noframes>: if ordering not yet set, it must be False (</html> either absent or after this element)
             # We do not flip saw_html_end_before_noframes here; absence of prior True value already encodes order.
-            # Place <noframes> inside <head> when we are still before or in head (non‑frameset doc) just like
+            # Place <noframes> inside <head> when we are still before or in head (non-frameset doc) just like
             # other head rawtext containers in these tests; once a frameset root is established the element
             # becomes a descendant of frameset (handled above). This matches html5lib expectations where
             # early <noframes> appears under head and its closing switches back to body/frameset modes.

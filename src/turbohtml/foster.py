@@ -44,7 +44,7 @@ def foster_parent(target_parent, open_elements, root):
 
     table_parent = table.parent
     if table_parent is None:
-        # Table is root-level (fragment maybe) – spec: append after table; emulate by
+        # Table is root-level (fragment maybe) - spec: append after table; emulate by
         # selecting root (or target_parent if root mismatch) and inserting after table.
         # We surface this as parent=root, before=None and let caller append; semantic diff
         # is acceptable for now (rare path). A refinement could expose explicit 'after' slot.
