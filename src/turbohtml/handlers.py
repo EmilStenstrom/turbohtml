@@ -337,92 +337,6 @@ class UnifiedCommentHandler(TagHandler):
         return True
 
 
-class FramesetPreprocessHandler(TagHandler):
-    """Unified frameset preprocessing (frameset_ok, takeover, guard).
-
-    Combines FramesetPreludeHandler and FramesetLateHandler into single preprocessing pass.
-    Handles frameset_ok management, stray <frame> suppression, benign-body purge for takeover,
-    and non-frameset tag suppression once in frameset modes.
-    """
-
-    _BENIGN_INLINE = {"span", "font", "b", "i", "u", "em", "strong"}
-
-    def early_start_preprocess(self, token, context):
-        tag = token.tag_name
-        
-        # Phase 1: Suppress stray <frame> before any root <frameset>
-        if tag == "frame" and not self.parser._has_root_frameset() and context.frameset_ok:
-            return True
-        
-        # Phase 2: frameset_ok management (track whether frameset insertion still viable)
-        if context.frameset_ok:
-            benign = {
-                "frameset","frame","noframes","param","source","track","base","basefont","bgsound","link","meta","script","style","title","svg","math"
-            }
-            if tag == "input" and (token.attributes.get("type", "") or "").lower() == "hidden":
-                benign = benign | {"input"}
-            if tag == "div" and context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
-                benign = benign | {"div"}
-            def _foreign_root_wrapper_benign():
-                body = self.parser._get_body_node()
-                if not body or len(body.children) != 1:
-                    return False
-                root = body.children[0]
-                if root.tag_name not in ("svg svg", "math math"):
-                    return False
-                stack = [root]
-                while stack:
-                    n = stack.pop()
-                    for ch in n.children:
-                        if (ch.tag_name == "#text" and ch.text_content and ch.text_content.strip()):
-                            return False
-                        if ch.tag_name not in ("#text", "#comment") and not (ch.tag_name.startswith("svg ") or ch.tag_name.startswith("math ")):
-                            if ch.tag_name not in ("div", "span"):
-                                return False
-                        stack.append(ch)
-                return True
-            if tag not in benign and not _foreign_root_wrapper_benign():
-                if tag != "p":
-                    context.frameset_ok = False
-        
-        # Phase 3: Frameset takeover (purge benign body when <frameset> encountered)
-        if tag == "frameset" and context.frameset_ok and context.document_state in (
-            DocumentState.INITIAL, DocumentState.IN_HEAD, DocumentState.IN_BODY, DocumentState.AFTER_HEAD
-        ):
-            body = self.parser._get_body_node()
-            if body:
-                def benign(node):
-                    if node.tag_name == "#comment":
-                        return True
-                    if node.tag_name == "#text":
-                        return not (node.text_content and node.text_content.strip())
-                    if node.tag_name in ("svg svg", "math math"):
-                        return all(benign(c) for c in node.children)
-                    if node.tag_name in self._BENIGN_INLINE:
-                        return all(benign(c) for c in node.children)
-                    if node.tag_name == "div":
-                        return all(benign(c) for c in node.children)
-                    if node.tag_name == "p":
-                        return all(benign(c) for c in node.children)
-                    return False
-                if body.children and all(benign(ch) for ch in body.children):
-                    while body.children:
-                        body.remove_child(body.children[-1])
-                    if body.parent:
-                        body.parent.remove_child(body)
-                    if self.parser.html_node:
-                        context.move_to_element(self.parser.html_node)
-        
-        # Phase 4: Guard against non-frameset content after root frameset established
-        if self.parser._has_root_frameset() and context.document_state in (
-            DocumentState.IN_FRAMESET, DocumentState.AFTER_FRAMESET
-        ):
-            if tag not in ("frameset", "frame", "noframes", "html"):
-                self.debug(f"Ignoring <{tag}> start tag in frameset document")
-                return True
-        
-        return False
-
 
 
 class DocumentStructureHandler(TagHandler):
@@ -9269,7 +9183,11 @@ class HeadElementHandler(TagHandler):
 
 
 class FramesetTagHandler(TagHandler):
-    """Handles frameset, frame, and noframes elements"""
+    """Unified frameset handler: preprocessing, frameset_ok management, and element insertion.
+    
+    Combines preprocessing guards with actual element handling to avoid duplication.
+    Manages frameset_ok flag for all tags, handles frameset/frame/noframes elements.
+    """
 
     _FRAMES_HTML_EMPTY_CONTAINERS = {
         "div",
@@ -9282,6 +9200,85 @@ class FramesetTagHandler(TagHandler):
         "footer",
         "main",
     }
+    
+    _BENIGN_INLINE = {"span", "font", "b", "i", "u", "em", "strong"}
+
+    def early_start_preprocess(self, token, context):
+        """Unified preprocessing: frameset_ok management, guards, and takeover logic."""
+        tag = token.tag_name
+        
+        # Phase 1: Suppress stray <frame> before any root <frameset>
+        if tag == "frame" and not self.parser._has_root_frameset() and context.frameset_ok:
+            return True
+        
+        # Phase 2: frameset_ok management (applies to ALL tags)
+        if context.frameset_ok:
+            benign = {
+                "frameset","frame","noframes","param","source","track","base","basefont","bgsound","link","meta","script","style","title","svg","math"
+            }
+            if tag == "input" and (token.attributes.get("type", "") or "").lower() == "hidden":
+                benign = benign | {"input"}
+            if tag == "div" and context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
+                benign = benign | {"div"}
+            def _foreign_root_wrapper_benign():
+                body = self.parser._get_body_node()
+                if not body or len(body.children) != 1:
+                    return False
+                root = body.children[0]
+                if root.tag_name not in ("svg svg", "math math"):
+                    return False
+                stack = [root]
+                while stack:
+                    n = stack.pop()
+                    for ch in n.children:
+                        if (ch.tag_name == "#text" and ch.text_content and ch.text_content.strip()):
+                            return False
+                        if ch.tag_name not in ("#text", "#comment") and not (ch.tag_name.startswith("svg ") or ch.tag_name.startswith("math ")):
+                            if ch.tag_name not in ("div", "span"):
+                                return False
+                        stack.append(ch)
+                return True
+            if tag not in benign and not _foreign_root_wrapper_benign():
+                if tag != "p":
+                    context.frameset_ok = False
+        
+        # Phase 3: Frameset takeover (purge benign body when <frameset> encountered)
+        if tag == "frameset" and context.frameset_ok and context.document_state in (
+            DocumentState.INITIAL, DocumentState.IN_HEAD, DocumentState.IN_BODY, DocumentState.AFTER_HEAD
+        ):
+            body = self.parser._get_body_node()
+            if body:
+                def benign(node):
+                    if node.tag_name == "#comment":
+                        return True
+                    if node.tag_name == "#text":
+                        return not (node.text_content and node.text_content.strip())
+                    if node.tag_name in ("svg svg", "math math"):
+                        return all(benign(c) for c in node.children)
+                    if node.tag_name in self._BENIGN_INLINE:
+                        return all(benign(c) for c in node.children)
+                    if node.tag_name == "div":
+                        return all(benign(c) for c in node.children)
+                    if node.tag_name == "p":
+                        return all(benign(c) for c in node.children)
+                    return False
+                if body.children and all(benign(ch) for ch in body.children):
+                    while body.children:
+                        body.remove_child(body.children[-1])
+                    if body.parent:
+                        body.parent.remove_child(body)
+                    if self.parser.html_node:
+                        context.move_to_element(self.parser.html_node)
+        
+        # Phase 4: Guard against non-frameset content after frameset established
+        if self.parser._has_root_frameset() and context.document_state in (
+            DocumentState.IN_FRAMESET, DocumentState.AFTER_FRAMESET
+        ):
+            if tag not in ("frameset", "frame", "noframes", "html"):
+                self.debug(f"Ignoring <{tag}> start tag in frameset document")
+                return True
+        
+        return False
 
     def _trim_body_leading_space(self):
         body = self.parser._get_body_node()

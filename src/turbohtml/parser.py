@@ -6,7 +6,6 @@ from .handlers import (
     TemplateHandler,
     DocumentStructureHandler,
     PlaintextHandler,
-    FramesetPreprocessHandler,
     FramesetTagHandler,
     SelectTagHandler,
     TableTagHandler,
@@ -74,7 +73,6 @@ class TurboHTML:
             TemplateHandler(self),
             DocumentStructureHandler(self),
             PlaintextHandler(self),
-            FramesetPreprocessHandler(self),
             FramesetTagHandler(self),
             SelectTagHandler(self),  # must precede table handling to suppress table tokens inside <select>
             TableTagHandler(self),
