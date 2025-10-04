@@ -1611,21 +1611,8 @@ class TextHandler(TagHandler):
         if not all(ch.tag_name == "#text" for ch in second.children):
             return
 
-        # Check if first subtree already contains same formatting tag and any text
-        def iter_desc(node):
-            aa = self.parser.adoption_agency
-            if aa:
-                yield from aa._iter_descendants(node)
-                return
-            stack_local = [node]
-            while stack_local:
-                cur = stack_local.pop()
-                for ch in cur.children:
-                    yield ch
-                    stack_local.append(ch)
-
         has_same_fmt = False
-        for d in iter_desc(first):
+        for d in self.parser.adoption_agency._iter_descendants(first):
             if d.tag_name == second.tag_name:
                 has_same_fmt = True
                 break
@@ -1634,7 +1621,7 @@ class TextHandler(TagHandler):
 
         has_any_text = any(
             (dd.tag_name == "#text" and dd.text_content and dd.text_content.strip())
-            for dd in iter_desc(first)
+            for dd in self.parser.adoption_agency._iter_descendants(first)
         )
         if not has_any_text:
             return
@@ -2095,16 +2082,6 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
                             before=chain_before,
                             push_nobr_late=(tag_name == "nobr"),
                         )
-                    else:
-                        self.debug(
-                            f"Foster parenting formatting element <{tag_name}> (append path) under <{foster_parent_node.tag_name}>",
-                        )
-                        new_element = self._insert_formatting_element(
-                            token,
-                            context,
-                            parent=foster_parent_node,
-                            push_nobr_late=(tag_name == "nobr"),
-                        )
                 else:
                     self.debug(
                         f"Foster parenting formatting element <{tag_name}> inside existing chain <{chain_parent.tag_name}>",
@@ -2510,24 +2487,6 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         if context.current_parent.is_inside_tag("select") and tag_name == "p":
             self.debug("Flattening <p> inside select (ignored start tag)")
             return True
-        if tag_name == "p" and context.document_state in (
-            DocumentState.IN_TABLE,
-            DocumentState.IN_TABLE_BODY,
-            DocumentState.IN_ROW,
-            DocumentState.IN_CELL,
-        ):
-            deepest_cell = None
-            for el in reversed(context.open_elements):
-                if el.tag_name in ("td", "th"):
-                    deepest_cell = el
-                    break
-            if deepest_cell and context.current_parent is not deepest_cell:
-                context.move_to_element(deepest_cell)
-                self.debug(
-                    "Relocated insertion point to open cell for <p> after foreign content",
-                )
-            return False  # Allow normal paragraph handling after relocation
-
         if context.current_parent.is_inside_tag("select") and tag_name in RAWTEXT_ELEMENTS:
             # Ignore other rawtext containers (e.g. title, textarea, noframes) inside select; script/style fall through
             if tag_name not in ("script", "style"):
@@ -4258,23 +4217,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 ):
                     cursor = cursor.children[-1]
 
-                # Helper to detect any descendant non-whitespace text; prevents merging separate runs.
-                def _descendant_has_text(node):
-                    for ch in node.children:
-                        if (
-                            ch.tag_name == "#text"
-                            and ch.text_content
-                            and ch.text_content.strip()
-                        ):
-                            return True
-                        if ch.tag_name in FORMATTING_ELEMENTS and _descendant_has_text(
-                            ch,
-                        ):
-                            return True
-                    return False
-
-                if not _descendant_has_text(cursor):
-                    target = cursor
+                target = cursor
             # target now resolved
             # Append or merge text at target
             if (
@@ -4566,34 +4509,10 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 self.debug(
                     f"Appending foster-parented text into previous block container <{prev_sibling.tag_name}>",
                 )
-                # If the last child is an <a> (or other formatting element) with no text yet, descend so text nests inside it.
-                if (
-                    prev_sibling.children
-                    and prev_sibling.children[-1].tag_name in FORMATTING_ELEMENTS
-                ):
-                    target = prev_sibling.children[-1]
-                    # Descend to deepest rightmost formatting element
-                    while (
-                        target.children
-                        and target.children[-1].tag_name in FORMATTING_ELEMENTS
-                    ):
-                        target = target.children[-1]
-                    if target.children and target.children[-1].tag_name == "#text":
-                        target.children[-1].text_content += text
-                    else:
-                        self.parser.insert_text(
-                            text, context, parent=target, merge=True,
-                        )
                 # Merge with its last text child if present
-                elif (
-                    prev_sibling.children
-                    and prev_sibling.children[-1].tag_name == "#text"
-                ):
-                    prev_sibling.children[-1].text_content += text
-                else:
-                    self.parser.insert_text(
-                        text, context, parent=prev_sibling, merge=True,
-                    )
+                self.parser.insert_text(
+                    text, context, parent=prev_sibling, merge=True,
+                )
                 return True
 
         # Anchor continuation handling (narrow): only segmentation or split cases are supported.
@@ -4817,47 +4736,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     seen_run.add(fmt_elem.tag_name)
 
             if reused_wrapper is not None:
-                if (
-                    reused_wrapper.tag_name == "nobr"
-                    and any(
-                        ch.tag_name == "#text" and ch.text_content
-                        for ch in reused_wrapper.children
-                    )
-                    and reused_wrapper.parent is foster_parent
-                ):
-                    sibling_token = self._synth_token("nobr")
-                    sibling = self.parser.insert_element(
-                        sibling_token,
-                        context,
-                        mode="normal",
-                        enter=False,
-                        parent=foster_parent,
-                        before=foster_parent.children[table_index],
-                        push_override=False,
-                    )
-                    current_parent_for_chain = sibling
-                else:
-                    current_parent_for_chain = reused_wrapper
-            elif (
-                not formatting_elements
-                and current_parent_for_chain.tag_name == "nobr"
-                and any(
-                    ch.tag_name == "#text"
-                    for ch in current_parent_for_chain.children
-                )
-                and current_parent_for_chain.parent is foster_parent
-            ):
-                sibling_token = self._synth_token("nobr")
-                sibling = self.parser.insert_element(
-                    sibling_token,
-                    context,
-                    mode="normal",
-                    enter=False,
-                    parent=foster_parent,
-                    before=foster_parent.children[table_index],
-                    push_override=False,
-                )
-                current_parent_for_chain = sibling
+                current_parent_for_chain = reused_wrapper
 
             text_holder = current_parent_for_chain
             self.debug(
@@ -4892,17 +4771,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             def _collapse_redundant_nobr(node):
                 if node.tag_name != "nobr":
                     return
-                if len(node.children) == 1 and node.children[0].tag_name == "nobr":
-                    inner = node.children[0]
-                    has_text = any(
-                        ch.tag_name == "#text" and ch.text_content
-                        for ch in inner.children
-                    )
-                    if has_text and not node.attributes and not inner.attributes:
-                        for ch in list(inner.children):
-                            inner.remove_child(ch)
-                            node.append_child(ch)
-                        node.remove_child(inner)
 
             if last_created:
                 _collapse_redundant_nobr(last_created)
@@ -7207,21 +7075,6 @@ class ForeignTagHandler(TagHandler):
                     if context.current_parent.parent:
                         context.move_up_one_level()
 
-            if tag_name_lower in RAWTEXT_ELEMENTS:
-                self.debug(
-                    f"Treating {tag_name_lower} as normal element in foreign context",
-                )
-                self.parser.insert_element(
-                    token,
-                    context,
-                    mode="normal",
-                    enter=True,
-                    tag_name_override=f"math {tag_name}",
-                    push_override=False,
-                )
-                # RAWTEXT mode exit is handled automatically by insert_element for foreign content
-                return True
-
             # Handle MathML elements
             if tag_name_lower == "annotation-xml":
                 self.parser.insert_element(
@@ -7670,20 +7523,6 @@ class ForeignTagHandler(TagHandler):
                     else n.tag_name.endswith("foreignObject")
                 ),
             )
-            if special and special.parent:
-                context.move_to_element(special.parent)
-                # Recompute context
-                ancestor = context.current_parent.find_ancestor(
-                    lambda n: n.tag_name.startswith("svg ")
-                    or n.tag_name.startswith("math "),
-                )
-                if ancestor:
-                    context.current_context = (
-                        "svg" if ancestor.tag_name.startswith("svg ") else "math"
-                    )
-                else:
-                    context.current_context = None
-                return True
 
         # If we didn't find a matching foreign element, but we're inside a foreign context
         # and this is a known HTML end tag, break out to HTML parsing to let HTML handlers
@@ -7772,31 +7611,6 @@ class ForeignTagHandler(TagHandler):
 
         return True  # Ignore if nothing matched and not a breakout case
 
-    def _is_in_integration_point(self, context):
-        """Check if we're inside an SVG or MathML integration point where HTML rules apply."""
-        # Check current parent and ancestors for integration points
-        current = context.current_parent
-        while current:
-            # SVG integration points: foreignObject, desc, title
-            if current.tag_name in ("svg foreignObject", "svg desc", "svg title"):
-                return True
-
-            # MathML integration points: annotation-xml with specific encoding
-            if (
-                current.tag_name == "math annotation-xml"
-                and current.attributes
-                and any(
-                    attr.name.lower() == "encoding"
-                    and attr.value.lower() in ("text/html", "application/xhtml+xml")
-                    for attr in current.attributes
-                )
-            ):
-                return True
-
-            current = current.parent
-
-        return False
-
     def should_handle_comment(self, comment, context):
         """Handle <![CDATA[...]]> sequences seen as comments by the tokenizer in foreign content.
 
@@ -7829,9 +7643,6 @@ class ForeignTagHandler(TagHandler):
                 if trailing == "]]":
                     # Proper empty terminated CDATA -> no text
                     inner = ""
-                elif trailing == "]] ":
-                    # Unterminated (EOF) CDATA whose inner was ']]' -> produce ']]'
-                    inner = "]]"
                 else:
                     inner = trailing.rstrip(" ")
 
@@ -7846,15 +7657,9 @@ class ForeignTagHandler(TagHandler):
             f"Converting CDATA to text: '{inner}' in {context.current_context} context",
         )
         # Add as text content (similar to handle_text)
-        if (
-            context.current_parent.children
-            and context.current_parent.children[-1].tag_name == "#text"
-        ):
-            context.current_parent.children[-1].text_content += inner
-        else:
-            self.parser.insert_text(
-                inner, context, parent=context.current_parent, merge=False,
-            )
+        self.parser.insert_text(
+            inner, context, parent=context.current_parent, merge=True,
+        )
         return True
 
     def finalize(self, parser):
@@ -8144,44 +7949,19 @@ class HeadTagHandler(TagHandler):
             attributes_override={k.lower(): v for k, v in token.attributes.items()},
             push_override=False,
         )
-        # Create the special "content" fragment (transient; not on open elements stack)
-        fake_token = HTMLToken("StartTag", tag_name="content", attributes={})
-        content_node = self.parser.insert_element(
-            fake_token,
-            context,
-            mode="transient",
-            enter=False,
-            parent=template_node,
-            tag_name_override="content",
-            attributes_override={},
-        )
 
         # Add template to the appropriate parent
         if context.document_state == DocumentState.IN_BODY:
             # Template appearing in body context stays in body
             context.current_parent.append_child(template_node)
             self.debug("Added template to body")
-        elif context.document_state == DocumentState.INITIAL:
-            # Template at document start should go to head
+        else:
+            # Template at document start or other context should go to head
             head = ensure_head(self.parser)
             context.transition_to_state( DocumentState.IN_HEAD, head)
             self.debug("Switched to head state for template at document start")
             context.current_parent.append_child(template_node)
             self.debug("Added template to head")
-        elif context.document_state == DocumentState.IN_HEAD:
-            # Template in head context stays in head
-            context.current_parent.append_child(template_node)
-            self.debug("Added template to head")
-        else:
-            # For other states (IN_TABLE, etc.), template stays in current context
-            context.current_parent.append_child(template_node)
-            self.debug(
-                f"Added template to current parent in {context.document_state} state",
-            )
-
-        # Set current to the content document fragment
-        context.move_to_element(content_node)
-        self.debug("Set current parent to template content")
 
         return True
 
