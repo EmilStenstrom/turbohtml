@@ -1016,6 +1016,8 @@ class HTMLTokenizer:
                 # Unterminated CDATA; consume rest of input (eof-in-cdata)
                 inner = self.html[start_pos:]
                 self.pos = self.length
+                # Apply character replacement for consistency with normal text tokens
+                inner = self._replace_invalid_characters(inner)
                 # If inner ends with ']]' we can't distinguish from empty terminated form; append space to disambiguate
                 if inner.endswith("]]"):
                     return HTMLToken("Comment", data=f"[CDATA[{inner} ")
@@ -1023,6 +1025,8 @@ class HTMLTokenizer:
             else:
                 inner = self.html[start_pos:end]
                 self.pos = end + 3  # skip ']]>'
+                # Apply character replacement for consistency with normal text tokens
+                inner = self._replace_invalid_characters(inner)
                 return HTMLToken("Comment", data=f"[CDATA[{inner}]]")
         # For <?, include the ? in the comment
         if self.html.startswith("<?", self.pos):

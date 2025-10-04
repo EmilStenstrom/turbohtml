@@ -153,12 +153,6 @@ class TurboHTML:
             self.tokenizer.state = "DATA"
             self.tokenizer.rawtext_tag = None
 
-    def replace_invalid_characters(self, text):
-        """Replace invalid characters in text (delegates to tokenizer utility)."""
-        if self.tokenizer:
-            return self.tokenizer._replace_invalid_characters(text)
-        return text
-
     def _init_dom_structure(self):
         """Initialize minimal DOM structure (document root and html element placeholder).
 

@@ -8565,14 +8565,8 @@ class ForeignTagHandler(TagHandler):
                 else:
                     inner = trailing.rstrip(" ")
 
-        # Normalize invalid code points inside CDATA per HTML5 (NULL/control -> U+FFFD) so that
-        # foreign contexts preserve replacement characters (HTML contexts may later strip some
-        # via TextHandler). Tokenizer bypassed _replace_invalid_characters for CDATA inner text
-        # (it only wrapped it in a Comment token), so we apply it here for consistency with
-        # normal character token emission.
-        if inner:
-            # Tokenizer always provides _replace_invalid_characters
-            inner = self.parser.replace_invalid_characters(inner)
+        # Tokenizer already applied character replacement to CDATA inner text during tokenization
+        # (converts NULL/control chars to U+FFFD per HTML5 spec)
 
         # Do not emit empty text for empty (or fully sanitized) CDATA blocks
         if inner == "":
