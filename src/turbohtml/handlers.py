@@ -1920,30 +1920,6 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         # dynamic context attribute monkey patching.
         self._pending_table_outside = None
 
-    def early_start_preprocess(self, token, context):
-        """Drops malformed start tags whose tag_name still contains '<' while inside a select subtree.
-
-        This suppresses malformed tokens that the tokenizer surfaced as StartTag tokens but whose
-        raw tag name retained a '<', indicating malformed input. We restrict scope to select/option/optgroup
-        subtrees so that outside select contexts malformed names flow through normal handler logic.
-        """
-        if token.type != "StartTag":
-            return False
-        if "<" not in token.tag_name:
-            return False
-        # Determine if we are inside select/option/optgroup subtree
-        cur = context.current_parent
-        inside = False
-        while cur:
-            if cur.tag_name in ("select", "option", "optgroup"):
-                inside = True
-                break
-            cur = cur.parent
-        if not inside:
-            return False
-        self.debug(f"Suppressing malformed start tag <{token.tag_name}> inside select subtree")
-        return True
-
     def _should_handle_start_impl(self, tag_name, context):
         # If we're in a select, handle all tags to prevent formatting elements
         # BUT only if we're not in template content (template elements should be handled by template handlers)
@@ -1953,6 +1929,15 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
 
     # Override to widen interception scope inside select (TemplateAwareHandler limits to handled_tags otherwise)
     def should_handle_start(self, tag_name, context):
+        # Always intercept to check for malformed tags (was early_start_preprocess)
+        if "<" in tag_name:
+            # Malformed tag - check if inside select subtree
+            cur = context.current_parent
+            while cur:
+                if cur.tag_name in ("select", "option", "optgroup"):
+                    return True  # Will suppress in handle_start
+                cur = cur.parent
+
         if context.current_parent.is_inside_tag("select") and not in_template_content(context):
             # Do NOT intercept script/style so RawtextTagHandler can process them within select per spec
             return tag_name not in ("script", "style")
@@ -1962,6 +1947,16 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         self, token, context,
     ):
         tag_name = token.tag_name
+
+        # Suppress malformed start tags inside select subtree (was early_start_preprocess)
+        if "<" in tag_name:
+            cur = context.current_parent
+            while cur:
+                if cur.tag_name in ("select", "option", "optgroup"):
+                    self.debug(f"Suppressing malformed start tag <{tag_name}> inside select subtree")
+                    return True  # Consume/suppress the token
+                cur = cur.parent
+
         self.debug(
             f"Handling {tag_name} in select context, current_parent={context.current_parent}",
         )
@@ -4771,13 +4766,6 @@ class HeadingTagHandler(SimpleElementHandler):
 class RawtextTagHandler(SelectAwareHandler):
     """Handles rawtext elements like script, style, title, etc."""
 
-    def early_start_preprocess(self, token, context):
-        """Suppress any start tags while in RAWTEXT content state."""
-        if context.content_state == ContentState.RAWTEXT:
-            self.debug(f"Ignoring <{token.tag_name}> start tag in RAWTEXT")
-            return True
-        return False
-
     def _should_handle_start_impl(self, tag_name, context):
         # Permit script/style/title/xmp/noscript/rawtext-like tags generally.
         # We intentionally ALLOW script/style inside <select> (spec allows script in select; style behavior differs
@@ -4791,6 +4779,10 @@ class RawtextTagHandler(SelectAwareHandler):
         return tag_name in RAWTEXT_ELEMENTS
 
     def should_handle_start(self, tag_name, context):
+        # Suppress any start tags while in RAWTEXT content state (was early_start_preprocess)
+        if context.content_state == ContentState.RAWTEXT:
+            return True  # Will suppress in handle_start
+
         # Override SelectAwareHandler filtering: allow script/style inside select so they form rawtext elements.
         if tag_name in ("script", "style"):
             return self._should_handle_start_impl(tag_name, context)
@@ -4800,6 +4792,12 @@ class RawtextTagHandler(SelectAwareHandler):
         self, token, context,
     ):
         tag_name = token.tag_name
+
+        # Suppress start tags in RAWTEXT state (was early_start_preprocess)
+        if context.content_state == ContentState.RAWTEXT:
+            self.debug(f"Ignoring <{tag_name}> start tag in RAWTEXT")
+            return True
+
         self.debug(f"handling {tag_name}")
 
         # Spec: In select insertion mode, <textarea> start tag is a parse error and ignored.
@@ -5455,28 +5453,6 @@ class ForeignTagHandler(TagHandler):
 
         return attach, None
 
-    def early_start_preprocess(self, token, context):
-        """Normalize self-closing MathML leaf in fragment context so following text nests.
-
-        Fragment tests like fragment_context='math ms' with source '<ms/>X' expect 'X' to be
-        a child of <ms>. The tokenizer marks <ms/> self-closing which prevents insertion
-        logic from entering it. We clear the self-closing flag early so generic handlers
-        treat it as an entered container. Limiting strictly to fragment contexts whose root
-        is the same MathML leaf avoids altering document parsing semantics.
-        """
-        frag_ctx = self.parser.fragment_context
-        if not frag_ctx or " " not in frag_ctx:
-            return False
-        root, leaf = frag_ctx.split(" ", 1)
-        if root != "math" or leaf not in self._MATHML_LEAFS:
-            return False
-        if token.tag_name != leaf:
-            return False
-        if token.is_self_closing:
-            self.debug(f"Clearing self-closing for MathML leaf fragment root <{leaf}/> to enable text nesting")
-            token.is_self_closing = False
-        return False
-
     def _fix_foreign_attribute_case(self, attributes, element_context):
         """Fix case for SVG/MathML attributes according to HTML5 spec.
 
@@ -5742,6 +5718,13 @@ class ForeignTagHandler(TagHandler):
         Returns True when we want the foreign handler to create a foreign element node
         (svg/math prefixed). Returns False to delegate to normal HTML handlers.
         """
+        # Always intercept MathML leaf in fragment context to clear self-closing flag (was early_start_preprocess)
+        frag_ctx = self.parser.fragment_context
+        if frag_ctx and " " in frag_ctx:
+            root, leaf = frag_ctx.split(" ", 1)
+            if root == "math" and leaf in self._MATHML_LEAFS and tag_name == leaf:
+                return True  # Will handle self-closing normalization in handle_start
+
         # Foreign context sanity: if context says we're in svg/math but the current insertion
         # point is no longer inside any foreign ancestor, clear the stale context. This can
         # happen when an HTML integration point (e.g. <svg desc>) delegates a table cell start
@@ -5922,6 +5905,16 @@ class ForeignTagHandler(TagHandler):
         tag_name = token.tag_name
         tag_name_lower = tag_name.lower()
 
+        # Normalize self-closing MathML leaf in fragment context (was early_start_preprocess)
+        frag_ctx = self.parser.fragment_context
+        if frag_ctx and " " in frag_ctx:
+            root, leaf = frag_ctx.split(" ", 1)
+            if root == "math" and leaf in self._MATHML_LEAFS and tag_name == leaf:
+                if token.is_self_closing:
+                    self.debug(f"Clearing self-closing for MathML leaf fragment root <{leaf}/> to enable text nesting")
+                    token.is_self_closing = False
+                # Delegate to other handlers (don't create as foreign element)
+                return False
 
         if self._handle_foreign_foster_parenting(token, context):
             return True
