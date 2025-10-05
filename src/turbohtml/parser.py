@@ -111,9 +111,9 @@ class TurboHTML:
         # Parse immediately upon construction (html string only used during parsing)
         self._parse(html)
 
-        # Post-parse finalization
+        # Post-parse processing
         for handler in self.tag_handlers:
-            handler.finalize(self)
+            handler.postprocess(self)
 
     def __repr__(self):
         return f"<TurboHTML root={self.root}>"
@@ -131,7 +131,7 @@ class TurboHTML:
     def _init_dom_structure(self):
         """Initialize minimal DOM structure (document root and html element placeholder).
 
-        Full structure (head/body) is ensured during parsing and in finalize().
+        Full structure (head/body) is ensured during parsing and in postprocess().
         """
         if self.fragment_context:
             self.root = Node("document-fragment")
@@ -424,10 +424,12 @@ class TurboHTML:
         """Handle all opening HTML tags."""
         tag_name = token.tag_name
 
+        # Pre-dispatch preprocessing (guards and side effects)
         for h in self.tag_handlers:
-            if h.early_start_preprocess(token, context):
+            if h.preprocess_start(token, context):
                 return
 
+        # Dispatch to first matching handler
         for handler in self.tag_handlers:
             if handler.should_handle_start(tag_name, context) and handler.handle_start(token, context):
                 return
@@ -439,12 +441,12 @@ class TurboHTML:
         """Handle all closing HTML tags (spec-aligned, no auxiliary adoption flags)."""
         tag_name = token.tag_name
 
-        # Early end-tag preprocessing (mirrors start tag path).
+        # Pre-dispatch preprocessing (guards and side effects)
         for h in self.tag_handlers:
-            if h.early_end_preprocess(token, context):
+            if h.preprocess_end(token, context):
                 return
 
-        # Try tag handlers first
+        # Dispatch to first matching handler
         for handler in self.tag_handlers:
             if handler.should_handle_end(tag_name, context) and handler.handle_end(token, context):
                 return

@@ -55,10 +55,10 @@ class TagHandler:
         class_name = self.__class__.__name__
         self.parser.debug(f"{class_name}: {message}", indent=indent)
 
-    # Hooks (early)
-    def early_start_preprocess(self, token, context):  # pragma: no cover
+    # Pre-dispatch hooks (called before handler dispatch for token guards/preprocessing)
+    def preprocess_start(self, token, context):  # pragma: no cover
         return False
-    def early_end_preprocess(self, token, context):  # pragma: no cover
+    def preprocess_end(self, token, context):  # pragma: no cover
         return False
 
     # Comment hooks (default no-ops so parser can call unconditionally)
@@ -81,7 +81,7 @@ class TagHandler:
     def handle_text(self, text, context):
         return False
 
-    def finalize(self, parser):
+    def postprocess(self, parser):
         """Post-parse tree normalization hook (default: no-op)."""
         return
 
@@ -371,7 +371,7 @@ class DocumentStructureHandler(TagHandler):
         context.saw_html_end_tag = True
         return True
 
-    def finalize(self, parser):
+    def postprocess(self, parser):
         """Post-parse finalization: ensure minimal document structure and merge adjacent text nodes."""
         # Skip structure synthesis for fragment parsing
         if parser.fragment_context:
@@ -1394,7 +1394,7 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
         "h1","h2","h3","h4","h5","h6",
     )
 
-    def early_start_preprocess(self, token, context):
+    def preprocess_start(self, token, context):
         """Performs pre-start-tag formatting element reconstruction or defers it.
 
         Mirrors the HTML5 spec "reconstruct the active formatting elements" algorithm
@@ -6651,7 +6651,7 @@ class ForeignTagHandler(TagHandler):
         )
         return True
 
-    def finalize(self, parser):
+    def postprocess(self, parser):
         """Normalize MathML attributes and adjust SVG/MathML foreign attributes per HTML5 spec."""
         root = parser.root
         if root is None:
@@ -7019,7 +7019,7 @@ class FramesetTagHandler(TagHandler):
 
     _BENIGN_INLINE = ("span", "font", "b", "i", "u", "em", "strong")
 
-    def early_start_preprocess(self, token, context):
+    def preprocess_start(self, token, context):
         """Unified preprocessing: frameset_ok management, guards, and takeover logic."""
         tag = token.tag_name
 
@@ -7123,7 +7123,7 @@ class FramesetTagHandler(TagHandler):
             for child in node.children
         )
 
-    def early_end_preprocess(self, token, context):
+    def preprocess_end(self, token, context):
         if context.document_state in (
             DocumentState.IN_FRAMESET,
             DocumentState.AFTER_FRAMESET,
