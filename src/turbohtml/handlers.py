@@ -441,37 +441,37 @@ class TemplateHandler(TagHandler):
             node = node.parent
         return None
 
-    def early_start_preprocess(self, token, context):
-        """Auto-enter content when inserting under a template."""
-        if token.tag_name == "template":
-            return False
-        node = context.current_parent
-        template_ancestor = None
-        while node and node.tag_name not in ("html", "document-fragment"):
-            if node.tag_name == "template":
-                template_ancestor = node
-                break
-            node = node.parent
-        if template_ancestor:
-            content = None
-            for ch in template_ancestor.children:
-                if ch.tag_name == "content":
-                    content = ch
-                    break
-            if content:
-                inside = False
-                probe = context.current_parent
-                while probe and probe is not template_ancestor:
-                    if probe is content:
-                        inside = True
-                        break
-                    probe = probe.parent
-                if not inside:
-                    context.move_to_element(content)
-        return False
-
     def should_handle_start(self, tag_name, context):
-        """Handle <template> tags OR filter content inside templates."""
+        """Handle <template> tags OR filter content inside templates.
+
+        As a side effect, auto-enters content node when inserting under a template.
+        """
+        # Side effect: Auto-enter content node if we're under a template but not already inside content
+        if tag_name != "template":
+            node = context.current_parent
+            template_ancestor = None
+            while node and node.tag_name not in ("html", "document-fragment"):
+                if node.tag_name == "template":
+                    template_ancestor = node
+                    break
+                node = node.parent
+            if template_ancestor:
+                content = None
+                for ch in template_ancestor.children:
+                    if ch.tag_name == "content":
+                        content = ch
+                        break
+                if content:
+                    inside = False
+                    probe = context.current_parent
+                    while probe and probe is not template_ancestor:
+                        if probe is content:
+                            inside = True
+                            break
+                        probe = probe.parent
+                    if not inside:
+                        context.move_to_element(content)
+
         # Check if inside template content for filtering logic
         in_template_content = self._in_template_content(context)
 
