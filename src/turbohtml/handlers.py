@@ -55,34 +55,44 @@ class TagHandler:
         class_name = self.__class__.__name__
         self.parser.debug(f"{class_name}: {message}", indent=indent)
 
-    # Pre-dispatch hooks (called before handler dispatch for token guards/preprocessing)
-    def preprocess_start(self, token, context):  # pragma: no cover
+    # Pre-dispatch hooks (token guards and preprocessing, called before handler dispatch)
+    def preprocess_start(self, token, context):
+        """Pre-process start tags before dispatch (guards, side effects). Return True to consume token."""
         return False
-    def preprocess_end(self, token, context):  # pragma: no cover
+
+    def preprocess_end(self, token, context):
+        """Pre-process end tags before dispatch (guards, side effects). Return True to consume token."""
         return False
 
     # Comment hooks (default no-ops so parser can call unconditionally)
-    def should_handle_comment(self, comment, context):  # pragma: no cover
-        return False
-    def handle_comment(self, comment, context):  # pragma: no cover
+    def should_handle_comment(self, comment, context):
         return False
 
-    # Default no-op behavior for dispatch predicates / handlers
+    def handle_comment(self, comment, context):
+        return False
+
+    # Dispatch predicates and handlers (main tag processing)
     def should_handle_start(self, tag_name, context):
         return False
+
     def handle_start(self, token, context):
         return False
+
     def should_handle_end(self, tag_name, context):
         return False
+
     def handle_end(self, token, context):
         return False
+
     def should_handle_text(self, text, context):
         return False
+
     def handle_text(self, text, context):
         return False
 
+    # Post-parse hook (tree normalization after parsing completes)
     def postprocess(self, parser):
-        """Post-parse tree normalization hook (default: no-op)."""
+        """Post-parse tree normalization (attribute fixing, structure validation). No-op by default."""
         return
 
 
