@@ -42,7 +42,33 @@ from turbohtml.utils import (
 )
 
 
-class TagHandler:
+class ForeignContentAware:
+    """Mixin providing foreign content (SVG/MathML) detection methods.
+
+    Automatically disabled when ForeignTagHandler is removed from handlers list.
+    All methods return safe defaults (False/None) when foreign handler unavailable.
+    """
+
+    def is_in_foreign_context(self, context):
+        """Return True if current context is svg or math."""
+        if not self.parser.foreign_handler:
+            return False
+        return context.current_context in ("svg", "math")
+
+    def is_cdata_in_foreign(self, comment, context):
+        """Return True if comment is CDATA in foreign content."""
+        if not self.parser.foreign_handler:
+            return False
+        return context.current_context in ("svg", "math") and comment.startswith("[CDATA[")
+
+    def get_svg_foreign_breakout_parent(self, context):
+        """Delegate to ForeignTagHandler for SVG breakout logic."""
+        if not self.parser.foreign_handler:
+            return None, None
+        return self.parser.foreign_handler.get_svg_foreign_breakout_parent(context)
+
+
+class TagHandler(ForeignContentAware):
     """Base class for tag-specific handling logic (full feature set)."""
 
     def __init__(self, parser):
@@ -102,7 +128,7 @@ class UnifiedCommentHandler(TagHandler):
 
     def should_handle_comment(self, comment, context):
         # Skip CDATA sections in foreign content (SVG/MathML) - let ForeignTagHandler handle them
-        if context.current_context in ("svg", "math") and comment.startswith("[CDATA["):
+        if self.is_cdata_in_foreign(comment, context):
             return False
         # Handle all other comments
         return True
@@ -476,7 +502,7 @@ class TemplateContentFilterHandler(TagHandler):
 
         # Handle nested templates inside template content
         if tag_name == "template":
-            if context.current_context in ("math", "svg"):
+            if self.is_in_foreign_context(context):
                 return bool(in_template)
             # Handle if we're inside template content (nested template)
             if in_template:
@@ -487,7 +513,7 @@ class TemplateContentFilterHandler(TagHandler):
         # Filter other content inside templates
         if not in_template:
             return False
-        if context.current_context in ("math", "svg"):
+        if self.is_in_foreign_context(context):
             return False
         if tag_name in ("svg", "math"):
             return False
@@ -502,10 +528,7 @@ class TemplateContentFilterHandler(TagHandler):
 
     def _handle_nested_template(self, token, context):
         """Handle nested template inside template content."""
-        if context.current_context in (
-            "math",
-            "svg",
-        ) or context.current_parent.has_ancestor_matching(
+        if self.is_in_foreign_context(context) or context.current_parent.has_ancestor_matching(
             lambda n: n.tag_name.startswith("svg ")
             or n.tag_name == "svg"
             or n.tag_name.startswith("math ")
@@ -750,7 +773,7 @@ class TemplateContentFilterHandler(TagHandler):
             # Nested templates handled here, top-level by TemplateElementHandler
             if context.content_state == ContentState.PLAINTEXT:
                 return False
-            if context.current_context in ("math", "svg"):
+            if self.is_in_foreign_context(context):
                 cur = context.current_parent
                 while cur:
                     if (
@@ -780,7 +803,7 @@ class TemplateContentFilterHandler(TagHandler):
 
         if not in_template_content(context):
             return False
-        if context.current_context in ("math", "svg"):
+        if self.is_in_foreign_context(context):
             return False
         if tag_name in ("svg", "math"):
             return False
@@ -1235,7 +1258,7 @@ class TextHandler(TagHandler):
         # Foreign (MathML/SVG) content: append text directly to current foreign element without
         # triggering body/table salvage heuristics. This preserves correct subtree placement
         # Handles post-body <math><mi>foo</mi> cases where text must remain within foreign subtree.
-        if context.current_context in ("math", "svg"):
+        if self.is_in_foreign_context(context):
             if text:
                 self._append_text(text, context)
             return True
@@ -2164,7 +2187,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             # Special case: inside SVG foreignObject integration point, break out of select
             # and insert formatting element in the nearest HTML context (outside the foreign subtree).
             # Delegate to ForeignTagHandler for breakout logic.
-            attach, _ = self.parser.foreign_handler.get_svg_foreign_breakout_parent(context)
+            attach, _ = self.get_svg_foreign_breakout_parent(context)
 
             if attach is not None:
                 self.debug(
@@ -2322,7 +2345,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                         return False  # Let TableTagHandler handle this
                 else:
                     # Check if in SVG integration point using centralized helper
-                    attach, _ = self.parser.foreign_handler.get_svg_foreign_breakout_parent(context)
+                    attach, _ = self.get_svg_foreign_breakout_parent(context)
                     if attach is not None and tag_name == "table":
                         self.debug(
                             "In SVG integration point: emitting <table> outside select",

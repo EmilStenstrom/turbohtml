@@ -50,11 +50,13 @@ class TurboHTML:
         html,
         debug=False,
         fragment_context=None,
+        handlers=None,
     ):
         """Args:
         html: The HTML string to parse
         debug: Whether to enable debug prints
         fragment_context: Context element for fragment parsing (e.g., 'td', 'tr').
+        handlers: Optional list of handler classes to use. If None, uses default set.
 
         """
         self.env_debug = debug
@@ -68,35 +70,38 @@ class TurboHTML:
         self.foreign_handler = None
 
         # Initialize tag handlers in deterministic order
-        self.tag_handlers = [
-            DoctypeHandler(self),
-            TemplateContentFilterHandler(self),  # must precede TemplateElementHandler
-            TemplateElementHandler(self),
-            DocumentStructureHandler(self),
-            PlaintextHandler(self),
-            FramesetTagHandler(self),
-            SelectTagHandler(self),  # must precede table handling to suppress table tokens inside <select>
-            TableTagHandler(self),
-            UnifiedCommentHandler(self),
-            ForeignTagHandler(self),
-            ParagraphTagHandler(self),
-            AutoClosingTagHandler(self),
-            MenuitemTagHandler(self),
-            ListTagHandler(self),
-            HeadTagHandler(self),
-            ButtonTagHandler(self),
-            VoidTagHandler(self),
-            RawtextTagHandler(self),
-            MarqueeTagHandler(self),
-            FormattingTagHandler(self),
-            ImageTagHandler(self),
-            TextHandler(self),
-            FormTagHandler(self),
-            HeadingTagHandler(self),
-            RubyTagHandler(self),
-            TableFosterHandler(self),
-            GenericEndTagHandler(self),
-        ]
+        if handlers is None:
+            handlers = [
+                DoctypeHandler,
+                TemplateContentFilterHandler,  # must precede TemplateElementHandler
+                TemplateElementHandler,
+                DocumentStructureHandler,
+                PlaintextHandler,
+                FramesetTagHandler,
+                SelectTagHandler,  # must precede table handling to suppress table tokens inside <select>
+                TableTagHandler,
+                UnifiedCommentHandler,
+                ForeignTagHandler,
+                ParagraphTagHandler,
+                AutoClosingTagHandler,
+                MenuitemTagHandler,
+                ListTagHandler,
+                HeadTagHandler,
+                ButtonTagHandler,
+                VoidTagHandler,
+                RawtextTagHandler,
+                MarqueeTagHandler,
+                FormattingTagHandler,
+                ImageTagHandler,
+                TextHandler,
+                FormTagHandler,
+                HeadingTagHandler,
+                RubyTagHandler,
+                TableFosterHandler,
+                GenericEndTagHandler,
+            ]
+
+        self.tag_handlers = [handler_class(self) for handler_class in handlers]
 
         for handler in self.tag_handlers:
             if isinstance(handler, TextHandler):
@@ -106,9 +111,6 @@ class TurboHTML:
 
         if self.text_handler is None:
             msg = "TextHandler not found in tag_handlers"
-            raise RuntimeError(msg)
-        if self.foreign_handler is None:
-            msg = "ForeignTagHandler not found in tag_handlers"
             raise RuntimeError(msg)
 
         # Sequential token counter for deduplication guards (replaces tokenizer position)
