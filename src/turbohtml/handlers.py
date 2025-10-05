@@ -3130,11 +3130,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         ):
             stack = context.open_elements
             # Find deepest currently open cell element (works even if current_parent moved elsewhere)
-            cell_index = -1
-            for i in range(len(stack) - 1, -1, -1):
-                if stack[i].tag_name in ("td", "th"):
-                    cell_index = i
-                    break
+            cell_index = stack.find_last_index(lambda el: el.tag_name in ("td", "th"))
             if cell_index != -1:
                 # Pop all elements above and including the open cell, updating insertion point
                 while len(stack) > cell_index:
@@ -3321,11 +3317,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
         # Pop tbody/thead/tfoot/tr/td/th to get back to table level
         stack = context.open_elements
-        table_idx = -1
-        for i in range(len(stack) - 1, -1, -1):
-            if stack[i] is table:
-                table_idx = i
-                break
+        table_idx = stack.find_last_index(lambda el: el is table)
 
         if table_idx != -1 and len(stack) > table_idx + 1:
             # Pop everything above table
@@ -3595,11 +3587,10 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             lambda n: n.tag_name in ("svg foreignObject", "svg desc", "svg title"),
         ):
             return False
-        cur = context.current_parent
-        while cur:
-            if cur.tag_name in ("select", "option", "optgroup"):
-                return False
-            cur = cur.parent
+        if context.current_parent.tag_name in ("select", "option", "optgroup") or context.current_parent.has_ancestor_matching(
+            lambda n: n.tag_name in ("select", "option", "optgroup"),
+        ):
+            return False
         return True
 
     def handle_text(self, text, context):
@@ -3895,15 +3886,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             + str([elem.tag_name for elem in formatting_elements]),
         )
 
-        def _has_inline_text(node):
-            stack_local = [node]
-            while stack_local:
-                cur = stack_local.pop()
-                for child in cur.children:
-                    if child.tag_name == "#text" and child.text_content:
-                        return True
-                    stack_local.append(child)
-            return False
         reused_wrapper = None
         if formatting_elements:
             formatting_elements = list(
@@ -3952,7 +3934,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 for idx, fmt_elem in enumerate(
                     formatting_elements,
                 ):  # outer->inner creation
-                    has_text_content = _has_inline_text(fmt_elem)
+                    has_text_content = fmt_elem.contains_text_nodes()
                     is_innermost = idx == len(formatting_elements) - 1
                     force_sibling = fmt_elem.tag_name in seen_run or (
                         is_innermost

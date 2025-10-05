@@ -244,6 +244,13 @@ class OpenElementsStack:
                 return el
         return None
 
+    def find_last_index(self, predicate):
+        """Find the index of the last (deepest) element matching predicate, or -1 if not found."""
+        for i in range(len(self._stack) - 1, -1, -1):
+            if predicate(self._stack[i]):
+                return i
+        return -1
+
     # --- iteration helpers ---
     def __iter__(self):
         return iter(self._stack)
