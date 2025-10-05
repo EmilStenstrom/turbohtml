@@ -204,7 +204,7 @@ class TurboHTML:
                 tableish = ("table","tbody","thead","tfoot","tr","td","th","caption","colgroup","col","form")
                 if not in_cell_or_caption and tag_name not in tableish:
                     target_parent, target_before = foster_parent(
-                        context.current_parent, context.open_elements, self.root,
+                        context.current_parent, context.open_elements, self.root, context.current_parent, tag_name,
                     )
 
         # Guard: transient mode only allowed inside template content subtrees (content under a template)

@@ -24,20 +24,30 @@ def find_table_in_scope(open_elements):
     return None
 
 
-def foster_parent(target_parent, open_elements, root):
-    """Return (parent, before) for foster-parented insertion.
+def needs_foster_parenting(current_parent):
+    """Check if current parent requires foster parenting for child elements."""
+    return current_parent.tag_name in TABLE_CONTEXT
 
-    Core algorithm for finding the correct foster parent location. Does NOT
-    perform any DOM mutations - only returns where to insert.
+
+def foster_parent(target_parent, open_elements, root, current_parent, tag_name):
+    """Return (parent, before) for foster-parented insertion with spec-compliant sibling nesting.
+
+    Determines WHERE to foster parent elements in table contexts, combining the core
+    foster parent algorithm with sibling nesting behavior required by the spec:
+    if the previous sibling before the table is the current_parent and is a container element
+    suitable for nesting (like <p>, <div>), nest inside it instead of creating a sibling.
+
+    Does NOT perform any DOM mutations - only returns where to insert.
 
     Args:
         target_parent: Current insertion parent (context.current_parent)
         open_elements: OpenElementsStack instance
         root: Root document node (fallback)
+        current_parent: Current insertion point element
+        tag_name: Tag name of element being inserted
 
     Returns:
         (parent_node, before_sibling): Insert child into parent_node before before_sibling
-                                       If before_sibling is None, append to parent_node
     """
     table = find_table_in_scope(open_elements)
     if not table:
@@ -51,9 +61,22 @@ def foster_parent(target_parent, open_elements, root):
         return target_parent if target_parent.tag_name != "table" else root, None
 
     # Normal path: insert before the table in its parent
-    return table_parent, table
+    parent, before = table_parent, table
 
+    # Spec-compliant sibling nesting: if previous sibling is current_parent and is a
+    # paragraph or similar container, nest inside it (e.g., <table><p>x</p><p>y nests 2nd in 1st)
+    # Exclude <li> to avoid incorrect nesting of list items
+    if before and before.parent is parent and tag_name not in ("li", "dt", "dd"):
+        try:
+            table_index = parent.children.index(before)
+            if table_index > 0:
+                prev_sibling = parent.children[table_index - 1]
+                # Only nest in specific container tags, not all block elements
+                if prev_sibling is current_parent and prev_sibling.tag_name in (
+                    "div", "p", "section", "article", "blockquote", "center",
+                ):
+                    return prev_sibling, None
+        except (ValueError, AttributeError):
+            pass
 
-def needs_foster_parenting(current_parent):
-    """Check if current parent requires foster parenting for child elements."""
-    return current_parent.tag_name in TABLE_CONTEXT
+    return parent, before

@@ -716,7 +716,10 @@ class AdoptionAgencyAlgorithm:
             return
 
         if needs_foster_parenting(target):
-            parent, before = foster_parent(target, context.open_elements, self.parser.root)
+            parent, before = foster_parent(
+                target, context.open_elements, self.parser.root,
+                target, last_node.tag_name,
+            )
             if parent is None:
                 parent = target
             if before is not None and before.parent is parent:

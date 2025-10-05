@@ -1835,6 +1835,7 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
             if needs_foster_parenting(context.current_parent):
                 foster_parent_node, before = foster_parent(
                     context.current_parent, context.open_elements, self.parser.root,
+                    context.current_parent, tag_name,
                 )
                 if before is not None:
                     if before in foster_parent_node.children:
@@ -2719,7 +2720,12 @@ class ParagraphTagHandler(TagHandler):
                     if context.open_elements.has_element_in_button_scope("p"):
                         fake_end = HTMLToken("EndTag", tag_name="p")
                         self.handle_end(fake_end, context)
-                    foster_parent_element(token.tag_name, token.attributes, context, self.parser)
+                    # Use centralized foster parenting with sibling nesting logic
+                    target_parent, target_before = foster_parent(
+                        context.current_parent, context.open_elements, self.parser.root,
+                        context.current_parent, token.tag_name,
+                    )
+                    self.parser.insert_element(token, context, parent=target_parent, before=target_before)
                 return True
 
         p_ancestor = context.current_parent.find_ancestor("p")
@@ -5165,7 +5171,10 @@ class VoidTagHandler(SelectAwareHandler):
                 # Foster parent using centralized helper
                 table = find_current_table(context)
                 if table:
-                    foster_parent_node, before = foster_parent(context.current_parent, context.open_elements, self.parser.root)
+                    foster_parent_node, before = foster_parent(
+                        context.current_parent, context.open_elements, self.parser.root,
+                        context.current_parent, tag_name,
+                    )
                     self.parser.insert_element(
                         token, context, mode="void", enter=False,
                         parent=foster_parent_node, before=before,
@@ -8087,42 +8096,15 @@ class TableFosterHandler(TagHandler):
                 )
                 return False
             self.debug(f"Foster parenting <{tag_name}> before current table")
-            foster_parent_element(tag_name, token.attributes, context, self.parser)
+            # Use centralized foster parenting with sibling nesting logic
+            target_parent, target_before = foster_parent(
+                context.current_parent, context.open_elements, self.parser.root,
+                context.current_parent, tag_name,
+            )
+            self.parser.insert_element(token, context, tag_name_override=tag_name, parent=target_parent, before=target_before)
             return True
 
         return False
-
-
-def foster_parent_element(tag_name, attributes, context, parser):
-    """Foster parent an element outside of table context.
-
-    Mirrors previous parser._foster_parent_element behavior but lives in handlers module
-    so table/paragraph fallback logic can call it without retaining the method on parser.
-    """
-    if context.document_state != DocumentState.IN_TABLE:
-        return
-    table = find_current_table(context)
-    if not table:
-        return
-
-    foster_parent_node, before = foster_parent(context.current_parent, context.open_elements, parser.root)
-    table_index = foster_parent_node.children.index(before) if before and before in foster_parent_node.children else len(foster_parent_node.children)
-
-    if table_index > 0:
-        prev_sibling = foster_parent_node.children[table_index - 1]
-        if prev_sibling is context.current_parent and prev_sibling.tag_name in (
-            "div", "p", "section", "article", "blockquote", "li", "center",
-        ):
-            new_node = Node(tag_name, attributes)
-            prev_sibling.append_child(new_node)
-            context.move_to_element(new_node)
-            context.open_elements.push(new_node)
-            return
-    new_node = Node(tag_name, attributes)
-    foster_parent_node.children.insert(table_index, new_node)
-    new_node.parent = foster_parent_node
-    context.move_to_element(new_node)
-    context.open_elements.push(new_node)
 
 
 class RubyTagHandler(TagHandler):
