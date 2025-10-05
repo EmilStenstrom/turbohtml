@@ -183,7 +183,7 @@ class DocumentStructureHandler(TagHandler):
     """Handles document structure: <html>, <head>, <body> start tags and </html> end tag.
 
     Unified handler managing root structure lifecycle:
-    - Start tags (<html>, <head>, <body>) via early_start_preprocess
+    - Start tags (<html>, <head>, <body>) via should_handle_start/handle_start
     - End tag (</html>) via should_handle_end/handle_end
     - Implicit head/body transitions for non-head content
     - Attribute merging for duplicate structure tags
@@ -191,7 +191,11 @@ class DocumentStructureHandler(TagHandler):
     - Post-parse finalization: ensure html/head/body exist, merge adjacent text nodes
     """
 
-    def early_start_preprocess(self, token, context):
+    def should_handle_start(self, tag_name, context):
+        # Always intercept to handle re-entry logic and structure tags
+        return True
+
+    def handle_start(self, token, context):
         tag = token.tag_name
         parser = self.parser
 
@@ -541,28 +545,18 @@ class TemplateHandler(TagHandler):
 
             insertion_parent = context.current_parent
             html_node = self.parser.html_node
-            head_node = None
-            body_node = None
-            if html_node:
-                for child in html_node.children:
-                    if child.tag_name == "head":
-                        head_node = child
-                    elif child.tag_name == "body":
-                        body_node = child
+            head_node = get_head(self.parser)
+            body_node = get_body(self.parser.root)
+
+            # In INITIAL/IN_HEAD/AFTER_HEAD states, ensure head exists and place template there
             state = context.document_state
-            at_top_level = context.current_parent in (html_node, head_node)
-            if body_node and state.name.startswith("AFTER_BODY"):
+            if state in (DocumentState.INITIAL, DocumentState.IN_HEAD, DocumentState.AFTER_HEAD):
+                if not head_node:
+                    head_node = ensure_head(self.parser)
+                insertion_parent = head_node
+            elif body_node and state.name.startswith("AFTER_BODY"):
                 insertion_parent = body_node
-            elif (
-                head_node
-                and at_top_level
-                and state
-                in (
-                    DocumentState.INITIAL,
-                    DocumentState.IN_HEAD,
-                    DocumentState.AFTER_HEAD,
-                )
-            ):
+            elif head_node and context.current_parent in (html_node, head_node):
                 insertion_parent = head_node
 
             template_node = self.parser.insert_element(
@@ -1279,12 +1273,13 @@ class TextHandler(TagHandler):
             was_initial = context.document_state == DocumentState.INITIAL
             # HTML Standard "space character" set: TAB, LF, FF, CR, SPACE (NOT all Unicode isspace())
             html_space = {"\t", "\n", "\f", "\r", " "}
-            # Find first character that is not an HTML space (replacement char is treated as data)
+            # Find first character that is not an HTML space. Replacement characters (U+FFFD from NULL)
+            # are treated as ignorable like whitespace for frameset_ok / body-creation purposes per spec.
             first_non_space_index = None
             for i, ch in enumerate(text):
-                if ch == "\ufffd":  # replacement triggers body like any other data
-                    first_non_space_index = i
-                    break
+                if ch == "\ufffd":
+                    # Skip replacement chars (treated as ignorable whitespace, don't trigger body)
+                    continue
                 if ch not in html_space:
                     # Non-HTML space (even if Python str.isspace()==True, e.g. U+205F) counts as data
                     first_non_space_index = i
