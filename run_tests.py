@@ -376,7 +376,7 @@ class TestReporter:
         Quiet mode still limits stdout to the header line.
         """
         total = passed + failed
-        percentage = round(passed * 100 / total) if total else 0
+        percentage = round(passed * 100 / total, 1) if total else 0
         header = f"Tests passed: {passed}/{total} ({percentage}%) ({skipped} skipped)"
         full_run = self.is_full_run()
         # If no file breakdown collected, just output header (and write header)

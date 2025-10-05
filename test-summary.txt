@@ -1,4 +1,4 @@
-Tests passed: 1729/1729 (100%) (39 skipped)
+Tests passed: 1729/1729 (100.0%) (39 skipped)
 
 adoption01.dat: 18/18 (100%) [..................]
 adoption02.dat: 2/2 (100%) [..]
