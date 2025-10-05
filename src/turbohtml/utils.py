@@ -205,10 +205,11 @@ def reconstruct_active_formatting_elements(parser, context):
                 and table_node.parent is not None
             ):
                 foster_parent = table_node.parent
-                try:
-                    insert_at = foster_parent.children.index(table_node)
-                except ValueError:
-                    insert_at = len(foster_parent.children)
+                insert_at = (
+                    foster_parent.children.index(table_node)
+                    if table_node in foster_parent.children
+                    else len(foster_parent.children)
+                )
                 foster_parent.insert_child_at(insert_at, clone)
             else:
                 first_table_idx = None

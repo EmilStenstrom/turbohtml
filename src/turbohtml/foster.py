@@ -67,7 +67,7 @@ def foster_parent(target_parent, open_elements, root, current_parent, tag_name):
     # paragraph or similar container, nest inside it (e.g., <table><p>x</p><p>y nests 2nd in 1st)
     # Exclude <li> to avoid incorrect nesting of list items
     if before and before.parent is parent and tag_name not in ("li", "dt", "dd"):
-        try:
+        if before in parent.children:
             table_index = parent.children.index(before)
             if table_index > 0:
                 prev_sibling = parent.children[table_index - 1]
@@ -76,7 +76,5 @@ def foster_parent(target_parent, open_elements, root, current_parent, tag_name):
                     "div", "p", "section", "article", "blockquote", "center",
                 ):
                     return prev_sibling, None
-        except (ValueError, AttributeError):
-            pass
 
     return parent, before
