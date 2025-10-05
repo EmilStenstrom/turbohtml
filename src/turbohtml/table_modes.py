@@ -59,11 +59,12 @@ def _in_integration_point(context):
     while cur:
         if cur.tag_name in ("svg foreignObject", "svg desc", "svg title"):
             return True
-        if cur.tag_name == "math annotation-xml" and cur.attributes and any(
-            attr.name.lower() == "encoding" and attr.value.lower() in ("text/html", "application/xhtml+xml")
-            for attr in cur.attributes
-        ):
-            return True
+        if cur.tag_name == "math annotation-xml" and cur.attributes:
+            for attr in cur.attributes:
+                name_lower = attr.name.lower()
+                value_lower = attr.value.lower()
+                if name_lower == "encoding" and value_lower in ("text/html", "application/xhtml+xml"):
+                    return True
         cur = cur.parent
     return False
 

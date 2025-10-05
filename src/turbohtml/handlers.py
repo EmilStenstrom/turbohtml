@@ -3327,7 +3327,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
         if context.current_parent and context.current_parent.tag_name == "p":
             paragraph_node = context.current_parent
-            is_empty_paragraph = len(paragraph_node.children) == 0
+            is_empty_paragraph = not paragraph_node.children
             if is_empty_paragraph:
                 if self._should_foster_parent_table(context):
                     self.debug("Empty <p> before <table> standards; close then sibling")
@@ -3753,7 +3753,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     is_empty_foster_formatting = (
                         context.current_parent.tag_name in FORMATTING_ELEMENTS
                         and context.current_parent.find_ancestor("table") is None
-                        and len(context.current_parent.children) == 0
+                        and not context.current_parent.children
                     )
                     # Check if current_parent is a foster parent (has table as child but is not table-related)
                     is_foster_parent = (
@@ -4641,8 +4641,9 @@ class ListTagHandler(TagHandler):
         )
         # Pre-check: If the current parent's last child is a <menuitem> that has no <li> yet,
         # nest this first <li> inside it (fixes menuitem-element:19 nesting expectation)
-        if context.current_parent.children:
-            prev = context.current_parent.children[-1]
+        children = context.current_parent.children
+        if children:
+            prev = children[-1]
             if prev.tag_name == "menuitem" and not any(
                 c.tag_name == "li" for c in prev.children
             ):
@@ -5282,7 +5283,7 @@ class AutoClosingTagHandler(TemplateAwareHandler):
         )
 
         # Also check if there are active formatting elements that need reconstruction
-        has_active_formatting = len(context.active_formatting_elements) > 0
+        has_active_formatting = bool(context.active_formatting_elements)
 
         block_tag = token.tag_name
         # List item handling follows its own algorithm; avoid hijacking it with the block-in-formatting path.
@@ -5979,9 +5980,7 @@ class ForeignTagHandler(TagHandler):
             if context.current_context is not None:
                 return True
             # In MathML fragment contexts (e.g., "math ms"), handle MathML elements even after context cleared by HTML breakout
-            if self.parser.fragment_context and self.parser.fragment_context.startswith("math "):
-                return True
-            return False
+            return bool(self.parser.fragment_context and self.parser.fragment_context.startswith("math "))
 
         # Fragment SVG fallback: if parsing an SVG fragment (fragment_context like 'svg svg') and
         # we lost foreign context due to a prior HTML breakout, treat subsequent unknown (non-HTML)
@@ -6813,11 +6812,13 @@ class ForeignTagHandler(TagHandler):
                 if xlink_attrs:
                     for k, _ in xlink_attrs:
                         del attrs[k]
-                    xlink_attrs.sort(key=lambda kv: kv[0].split(":", 1)[1])
+                    # Split once per key and cache (key, local_part, value) tuples
+                    xlink_split = [(k, k.split(":", 1)[1], v) for k, v in xlink_attrs]
+                    xlink_split.sort(key=lambda t: t[1])
                     rebuilt = {}
                     if "definitionURL" in attrs:
                         rebuilt["definitionURL"] = attrs.pop("definitionURL")
-                    rebuilt.update({f"xlink {k.split(':', 1)[1]}": v for k, v in xlink_attrs})
+                    rebuilt.update({f"xlink {local}": v for _, local, v in xlink_split})
                     rebuilt.update(attrs)
                     node.attributes = rebuilt
             for ch in node.children:
@@ -6894,7 +6895,8 @@ class HeadTagHandler(TagHandler):
                     # Special case: if current_parent is a foster-parented <select> immediately before the table,
                     # keep the rawtext element INSIDE that <select>. This mirrors normal insertion
                     # point behavior: select is still open and current_parent points at it.
-                    if context.current_parent.tag_name == "select" or context.current_parent.tag_name in ("tbody", "thead", "tfoot"):
+                    parent_tag = context.current_parent.tag_name
+                    if parent_tag == "select" or parent_tag in ("tbody", "thead", "tfoot"):
                         container = context.current_parent
                     else:
                         container = table
@@ -7589,7 +7591,7 @@ class DoctypeHandler(TagHandler):
 
         if (
             context.document_state != DocumentState.INITIAL
-            or len(self.parser.root.children) > 0
+            or self.parser.root.children
         ):
             self.debug("Ignoring unexpected DOCTYPE after document started")
             return True

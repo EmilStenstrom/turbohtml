@@ -13,8 +13,9 @@ References:
 
 """
 
-# HTML Element Sets
-VOID_ELEMENTS = [
+# HTML Element Sets (frozensets for O(1) membership testing)
+# Note: Order doesn't matter for membership tests, which is the primary use case
+VOID_ELEMENTS = frozenset([
     "area",
     "base",
     "basefont",
@@ -32,9 +33,9 @@ VOID_ELEMENTS = [
     "source",
     "track",
     "wbr",
-]
+])
 
-HTML_ELEMENTS = [
+HTML_ELEMENTS = frozenset([
     "a",
     "b",
     "big",
@@ -87,9 +88,9 @@ HTML_ELEMENTS = [
     "u",
     "ul",
     "var",
-]
+])
 
-BLOCK_ELEMENTS = [
+BLOCK_ELEMENTS = frozenset([
     "address",
     "article",
     "aside",
@@ -131,7 +132,7 @@ BLOCK_ELEMENTS = [
     "table",
     "ul",
     "summary",
-]
+])
 
 # Elements considered "special" for various tree construction steps (e.g.,
 # Adoption Agency Algorithm furthest block calculations). This consolidates
@@ -221,7 +222,7 @@ SPECIAL_CATEGORY_ELEMENTS = {
     "xmp",
 }
 
-TABLE_ELEMENTS = [
+TABLE_ELEMENTS = frozenset([
     # Structure elements
     "table",
     "thead",
@@ -234,7 +235,7 @@ TABLE_ELEMENTS = [
     # Cell elements
     "td",
     "th",
-]
+])
 
 # Canonical table category constant sets (centralized from table_modes):
 # Maintained here so membership logic stays deterministic and not duplicated across modules.
@@ -243,7 +244,7 @@ TABLE_ROW_TAGS = {"tr"}
 TABLE_CELL_TAGS = {"td", "th"}
 TABLE_PRELUDE_TAGS = {"caption", "col", "colgroup"} | TABLE_SECTION_TAGS
 
-HEAD_ELEMENTS = [
+HEAD_ELEMENTS = frozenset([
     "base",
     "basefont",
     "bgsound",
@@ -255,7 +256,7 @@ HEAD_ELEMENTS = [
     "style",
     "template",
     "title",
-]
+])
 
 # Sentinel used during tokenization to mark invalid numeric character references whose
 # resulting replacement character (U+FFFD) must be preserved (entities tests) and not
@@ -265,7 +266,7 @@ HEAD_ELEMENTS = [
 # stripping rules.
 NUMERIC_ENTITY_INVALID_SENTINEL = "\uf000"  # Private Use Area codepoint unlikely in input
 
-RAWTEXT_ELEMENTS = [
+RAWTEXT_ELEMENTS = frozenset([
     "title",
     "textarea",
     "style",
@@ -274,9 +275,9 @@ RAWTEXT_ELEMENTS = [
     "iframe",
     "noembed",
     "noframes",
-]
+])
 
-FORMATTING_ELEMENTS = [
+FORMATTING_ELEMENTS = frozenset([
     "a",
     "b",
     "big",
@@ -291,12 +292,12 @@ FORMATTING_ELEMENTS = [
     "strong",
     "tt",
     "u",
-]
+])
 
 # HTML elements that break out of foreign content (SVG/MathML)
 # Per WHATWG HTML5 spec - these are specifically the HTML elements that
 # cause a break-out from foreign content context
-HTML_BREAK_OUT_ELEMENTS = [
+HTML_BREAK_OUT_ELEMENTS = frozenset([
     "b",
     "big",
     "blockquote",
@@ -344,7 +345,7 @@ HTML_BREAK_OUT_ELEMENTS = [
     "u",
     "ul",
     "var",
-]
+])
 
 BOUNDARY_ELEMENTS = {
     "marquee",
@@ -357,9 +358,9 @@ BOUNDARY_ELEMENTS = {
     "td",
 }
 
-HEADING_ELEMENTS = ["h1", "h2", "h3", "h4", "h5", "h6"]
+HEADING_ELEMENTS = frozenset(["h1", "h2", "h3", "h4", "h5", "h6"])
 
-OPTIONAL_END_TAG_ELEMENTS = [
+OPTIONAL_END_TAG_ELEMENTS = frozenset([
     "li",
     "dt",
     "dd",
@@ -376,10 +377,10 @@ OPTIONAL_END_TAG_ELEMENTS = [
     "tr",
     "td",
     "th",
-]
+])
 
 AUTO_CLOSING_TAGS = {
-    "p": [
+    "p": frozenset([
         "address",
         "article",
         "aside",
@@ -424,38 +425,38 @@ AUTO_CLOSING_TAGS = {
         "rt",
         "rp",
         "rtc",
-    ],
-    "li": ["li"],
-    "menuitem": [],
-    "dt": ["dt", "dd"],
-    "dd": ["dt", "dd"],
-    "tr": ["tr", "td", "th"],
-    "td": ["td", "th"],
-    "th": ["td", "th"],
-    "rt": ["rt", "rp"],
-    "rp": ["rt", "rp"],
-    "button": ["button"],
-    "h1": ["h1", "h2", "h3", "h4", "h5", "h6"],
-    "h2": ["h1", "h2", "h3", "h4", "h5", "h6"],
-    "h3": ["h1", "h2", "h3", "h4", "h5", "h6"],
-    "h4": ["h1", "h2", "h3", "h4", "h5", "h6"],
-    "h5": ["h1", "h2", "h3", "h4", "h5", "h6"],
-    "h6": ["h1", "h2", "h3", "h4", "h5", "h6"],
+    ]),
+    "li": frozenset(["li"]),
+    "menuitem": frozenset(),
+    "dt": frozenset(["dt", "dd"]),
+    "dd": frozenset(["dt", "dd"]),
+    "tr": frozenset(["tr", "td", "th"]),
+    "td": frozenset(["td", "th"]),
+    "th": frozenset(["td", "th"]),
+    "rt": frozenset(["rt", "rp"]),
+    "rp": frozenset(["rt", "rp"]),
+    "button": frozenset(["button"]),
+    "h1": frozenset(["h1", "h2", "h3", "h4", "h5", "h6"]),
+    "h2": frozenset(["h1", "h2", "h3", "h4", "h5", "h6"]),
+    "h3": frozenset(["h1", "h2", "h3", "h4", "h5", "h6"]),
+    "h4": frozenset(["h1", "h2", "h3", "h4", "h5", "h6"]),
+    "h5": frozenset(["h1", "h2", "h3", "h4", "h5", "h6"]),
+    "h6": frozenset(["h1", "h2", "h3", "h4", "h5", "h6"]),
 }
 
 CLOSE_ON_PARENT_CLOSE = {
-    "li": ["ul", "ol", "menu"],
-    "dt": ["dl"],
-    "dd": ["dl"],
-    "rb": ["ruby"],
-    "rt": ["ruby", "rtc"],
-    "rtc": ["ruby"],
-    "rp": ["ruby"],
-    "optgroup": ["select"],
-    "option": ["select", "optgroup", "datalist"],
-    "tr": ["table", "thead", "tbody", "tfoot"],
-    "td": ["tr"],
-    "th": ["tr"],
+    "li": frozenset(["ul", "ol", "menu"]),
+    "dt": frozenset(["dl"]),
+    "dd": frozenset(["dl"]),
+    "rb": frozenset(["ruby"]),
+    "rt": frozenset(["ruby", "rtc"]),
+    "rtc": frozenset(["ruby"]),
+    "rp": frozenset(["ruby"]),
+    "optgroup": frozenset(["select"]),
+    "option": frozenset(["select", "optgroup", "datalist"]),
+    "tr": frozenset(["table", "thead", "tbody", "tfoot"]),
+    "td": frozenset(["tr"]),
+    "th": frozenset(["tr"]),
 }
 
 SVG_CASE_SENSITIVE_ELEMENTS = {
@@ -499,7 +500,7 @@ SVG_CASE_SENSITIVE_ELEMENTS = {
 }
 
 # MathML elements that should automatically enter MathML context
-MATHML_ELEMENTS = [
+MATHML_ELEMENTS = frozenset([
     "math",
     "mi",
     "mo",
@@ -531,7 +532,7 @@ MATHML_ELEMENTS = [
     "mphantom",
     "mglyph",
     "annotation-xml",
-]
+])
 
 # SVG attributes that should have their case preserved
 SVG_CASE_SENSITIVE_ATTRIBUTES = {

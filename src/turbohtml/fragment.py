@@ -212,8 +212,7 @@ def _supp_fragment_legacy_context(parser, context, token, fragment_context):
         return True
     # Additional frameset restrictions (html fragment only)
     if fragment_context == "html" and context.document_state in (DocumentState.IN_FRAMESET, DocumentState.AFTER_FRAMESET):
-        if tn not in {"frameset", "frame", "noframes"}:
-            return True
+        return tn not in {"frameset", "frame", "noframes"}
     return False
 
 
@@ -380,7 +379,7 @@ def _implied_table_section_pre_token(parser, context, token):
         node = node.parent
     if not table_ancestor:
         # Consult open elements stack (fragment cases with fostered content may leave us outside)
-        for el in reversed(list(context.open_elements)):
+        for el in reversed(context.open_elements):
             if el.tag_name == "table":
                 table_ancestor = el
                 break

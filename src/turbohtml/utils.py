@@ -164,10 +164,10 @@ def reconstruct_active_formatting_elements(parser, context):
         if (
             entry.element.tag_name == "nobr"
             and context.current_parent.tag_name in ("body", "div", "section", "article", "p")
-            and context.current_parent.children
-            and context.current_parent.children[-1].tag_name == "nobr"
         ):
-            continue
+            children = context.current_parent.children
+            if children and children[-1].tag_name == "nobr":
+                continue
         # Reuse existing current_parent for <nobr> only when it is empty (no children) to avoid
         # collapsing expected sibling <nobr> wrappers that follow immediately after text or <br>.
         if (

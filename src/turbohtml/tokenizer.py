@@ -707,7 +707,7 @@ class HTMLTokenizer:
                     # Suppress emission if EOF reached while still inside quoted attribute value OR if we saw
                     # an unbalanced quote sequence that consumed other tag open markers (inner '<') without
                     # ever closing; treat as entirely bogus to avoid partial attribute name creation.
-                    if (quote is not None and self.pos >= self.length) or (quote is not None and saw_inner_lt):
+                    if quote is not None and (self.pos >= self.length or saw_inner_lt):
                         suppressed = True
                     if suppressed:
                         # If suppressed void-like element, consume to EOF so no residual tokens are produced

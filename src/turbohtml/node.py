@@ -198,10 +198,9 @@ class Node:
             return "\n".join(child.to_test_format(0) for child in self.children)
         if self.tag_name == "content":
             # Template content should be displayed without angle brackets
-            result = f"| {' ' * indent}content"
-            for child in self.children:
-                result += "\n" + child.to_test_format(indent + 2)
-            return result
+            parts = [f"| {' ' * indent}content"]
+            parts.extend(child.to_test_format(indent + 2) for child in self.children)
+            return "\n".join(parts)
         if self.tag_name == "#text":
             return f'| {" " * indent}"{self.text_content}"'
         if self.tag_name == "#comment":
@@ -243,8 +242,10 @@ class Node:
                 result += f'\n| {" " * (indent + 2)}{display_key}="{value}"'
 
         # Add children
-        for child in self.children:
-            result += "\n" + child.to_test_format(indent + 2)
+        if self.children:
+            parts = [result]
+            parts.extend(child.to_test_format(indent + 2) for child in self.children)
+            return "\n".join(parts)
         return result
 
     def find_ancestor(self, tag_name_or_predicate, stop_at_boundary=False):
@@ -421,10 +422,7 @@ class Node:
         """Recursively check if this node or any descendant is a text node."""
         if self.tag_name == "#text":
             return True
-        for child in self.children:
-            if child.contains_text_nodes():
-                return True
-        return False
+        return any(child.contains_text_nodes() for child in self.children)
 
     def has_text_children(self):
         """Check if any immediate child is a text node with content."""
