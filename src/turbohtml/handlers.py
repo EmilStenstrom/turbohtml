@@ -1212,11 +1212,9 @@ class TextHandler(TagHandler):
             if cur.tag_name in integration_point_tags:
                 ancestor_ips.append(cur)
             cur = cur.parent
-        # If we have any integration point ancestors but current_parent is no longer inside the *deepest* one due to
-        # Ancestor restriction prevents drift.
-        # Additionally, avoid re-enter when the integration point lived inside template content and we are now
-        # outside that template's content fragment.
-        # (No action required; logic retained for future heuristics.)
+        # Integration point drift prevention: if ancestor integration points exist but current_parent
+        # has moved outside their subtree, avoid re-entering. Also skip re-entry when the integration
+        # point was inside template content and we've moved outside that template.
 
         # AFTER_HEAD: whitespace -> html root; non-whitespace forces body creation
         if (
@@ -1345,30 +1343,6 @@ class TextHandler(TagHandler):
                             break
                     # If none were stale but we still have formatting entries, attempt reconstruction anyway (diagnostic) so trailing text lands inside wrapper.
                     if not need_reconstruct_after_table:
-                        need_reconstruct_after_table = True
-                # Attempt spec-like reconstruction without heuristic wrapper creation: if the last child
-                # is a table and there exists a preceding formatting element sibling that already has text,
-                # but its element is still on the open elements stack (blocking reconstruction), temporarily
-                # remove it from the open stack (keep active formatting entry) so standard reconstruction
-                # will clone a fresh wrapper for trailing text. This avoids bespoke wrapper synthesis.
-                if elems and elems[-1].tag_name == "table" and text:
-                    fmt_with_text = None
-                    for sibling in reversed(elems[:-1]):
-                        if sibling.tag_name in FORMATTING_ELEMENTS and any(
-                            ch.tag_name == "#text"
-                            and (ch.text_content or "").strip()
-                            for ch in sibling.children
-                        ):
-                            fmt_with_text = sibling
-                            break
-                    if fmt_with_text is not None and context.open_elements.contains(
-                        fmt_with_text,
-                    ):
-                        self.debug(
-                            f"Post-table trailing text: temporarily removing open formatting element <{fmt_with_text.tag_name}> to force reconstruction",
-                        )
-                        context.open_elements.remove_element(fmt_with_text)
-                        # Do not remove from active formatting elements; let reconstruction detect it as stale
                         need_reconstruct_after_table = True
                 if need_reconstruct_after_table:
                     self.debug("Reconstructing after table for trailing body text")
@@ -1641,16 +1615,6 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
             else None
         )
 
-        # Pre-start stale formatting reconstruction: if there exists any active formatting element (except markers)
-        # whose element is not on the open elements stack, reconstruct now so new formatting nests correctly.
-        # This narrows residual nobr / inline layering divergences without broad heuristics.
-        for entry in list(context.active_formatting_elements):
-            el = entry.element
-            if el is None:
-                continue
-            if not context.open_elements.contains(el):
-                reconstruct_if_needed(self.parser, context)
-                break
         # Proactive duplicate <a> segmentation (spec: any new <a> implies adoption of existing active <a>)
         adoption_ran_for_anchor = False
         if tag_name == "a":
@@ -1675,19 +1639,6 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
                     "Table children after adoption: "
                     + str([child.tag_name for child in table_node.children]),
                 )
-        # Foreign fragment adjustment: when parsing a fragment whose context is a MathML or SVG leaf
-        # element (e.g. 'math ms', 'math mi', etc.), expected trees in foreign-fragment tests retain the
-        # formatting element wrapper as an open element at fragment end (no adoption reparent). Our
-        # normal formatting handler would push/pop via adoption algorithm, producing a flattened
-        # structure (text becomes sibling). To align with expected structure deterministically without
-        # heuristic token lookahead, treat formatting tags as plain elements (insert & push) but do NOT
-        # register them in active_formatting_elements and do NOT trigger duplicate <a>/nobr adoption logic.
-        frag_ctx = self.parser.fragment_context
-        if frag_ctx and context.current_context in ("math", "svg") and tag_name in ("b","i","u","em","strong"):
-            self.parser.insert_element(token, context, mode="normal", enter=True)
-            return True
-
-        # (Duplicate <a> logic consolidated above)
         # Pending reconstruction after new adoption segmentation
         if context.needs_reconstruction and reconstruct_if_needed(self.parser, context):
             context.needs_reconstruction = False

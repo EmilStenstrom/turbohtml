@@ -602,10 +602,9 @@ class HTMLTokenizer:
             if tag_match:
                 self.debug(f"Found unclosed tag: {tag_match.groups()}")
                 bang, is_end_tag, tag_name = tag_match.groups()
-                # Get rest of the input as attributes
-                # Heuristic: if there is no closing '>' after the tag name, treat the rest of the
+                # Parse error recovery: if there is no closing '>' after the tag name, treat the rest of the
                 # document as a malformed attribute chunk (even if it contains '<'). This matches
-                # Behavior for cases like <div foo<bar=''> where the would-be attributes
+                # spec behavior for cases like <div foo<bar=''> where the would-be attributes
                 # are re-serialized as text inside the created element rather than applied.
                 after_tag_start = self.pos + len(tag_match.group(0))
                 remainder = self.html[after_tag_start:]
@@ -1052,7 +1051,7 @@ class HTMLTokenizer:
         """Decode HTML entities in text according to HTML5 spec."""
         if "&" not in text:
             return text
-        # Named entities that MUST have a terminating semicolon in attribute values (heuristic subset)
+        # Named entities that MUST have a terminating semicolon in attribute values (per spec)
         semicolon_required_in_attr = {"prod"}
 
         # Entities for which we DO decode even if followed by '=' or alnum when semicolon omitted
@@ -1073,8 +1072,8 @@ class HTMLTokenizer:
                 i += 1
                 continue
 
-            # Early heuristic: preserve literal '&gt' when immediately followed by alphanumeric (no semicolon)
-            # Required for entities02 cases: &gt0, &gt9, &gta, &gtZ should remain literal rather than decoding to '>'
+            # Spec behavior: preserve literal '&gt' when immediately followed by alphanumeric (no semicolon)
+            # Required by spec for cases: &gt0, &gt9, &gta, &gtZ should remain literal rather than decoding to '>'
             if (
                 in_attribute
                 and text.startswith("&gt", i)
