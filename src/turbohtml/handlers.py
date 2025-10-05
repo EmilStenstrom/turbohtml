@@ -5953,18 +5953,17 @@ class ForeignTagHandler(TagHandler):
                 # Signal that foreign handler will process this tag (handled in handle_start where token is available)
                 return True
             if in_text_ip:
-                tnl = tag_name.lower()
                 # HTML elements (including object) inside MathML text integration points must remain HTML (no prefix)
                 if (
-                    tnl in HTML_ELEMENTS
-                    and tnl not in TABLE_ELEMENTS
-                    and tnl != "table"
+                    tag_name_lower in HTML_ELEMENTS
+                    and tag_name_lower not in TABLE_ELEMENTS
+                    and tag_name_lower != "table"
                 ):
                     return False  # delegate to HTML
             if context.current_parent.tag_name == "math annotation-xml":
                 encoding = context.current_parent.attributes.get("encoding", "").lower()
                 if encoding in ("application/xhtml+xml", "text/html"):
-                    if tag_name.lower() in HTML_ELEMENTS:
+                    if tag_name_lower in HTML_ELEMENTS:
                         return False
             return True
 
@@ -6519,11 +6518,12 @@ class ForeignTagHandler(TagHandler):
                 )
                 is not None
             )
-            if in_text_ip and tag_name.lower() in HTML_ELEMENTS:
+            tag_name_lower = tag_name.lower()
+            if in_text_ip and tag_name_lower in HTML_ELEMENTS:
                 return False
             if context.current_parent.tag_name == "math annotation-xml":
                 enc = context.current_parent.attributes.get("encoding", "").lower()
-                if enc in ("application/xhtml+xml", "text/html") and tag_name.lower() in HTML_ELEMENTS:
+                if enc in ("application/xhtml+xml", "text/html") and tag_name_lower in HTML_ELEMENTS:
                     return False
         # If we are still inside a foreign context
         if context.current_context in ("svg", "math"):

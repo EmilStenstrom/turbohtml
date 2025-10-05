@@ -732,15 +732,15 @@ class HTMLTokenizer:
             # RAWTEXT handling: defer ONLY for <textarea> (needed for select fragment suppression);
             # keep eager switching for other rawtext/rCDATA elements (script/style/title/xmp/noframes/plaintext)
             deferred_rawtext = False
-            if not is_end_tag and tag_name.lower() in RAWTEXT_ELEMENTS:
-                lowered = tag_name.lower()
-                if lowered == "textarea":
+            tag_name_lower = tag_name.lower()
+            if not is_end_tag and tag_name_lower in RAWTEXT_ELEMENTS:
+                if tag_name_lower == "textarea":
                     deferred_rawtext = True
                 else:
                     self.debug(f"Switching to RAWTEXT mode for {tag_name}")
                     self.state = "RAWTEXT"
-                    self.rawtext_tag = lowered
-                if lowered == "script":
+                    self.rawtext_tag = tag_name_lower
+                if tag_name_lower == "script":
                     # Attribute type sniffing still needed (even if eager) for executability
                     _tmp_self_closing, tmp_attrs = (
                         self._parse_attributes_and_check_self_closing(attributes)
