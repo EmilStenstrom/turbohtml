@@ -5899,7 +5899,15 @@ class ForeignTagHandler(TagHandler):
         if tag_name in MATHML_ELEMENTS:
             # If this is a MathML leaf fragment context (math mi/mo/mn/ms/mtext), we want the leaf element itself
             # to be treated as HTML (unprefixed) so skip foreign handling.
-            return not (context.current_context is None and self.parser.fragment_context == f"math {tag_name}" and tag_name in ("mi", "mo", "mn", "ms", "mtext"))
+            if context.current_context is None and self.parser.fragment_context == f"math {tag_name}" and tag_name in ("mi", "mo", "mn", "ms", "mtext"):
+                return False
+            # Handle MathML elements when context is active
+            if context.current_context is not None:
+                return True
+            # In MathML fragment contexts (e.g., "math ms"), handle MathML elements even after context cleared by HTML breakout
+            if self.parser.fragment_context and self.parser.fragment_context.startswith("math "):
+                return True
+            return False
 
         # Fragment SVG fallback: if parsing an SVG fragment (fragment_context like 'svg svg') and
         # we lost foreign context due to a prior HTML breakout, treat subsequent unknown (non-HTML)
