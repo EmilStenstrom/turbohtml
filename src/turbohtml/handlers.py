@@ -2975,53 +2975,16 @@ class TableElementHandler(TagHandler):
 class TableTagHandler(TemplateAwareHandler, TableElementHandler):
     """Handles table-related elements."""
 
-    def early_end_preprocess(self, token, context):
-        # Ignore stray </table> when no open <table> exists.
-        if token.tag_name == "table":
-            table = find_current_table(context)
-            if table is None:
-                self.debug("Ignoring stray </table> with no open table (early end handler)")
-                return True
-        # Cell re-entry: if an end tag (not </td>/<th>) arrives while a td/th is still open on the stack but
-        # current_parent drifted outside any cell, reposition to deepest open cell before normal handling.
-        if token.tag_name not in ("td", "th") and not in_template_content(context):
-            deepest_cell = context.open_elements.find_last(lambda el: el.tag_name in ("td", "th"))
-            if (
-                deepest_cell is not None
-                and context.current_parent is not deepest_cell
-                and not (
-                    context.current_parent
-                    and context.current_parent.find_ancestor(
-                        lambda n: n.tag_name in ("td", "th"),
-                    )
-                )
-            ):
-                context.move_to_element(deepest_cell)
-                self.debug(
-                    f"Repositioned to open cell <{deepest_cell.tag_name}> before handling </{token.tag_name}>",
-                )
-        return False
-
-    def early_start_preprocess(self, token, context):
-        """Early table prelude suppression & stray <tr> recovery.
-
-        Invoked by parser before formatting reconstruction / handler dispatch via generic
-        TagHandler hook. Returns True if token is consumed (ignored or synthesized).
-        """
-        tag_name = token.tag_name
-        # Orphan section suppression: ignore thead/tbody/tfoot that appear directly
-        # inside an SVG integration point element (title/desc/foreignObject) when no HTML <table> is open.
-        # These are parse errors that should not construct HTML table structure (svg.dat cases 2-4).
+    def _should_handle_start_impl(self, tag_name, context):
+        # Orphan section suppression: ignore thead/tbody/tfoot inside SVG integration point with no table
         if (
             tag_name in ("thead", "tbody", "tfoot")
             and context.current_parent
             and context.current_parent.tag_name in ("svg title", "svg desc", "svg foreignObject")
             and not find_current_table(context)
         ):
-            self.debug(
-                f"Ignoring HTML table section <{tag_name}> inside SVG integration point with no open table (early)",
-            )
             return True
+
         # Prelude suppression (caption/col/colgroup/thead/tbody/tfoot) outside any table
         if (
             tag_name in ("caption", "col", "colgroup", "thead", "tbody", "tfoot")
@@ -3031,10 +2994,8 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             and not find_current_table(context)
             and context.current_parent.tag_name not in ("table", "caption")
         ):
-            self.debug(
-                f"Ignoring standalone table prelude <{tag_name}> before table context (early)",
-            )
             return True
+
         # Stray <tr> recovery
         if tag_name == "tr" and (
             not find_current_table(context)
@@ -3044,9 +3005,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             and not context.current_parent.find_ancestor("select")
         ):
             return True
-        return False
 
-    def _should_handle_start_impl(self, tag_name, context):
         # Always handle col/colgroup here
         if tag_name in ("col", "colgroup"):
             return self.parser.fragment_context != "colgroup"
@@ -3105,6 +3064,38 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         tag_name = token.tag_name
         self.debug(f"Handling {tag_name} in table context")
 
+        # Orphan section suppression: ignore thead/tbody/tfoot inside SVG integration point with no table
+        if (
+            tag_name in ("thead", "tbody", "tfoot")
+            and context.current_parent
+            and context.current_parent.tag_name in ("svg title", "svg desc", "svg foreignObject")
+            and not find_current_table(context)
+        ):
+            self.debug(f"Ignoring HTML table section <{tag_name}> inside SVG integration point with no open table")
+            return True
+
+        # Prelude suppression (caption/col/colgroup/thead/tbody/tfoot) outside any table
+        if (
+            tag_name in ("caption", "col", "colgroup", "thead", "tbody", "tfoot")
+            and self.parser.fragment_context != "colgroup"
+            and context.current_context not in ("math", "svg")
+            and not in_template_content(context)
+            and not find_current_table(context)
+            and context.current_parent.tag_name not in ("table", "caption")
+        ):
+            self.debug(f"Ignoring standalone table prelude <{tag_name}> before table context")
+            return True
+
+        # Stray <tr> recovery
+        if tag_name == "tr" and (
+            not find_current_table(context)
+            and context.current_parent.tag_name not in ("table", "caption")
+            and context.current_context not in ("math", "svg")
+            and not in_template_content(context)
+            and not context.current_parent.find_ancestor("select")
+        ):
+            return True
+
         # Fragment row context adjustment (spec-aligned implied cell end):
         # In a fragment with context 'tr', each new <td>/<th> start tag implicitly closes any
         # currently open cell. Without this, a sequence like <td>...<td> nests the second cell
@@ -3129,13 +3120,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 # cell will become a sibling.
 
         if context.current_parent.tag_name == "svg title":
-            return True
-        if (
-            tag_name in ("thead", "tbody", "tfoot")
-            and context.current_parent.tag_name
-            in ("svg title", "svg desc", "svg foreignObject")
-            and not find_current_table(context)
-        ):
             return True
 
         if self.parser.foreign_handler.is_plain_svg_foreign(context):
@@ -3272,14 +3256,26 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         return True
 
     def should_handle_end(self, tag_name, context):
+        # Ignore stray </table> when no table is open
+        if tag_name == "table" and not find_current_table(context):
+            return True
+
+        # Reposition to deepest open cell for cell re-entry (td/th end tags)
+        if tag_name in ("td", "th"):
+            stack = context.open_elements
+            cell_index = stack.find_last_index(lambda el: el.tag_name in ("td", "th"))
+            if cell_index != -1:
+                cell = stack[cell_index]
+                if context.current_parent is not cell:
+                    context.move_to_element(cell)
+            return True
+
         return tag_name in {
             "table",
             "tbody",
             "thead",
             "tfoot",
             "tr",
-            "td",
-            "th",
             "caption",
             "colgroup",
         }
@@ -4080,6 +4076,10 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
     def handle_end(self, token, context):
         tag_name = token.tag_name
         self.debug(f"handling end tag {tag_name}")
+
+        # Ignore stray </table> when no table is open (handled in should_handle_end)
+        if tag_name == "table" and not find_current_table(context):
+            return True
 
         if tag_name == "caption" and context.document_state == DocumentState.IN_CAPTION:
             caption = context.current_parent.find_ancestor("caption")
