@@ -28,7 +28,8 @@ from turbohtml.handlers import (
     SelectTagHandler,
     TableFosterHandler,
     TableTagHandler,
-    TemplateHandler,
+    TemplateContentFilterHandler,
+    TemplateElementHandler,
     TextHandler,
     UnifiedCommentHandler,
     VoidTagHandler,
@@ -65,7 +66,8 @@ class TurboHTML:
         # Initialize tag handlers in deterministic order
         self.tag_handlers = [
             DoctypeHandler(self),
-            TemplateHandler(self),
+            TemplateContentFilterHandler(self),  # must precede TemplateElementHandler
+            TemplateElementHandler(self),
             DocumentStructureHandler(self),
             PlaintextHandler(self),
             FramesetTagHandler(self),

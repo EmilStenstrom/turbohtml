@@ -395,14 +395,15 @@ class DocumentStructureHandler(TagHandler):
             _ = body
 
 
-class TemplateHandler(TagHandler):
-    """Unified template element handling: auto-enter content, create templates, filter content.
+class TemplateContentFilterHandler(TagHandler):
+    """Filters and adjusts content inside template content.
 
-    Consolidates TemplateContentAutoEnterHandler, TemplateTagHandler, and TemplateContentFilterHandler.
-    Handles all aspects of <template> element behavior:
-    - Auto-enter 'content' node when inserting under template (early preprocessing)
-    - Create template elements with content subtrees
-    - Filter/adjust tokens inside template content (special table/structure logic)
+    Handles special insertion rules for table elements and structure inside template content.
+    Responsible for:
+    - Auto-entering 'content' node when inserting under a template
+    - Synthesizing table structure (tbody, tr wrappers) for table elements
+    - Ignoring document structure tags (html, head, body) inside templates
+    - Handling nested templates inside template content
     """
 
     # Ignore only top-level/document-structure things inside template content
@@ -452,12 +453,16 @@ class TemplateHandler(TagHandler):
         return None
 
     def should_handle_start(self, tag_name, context):
-        """Handle <template> tags OR filter content inside templates.
+        """Filter content inside templates (auto-enter content, handle nested templates).
 
         As a side effect, auto-enters content node when inserting under a template.
         """
+        # Check if inside template content for filtering logic FIRST
+        in_template_content = self._in_template_content(context)
+
         # Side effect: Auto-enter content node if we're under a template but not already inside content
-        if tag_name != "template":
+        # ONLY do this if we're already in template content (otherwise we're outside the template)
+        if tag_name != "template" and in_template_content:
             node = context.current_parent
             template_ancestor = None
             while node and node.tag_name not in ("html", "document-fragment"):
@@ -482,20 +487,15 @@ class TemplateHandler(TagHandler):
                     if not inside:
                         context.move_to_element(content)
 
-        # Check if inside template content for filtering logic
-        in_template_content = self._in_template_content(context)
-
+        # Handle nested templates inside template content
         if tag_name == "template":
-            # Always handle top-level templates (not in foreign context, not nested in content)
             if context.current_context in ("math", "svg"):
                 return bool(in_template_content)
-            if (
-                context.current_parent.find_ancestor(lambda n: n.tag_name == "template")
-                and context.current_parent.tag_name == "content"
-            ):
-                # Nested template inside template content - handle via content filtering
+            # Handle if we're inside template content (nested template)
+            if in_template_content:
                 return True
-            return True
+            # Top-level templates handled by TemplateElementHandler
+            return False
 
         # Filter other content inside templates
         if not in_template_content:
@@ -513,63 +513,29 @@ class TemplateHandler(TagHandler):
                 return True
         return tag_name in (self.IGNORED_START + self.GENERIC_AS_PLAIN)
 
-    def _handle_template_element(self, token, context, in_template_content):
-        """Create <template> element (nested or top-level)."""
-        # Nested template inside template content - use simplified creation
-        if in_template_content:
-            if context.current_context in (
-                "math",
-                "svg",
-            ) or context.current_parent.has_ancestor_matching(
-                lambda n: n.tag_name.startswith("svg ")
-                or n.tag_name == "svg"
-                or n.tag_name.startswith("math ")
-                or n.tag_name == "math",
-            ):
-                return False
-            # Template elements are allowed in table context without foster parenting
-            template_node = self.parser.insert_element(
-                token, context, mode="normal", enter=True, auto_foster=False,
-            )
-            content_token = self._synth_token("content")
-            self.parser.insert_element(
-                content_token,
-                context,
-                mode="transient",
-                enter=True,
-                parent=template_node,
-            )
-            return True
-
-        # Top-level template - full creation logic
-        if context.document_state in (
-            DocumentState.IN_FRAMESET,
-            DocumentState.AFTER_FRAMESET,
+    def _handle_nested_template(self, token, context):
+        """Handle nested template inside template content."""
+        if context.current_context in (
+            "math",
+            "svg",
+        ) or context.current_parent.has_ancestor_matching(
+            lambda n: n.tag_name.startswith("svg ")
+            or n.tag_name == "svg"
+            or n.tag_name.startswith("math ")
+            or n.tag_name == "math",
         ):
-            return True
-
-        insertion_parent = context.current_parent
-        html_node = self.parser.html_node
-        head_node = get_head(self.parser)
-        body_node = get_body(self.parser.root)
-
-        # In INITIAL/IN_HEAD/AFTER_HEAD states, ensure head exists and place template there
-        state = context.document_state
-        if state in (DocumentState.INITIAL, DocumentState.IN_HEAD, DocumentState.AFTER_HEAD):
-            if not head_node:
-                head_node = ensure_head(self.parser)
-            insertion_parent = head_node
-        elif body_node and state.name.startswith("AFTER_BODY"):
-            insertion_parent = body_node
-        elif head_node and context.current_parent in (html_node, head_node):
-            insertion_parent = head_node
-
+            return False
+        # Template elements are allowed in table context without foster parenting
         template_node = self.parser.insert_element(
-            token, context, parent=insertion_parent, mode="normal", enter=True,
+            token, context, mode="normal", enter=True, auto_foster=False,
         )
         content_token = self._synth_token("content")
         self.parser.insert_element(
-            content_token, context, mode="transient", enter=True, parent=template_node,
+            content_token,
+            context,
+            mode="transient",
+            enter=True,
+            parent=template_node,
         )
         return True
 
@@ -761,13 +727,12 @@ class TemplateHandler(TagHandler):
         return True
 
     def handle_start(self, token, context):
-        """Create template elements OR filter content inside templates."""
+        """Filter and adjust content inside templates."""
         tag_name = token.tag_name
-        in_template_content = self._in_template_content(context)
 
-        # Handle <template> elements
+        # Handle nested templates inside template content
         if tag_name == "template":
-            return self._handle_template_element(token, context, in_template_content)
+            return self._handle_nested_template(token, context)
 
         # Filter other content inside templates
         if token.tag_name in self.IGNORED_START:
@@ -793,8 +758,9 @@ class TemplateHandler(TagHandler):
         return self._handle_generic_template_content(token, context, boundary)
 
     def should_handle_end(self, tag_name, context):
-        """Handle </template> tags OR filter end tags inside templates."""
+        """Filter end tags inside templates."""
         if tag_name == "template":
+            # Nested templates handled here, top-level by TemplateElementHandler
             if context.content_state == ContentState.PLAINTEXT:
                 return False
             if context.current_context in ("math", "svg"):
@@ -808,7 +774,22 @@ class TemplateHandler(TagHandler):
                         return True
                     cur = cur.parent
                 return False
-            return True
+            # Only handle if we're NESTED inside template content (not at the immediate content level)
+            # If current_parent IS the content node of a template, check if that template is nested
+            if context.current_parent.tag_name == "content":
+                immediate_template = context.current_parent.parent
+                if immediate_template and immediate_template.tag_name == "template":
+                    # Check if this template is nested inside another template's content
+                    ancestor = immediate_template.parent
+                    while ancestor:
+                        if ancestor.tag_name == "content" and ancestor.parent and ancestor.parent.tag_name == "template":
+                            # This template is nested - we should handle it
+                            return True
+                        ancestor = ancestor.parent
+                    # Not nested - TemplateElementHandler should handle it
+                    return False
+            # If we're deeper inside (past the content node), check if we're in template content
+            return self._in_template_content(context)
 
         if not self._in_template_content(context):
             return False
@@ -830,10 +811,12 @@ class TemplateHandler(TagHandler):
         return tag_name in (table_like | {"select"})
 
     def handle_end(self, token, context):
-        """Close template elements OR filter end tags inside templates."""
+        """Close elements inside template content."""
         tag_name = token.tag_name
 
+        # Handle nested </template> (closing a template that's inside another template's content)
         if tag_name == "template":
+            # This is a nested template closing - use same logic as TemplateElementHandler
             if context.document_state in (
                 DocumentState.IN_FRAMESET,
                 DocumentState.AFTER_FRAMESET,
@@ -879,9 +862,11 @@ class TemplateHandler(TagHandler):
                 context.move_to_element_with_fallback(parent, template_node)
             return True
 
-        if token.tag_name in self.IGNORED_START or token.tag_name == "select":
+        # Ignored tags and select
+        if tag_name in self.IGNORED_START or tag_name == "select":
             return True
 
+        # Generic ancestor closing for table elements
         boundary = self._current_content_boundary(context)
         cursor = context.current_parent
         found = None
@@ -904,6 +889,141 @@ class TemplateHandler(TagHandler):
             context.move_to_element_with_fallback(
                 context.current_parent.parent, context.current_parent,
             )
+        return True
+
+
+class TemplateElementHandler(TagHandler):
+    """Creates and closes <template> elements.
+
+    Handles top-level template element lifecycle:
+    - Creating <template> elements with content subtrees
+    - Determining proper insertion location (head vs body)
+    - Closing template elements and managing open elements stack
+    """
+
+    def should_handle_start(self, tag_name, context):
+        """Handle top-level <template> tags."""
+        if tag_name != "template":
+            return False
+        # Only handle top-level templates (not nested in template content)
+        # Nested templates are handled by TemplateContentFilterHandler
+        if context.current_parent.tag_name == "content":
+            parent_is_template = (
+                context.current_parent.parent
+                and context.current_parent.parent.tag_name == "template"
+            )
+            if parent_is_template:
+                return False
+        # Skip if inside template content
+        p = context.current_parent
+        while p and p.tag_name not in ("html", "document-fragment"):
+            if p.tag_name == "content" and p.parent and p.parent.tag_name == "template":
+                return False
+            p = p.parent
+        return True
+
+    def handle_start(self, token, context):
+        """Create top-level <template> element."""
+        if context.document_state in (
+            DocumentState.IN_FRAMESET,
+            DocumentState.AFTER_FRAMESET,
+        ):
+            return True
+
+        insertion_parent = context.current_parent
+        html_node = self.parser.html_node
+        head_node = get_head(self.parser)
+        body_node = get_body(self.parser.root)
+
+        # In INITIAL/IN_HEAD/AFTER_HEAD states, ensure head exists and place template there
+        state = context.document_state
+        if state in (DocumentState.INITIAL, DocumentState.IN_HEAD, DocumentState.AFTER_HEAD):
+            if not head_node:
+                head_node = ensure_head(self.parser)
+            insertion_parent = head_node
+        elif body_node and state.name.startswith("AFTER_BODY"):
+            insertion_parent = body_node
+        elif head_node and context.current_parent in (html_node, head_node):
+            insertion_parent = head_node
+
+        # Template elements are allowed in table context without foster parenting (per spec)
+        template_node = self.parser.insert_element(
+            token, context, parent=insertion_parent, mode="normal", enter=True, auto_foster=False,
+        )
+        content_token = self._synth_token("content")
+        self.parser.insert_element(
+            content_token, context, mode="transient", enter=True, parent=template_node,
+        )
+        return True
+
+    def should_handle_end(self, tag_name, context):
+        """Handle </template> tags for top-level templates."""
+        if tag_name != "template":
+            return False
+        if context.content_state == ContentState.PLAINTEXT:
+            return False
+        # Distinguish between:
+        # 1. Nested template (inside template content) - handled by TemplateContentFilterHandler
+        # 2. Top-level template (even if currently inside its content) - handled here
+        if context.current_parent.tag_name == "content":
+            immediate_template = context.current_parent.parent
+            if immediate_template and immediate_template.tag_name == "template":
+                # Check if this template is nested inside another template's content
+                ancestor = immediate_template.parent
+                while ancestor:
+                    if ancestor.tag_name == "content" and ancestor.parent and ancestor.parent.tag_name == "template":
+                        # This template is nested inside another template's content
+                        return False
+                    ancestor = ancestor.parent
+                # This is a top-level template (not nested in another template's content)
+                return True
+        return True
+
+    def handle_end(self, token, context):
+        """Close <template> element."""
+        if context.document_state in (
+            DocumentState.IN_FRAMESET,
+            DocumentState.AFTER_FRAMESET,
+        ):
+            return True
+
+        if (
+            context.current_parent
+            and context.current_parent.tag_name == "content"
+            and context.current_parent.parent
+            and context.current_parent.parent.tag_name == "template"
+        ):
+            context.move_to_element_with_fallback(
+                context.current_parent.parent, context.current_parent,
+            )
+
+        while context.current_parent and context.current_parent.tag_name != "template":
+            if context.current_parent.parent:
+                context.move_to_element_with_fallback(
+                    context.current_parent.parent, context.current_parent,
+                )
+            else:
+                break
+
+        if context.current_parent and context.current_parent.tag_name == "template":
+            template_node = context.current_parent
+            if context.open_elements:
+                new_stack = []
+                for el in context.open_elements:
+                    cur = el.parent
+                    keep = True
+                    while cur:
+                        if cur is template_node:
+                            keep = False
+                            break
+                        cur = cur.parent
+                    if keep:
+                        new_stack.append(el)
+                context.open_elements.replace_stack(new_stack)
+            if context.open_elements.contains(template_node):
+                context.open_elements.remove_element(template_node)
+            parent = template_node.parent or template_node
+            context.move_to_element_with_fallback(parent, template_node)
         return True
 
 
