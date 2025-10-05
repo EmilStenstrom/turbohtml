@@ -236,6 +236,14 @@ class OpenElementsStack:
     def _is_special_category(self, element):
         return element.tag_name in SPECIAL_CATEGORY_ELEMENTS
 
+    # --- search helpers ---
+    def find_last(self, predicate):
+        """Find the last (deepest) element matching predicate, searching from top of stack."""
+        for el in reversed(self._stack):
+            if predicate(el):
+                return el
+        return None
+
     # --- iteration helpers ---
     def __iter__(self):
         return iter(self._stack)

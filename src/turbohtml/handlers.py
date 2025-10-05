@@ -2997,11 +2997,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         # Cell re-entry: if an end tag (not </td>/<th>) arrives while a td/th is still open on the stack but
         # current_parent drifted outside any cell, reposition to deepest open cell before normal handling.
         if token.tag_name not in ("td", "th") and not in_template_content(context):
-            deepest_cell = None
-            for el in reversed(context.open_elements):
-                if el.tag_name in ("td", "th"):
-                    deepest_cell = el
-                    break
+            deepest_cell = context.open_elements.find_last(lambda el: el.tag_name in ("td", "th"))
             if (
                 deepest_cell is not None
                 and context.current_parent is not deepest_cell
@@ -3499,6 +3495,38 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         )
         return True
 
+    def _merge_or_insert_text(self, text, target, context):
+        """Merge text with last child if it's a text node, otherwise insert new text node."""
+        if target.children and target.children[-1].tag_name == "#text":
+            target.children[-1].text_content += text
+        else:
+            self.parser.insert_text(text, context, parent=target, merge=True)
+
+    def _create_formatting_wrapper(self, tag_name, attributes, parent, before, context):
+        """Create a formatting element wrapper and add it to AFE list."""
+        wrapper_token = HTMLToken("StartTag", tag_name=tag_name, attributes=attributes.copy())
+        new_wrapper = self.parser.insert_element(
+            wrapper_token, context, mode="normal", enter=False,
+            parent=parent, before=before, push_override=False,
+        )
+        context.active_formatting_elements.push(new_wrapper, wrapper_token)
+        return new_wrapper
+
+    def _pop_until_tag(self, tag_name, context, new_state):
+        """Pop elements from stack until finding tag_name, then transition to new_state."""
+        section = context.current_parent.find_ancestor(tag_name)
+        if not section:
+            return False
+        stack = context.open_elements
+        while stack:
+            popped = stack.pop()
+            if popped is section:
+                break
+        next_parent = stack[-1] if stack else ensure_body(self.parser.root, context.document_state, self.parser.fragment_context) or self.parser.root
+        context.move_to_element(next_parent)
+        context.transition_to_state(new_state)
+        return True
+
     def _find_or_create_tbody(self, context):
         """Find existing tbody or create new one.
 
@@ -3515,15 +3543,10 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             return None
 
         # Find tbody that comes after any colgroups (valid for reuse)
-        last_colgroup_idx = -1
-        for i, child in enumerate(table.children):
-            if child.tag_name == "colgroup":
-                last_colgroup_idx = i
-
-        # Look for tbody after last colgroup
-        for i in range(last_colgroup_idx + 1, len(table.children)):
-            if table.children[i].tag_name == "tbody":
-                return table.children[i]
+        last_colgroup_idx = table.find_last_child_index("colgroup")
+        tbody = table.find_child_after_index("tbody", last_colgroup_idx)
+        if tbody:
+            return tbody
 
         # No valid tbody found, create new one
         tbody_token = self._synth_token("tbody")
@@ -3609,13 +3632,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 reconstruct_active_formatting_elements(self.parser, context)
 
             target = context.current_parent
-            if (
-                target.children
-                and target.children[-1].tag_name == "#text"
-            ):
-                target.children[-1].text_content += text
-            else:
-                self.parser.insert_text(text, context, parent=target, merge=True)
+            self._merge_or_insert_text(text, target, context)
             return True
 
         # Special handling for colgroup context
@@ -3739,10 +3756,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     if not context.open_elements.contains(node):
                         continue
                     # Check if node lives inside the foster-parented block
-                    cursor = node
-                    while cursor is not None and cursor is not block_elem:
-                        cursor = cursor.parent
-                    if cursor is block_elem or node is block_elem:
+                    if node is block_elem or node.find_ancestor(lambda n: n is block_elem):
                         target = node
                         break
             # If target is still the block, but its last child is a formatting element that is open, descend to the
@@ -3766,11 +3780,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 if new_a:
                     self.debug("[anchor-cont][reconstruct] late reconstruction produced <a>")
                     target = new_a[-1]
-            # Append/merge text at target
-            if target.children and target.children[-1].tag_name == "#text":
-                target.children[-1].text_content += text
-            else:
-                self.parser.insert_text(text, context, parent=target, merge=True)
+            self._merge_or_insert_text(text, target, context)
             return True
 
         # Foster parent non-whitespace text nodes
@@ -3781,6 +3791,10 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         if not table or not table.parent:
             self.debug("No table or table parent found")
             return False
+
+        # Find the appropriate parent for foster parenting
+        foster_parent = table.parent
+        table_index = foster_parent.children.index(table)
 
         # Special guard (spec-aligned) for pattern where foster-parented formatting could duplicate:
         # If the current_parent is a formatting element (e.g. <font>) that is a direct child of a block
@@ -3794,8 +3808,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             and context.current_parent.parent.tag_name in BLOCK_ELEMENTS
         ):
             block = context.current_parent.parent
-            foster_parent = table.parent
-            table_index = foster_parent.children.index(table)
             # Check block is immediately before table and contains the formatting element as last child (or last non-whitespace)
             if block in foster_parent.children[:table_index]:
                 # Ensure no prior non-whitespace text inside the formatting element (first text run)
@@ -3814,9 +3826,6 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     )
                     return True
 
-        # Find the appropriate parent for foster parenting
-        foster_parent = table.parent
-        table_index = foster_parent.children.index(table)
         self.debug(f"Foster parent: {foster_parent}, table index: {table_index}")
 
         # If the immediate previous sibling before the table is suitable, decide placement:
@@ -3846,26 +3855,11 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                     and context.open_elements.contains(prev_sibling)
                     and context.current_parent.tag_name not in FORMATTING_ELEMENTS
                 ):
-                    has_text = any(
-                        ch.tag_name == "#text" and ch.text_content
-                        for ch in prev_sibling.children
-                    )
-                    if has_text:
-                        wrapper_token = HTMLToken(
-                            "StartTag",
-                            tag_name=prev_sibling.tag_name,
-                            attributes=prev_sibling.attributes.copy(),
+                    if prev_sibling.has_text_children():
+                        new_wrapper = self._create_formatting_wrapper(
+                            prev_sibling.tag_name, prev_sibling.attributes,
+                            foster_parent, foster_parent.children[table_index], context,
                         )
-                        new_wrapper = self.parser.insert_element(
-                            wrapper_token,
-                            context,
-                            mode="normal",
-                            enter=False,
-                            parent=foster_parent,
-                            before=foster_parent.children[table_index],
-                            push_override=False,
-                        )
-                        context.active_formatting_elements.push(new_wrapper, wrapper_token)
                         self.parser.insert_text(
                             text, context, parent=new_wrapper, merge=True,
                         )
@@ -4188,14 +4182,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         el = entry.element
                         if el is None:
                             continue
-                        cur = el
-                        inside_table = False
-                        while cur:
-                            if cur is table_node:
-                                inside_table = True
-                                break
-                            cur = cur.parent
-                        if inside_table:
+                        if el.find_ancestor(lambda n: n is table_node):
                             context.active_formatting_elements.remove_entry(entry)
                 # Find any active formatting element that contained the table
                 formatting_parent = table_node.parent
@@ -4277,36 +4264,9 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
 
         elif tag_name in TABLE_ELEMENTS:
             if tag_name in ["tbody", "thead", "tfoot"]:
-                section = context.current_parent.find_ancestor(tag_name)
-                if section:
-                    stack = context.open_elements
-                    found = False
-                    while stack:
-                        popped = stack.pop()
-                        if popped is section:
-                            found = True
-                            break
-                    if found:
-                        next_parent = stack[-1] if stack else ensure_body(self.parser.root, context.document_state, self.parser.fragment_context) or self.parser.root
-                        context.move_to_element(next_parent)
-                        context.transition_to_state( DocumentState.IN_TABLE)
-                        return True
-            elif tag_name == "tr":
-                stack = context.open_elements
-                target = None
-                for el in reversed(stack):
-                    if el.tag_name == "tr":
-                        target = el
-                        break
-                if target:
-                    while stack:
-                        popped = stack.pop()
-                        if popped is target:
-                            break
-                    next_parent = stack[-1] if stack else ensure_body(self.parser.root, context.document_state, self.parser.fragment_context) or self.parser.root
-                    context.move_to_element(next_parent)
-                    context.transition_to_state( DocumentState.IN_TABLE_BODY)
-                    return True
+                return self._pop_until_tag(tag_name, context, DocumentState.IN_TABLE)
+            if tag_name == "tr":
+                return self._pop_until_tag("tr", context, DocumentState.IN_TABLE_BODY)
 
         return False
 
@@ -5118,18 +5078,13 @@ class VoidTagHandler(SelectAwareHandler):
                 raw_type.lower() == "hidden" and raw_type == raw_type.strip()
             )
             if not is_clean_hidden:
-                # Manual foster parenting (avoid making the void element current insertion point)
+                # Foster parent using centralized helper
                 table = find_current_table(context)
-                if table and table.parent:
-                    foster_parent = table.parent
-                    # Insert before the table using centralized helper (void mode avoids stack/enter side-effects)
+                if table:
+                    foster_parent_node, before = foster_parent(context.current_parent, context.open_elements, self.parser.root)
                     self.parser.insert_element(
-                        token,
-                        context,
-                        mode="void",
-                        enter=False,
-                        parent=foster_parent,
-                        before=table,
+                        token, context, mode="void", enter=False,
+                        parent=foster_parent_node, before=before,
                     )
                     self.debug("Foster parented input before table (non-clean hidden)")
                     return True
@@ -8053,23 +8008,19 @@ def foster_parent_element(tag_name, attributes, context, parser):
     Mirrors previous parser._foster_parent_element behavior but lives in handlers module
     so table/paragraph fallback logic can call it without retaining the method on parser.
     """
-    table = None
-    if context.document_state == DocumentState.IN_TABLE:
-        table = find_current_table(context)
-    if not table or not table.parent:
-        pass
-    foster_parent = table.parent
-    table_index = foster_parent.children.index(table)
+    if context.document_state != DocumentState.IN_TABLE:
+        return
+    table = find_current_table(context)
+    if not table:
+        return
+
+    foster_parent_node, before = foster_parent(context.current_parent, context.open_elements, parser.root)
+    table_index = foster_parent_node.children.index(before) if before and before in foster_parent_node.children else len(foster_parent_node.children)
+
     if table_index > 0:
-        prev_sibling = foster_parent.children[table_index - 1]
+        prev_sibling = foster_parent_node.children[table_index - 1]
         if prev_sibling is context.current_parent and prev_sibling.tag_name in (
-            "div",
-            "p",
-            "section",
-            "article",
-            "blockquote",
-            "li",
-            "center",
+            "div", "p", "section", "article", "blockquote", "li", "center",
         ):
             new_node = Node(tag_name, attributes)
             prev_sibling.append_child(new_node)
@@ -8077,8 +8028,8 @@ def foster_parent_element(tag_name, attributes, context, parser):
             context.open_elements.push(new_node)
             return
     new_node = Node(tag_name, attributes)
-    foster_parent.children.insert(table_index, new_node)
-    new_node.parent = foster_parent
+    foster_parent_node.children.insert(table_index, new_node)
+    new_node.parent = foster_parent_node
     context.move_to_element(new_node)
     context.open_elements.push(new_node)
 

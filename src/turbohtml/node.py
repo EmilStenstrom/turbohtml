@@ -416,3 +416,30 @@ class Node:
                 return True
             current = current.parent
         return False
+
+    def contains_text_nodes(self):
+        """Recursively check if this node or any descendant is a text node."""
+        if self.tag_name == "#text":
+            return True
+        for child in self.children:
+            if child.contains_text_nodes():
+                return True
+        return False
+
+    def has_text_children(self):
+        """Check if any immediate child is a text node with content."""
+        return any(child.tag_name == "#text" and child.text_content for child in self.children)
+
+    def find_last_child_index(self, tag_name):
+        """Find the index of the last child with the given tag name."""
+        for i in range(len(self.children) - 1, -1, -1):
+            if self.children[i].tag_name == tag_name:
+                return i
+        return -1
+
+    def find_child_after_index(self, tag_name, start_index):
+        """Find first child with tag_name after the given index."""
+        for i in range(start_index + 1, len(self.children)):
+            if self.children[i].tag_name == tag_name:
+                return self.children[i]
+        return None
