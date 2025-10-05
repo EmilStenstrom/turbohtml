@@ -513,100 +513,87 @@ class TemplateHandler(TagHandler):
                 return True
         return tag_name in (self.IGNORED_START + self.GENERIC_AS_PLAIN)
 
-    def handle_start(self, token, context):
-        """Create template elements OR filter content inside templates."""
-        tag_name = token.tag_name
-        in_template_content = self._in_template_content(context)
-
-        # Handle <template> elements
-        if tag_name == "template":
-            # Nested template inside template content - use simplified creation
-            if in_template_content:
-                if context.current_context in (
-                    "math",
-                    "svg",
-                ) or context.current_parent.has_ancestor_matching(
-                    lambda n: n.tag_name.startswith("svg ")
-                    or n.tag_name == "svg"
-                    or n.tag_name.startswith("math ")
-                    or n.tag_name == "math",
-                ):
-                    return False
-                # Template elements are allowed in table context without foster parenting
-                template_node = self.parser.insert_element(
-                    token, context, mode="normal", enter=True, auto_foster=False,
-                )
-                content_token = self._synth_token("content")
-                self.parser.insert_element(
-                    content_token,
-                    context,
-                    mode="transient",
-                    enter=True,
-                    parent=template_node,
-                )
-                return True
-
-            # Top-level template - full creation logic
-            if context.document_state in (
-                DocumentState.IN_FRAMESET,
-                DocumentState.AFTER_FRAMESET,
+    def _handle_template_element(self, token, context, in_template_content):
+        """Create <template> element (nested or top-level)."""
+        # Nested template inside template content - use simplified creation
+        if in_template_content:
+            if context.current_context in (
+                "math",
+                "svg",
+            ) or context.current_parent.has_ancestor_matching(
+                lambda n: n.tag_name.startswith("svg ")
+                or n.tag_name == "svg"
+                or n.tag_name.startswith("math ")
+                or n.tag_name == "math",
             ):
-                return True
-
-            insertion_parent = context.current_parent
-            html_node = self.parser.html_node
-            head_node = get_head(self.parser)
-            body_node = get_body(self.parser.root)
-
-            # In INITIAL/IN_HEAD/AFTER_HEAD states, ensure head exists and place template there
-            state = context.document_state
-            if state in (DocumentState.INITIAL, DocumentState.IN_HEAD, DocumentState.AFTER_HEAD):
-                if not head_node:
-                    head_node = ensure_head(self.parser)
-                insertion_parent = head_node
-            elif body_node and state.name.startswith("AFTER_BODY"):
-                insertion_parent = body_node
-            elif head_node and context.current_parent in (html_node, head_node):
-                insertion_parent = head_node
-
+                return False
+            # Template elements are allowed in table context without foster parenting
             template_node = self.parser.insert_element(
-                token, context, parent=insertion_parent, mode="normal", enter=True,
+                token, context, mode="normal", enter=True, auto_foster=False,
             )
             content_token = self._synth_token("content")
             self.parser.insert_element(
-                content_token, context, mode="transient", enter=True, parent=template_node,
+                content_token,
+                context,
+                mode="transient",
+                enter=True,
+                parent=template_node,
             )
             return True
 
-        # Filter other content inside templates
-        if token.tag_name in self.IGNORED_START:
-            tableish = {
-                "table",
-                "thead",
-                "tfoot",
-                "tbody",
-                "tr",
-                "td",
-                "th",
-                "col",
-                "colgroup",
-            }
-            if context.current_parent and context.current_parent.tag_name in tableish:
-                boundary = self._current_content_boundary(context)
-                if boundary:
-                    context.move_to_element(boundary)
+        # Top-level template - full creation logic
+        if context.document_state in (
+            DocumentState.IN_FRAMESET,
+            DocumentState.AFTER_FRAMESET,
+        ):
             return True
 
         insertion_parent = context.current_parent
-        content_boundary = self._current_content_boundary(context)
-        boundary = insertion_parent
+        html_node = self.parser.html_node
+        head_node = get_head(self.parser)
+        body_node = get_body(self.parser.root)
 
-        last_child = boundary.children[-1] if boundary and boundary.children else None
-        if last_child and last_child.tag_name in {"col", "colgroup"}:
-            allowed_after_col = {"col", "#text"}
-            if token.tag_name not in allowed_after_col:
-                return True
+        # In INITIAL/IN_HEAD/AFTER_HEAD states, ensure head exists and place template there
+        state = context.document_state
+        if state in (DocumentState.INITIAL, DocumentState.IN_HEAD, DocumentState.AFTER_HEAD):
+            if not head_node:
+                head_node = ensure_head(self.parser)
+            insertion_parent = head_node
+        elif body_node and state.name.startswith("AFTER_BODY"):
+            insertion_parent = body_node
+        elif head_node and context.current_parent in (html_node, head_node):
+            insertion_parent = head_node
 
+        template_node = self.parser.insert_element(
+            token, context, parent=insertion_parent, mode="normal", enter=True,
+        )
+        content_token = self._synth_token("content")
+        self.parser.insert_element(
+            content_token, context, mode="transient", enter=True, parent=template_node,
+        )
+        return True
+
+    def _handle_ignored_tags(self, token, context):
+        """Handle ignored tags (html, head, body, frameset, frame) inside template content."""
+        tableish = {
+            "table",
+            "thead",
+            "tfoot",
+            "tbody",
+            "tr",
+            "td",
+            "th",
+            "col",
+            "colgroup",
+        }
+        if context.current_parent and context.current_parent.tag_name in tableish:
+            boundary = self._current_content_boundary(context)
+            if boundary:
+                context.move_to_element(boundary)
+        return True
+
+    def _handle_table_sections(self, token, context, boundary):
+        """Handle tbody/caption/colgroup/thead/tfoot inside template content."""
         if token.tag_name in {"tbody", "caption", "colgroup"}:
             has_rows_or_cells = any(
                 ch.tag_name in {"tr", "td", "th"} for ch in (boundary.children or [])
@@ -621,99 +608,108 @@ class TemplateHandler(TagHandler):
                 )
             return True
 
-        if token.tag_name in ("td", "th"):
-            if context.current_parent.tag_name == "tr":
-                self.parser.insert_element(token, context, mode="transient", enter=True)
-                return True
-            if context.current_parent is boundary:
-                prev = None
-                for child in reversed(boundary.children or []):
-                    if child.tag_name == "template":
-                        continue
-                    prev = child
-                    break
-                if prev and prev.tag_name == "tr":
-                    fake_tr_token = HTMLToken("StartTag", tag_name="tr", attributes={})
-                    self.parser.insert_element(
-                        fake_tr_token,
-                        context,
-                        parent=boundary,
-                        mode="transient",
-                        enter=True,
-                    )
-                    self.parser.insert_element(
-                        token, context, mode="transient", enter=True,
-                    )
-                else:
-                    self.parser.insert_element(
-                        token, context, parent=boundary, mode="transient", enter=True,
-                    )
-                return True
-
-        if token.tag_name == "tr":
-            tr_boundary = content_boundary or insertion_parent
-            if context.current_parent is not tr_boundary:
-                return True
-            last_sig = None
-            for ch in reversed(tr_boundary.children or []):
-                if ch.tag_name == "#text" and (
-                    not ch.text_content or ch.text_content.isspace()
-                ):
-                    continue
-                last_sig = ch
-                break
-            if last_sig and last_sig.tag_name == "template":
-                has_table_context = any(
-                    ch.tag_name in {"thead", "tfoot", "tbody", "tr", "td", "th"}
-                    for ch in (tr_boundary.children or [])
-                )
-                if not has_table_context:
-                    return True
-            seen_section = any(
-                ch.tag_name in {"thead", "tfoot", "tbody"}
-                for ch in (tr_boundary.children or [])
-            )
-            if seen_section:
-                last_section = None
-                for ch in reversed(tr_boundary.children or []):
-                    if ch.tag_name in {"thead", "tfoot", "tbody"}:
-                        last_section = ch
-                        break
-                if not last_section or last_section.tag_name != "tbody":
-                    fake_tbody = HTMLToken("StartTag", tag_name="tbody", attributes={})
-                    last_section = self.parser.insert_element(
-                        fake_tbody,
-                        context,
-                        parent=tr_boundary,
-                        mode="transient",
-                        enter=False,
-                    )
-                fake_tr_token = HTMLToken(
-                    "StartTag", tag_name="tr", attributes=token.attributes,
-                )
-                self.parser.insert_element(
-                    fake_tr_token,
-                    context,
-                    parent=last_section,
-                    mode="transient",
-                    enter=True,
-                )
-                return True
-            fake_tr_token = HTMLToken(
-                "StartTag", tag_name="tr", attributes=token.attributes,
-            )
-            self.parser.insert_element(
-                fake_tr_token, context, parent=tr_boundary, mode="transient", enter=True,
-            )
-            return True
-
         if token.tag_name in {"thead", "tfoot"}:
-            target = content_boundary or insertion_parent
+            content_boundary = self._current_content_boundary(context)
+            target = content_boundary or context.current_parent
             self.parser.insert_element(
                 token, context, parent=target, mode="transient", enter=False,
             )
             return True
 
+        return False
+
+    def _handle_table_cells(self, token, context, boundary):
+        """Handle td/th inside template content."""
+        if context.current_parent.tag_name == "tr":
+            self.parser.insert_element(token, context, mode="transient", enter=True)
+            return True
+        if context.current_parent is boundary:
+            prev = None
+            for child in reversed(boundary.children or []):
+                if child.tag_name == "template":
+                    continue
+                prev = child
+                break
+            if prev and prev.tag_name == "tr":
+                fake_tr_token = HTMLToken("StartTag", tag_name="tr", attributes={})
+                self.parser.insert_element(
+                    fake_tr_token,
+                    context,
+                    parent=boundary,
+                    mode="transient",
+                    enter=True,
+                )
+                self.parser.insert_element(
+                    token, context, mode="transient", enter=True,
+                )
+            else:
+                self.parser.insert_element(
+                    token, context, parent=boundary, mode="transient", enter=True,
+                )
+            return True
+        return False
+
+    def _handle_table_rows(self, token, context, boundary):
+        """Handle tr inside template content."""
+        content_boundary = self._current_content_boundary(context)
+        tr_boundary = content_boundary or context.current_parent
+        if context.current_parent is not tr_boundary:
+            return True
+        last_sig = None
+        for ch in reversed(tr_boundary.children or []):
+            if ch.tag_name == "#text" and (
+                not ch.text_content or ch.text_content.isspace()
+            ):
+                continue
+            last_sig = ch
+            break
+        if last_sig and last_sig.tag_name == "template":
+            has_table_context = any(
+                ch.tag_name in {"thead", "tfoot", "tbody", "tr", "td", "th"}
+                for ch in (tr_boundary.children or [])
+            )
+            if not has_table_context:
+                return True
+        seen_section = any(
+            ch.tag_name in {"thead", "tfoot", "tbody"}
+            for ch in (tr_boundary.children or [])
+        )
+        if seen_section:
+            last_section = None
+            for ch in reversed(tr_boundary.children or []):
+                if ch.tag_name in {"thead", "tfoot", "tbody"}:
+                    last_section = ch
+                    break
+            if not last_section or last_section.tag_name != "tbody":
+                fake_tbody = HTMLToken("StartTag", tag_name="tbody", attributes={})
+                last_section = self.parser.insert_element(
+                    fake_tbody,
+                    context,
+                    parent=tr_boundary,
+                    mode="transient",
+                    enter=False,
+                )
+            fake_tr_token = HTMLToken(
+                "StartTag", tag_name="tr", attributes=token.attributes,
+            )
+            self.parser.insert_element(
+                fake_tr_token,
+                context,
+                parent=last_section,
+                mode="transient",
+                enter=True,
+            )
+            return True
+        fake_tr_token = HTMLToken(
+            "StartTag", tag_name="tr", attributes=token.attributes,
+        )
+        self.parser.insert_element(
+            fake_tr_token, context, parent=tr_boundary, mode="transient", enter=True,
+        )
+        return True
+
+    def _handle_generic_template_content(self, token, context, boundary):
+        """Handle generic content inside template (fallback insertion)."""
         tableish = {
             "table",
             "thead",
@@ -763,6 +759,38 @@ class TemplateHandler(TagHandler):
             parent=context.current_parent,
         )
         return True
+
+    def handle_start(self, token, context):
+        """Create template elements OR filter content inside templates."""
+        tag_name = token.tag_name
+        in_template_content = self._in_template_content(context)
+
+        # Handle <template> elements
+        if tag_name == "template":
+            return self._handle_template_element(token, context, in_template_content)
+
+        # Filter other content inside templates
+        if token.tag_name in self.IGNORED_START:
+            return self._handle_ignored_tags(token, context)
+
+        boundary = context.current_parent
+
+        last_child = boundary.children[-1] if boundary and boundary.children else None
+        if last_child and last_child.tag_name in {"col", "colgroup"}:
+            allowed_after_col = {"col", "#text"}
+            if token.tag_name not in allowed_after_col:
+                return True
+
+        if token.tag_name in {"tbody", "caption", "colgroup", "thead", "tfoot"}:
+            return self._handle_table_sections(token, context, boundary)
+
+        if token.tag_name in ("td", "th"):
+            return self._handle_table_cells(token, context, boundary)
+
+        if token.tag_name == "tr":
+            return self._handle_table_rows(token, context, boundary)
+
+        return self._handle_generic_template_content(token, context, boundary)
 
     def should_handle_end(self, tag_name, context):
         """Handle </template> tags OR filter end tags inside templates."""
