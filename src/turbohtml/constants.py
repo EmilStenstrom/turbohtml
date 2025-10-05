@@ -445,18 +445,18 @@ AUTO_CLOSING_TAGS = {
 }
 
 CLOSE_ON_PARENT_CLOSE = {
-    "li": frozenset(["ul", "ol", "menu"]),
-    "dt": frozenset(["dl"]),
-    "dd": frozenset(["dl"]),
-    "rb": frozenset(["ruby"]),
-    "rt": frozenset(["ruby", "rtc"]),
-    "rtc": frozenset(["ruby"]),
-    "rp": frozenset(["ruby"]),
-    "optgroup": frozenset(["select"]),
-    "option": frozenset(["select", "optgroup", "datalist"]),
-    "tr": frozenset(["table", "thead", "tbody", "tfoot"]),
-    "td": frozenset(["tr"]),
-    "th": frozenset(["tr"]),
+    "li": ("ul", "ol", "menu"),
+    "dt": ("dl",),
+    "dd": ("dl",),
+    "rb": ("ruby",),
+    "rt": ("ruby", "rtc"),
+    "rtc": ("ruby",),
+    "rp": ("ruby",),
+    "optgroup": ("select",),
+    "option": ("select", "optgroup", "datalist"),
+    "tr": ("table", "thead", "tbody", "tfoot"),
+    "td": ("tr",),
+    "th": ("tr",),
 }
 
 SVG_CASE_SENSITIVE_ELEMENTS = {

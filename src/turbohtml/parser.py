@@ -199,7 +199,7 @@ class TurboHTML:
                     context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption")),
                 )
                 # Don't foster table-related elements or elements specifically allowed in tables (form)
-                tableish = {"table","tbody","thead","tfoot","tr","td","th","caption","colgroup","col","form"}
+                tableish = ("table","tbody","thead","tfoot","tr","td","th","caption","colgroup","col","form")
                 if not in_cell_or_caption and tag_name not in tableish:
                     target_parent, target_before = foster_parent(
                         context.current_parent, context.open_elements, self.root,
