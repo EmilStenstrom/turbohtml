@@ -426,19 +426,6 @@ class TemplateContentFilterHandler(TagHandler):
         "menu",  # Treat list containers as plain so they remain within template content
     )
 
-    def _in_template_content(self, context):
-        """Check if current insertion point is inside template content."""
-        p = context.current_parent
-        if not p:
-            return False
-        if p.tag_name == "content" and p.parent and p.parent.tag_name == "template":
-            return True
-        return p.has_ancestor_matching(
-            lambda n: n.tag_name == "content"
-            and n.parent
-            and n.parent.tag_name == "template",
-        )
-
     def _current_content_boundary(self, context):
         """Find the nearest template content boundary node."""
         node = context.current_parent
@@ -458,11 +445,11 @@ class TemplateContentFilterHandler(TagHandler):
         As a side effect, auto-enters content node when inserting under a template.
         """
         # Check if inside template content for filtering logic FIRST
-        in_template_content = self._in_template_content(context)
+        in_template = in_template_content(context)
 
         # Side effect: Auto-enter content node if we're under a template but not already inside content
         # ONLY do this if we're already in template content (otherwise we're outside the template)
-        if tag_name != "template" and in_template_content:
+        if tag_name != "template" and in_template:
             node = context.current_parent
             template_ancestor = None
             while node and node.tag_name not in ("html", "document-fragment"):
@@ -490,15 +477,15 @@ class TemplateContentFilterHandler(TagHandler):
         # Handle nested templates inside template content
         if tag_name == "template":
             if context.current_context in ("math", "svg"):
-                return bool(in_template_content)
+                return bool(in_template)
             # Handle if we're inside template content (nested template)
-            if in_template_content:
+            if in_template:
                 return True
             # Top-level templates handled by TemplateElementHandler
             return False
 
         # Filter other content inside templates
-        if not in_template_content:
+        if not in_template:
             return False
         if context.current_context in ("math", "svg"):
             return False
@@ -789,9 +776,9 @@ class TemplateContentFilterHandler(TagHandler):
                     # Not nested - TemplateElementHandler should handle it
                     return False
             # If we're deeper inside (past the content node), check if we're in template content
-            return self._in_template_content(context)
+            return in_template_content(context)
 
-        if not self._in_template_content(context):
+        if not in_template_content(context):
             return False
         if context.current_context in ("math", "svg"):
             return False
@@ -2038,7 +2025,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
 
     # Override to widen interception scope inside select (TemplateAwareHandler limits to handled_tags otherwise)
     def should_handle_start(self, tag_name, context):
-        # Always intercept to check for malformed tags (was early_start_preprocess)
+        # Always intercept to check for malformed tags
         if "<" in tag_name:
             # Malformed tag - check if inside select subtree
             cur = context.current_parent
@@ -2057,7 +2044,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
     ):
         tag_name = token.tag_name
 
-        # Suppress malformed start tags inside select subtree (was early_start_preprocess)
+        # Suppress malformed start tags inside select subtree
         if "<" in tag_name:
             cur = context.current_parent
             while cur:
@@ -4888,7 +4875,7 @@ class RawtextTagHandler(SelectAwareHandler):
         return tag_name in RAWTEXT_ELEMENTS
 
     def should_handle_start(self, tag_name, context):
-        # Suppress any start tags while in RAWTEXT content state (was early_start_preprocess)
+        # Suppress any start tags while in RAWTEXT content state
         if context.content_state == ContentState.RAWTEXT:
             return True  # Will suppress in handle_start
 
@@ -4902,7 +4889,7 @@ class RawtextTagHandler(SelectAwareHandler):
     ):
         tag_name = token.tag_name
 
-        # Suppress start tags in RAWTEXT state (was early_start_preprocess)
+        # Suppress start tags in RAWTEXT state
         if context.content_state == ContentState.RAWTEXT:
             self.debug(f"Ignoring <{tag_name}> start tag in RAWTEXT")
             return True
@@ -5827,7 +5814,7 @@ class ForeignTagHandler(TagHandler):
         Returns True when we want the foreign handler to create a foreign element node
         (svg/math prefixed). Returns False to delegate to normal HTML handlers.
         """
-        # Always intercept MathML leaf in fragment context to clear self-closing flag (was early_start_preprocess)
+        # Always intercept MathML leaf in fragment context to clear self-closing flag
         frag_ctx = self.parser.fragment_context
         if frag_ctx and " " in frag_ctx:
             root, leaf = frag_ctx.split(" ", 1)
@@ -6014,7 +6001,7 @@ class ForeignTagHandler(TagHandler):
         tag_name = token.tag_name
         tag_name_lower = tag_name.lower()
 
-        # Normalize self-closing MathML leaf in fragment context (was early_start_preprocess)
+        # Normalize self-closing MathML leaf in fragment context
         frag_ctx = self.parser.fragment_context
         if frag_ctx and " " in frag_ctx:
             root, leaf = frag_ctx.split(" ", 1)

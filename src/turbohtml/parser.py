@@ -63,6 +63,10 @@ class TurboHTML:
         self._init_dom_structure()
         self.adoption_agency = AdoptionAgencyAlgorithm(self)
 
+        # Handler references initialized during registration
+        self.text_handler = None
+        self.foreign_handler = None
+
         # Initialize tag handlers in deterministic order
         self.tag_handlers = [
             DoctypeHandler(self),
@@ -100,10 +104,10 @@ class TurboHTML:
             elif isinstance(handler, ForeignTagHandler):
                 self.foreign_handler = handler
 
-        if not hasattr(self, "text_handler"):
+        if self.text_handler is None:
             msg = "TextHandler not found in tag_handlers"
             raise RuntimeError(msg)
-        if not hasattr(self, "foreign_handler"):
+        if self.foreign_handler is None:
             msg = "ForeignTagHandler not found in tag_handlers"
             raise RuntimeError(msg)
 
@@ -245,7 +249,7 @@ class TurboHTML:
             context.enter_element(new_node)
 
         # Activate RAWTEXT mode if token requires it (deferred activation for elements like textarea)
-        if hasattr(token, "needs_rawtext") and token.needs_rawtext and self.tokenizer:
+        if token.needs_rawtext and self.tokenizer:
             context.content_state = ContentState.RAWTEXT
             self.tokenizer.start_rawtext(tag_name)
 

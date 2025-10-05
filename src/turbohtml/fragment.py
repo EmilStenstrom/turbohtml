@@ -108,7 +108,7 @@ def _supp_select_disallowed(parser, context, token, fragment_context):
     "input", "keygen", "textarea" are parse errors and the token is ignored. We suppress them
     here for fragment parsing so downstream handlers (e.g. Plaintext) don't change tokenizer state.
     This avoids incorrectly switching to PLAINTEXT for <textarea> inside a <select> fragment which
-    previously caused subsequent <option> tags to be treated as literal text.
+    would cause subsequent <option> tags to be treated as literal text.
     """
     if fragment_context != "select":
         return False
@@ -197,7 +197,7 @@ def _supp_fragment_nonhtml_structure(parser, context, token, fragment_context):
     return tn in {"caption", "colgroup", "tbody", "thead", "tfoot", "tr", "td", "th"}
 
 def _supp_fragment_legacy_context(parser, context, token, fragment_context):
-    """Aggregate remaining legacy suppression logic previously in parser._should_ignore_fragment_start_tag.
+    """Aggregate remaining legacy suppression logic.
 
     Responsibilities migrated:
       * Single initial context element suppression for tbody/thead/tfoot/tr/td/th (now covered elsewhere but kept idempotent)
@@ -403,7 +403,6 @@ def _implied_table_section_pre_token(parser, context, token):
 
     # No existing section - create implied tbody under the table ancestor (or at current parent if it *is* table)
     attach_parent = table_ancestor
-    # (Instrumentation removed) - earlier debug printed table children when synthesizing tbody.
     tbody = Node("tbody")
     # Insert before first <tr> child to preserve ordering if such a row already slipped in.
     for i, ch in enumerate(attach_parent.children):
@@ -560,10 +559,8 @@ def parse_fragment(parser, html):  # pragma: no cover
     if fragment_context != "html" and parser.html_node is None:
         html_node = Node("html")
         parser.html_node = html_node
-    # NOTE: Earlier experimental synthetic stack seeding (table/tbody/tr) for td/th/tr fragment
-    # contexts was removed after introducing regressions (innerHTML pass rate drop). Any required
-    # implied section or row alignment now handled via pre-token hooks and normal insertion logic
-    # without seeding non-DOM ancestors.
+    # NOTE: Implied section or row alignment now handled via pre-token hooks and normal insertion
+    # logic without seeding non-DOM ancestors.
 
     # Cache spec attributes locally (minor attribute lookup reduction in hot loop)
     pre_hooks = spec.pre_token_hooks if spec and spec.pre_token_hooks else ()

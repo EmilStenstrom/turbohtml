@@ -134,9 +134,8 @@ BLOCK_ELEMENTS = [
 ]
 
 # Elements considered "special" for various tree construction steps (e.g.,
-# Adoption Agency Algorithm furthest block calculations). This consolidates the
-# previously duplicated sets in adoption.py so that category membership remains
-# deterministic and centrally maintained.
+# Adoption Agency Algorithm furthest block calculations). This consolidates
+# element category membership so it remains deterministic and centrally maintained.
 SPECIAL_CATEGORY_ELEMENTS = {
     "address",
     "applet",

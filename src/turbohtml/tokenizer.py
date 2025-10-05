@@ -46,7 +46,7 @@ class HTMLToken:
         self.ignored_end_tag = False
         # When True (for start tags of RAWTEXT/RCDATA elements) the tree builder
         # will activate the tokenizer RAWTEXT state ONLY if it actually inserts
-        # the element. This defers state changes, removing need for rollback hacks
+        # the element. This defers state changes, avoiding rollback complexity
         # when such start tags are suppressed (e.g. <textarea> inside select fragment).
         self.needs_rawtext = needs_rawtext
 

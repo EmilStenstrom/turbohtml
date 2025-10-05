@@ -124,7 +124,6 @@ __all__ = [
 def fragment_table_insert(tag_name, token, context, parser):
     """Handle start tag insertion when fragment_context == 'table'.
 
-    Mirrors the inline block previously in parser._handle_start_tag with no semantic changes.
     Returns True if handled (caller should return early).
     """
     if parser.fragment_context != "table":
