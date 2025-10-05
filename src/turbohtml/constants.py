@@ -641,3 +641,8 @@ HTML5_NUMERIC_REPLACEMENTS = {
     0x9E: "\u017e",  # 0x9E -> LATIN SMALL LETTER Z WITH CARON
     0x9F: "\u0178",  # 0x9F -> LATIN CAPITAL LETTER Y WITH DIAERESIS
 }
+
+# SVG/MathML integration point constants (HTML5 spec §13.2.6.5)
+# These elements allow HTML content to be nested within SVG/MathML foreign content
+SVG_INTEGRATION_POINTS = ("svg foreignObject", "svg desc", "svg title")
+MATHML_TEXT_INTEGRATION_POINTS = ("math mtext", "math mi", "math mo", "math mn", "math ms")

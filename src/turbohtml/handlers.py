@@ -13,10 +13,12 @@ from turbohtml.constants import (
     HTML_ELEMENTS,
     MATHML_CASE_SENSITIVE_ATTRIBUTES,
     MATHML_ELEMENTS,
+    MATHML_TEXT_INTEGRATION_POINTS,
     RAWTEXT_ELEMENTS,
     SPECIAL_CATEGORY_ELEMENTS,
     SVG_CASE_SENSITIVE_ATTRIBUTES,
     SVG_CASE_SENSITIVE_ELEMENTS,
+    SVG_INTEGRATION_POINTS,
     TABLE_ELEMENTS,
     VOID_ELEMENTS,
 )
@@ -2617,7 +2619,7 @@ class ParagraphTagHandler(TagHandler):
         p_ancestor = context.current_parent.find_ancestor("p")
         if p_ancestor:
             boundary_between = context.current_parent.find_ancestor(
-                lambda n: n.tag_name in ("svg foreignObject", "svg desc", "svg title"),
+                lambda n: n.tag_name in SVG_INTEGRATION_POINTS,
             )
             if boundary_between and boundary_between != p_ancestor:
                 self.debug(
@@ -2788,12 +2790,8 @@ class ParagraphTagHandler(TagHandler):
         # a table subtree. An implicit empty <p> element should appear around tables in this case.
         # Do NOT apply this behavior inside HTML integration points within foreign content
         # (e.g., inside <svg foreignObject> or MathML text IPs); keep paragraph handling local there.
-        in_svg_ip = context.current_parent.tag_name in (
-            "svg foreignObject",
-            "svg desc",
-            "svg title",
-        ) or context.current_parent.has_ancestor_matching(
-            lambda n: n.tag_name in ("svg foreignObject", "svg desc", "svg title"),
+        in_svg_ip = context.current_parent.tag_name in SVG_INTEGRATION_POINTS or context.current_parent.has_ancestor_matching(
+            lambda n: n.tag_name in SVG_INTEGRATION_POINTS,
         )
         in_math_ip = context.current_parent.find_ancestor(
             lambda n: n.tag_name
@@ -3073,8 +3071,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             in_integration_point = False
             if context.current_context == "svg":
                 svg_integration_ancestor = context.current_parent.find_ancestor(
-                    lambda n: n.tag_name
-                    in ("svg foreignObject", "svg desc", "svg title"),
+                    lambda n: n.tag_name in SVG_INTEGRATION_POINTS,
                 )
                 if svg_integration_ancestor:
                     in_integration_point = True
@@ -3579,12 +3576,8 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
             DocumentState.IN_ROW,
         ):
             return False
-        if context.current_parent.tag_name in (
-            "svg foreignObject",
-            "svg desc",
-            "svg title",
-        ) or context.current_parent.has_ancestor_matching(
-            lambda n: n.tag_name in ("svg foreignObject", "svg desc", "svg title"),
+        if context.current_parent.tag_name in SVG_INTEGRATION_POINTS or context.current_parent.has_ancestor_matching(
+            lambda n: n.tag_name in SVG_INTEGRATION_POINTS,
         ):
             return False
         if context.current_parent.tag_name in ("select", "option", "optgroup") or context.current_parent.has_ancestor_matching(
@@ -5379,8 +5372,6 @@ class ForeignTagHandler(TagHandler):
     """
 
     _MATHML_LEAFS = ("mi", "mo", "mn", "ms", "mtext")
-    _SVG_INTEGRATION_POINTS = ("svg foreignObject", "svg desc", "svg title")
-    _MATHML_TEXT_INTEGRATION_POINTS = ("math mtext", "math mi", "math mo", "math mn", "math ms")
 
     def is_plain_svg_foreign(self, context):
         """Return True if current parent is inside an <svg> subtree that is NOT an HTML integration point.
@@ -5395,26 +5386,26 @@ class ForeignTagHandler(TagHandler):
             if cur.tag_name.startswith("svg "):
                 seen_svg = True
             # Any integration point breaks the foreign-only condition
-            if cur.tag_name in self._SVG_INTEGRATION_POINTS:
+            if cur.tag_name in SVG_INTEGRATION_POINTS:
                 return False
             cur = cur.parent
         return seen_svg
 
     def is_in_svg_integration_point(self, context):
         """Return True if current parent or ancestor is an SVG integration point (foreignObject/desc/title)."""
-        if context.current_parent.tag_name in self._SVG_INTEGRATION_POINTS:
+        if context.current_parent.tag_name in SVG_INTEGRATION_POINTS:
             return True
         return context.current_parent.find_ancestor(
-            lambda n: n.tag_name in self._SVG_INTEGRATION_POINTS,
+            lambda n: n.tag_name in SVG_INTEGRATION_POINTS,
         ) is not None
 
     def is_in_mathml_integration_point(self, context):
         """Return True if in MathML text integration point or annotation-xml with HTML encoding."""
         # Check text integration points (mtext/mi/mo/mn/ms)
-        if context.current_parent.tag_name in self._MATHML_TEXT_INTEGRATION_POINTS:
+        if context.current_parent.tag_name in MATHML_TEXT_INTEGRATION_POINTS:
             return True
         if context.current_parent.find_ancestor(
-            lambda n: n.tag_name in self._MATHML_TEXT_INTEGRATION_POINTS,
+            lambda n: n.tag_name in MATHML_TEXT_INTEGRATION_POINTS,
         ):
             return True
 
