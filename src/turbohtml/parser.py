@@ -209,7 +209,7 @@ class TurboHTML:
                     if context.current_parent.is_svg and context.current_parent.tag_name in ("foreignObject", "desc", "title"):
                         in_svg_integration_point = True
                     elif context.current_parent.has_ancestor_matching(
-                        lambda n: n.is_svg and n.tag_name in ("foreignObject", "desc", "title")
+                        lambda n: n.is_svg and n.tag_name in ("foreignObject", "desc", "title"),
                     ):
                         in_svg_integration_point = True
 
@@ -220,7 +220,7 @@ class TurboHTML:
                     if context.current_parent.is_mathml and context.current_parent.tag_name in ("mi", "mo", "mn", "ms", "mtext"):
                         in_math_integration_point = True
                     elif context.current_parent.find_ancestor(
-                        lambda n: n.is_mathml and n.tag_name in ("mi", "mo", "mn", "ms", "mtext")
+                        lambda n: n.is_mathml and n.tag_name in ("mi", "mo", "mn", "ms", "mtext"),
                     ):
                         in_math_integration_point = True
                     # annotation-xml with HTML encoding

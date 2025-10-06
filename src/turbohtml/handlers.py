@@ -6874,7 +6874,7 @@ class ForeignTagHandler(TagHandler):
                         new_attrs.update({f"xlink {k.split(':', 1)[1]}": v for k, v in xlink_sorted})
                         new_attrs.update(attrs)
                         current.attributes = new_attrs
-                        
+
                 stack.extend(ch for ch in current.children if ch.tag_name != "#text")
 
         adjust_foreign(root)
