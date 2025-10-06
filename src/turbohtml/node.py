@@ -46,13 +46,6 @@ class Node:
                 msg,
             )
 
-        # Handle backward compatibility: if tag_name contains namespace prefix, extract it
-        if namespace is None and " " in tag_name:
-            parts = tag_name.split(" ", 1)
-            if parts[0] in ("svg", "math"):
-                namespace = parts[0]
-                tag_name = parts[1]
-
         self.tag_name = tag_name
         self.namespace = namespace  # None for HTML, "svg" or "math" for foreign elements
         if attributes:
@@ -106,7 +99,6 @@ class Node:
     def matches_tag(self, tag_spec):
         """Check if this node matches a tag specification.
 
-        Supports both old format ("svg circle") and new format checks.
         tag_spec can be:
         - A simple tag name: "div" matches tag_name="div", namespace=None
         - A namespaced tag: "svg circle" matches tag_name="circle", namespace="svg"

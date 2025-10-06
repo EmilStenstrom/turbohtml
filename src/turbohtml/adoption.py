@@ -428,8 +428,8 @@ class AdoptionAgencyAlgorithm:
                     if context.open_elements.contains(candidate):
                         target = candidate
                         break
-                    tag = candidate.tag_name
-                    if tag.startswith(("svg ", "math ")) or tag in {"svg", "math", "math annotation-xml"}:
+                    # Stop at foreign elements (SVG/MathML)
+                    if candidate.namespace in ("svg", "math"):
                         break
                     candidate = candidate.parent
                 if target is None:
