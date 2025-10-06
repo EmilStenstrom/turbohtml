@@ -6797,9 +6797,7 @@ class ForeignTagHandler(TagHandler):
                         else:
                             new_attrs[kl] = v
                     current.attributes = new_attrs
-                for ch in current.children:
-                    if ch.tag_name != "#text":
-                        stack.append(ch)
+                stack.extend(ch for ch in current.children if ch.tag_name != "#text")
 
         normalize_mathml(root)
 
@@ -6854,9 +6852,7 @@ class ForeignTagHandler(TagHandler):
                         rebuilt.update({f"xlink {local}": v for _, local, v in xlink_split})
                         rebuilt.update(attrs)
                         current.attributes = rebuilt
-                for ch in current.children:
-                    if ch.tag_name != "#text":
-                        stack.append(ch)
+                stack.extend(ch for ch in current.children if ch.tag_name != "#text")
 
         adjust_foreign(root)
 
