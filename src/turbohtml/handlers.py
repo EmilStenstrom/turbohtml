@@ -414,8 +414,7 @@ class DocumentStructureHandler(TagHandler):
         ensure_head(parser)
         # Only ensure body if NOT a frameset document
         if not has_root_frameset(parser.root):
-            body = get_body(parser.root) or ensure_body(parser.root, DocumentState.INITIAL, parser.fragment_context)
-            _ = body
+            get_body(parser.root) or ensure_body(parser.root, DocumentState.INITIAL, parser.fragment_context)
 
 
 class TemplateContentFilterHandler(TagHandler):
@@ -1201,7 +1200,7 @@ class TextHandler(TagHandler):
                     self.debug("Stale AFE detected before text; performing reconstruction")
                     reconstruct_active_formatting_elements(self.parser, context)
                     break
-        
+
         # Only consider ancestors (not arbitrary earlier open elements) to avoid resurrecting closed/suppressed nodes.
         ancestor_ips = []
         cur = context.current_parent
@@ -2587,7 +2586,6 @@ class ParagraphTagHandler(TagHandler):
             # Continue with normal handling of the triggering start tag (return False so other handler runs)
             return False
 
-        # (Reverted broader paragraph scope closure: previous attempt reduced overall pass count.)
         # Spec: A start tag <p> when a <p> element is currently open in *button scope*
         # implies an end tag </p>. Implement minimal button-scope check (added to
         # OpenElementsStack) so we do not rely on broader heuristics. Only trigger when
@@ -4319,7 +4317,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                             context.active_formatting_elements.remove_entry(entry)
                 # Find any active formatting element that contained the table
                 formatting_parent = table_node.parent
-                
+
                 # Check if table is inside a foreign integration point (foreignObject/annotation-xml)
                 # by looking for foreign ancestors of the table
                 foreign_ancestor = None
@@ -4328,7 +4326,7 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                         lambda n: (n.is_svg and n.tag_name == "foreignObject")
                         or (n.is_mathml and n.tag_name == "annotation-xml"),
                     )
-                
+
                 self.debug(
                     f"After </table> pop stack={[el.tag_name for el in context.open_elements]}",
                 )
@@ -6814,9 +6812,7 @@ class ForeignTagHandler(TagHandler):
             stack = [node]
             while stack:
                 current = stack.pop()
-                # tag_name is now the local name (namespace is separate field)
-                is_mathml = current.tag_name in MATHML_ELEMENTS or current.is_mathml
-                if is_mathml and current.attributes:
+                if current.is_mathml and current.attributes:
                     new_attrs = {}
                     for k, v in current.attributes.items():
                         kl = k.lower()
@@ -6834,10 +6830,7 @@ class ForeignTagHandler(TagHandler):
             stack = [node]
             while stack:
                 current = stack.pop()
-                # tag_name is now the local name (namespace is separate field)
-                is_svg = current.is_svg or current.tag_name == "svg"
-                is_math = current.is_mathml or current.tag_name == "math"
-                if is_svg and current.attributes:
+                if current.is_svg and current.attributes:
                     attrs = dict(current.attributes)
                     defn_val = attrs.pop("definitionurl", None)
                     xml_lang = attrs.pop("xml:lang", None)
@@ -6863,7 +6856,7 @@ class ForeignTagHandler(TagHandler):
                     if xml_base is not None:
                         new_attrs["xml:base"] = xml_base
                     current.attributes = new_attrs
-                elif is_math and current.attributes:
+                elif current.is_mathml and current.attributes:
                     attrs = dict(current.attributes)
                     if "definitionurl" in attrs and "definitionURL" not in attrs:
                         attrs["definitionURL"] = attrs.pop("definitionurl")

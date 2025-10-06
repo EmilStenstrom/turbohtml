@@ -275,7 +275,6 @@ class OpenElementsStack:
         """Replace the entire stack with a new list of elements."""
         self._stack = new_stack
 
-# Experimental anchor/table relocation feature flag removed (kept disabled in practice); code simplified to baseline behavior.
 
 class AdoptionAgencyAlgorithm:
     def __init__(self, parser):
