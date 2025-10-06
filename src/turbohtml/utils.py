@@ -14,7 +14,7 @@ def is_in_table_cell(context):
     parent = context.current_parent
     if parent is None:
         return False
-    if parent.tag_name in ("td", "th"):
+    if parent.tag_name in {"td", "th"}:
         return True
     # If we're at a table element itself, we're not in a cell OF that table
     # (even if the table is nested inside a cell of an outer table)
@@ -36,7 +36,7 @@ def is_in_table_context(context):
 def is_in_cell_or_caption(context):
     """Check if current insertion point is inside a cell or caption."""
     return bool(
-        context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption")),
+        context.current_parent.find_ancestor(lambda n: n.tag_name in {"td", "th", "caption"}),
     )
 
 

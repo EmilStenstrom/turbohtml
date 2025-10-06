@@ -416,7 +416,7 @@ class AdoptionAgencyAlgorithm:
         fmt_parent = formatting_element.parent
         target = None
         if fmt_parent is not None:
-            if fmt_parent.tag_name in ("td", "th", "caption"):
+            if fmt_parent.tag_name in {"td", "th", "caption"}:
                 target = fmt_parent
             else:
                 candidate = fmt_parent

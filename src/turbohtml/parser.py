@@ -206,10 +206,10 @@ class TurboHTML:
                 # Check for SVG integration points
                 in_svg_integration_point = False
                 if context.current_context == "svg":
-                    if context.current_parent.is_svg and context.current_parent.tag_name in ("foreignObject", "desc", "title"):
+                    if context.current_parent.is_svg and context.current_parent.tag_name in {"foreignObject", "desc", "title"}:
                         in_svg_integration_point = True
                     elif context.current_parent.has_ancestor_matching(
-                        lambda n: n.is_svg and n.tag_name in ("foreignObject", "desc", "title"),
+                        lambda n: n.is_svg and n.tag_name in {"foreignObject", "desc", "title"},
                     ):
                         in_svg_integration_point = True
 
@@ -217,10 +217,10 @@ class TurboHTML:
                 in_math_integration_point = False
                 if context.current_context == "math":
                     # MathML text integration points: mi, mo, mn, ms, mtext
-                    if context.current_parent.is_mathml and context.current_parent.tag_name in ("mi", "mo", "mn", "ms", "mtext"):
+                    if context.current_parent.is_mathml and context.current_parent.tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
                         in_math_integration_point = True
                     elif context.current_parent.find_ancestor(
-                        lambda n: n.is_mathml and n.tag_name in ("mi", "mo", "mn", "ms", "mtext"),
+                        lambda n: n.is_mathml and n.tag_name in {"mi", "mo", "mn", "ms", "mtext"},
                     ):
                         in_math_integration_point = True
                     # annotation-xml with HTML encoding
@@ -237,7 +237,7 @@ class TurboHTML:
             if needs_foster_parenting(context.current_parent):
                 # Check if we're inside a cell or caption (foster parenting doesn't apply there)
                 in_cell_or_caption = bool(
-                    context.current_parent.find_ancestor(lambda n: n.tag_name in ("td", "th", "caption")),
+                    context.current_parent.find_ancestor(lambda n: n.tag_name in {"td", "th", "caption"}),
                 )
                 # Don't foster table-related elements or elements specifically allowed in tables (form)
                 tableish = ("table","tbody","thead","tfoot","tr","td","th","caption","colgroup","col","form")
@@ -329,11 +329,11 @@ class TurboHTML:
             preserve = False
 
             # Always preserve in script/style/plaintext
-            if target_parent.tag_name in ("script", "style", "plaintext"):
+            if target_parent.tag_name in {"script", "style", "plaintext"}:
                 preserve = True
             else:
                 for elem in context.open_elements:
-                    if elem.tag_name in ("script", "style", "plaintext"):
+                    if elem.tag_name in {"script", "style", "plaintext"}:
                         preserve = True
                         break
 

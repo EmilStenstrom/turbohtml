@@ -57,7 +57,7 @@ def _in_template_content(context):
 def _in_integration_point(context):
     cur = context.current_parent
     while cur:
-        if cur.is_svg and cur.tag_name in ("foreignObject", "desc", "title"):
+        if cur.is_svg and cur.tag_name in {"foreignObject", "desc", "title"}:
             return True
         if cur.is_mathml and cur.tag_name == "annotation-xml" and cur.attributes:
             for attr in cur.attributes:
@@ -105,7 +105,7 @@ def restore_insertion_open_cell(context):
     outside it (e.g., foreign content breakout), reposition to that cell. Returns the cell or None.
     """
     for el in reversed(context.open_elements):
-        if el.tag_name in ("td", "th"):
+        if el.tag_name in {"td", "th"}:
             context.move_to_element(el)
             return el
     return None
@@ -175,7 +175,7 @@ def fragment_table_insert(tag_name, token, context, parser):
         col = Node("col", token.attributes)
         cg.append_child(col)
         return True
-    if tag_name in ("tbody", "thead", "tfoot"):
+    if tag_name in {"tbody", "thead", "tfoot"}:
         section = Node(tag_name, token.attributes)
         root.append_child(section)
         context.open_elements.push(section)
@@ -184,7 +184,7 @@ def fragment_table_insert(tag_name, token, context, parser):
     if tag_name == "tr":
         container = None
         for ch in reversed(root.children):
-            if ch.tag_name in ("tbody", "thead", "tfoot"):
+            if ch.tag_name in {"tbody", "thead", "tfoot"}:
                 container = ch
                 break
         if not container:
@@ -196,10 +196,10 @@ def fragment_table_insert(tag_name, token, context, parser):
         context.move_to_element(tr)
         context.transition_to_state(DocumentState.IN_ROW, tr)
         return True
-    if tag_name in ("td", "th"):
+    if tag_name in {"td", "th"}:
         container = None
         for ch in reversed(root.children):
-            if ch.tag_name in ("tbody", "thead", "tfoot"):
+            if ch.tag_name in {"tbody", "thead", "tfoot"}:
                 container = ch
                 break
         if not container:
@@ -248,7 +248,7 @@ def fragment_table_section_insert(tag_name, token, context, parser):
         nested_section = None
         cur = context.current_parent
         while cur and cur.tag_name != "document-fragment":
-            if cur.tag_name in ("tbody", "thead", "tfoot") and cur.parent and cur.parent.tag_name == "table":
+            if cur.tag_name in {"tbody", "thead", "tfoot"} and cur.parent and cur.parent.tag_name == "table":
                 nested_section = cur
                 break
             cur = cur.parent

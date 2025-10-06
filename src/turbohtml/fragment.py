@@ -80,10 +80,10 @@ def _supp_malformed_select_like(parser, context, token, fragment_context):
     tag_name = token.tag_name
     if "<" not in tag_name:
         return False
-    if context.current_parent.tag_name in ("select", "option", "optgroup"):
+    if context.current_parent.tag_name in {"select", "option", "optgroup"}:
         return True
     anc = context.current_parent.find_ancestor(
-        lambda n: n.tag_name in ("select", "option", "optgroup"),
+        lambda n: n.tag_name in {"select", "option", "optgroup"},
     )
     return anc is not None
 
@@ -371,7 +371,7 @@ def _implied_table_section_pre_token(parser, context, token):
     table_ancestor = None
     last_section = None
     while node and node.tag_name != "document-fragment":
-        if node.tag_name in ("tbody", "thead", "tfoot") and last_section is None:
+        if node.tag_name in {"tbody", "thead", "tfoot"} and last_section is None:
             last_section = node
         if node.tag_name == "table":
             table_ancestor = node
@@ -393,7 +393,7 @@ def _implied_table_section_pre_token(parser, context, token):
         # Search direct children of table for an existing section if we climbed from an inline
         # descendant (e.g., <tbody><a> ... <tr>) where current_parent is the table or deeper inline.
         for ch in reversed(table_ancestor.children):  # reverse: prefer most recent
-            if ch.tag_name in ("tbody", "thead", "tfoot"):
+            if ch.tag_name in {"tbody", "thead", "tfoot"}:
                 last_section = ch
                 break
     if last_section is not None:

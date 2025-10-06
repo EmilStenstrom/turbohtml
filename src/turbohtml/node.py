@@ -229,7 +229,7 @@ class Node:
         return f"Node(<{self.tag_name}>, children={len(self.children)})"
 
     def to_test_format(self, indent=0):
-        if self.tag_name in ("document", "document-fragment"):
+        if self.tag_name in {"document", "document-fragment"}:
             return "\n".join(child.to_test_format(0) for child in self.children)
         if self.tag_name == "content":
             # Template content should be displayed without angle brackets
