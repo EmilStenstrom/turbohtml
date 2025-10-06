@@ -6832,46 +6832,49 @@ class ForeignTagHandler(TagHandler):
                 current = stack.pop()
                 if current.is_svg and current.attributes:
                     attrs = dict(current.attributes)
+                    # Pop special attributes
                     defn_val = attrs.pop("definitionurl", None)
                     xml_lang = attrs.pop("xml:lang", None)
                     xml_space = attrs.pop("xml:space", None)
                     xml_base = attrs.pop("xml:base", None)
-                    other_xml = [
-                        (k, attrs.pop(k))
-                        for k in list(attrs.keys())
-                        if k.startswith("xml:") and k not in ("xml:lang", "xml:space", "xml:base")
-                    ]
+                    # Pop other xml: attributes
+                    other_xml = [(k, attrs.pop(k)) for k in list(attrs.keys()) if k.startswith("xml:")]
+
+                    # Rebuild in spec order: definitionurl, regular attrs, xml:lang, xml:space, other xml:, xml:base
                     new_attrs = {}
                     if defn_val is not None:
                         new_attrs["definitionurl"] = defn_val
-                    new_attrs.update({
-                        k: v for k, v in current.attributes.items()
-                        if not (k in ("definitionurl", "xml:lang", "xml:space", "xml:base") or k.startswith("xml:"))
-                    })
+                    new_attrs.update(attrs)
                     if xml_lang is not None:
                         new_attrs["xml lang"] = xml_lang
                     if xml_space is not None:
                         new_attrs["xml space"] = xml_space
-                    new_attrs.update(dict(other_xml))
+                    new_attrs.update(other_xml)
                     if xml_base is not None:
                         new_attrs["xml:base"] = xml_base
                     current.attributes = new_attrs
+
                 elif current.is_mathml and current.attributes:
                     attrs = dict(current.attributes)
+                    # Convert definitionurl to definitionURL
                     if "definitionurl" in attrs and "definitionURL" not in attrs:
                         attrs["definitionURL"] = attrs.pop("definitionurl")
+
+                    # Handle xlink: attributes - sort alphabetically and convert to "xlink name" format
                     xlink_attrs = [(k, v) for k, v in attrs.items() if k.startswith("xlink:")]
                     if xlink_attrs:
+                        # Remove xlink: attrs from dict
                         for k, _ in xlink_attrs:
                             del attrs[k]
-                        xlink_split = [(k, k.split(":", 1)[1], v) for k, v in xlink_attrs]
-                        xlink_split.sort(key=lambda t: t[1])
-                        rebuilt = {}
+                        # Sort by local name and rebuild
+                        xlink_sorted = sorted(xlink_attrs, key=lambda t: t[0].split(":", 1)[1])
+                        new_attrs = {}
                         if "definitionURL" in attrs:
-                            rebuilt["definitionURL"] = attrs.pop("definitionURL")
-                        rebuilt.update({f"xlink {local}": v for _, local, v in xlink_split})
-                        rebuilt.update(attrs)
-                        current.attributes = rebuilt
+                            new_attrs["definitionURL"] = attrs.pop("definitionURL")
+                        new_attrs.update({f"xlink {k.split(':', 1)[1]}": v for k, v in xlink_sorted})
+                        new_attrs.update(attrs)
+                        current.attributes = new_attrs
+                        
                 stack.extend(ch for ch in current.children if ch.tag_name != "#text")
 
         adjust_foreign(root)
