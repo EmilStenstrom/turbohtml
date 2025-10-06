@@ -648,14 +648,25 @@ def create_fragment_context(parser, html):
         context.transition_to_state(DocumentState.IN_TABLE, parser.root)
 
     # Foreign context detection (math/svg + namespaced)
+    # BUT: Don't set foreign context for integration points where HTML rules apply
     if fc:
-        if fc in ("math", "svg"):
-            context.current_context = fc
-            parser.debug(f"Set foreign context to {fc}")
-        elif " " in fc:  # namespaced
-            namespace_elem = fc.split(" ")[0]
-            if namespace_elem in ("math", "svg"):
-                context.current_context = namespace_elem
-                parser.debug(f"Set foreign context to {namespace_elem}")
+        # Check if fragment context is an integration point
+        is_svg_integration_point = fc in ("svg foreignObject", "svg desc", "svg title")
+        # Note: annotation-xml is only an integration point with encoding="text/html" or
+        # "application/xhtml+xml". In fragment parsing without attributes, it's NOT an integration point.
+        is_math_integration_point = False
+
+        # MathML text integration points (mi, mo, mn, ms, mtext) use HTML parsing
+        is_math_text_integration_point = fc in ("math mi", "math mo", "math mn", "math ms", "math mtext")
+
+        if not is_svg_integration_point and not is_math_integration_point and not is_math_text_integration_point:
+            if fc in ("math", "svg"):
+                context.current_context = fc
+                parser.debug(f"Set foreign context to {fc}")
+            elif " " in fc:  # namespaced
+                namespace_elem = fc.split(" ")[0]
+                if namespace_elem in ("math", "svg"):
+                    context.current_context = namespace_elem
+                    parser.debug(f"Set foreign context to {namespace_elem}")
 
     return context

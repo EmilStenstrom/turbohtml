@@ -166,6 +166,7 @@ class TurboHTML:
         parent=None,
         before=None,
         tag_name_override=None,
+        namespace=None,
         attributes_override=None,
         preserve_attr_case=False,
         push_override=None,
@@ -193,6 +194,44 @@ class TurboHTML:
         target_parent = parent or context.current_parent
         target_before = before
         tag_name = tag_name_override or token.tag_name
+
+        # Determine namespace: explicit parameter, or inherit from context
+        # BUT: don't auto-namespace if we're in an integration point where HTML elements are HTML
+        # ALSO: don't auto-namespace synthetic HTML elements at fragment root in foreign contexts
+        if namespace is None and context.current_context in ("svg", "math"):
+            # If at fragment root (document-fragment parent), don't auto-namespace
+            if context.current_parent.tag_name == "document-fragment":
+                pass  # Keep namespace=None (HTML)
+            else:
+                # Check for SVG integration points
+                in_svg_integration_point = False
+                if context.current_context == "svg":
+                    if context.current_parent.is_svg and context.current_parent.tag_name in ("foreignObject", "desc", "title"):
+                        in_svg_integration_point = True
+                    elif context.current_parent.has_ancestor_matching(
+                        lambda n: n.is_svg and n.tag_name in ("foreignObject", "desc", "title")
+                    ):
+                        in_svg_integration_point = True
+
+                # Check for MathML integration points
+                in_math_integration_point = False
+                if context.current_context == "math":
+                    # MathML text integration points: mi, mo, mn, ms, mtext
+                    if context.current_parent.is_mathml and context.current_parent.tag_name in ("mi", "mo", "mn", "ms", "mtext"):
+                        in_math_integration_point = True
+                    elif context.current_parent.find_ancestor(
+                        lambda n: n.is_mathml and n.tag_name in ("mi", "mo", "mn", "ms", "mtext")
+                    ):
+                        in_math_integration_point = True
+                    # annotation-xml with HTML encoding
+                    elif context.current_parent.is_mathml and context.current_parent.tag_name == "annotation-xml":
+                        encoding = context.current_parent.attributes.get("encoding", "").lower()
+                        if encoding in ("application/xhtml+xml", "text/html"):
+                            in_math_integration_point = True
+
+                # Only auto-namespace if NOT in an integration point
+                if not in_svg_integration_point and not in_math_integration_point:
+                    namespace = context.current_context
 
         if auto_foster and parent is None and before is None:
             if needs_foster_parenting(context.current_parent):
@@ -228,7 +267,7 @@ class TurboHTML:
         attrs = (
             attributes_override if attributes_override is not None else token.attributes
         )
-        new_node = Node(tag_name, attrs, preserve_attr_case=preserve_attr_case)
+        new_node = Node(tag_name, attrs, preserve_attr_case=preserve_attr_case, namespace=namespace)
         if target_before and target_before.parent is target_parent:
             target_parent.insert_before(new_node, target_before)
         else:
@@ -256,12 +295,13 @@ class TurboHTML:
             self.tokenizer.start_rawtext(tag_name)
 
         # Activate PLAINTEXT mode for <plaintext> element (consumes all remaining input as text)
-        if tag_name == "plaintext" and self.tokenizer:
+        # BUT NOT in foreign (SVG/MathML) context where plaintext is a regular element
+        if tag_name == "plaintext" and namespace is None and self.tokenizer:
             context.content_state = ContentState.PLAINTEXT
             self.tokenizer.start_plaintext()
 
         # Exit RAWTEXT mode when inserting foreign content (math/svg elements)
-        if tag_name.startswith(("math ", "svg ")) and self.tokenizer and self.tokenizer.state == "RAWTEXT":
+        if namespace in ("svg", "math") and self.tokenizer and self.tokenizer.state == "RAWTEXT":
             self.tokenizer.state = "DATA"
             self.tokenizer.rawtext_tag = None
 
@@ -300,8 +340,8 @@ class TurboHTML:
             # Preserve in SVG content (but NOT in HTML integration points)
             if (
                 not preserve
-                and target_parent.tag_name.startswith("svg ")
-                and target_parent.tag_name not in ("svg foreignObject", "svg desc", "svg title")
+                and target_parent.is_svg
+                and target_parent.tag_name not in ("foreignObject", "desc", "title")
             ):
                 preserve = True
 

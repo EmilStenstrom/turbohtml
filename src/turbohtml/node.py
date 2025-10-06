@@ -23,6 +23,7 @@ class Node:
     __slots__ = (
         "attributes",
         "children",
+        "namespace",
         "next_sibling",
         "parent",
         "previous_sibling",
@@ -36,7 +37,7 @@ class Node:
         "text_content",
     )
 
-    def __init__(self, tag_name, attributes=None, preserve_attr_case=False, text_content=None):
+    def __init__(self, tag_name, attributes=None, preserve_attr_case=False, text_content=None, namespace=None):
         # Instrumentation / safety: empty tag names should never be constructed.
         # If this triggers we want a loud failure with context so we can trace upstream logic.
         if tag_name is None or tag_name == "":
@@ -44,7 +45,16 @@ class Node:
             raise ValueError(
                 msg,
             )
+
+        # Handle backward compatibility: if tag_name contains namespace prefix, extract it
+        if namespace is None and " " in tag_name:
+            parts = tag_name.split(" ", 1)
+            if parts[0] in ("svg", "math"):
+                namespace = parts[0]
+                tag_name = parts[1]
+
         self.tag_name = tag_name
+        self.namespace = namespace  # None for HTML, "svg" or "math" for foreign elements
         if attributes:
             if preserve_attr_case:
                 # Keep first occurrence preserving original key casing
@@ -72,6 +82,39 @@ class Node:
         # Default: real DOM node (False). Fragment bootstrap may set True on ephemeral
         # ancestors that exist only on the open elements stack.
         self.synthetic_stack_only = False
+
+    @property
+    def is_svg(self):
+        """Check if this is an SVG element."""
+        return self.namespace == "svg"
+
+    @property
+    def is_mathml(self):
+        """Check if this is a MathML element."""
+        return self.namespace == "math"
+
+    @property
+    def is_foreign(self):
+        """Check if this is a foreign element (SVG or MathML)."""
+        return self.namespace in ("svg", "math")
+
+    @property
+    def local_name(self):
+        """Get the local tag name (same as tag_name now that namespace is separate)."""
+        return self.tag_name
+
+    def matches_tag(self, tag_spec):
+        """Check if this node matches a tag specification.
+
+        Supports both old format ("svg circle") and new format checks.
+        tag_spec can be:
+        - A simple tag name: "div" matches tag_name="div", namespace=None
+        - A namespaced tag: "svg circle" matches tag_name="circle", namespace="svg"
+        """
+        if " " in tag_spec:
+            ns, local = tag_spec.split(" ", 1)
+            return self.namespace == ns and self.tag_name == local
+        return self.namespace is None and self.tag_name == tag_spec
 
     def append_child(self, child):
         # Check for circular reference before adding
@@ -212,26 +255,27 @@ class Node:
                 return f"| <!DOCTYPE {content}>"
             return "| <!DOCTYPE >"
 
-        # Start with the tag name
-        result = f"| {' ' * indent}<{self.tag_name}>"
+        # Start with the tag name (with namespace prefix for foreign elements)
+        if self.namespace:
+            display_tag = f"{self.namespace} {self.tag_name}"
+        else:
+            display_tag = self.tag_name
+        result = f"| {' ' * indent}<{display_tag}>"
 
         # Add attributes on their own line if present (sorted alphabetically)
         if self.attributes:
             # Preserve original insertion order for foreign (svg/math) elements where tests rely on
             # specific grouping; otherwise sort alphabetically for deterministic HTML output.
-            if self.tag_name.startswith("svg ") or self.tag_name.startswith("math "):
+            if self.is_foreign:
                 attr_items = self.attributes.items()
             else:
                 attr_items = sorted(self.attributes.items())
             for key, value in attr_items:
                 # Namespaced attribute presentation rules:
-                #  * Inside foreign (svg/math prefixed tag_name) elements, tests expect prefixes separated
+                #  * Inside foreign (svg/math) elements, tests expect prefixes separated
                 #    by a space: xlink:href -> xlink href, xml:lang -> xml lang, xmlns:xlink -> xmlns xlink.
                 #  * On pure HTML elements, retain the original colon form (body xlink:href remains xlink:href).
-                if ":" in key and (
-                    self.tag_name.startswith("svg ")
-                    or self.tag_name.startswith("math ")
-                ):
+                if ":" in key and self.is_foreign:
                     prefix, local = key.split(":", 1)
                     if (prefix == "xml" and local in ("lang", "space")) or (prefix in ("xlink", "xmlns") and local):
                         display_key = f"{prefix} {local}"

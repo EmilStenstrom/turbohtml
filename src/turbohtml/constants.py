@@ -644,5 +644,5 @@ HTML5_NUMERIC_REPLACEMENTS = {
 
 # SVG/MathML integration point constants (HTML5 spec §13.2.6.5)
 # These elements allow HTML content to be nested within SVG/MathML foreign content
-SVG_INTEGRATION_POINTS = ("svg foreignObject", "svg desc", "svg title")
-MATHML_TEXT_INTEGRATION_POINTS = ("math mtext", "math mi", "math mo", "math mn", "math ms")
+SVG_INTEGRATION_POINTS = ("foreignObject", "desc", "title")
+MATHML_TEXT_INTEGRATION_POINTS = ("mtext", "mi", "mo", "mn", "ms")

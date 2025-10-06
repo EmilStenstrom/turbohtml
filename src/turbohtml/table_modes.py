@@ -57,9 +57,9 @@ def _in_template_content(context):
 def _in_integration_point(context):
     cur = context.current_parent
     while cur:
-        if cur.tag_name in ("svg foreignObject", "svg desc", "svg title"):
+        if cur.is_svg and cur.tag_name in ("foreignObject", "desc", "title"):
             return True
-        if cur.tag_name == "math annotation-xml" and cur.attributes:
+        if cur.is_mathml and cur.tag_name == "annotation-xml" and cur.attributes:
             for attr in cur.attributes:
                 name_lower = attr.name.lower()
                 value_lower = attr.value.lower()
