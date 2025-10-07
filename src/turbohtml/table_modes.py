@@ -24,7 +24,7 @@ from turbohtml.node import Node
 
 # Elements treated specially in table mode when deciding foster parenting.
 # Mirrors exclusions in parser._handle_start_tag condition.
-TABLE_ELEMENTS_CANON = {
+TABLE_ELEMENTS_CANON = frozenset({
     "table",
     "thead",
     "tbody",
@@ -35,9 +35,9 @@ TABLE_ELEMENTS_CANON = {
     "caption",
     "colgroup",
     "col",
-}
+})
 
-HEAD_ELEMENTS_CANON = {"head", "base", "basefont", "bgsound", "link", "meta", "title", "style"}
+HEAD_ELEMENTS_CANON = frozenset({"head", "base", "basefont", "bgsound", "link", "meta", "title", "style"})
 
 
 def _in_template_content(context):

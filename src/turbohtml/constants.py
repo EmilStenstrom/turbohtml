@@ -12,6 +12,7 @@ References:
     - https://html.spec.whatwg.org/multipage/syntax.html#optional-tags
 
 """
+from types import MappingProxyType
 
 # HTML Element Sets (frozensets for O(1) membership testing)
 # Note: Order doesn't matter for membership tests, which is the primary use case
@@ -137,7 +138,7 @@ BLOCK_ELEMENTS = frozenset([
 # Elements considered "special" for various tree construction steps (e.g.,
 # Adoption Agency Algorithm furthest block calculations). This consolidates
 # element category membership so it remains deterministic and centrally maintained.
-SPECIAL_CATEGORY_ELEMENTS = {
+SPECIAL_CATEGORY_ELEMENTS = frozenset({
     "address",
     "applet",
     "area",
@@ -220,7 +221,7 @@ SPECIAL_CATEGORY_ELEMENTS = {
     "ul",
     "wbr",
     "xmp",
-}
+})
 
 TABLE_ELEMENTS = frozenset([
     # Structure elements
@@ -347,7 +348,7 @@ HTML_BREAK_OUT_ELEMENTS = frozenset([
     "var",
 ])
 
-BOUNDARY_ELEMENTS = {
+BOUNDARY_ELEMENTS = frozenset({
     "marquee",
     "object",
     "template",
@@ -356,7 +357,7 @@ BOUNDARY_ELEMENTS = {
     "table",
     "th",
     "td",
-}
+})
 
 HEADING_ELEMENTS = frozenset(["h1", "h2", "h3", "h4", "h5", "h6"])
 
@@ -379,7 +380,7 @@ OPTIONAL_END_TAG_ELEMENTS = frozenset([
     "th",
 ])
 
-AUTO_CLOSING_TAGS = {
+AUTO_CLOSING_TAGS = MappingProxyType({
     "p": frozenset([
         "address",
         "article",
@@ -442,9 +443,9 @@ AUTO_CLOSING_TAGS = {
     "h4": frozenset(["h1", "h2", "h3", "h4", "h5", "h6"]),
     "h5": frozenset(["h1", "h2", "h3", "h4", "h5", "h6"]),
     "h6": frozenset(["h1", "h2", "h3", "h4", "h5", "h6"]),
-}
+})
 
-CLOSE_ON_PARENT_CLOSE = {
+CLOSE_ON_PARENT_CLOSE = MappingProxyType({
     "li": ("ul", "ol", "menu"),
     "dt": ("dl",),
     "dd": ("dl",),
@@ -457,9 +458,9 @@ CLOSE_ON_PARENT_CLOSE = {
     "tr": ("table", "thead", "tbody", "tfoot"),
     "td": ("tr",),
     "th": ("tr",),
-}
+})
 
-SVG_CASE_SENSITIVE_ELEMENTS = {
+SVG_CASE_SENSITIVE_ELEMENTS = MappingProxyType({
     "foreignobject": "foreignObject",
     "animatemotion": "animateMotion",
     "animatetransform": "animateTransform",
@@ -497,7 +498,7 @@ SVG_CASE_SENSITIVE_ELEMENTS = {
     "animatecolor": "animateColor",
     "femerge": "feMerge",
     "glyphref": "glyphRef",
-}
+})
 
 # MathML elements that should automatically enter MathML context
 MATHML_ELEMENTS = frozenset([
@@ -535,7 +536,7 @@ MATHML_ELEMENTS = frozenset([
 ])
 
 # SVG attributes that should have their case preserved
-SVG_CASE_SENSITIVE_ATTRIBUTES = {
+SVG_CASE_SENSITIVE_ATTRIBUTES = MappingProxyType({
     "attributename": "attributeName",
     "attributetype": "attributeType",
     "basefrequency": "baseFrequency",
@@ -596,17 +597,17 @@ SVG_CASE_SENSITIVE_ATTRIBUTES = {
     "zoomandpan": "zoomAndPan",
     # The spec keeps some attributes lowercase; tests expect these untouched
     # contentscripttype, contentstyletype, externalresourcesrequired, filterres remain lowercase
-}
+})
 
 # MathML case-sensitive attribute adjustments per HTML5 spec
-MATHML_CASE_SENSITIVE_ATTRIBUTES = {
+MATHML_CASE_SENSITIVE_ATTRIBUTES = MappingProxyType({
     "definitionurl": "definitionURL",
-}
+})
 
 # HTML5 Numeric Character Reference Replacements
 # Per HTML5 spec section 13.2.5.73, certain codepoints have special replacements
 # when found in numeric character references
-HTML5_NUMERIC_REPLACEMENTS = {
+HTML5_NUMERIC_REPLACEMENTS = MappingProxyType({
     0x00: "\ufffd",  # NULL -> REPLACEMENT CHARACTER
     0x80: "\u20ac",  # 0x80 -> EURO SIGN
     0x81: "\u0081",  # 0x81 -> <control>
@@ -640,7 +641,7 @@ HTML5_NUMERIC_REPLACEMENTS = {
     0x9D: "\u009d",  # 0x9D -> <control>
     0x9E: "\u017e",  # 0x9E -> LATIN SMALL LETTER Z WITH CARON
     0x9F: "\u0178",  # 0x9F -> LATIN CAPITAL LETTER Y WITH DIAERESIS
-}
+})
 
 # SVG/MathML integration point constants (HTML5 spec §13.2.6.5)
 # These elements allow HTML content to be nested within SVG/MathML foreign content
