@@ -3625,6 +3625,9 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
                 parent=context.current_parent,
             )
         tr = self._find_or_create_tr(context)
+        if not tr:
+            self.debug(f"No table context for {token.tag_name}, ignoring")
+            return True
         # Original simplified behavior: insert but do not push td/th to keep stack shape lean.
         self.parser.insert_element(
             token,
@@ -3706,6 +3709,8 @@ class TableTagHandler(TemplateAwareHandler, TableElementHandler):
         if tr_ancestor:
             return tr_ancestor
         tbody = self._find_or_create_tbody(context)
+        if not tbody:
+            return None
         last_tr = tbody.get_last_child_with_tag("tr")
         if last_tr:
             return last_tr
