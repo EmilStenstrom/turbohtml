@@ -257,9 +257,6 @@ class OpenElementsStack:
     def __iter__(self):
         return iter(self._stack)
 
-    def __len__(self):
-        return len(self._stack)
-
     def __reversed__(self):
         return reversed(self._stack)
 
