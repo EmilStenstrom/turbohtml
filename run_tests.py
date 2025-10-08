@@ -551,7 +551,7 @@ def parse_args():
 
 def main():
     config = parse_args()
-    test_dir = Path("../html5lib-tests/tree-construction")
+    test_dir = Path("tests/html5lib-tests")
 
     runner = TestRunner(test_dir, config)
     reporter = TestReporter(config)
