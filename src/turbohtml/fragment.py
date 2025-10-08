@@ -101,22 +101,6 @@ def _supp_colgroup_whitespace(parser, context, token, fragment_context):
     return context.current_parent.tag_name == "document-fragment"
 
 
-def _supp_select_disallowed(parser, context, token, fragment_context):
-    """Suppress start tags that the spec says to ignore in select insertion mode.
-
-    HTML Standard: In the "in select" insertion mode, start tags whose tag name is one of
-    "input", "keygen", "textarea" are parse errors and the token is ignored. We suppress them
-    here for fragment parsing so downstream handlers (e.g. Plaintext) don't change tokenizer state.
-    This avoids incorrectly switching to PLAINTEXT for <textarea> inside a <select> fragment which
-    would cause subsequent <option> tags to be treated as literal text.
-    """
-    if fragment_context != "select":
-        return False
-    if token.type != "StartTag":
-        return False
-    return token.tag_name in {"input", "keygen", "textarea"}
-
-
 def _supp_duplicate_section_wrapper(parser, context, token, fragment_context):
     """Suppress an explicit table section start tag that duplicates the fragment context.
 
@@ -273,7 +257,6 @@ FRAGMENT_SPECS = {
         suppression_predicates=[
             _supp_doctype,
             _supp_malformed_select_like,
-            _supp_select_disallowed,
             _supp_fragment_nonhtml_structure,
         ],
     ),

@@ -2037,7 +2037,13 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
     def _should_handle_start_impl(self, tag_name, context):
         # If we're in a select, handle all tags to prevent formatting elements
         # BUT only if we're not in template content (template elements should be handled by template handlers)
-        if context.current_parent.is_inside_tag("select") and not in_template_content(context):
+        # AND not in foreign content (svg/math) where foreign handler should process children
+        # Check if current parent is actually a foreign element (not just foreign ancestor)
+        if (
+            context.current_parent.is_inside_tag("select")
+            and not in_template_content(context)
+            and not (context.current_parent.is_svg or context.current_parent.is_mathml)
+        ):
             return True  # Intercept every tag inside <select>
         return tag_name in {"select", "option", "optgroup", "datalist"}
 
@@ -2052,7 +2058,11 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                     return True  # Will suppress in handle_start
                 cur = cur.parent
 
-        if context.current_parent.is_inside_tag("select") and not in_template_content(context):
+        if (
+            context.current_parent.is_inside_tag("select")
+            and not in_template_content(context)
+            and not (context.current_parent.is_svg or context.current_parent.is_mathml)
+        ):
             # Do NOT intercept script/style so RawtextTagHandler can process them within select per spec
             return tag_name not in ("script", "style")
         return super().should_handle_start(tag_name, context)
@@ -2138,16 +2148,10 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             self.debug(f"Created new {tag_name}: parent now: {context.current_parent}")
             return True
 
-        # Disallowed start tags inside select (input, keygen, textarea): spec says
-        #   \'act as if an end tag token with tag name \"select\" had been seen, then reprocess the token\'.
-        # We implement this by popping the open <select> (implicitly closing option/optgroup) then
-        # allowing normal processing (return False) so the element is emitted at the new insertion point.
-        # Exception: fragment parsing with fragment_context == 'select' where we have no actual <select>
-        # element on the stack and tests expect these tokens to be ignored (only option/optgroup retained).
+        # Relaxed select parser: input and textarea still close select (but keygen is now allowed inside)
         if (
             context.current_parent.is_inside_tag("select")
-            and tag_name in ("input", "keygen", "textarea")
-            and self.parser.fragment_context != "select"
+            and tag_name in ("input", "textarea")
         ):
             self.debug(
                 f"Auto-closing open <select> before <{tag_name}> (reprocess token outside select)",
@@ -2167,82 +2171,6 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                             context.move_to_element(parent)
                         break
             return False  # Reprocess token as normal start tag now outside select
-        if (
-            context.current_parent.is_inside_tag("select")
-            and tag_name in ("input", "keygen", "textarea")
-            and self.parser.fragment_context == "select"
-        ):
-            self.debug(
-                f"Ignoring disallowed <{tag_name}> inside select fragment context (suppress only, no auto-close)",
-            )
-            return True
-
-        # If we're in a select, ignore any formatting elements
-        if context.current_parent.is_inside_tag("select") and tag_name in FORMATTING_ELEMENTS:
-            # Special case: inside SVG foreignObject integration point, break out of select
-            # and insert formatting element in the nearest HTML context (outside the foreign subtree).
-            # Delegate to ForeignTagHandler for breakout logic.
-            attach, _ = self.get_svg_foreign_breakout_parent(context)
-
-            if attach is not None:
-                self.debug(
-                    f"In SVG integration point: emitting {tag_name} outside select",
-                )
-                # Fallback if no attach point found
-                if attach is None:
-                    attach = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context) or self.parser.root
-
-                if not tag_name:
-                    # Defensive: This should never happen; capture stacks indirectly via raising after logging.
-                    self.debug(
-                        "BUG: empty tag_name when creating fake_token for formatting element outside select",
-                    )
-                    # Fallback to 'span' to avoid crashing downstream while we investigate
-                    tag_name = "span"
-                # Correct token construction: we need a StartTag token with tag_name set.
-                fake_token = HTMLToken(
-                    "StartTag", tag_name=tag_name, attributes={}, is_self_closing=False,
-                )
-                new_node = self.parser.insert_element(
-                    fake_token, context, parent=attach, mode="normal",
-                )
-                # If there's a pending table inserted due to earlier select-table, insert before it
-                pending = self._pending_table_outside
-                if pending and pending.parent is attach:
-                    attach.insert_before(new_node, pending)
-                # Do not change select context; consume token
-                return True
-            self.debug(f"Ignoring formatting element {tag_name} inside select")
-            return True
-
-        if context.current_parent.is_inside_tag("select") and (
-            tag_name in ("svg", "math") or tag_name in MATHML_ELEMENTS
-        ):
-            self.debug(
-                f"Flattening foreign/MathML element {tag_name} inside select to text context",
-            )
-            return True
-
-        if context.current_parent.is_inside_tag("select") and tag_name in {
-            "mi",
-            "mo",
-            "mn",
-            "ms",
-            "mtext",
-        }:
-            self.debug(f"Explicitly dropping MathML leaf {tag_name} inside select")
-            return True
-
-        if context.current_parent.is_inside_tag("select") and tag_name == "p":
-            self.debug("Flattening <p> inside select (ignored start tag)")
-            return True
-        if context.current_parent.is_inside_tag("select") and tag_name in RAWTEXT_ELEMENTS:
-            # Ignore other rawtext containers (e.g. title, textarea, noframes) inside select; script/style fall through
-            if tag_name not in ("script", "style"):
-                self.debug(f"Ignoring rawtext element {tag_name} inside select")
-                return True
-            # script/style: allow RawtextTagHandler to handle (return False)
-            return False
 
         # Handle <hr> inside <select>: insert as void element inside select (not ignored)
         if context.current_parent.is_inside_tag("select") and tag_name == "hr":
@@ -2260,24 +2188,18 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             return True
 
         if context.current_parent.is_inside_tag("select") and tag_name in TABLE_ELEMENTS:
-            # Do NOT auto-pop select for every table-related tag (can produce unintended
-            #   table structures inside foreignObject or tbody/tr under select).
-            # * When in a table insertion mode already (e.g. select nested inside an open table cell),
-            #   allow foster-parenting logic below to operate.
-            # * When inside an SVG foreignObject integration point, emit <table> outside the select subtree
-            #   (handled below) but otherwise ignore non-<table> table-scope tags inside select (they should
-            #   be ignored per select insertion mode rules).
             select_ancestor = context.current_parent.find_ancestor("select")
-            # If in IN_TABLE and encountering a row-group/row/cell boundary token inside a select, pop select first so
-            # table content does not siphon character data into an open <option> (tables01.dat:9 expectation: 'B' in cell).
+            # If in ANY table insertion mode and encountering table structural tags inside select, pop select first
             if (
                 context.document_state
                 in (
                     DocumentState.IN_TABLE,
+                    DocumentState.IN_CAPTION,
                     DocumentState.IN_TABLE_BODY,
                     DocumentState.IN_ROW,
+                    DocumentState.IN_CELL,
                 )
-                and tag_name in ("tr", "tbody", "thead", "tfoot", "td", "th", "caption")
+                and tag_name in ("tr", "tbody", "thead", "tfoot", "td", "th", "caption", "col", "colgroup")
                 and select_ancestor is not None
             ):
                 self.debug(
@@ -2290,99 +2212,65 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                             context.move_to_element(popped.parent)
                         break
                 return False  # Reprocess under appropriate table handler
-            select_element = context.current_parent.find_ancestor("select")
-            if select_element:
-                if context.document_state in (
-                    DocumentState.IN_TABLE,
-                    DocumentState.IN_CAPTION,
-                ):
-                    current_table = find_current_table(context)
-                    if current_table:
-                        self.debug(
-                            f"Foster parenting table element {tag_name} from select back to table context",
-                        )
-                        foster_parent = (
-                            self._find_foster_parent_for_table_element_in_current_table(
-                                current_table, tag_name,
-                            )
-                        )
-                        if foster_parent:
-                            # Use standardized insertion logic. For sibling-after-current-table we compute 'before'.
-                            if (
-                                tag_name == "table"
-                                and foster_parent is current_table.parent
-                            ):
-                                # Insert after current_table by identifying following sibling (or None to append)
-                                if current_table in foster_parent.children:
-                                    idx = foster_parent.children.index(current_table)
-                                    before = (
-                                        foster_parent.children[idx + 1]
-                                        if idx + 1 < len(foster_parent.children)
-                                        else None
-                                    )
-                                else:
-                                    before = None
-                                new_node = self.parser.insert_element(
-                                    token,
-                                    context,
-                                    parent=foster_parent,
-                                    before=before,
-                                    mode="normal",
-                                    enter=True,
-                                )
-                                context.transition_to_state(
-                                    DocumentState.IN_TABLE,
-                                )
-                            self.debug(
-                                f"Foster parented {tag_name} to {foster_parent.tag_name} via insert_element: {new_node}",
-                            )
-                            return True
-                        return False  # Let TableTagHandler handle this
-                else:
-                    # Check if in SVG integration point using centralized helper
-                    attach, _ = self.get_svg_foreign_breakout_parent(context)
-                    if attach is not None and tag_name == "table":
-                        self.debug(
-                            "In SVG integration point: emitting <table> outside select",
-                        )
-                        # Fallback if no attach point found
-                        if attach is None:
-                            attach = (
-                                ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
-                                or self.parser.root
-                            )
-                        before = None
-                        for i in range(len(attach.children) - 1, -1, -1):
-                            if attach.children[i].tag_name == "table" and i + 1 < len(
-                                attach.children,
-                            ):
-                                before = attach.children[i + 1]
+            # Relaxed select parser: ignore table row/cell/section elements when not in table context
+            # (table element itself is allowed, but tr/td/th/tbody/thead/tfoot are ignored)
+            if tag_name in ("tr", "td", "th", "tbody", "thead", "tfoot", "caption", "col", "colgroup"):
+                self.debug(f"Ignoring table structural element <{tag_name}> inside select (not in table context)")
+                return True
+            # Special case: <table> inside select when there's a table on the open elements stack should close select
+            if tag_name == "table":
+                # Check if there's a table on the stack (not necessarily an ancestor in the tree)
+                table_on_stack = any(el.tag_name == "table" for el in context.open_elements)
+                self.debug(f"Checking table inside select: table_on_stack={table_on_stack}, select_ancestor={select_ancestor}")
+                if table_on_stack:
+                    self.debug("Closing <select> before nested <table> (table on stack)")
+                    # Find select on the stack and pop it and everything after it
+                    # Stack: ['div', 'table', 'foreignObject', 'select']
+                    # After popping select and foreignObject: ['div', 'table']
+                    select_index = context.open_elements.index_of(select_ancestor)
+                    if select_index != -1:
+                        # Pop all elements from select_index onwards (select and everything pushed after it)
+                        # Count how many elements to pop by checking if current element is at or after select_index
+                        elements_to_pop = []
+                        current = context.open_elements.current()
+                        while current:
+                            current_index = context.open_elements.index_of(current)
+                            if current_index >= select_index:
+                                elements_to_pop.append(current)
+                                context.open_elements.pop()
+                                current = context.open_elements.current()
+                            else:
                                 break
-                            if attach.children[i].tag_name == "table":
-                                before = None  # append at end
-                                break
-                        new_table = self.parser.insert_element(
-                            token,
-                            context,
-                            parent=attach,
-                            before=before,
-                            mode="normal",
-                            enter=False,  # do not change insertion point (remain inside select foreign context)
-                        )
-                        if (
-                            not context.open_elements.is_empty()
-                            and context.open_elements[-1] is new_table
-                        ):
-                            context.open_elements.pop()
-                        self._pending_table_outside = new_table
-                        return True
-                    self.debug(
-                        f"Ignoring table element {tag_name} inside select (not in table document state)",
-                    )
-                    return True
 
-            self.debug(f"Ignoring table element {tag_name} inside select")
-            return True
+                    # Now also pop any foreign content elements (svg/foreignObject/math elements)
+                    # that are on top of the stack
+                    while not context.open_elements.is_empty():
+                        top = context.open_elements.current()
+                        if top and (top.is_svg or top.is_mathml):
+                            context.open_elements.pop()
+                        else:
+                            break
+
+                    # Determine the insertion point by walking up from select's parent
+                    # until we're out of foreign content
+                    target_parent = None
+                    if select_ancestor.parent:
+                        parent = select_ancestor.parent
+                        # If parent is in foreign content (svg, foreignObject, etc.), move up to div/body
+                        while parent and (parent.is_svg or parent.is_mathml):
+                            parent = parent.parent
+                        target_parent = parent
+
+                    if target_parent:
+                        context.move_to_element(target_parent)
+
+                    # Restore document state to IN_TABLE since table is still on the stack
+                    if context.open_elements.contains(context.open_elements.current()) and context.open_elements.current().tag_name == "table":
+                        context.transition_to_state(DocumentState.IN_TABLE, context.current_parent)
+
+                    return False  # Reprocess table outside select
+            # Allow other table-related elements
+            return False
 
         if tag_name in ("optgroup", "option"):
             # Check if we're in a select or datalist
@@ -2480,10 +2368,6 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             )
             return True
 
-        # If we're in a select and this is any other tag, ignore it
-        if context.current_parent.is_inside_tag("select"):
-            self.debug(f"Ignoring {tag_name} inside select")
-            return True
 
         return False
 
@@ -5698,7 +5582,7 @@ class ForeignTagHandler(TagHandler):
         tag_name = token.tag_name
         tag_name_lower = tag_name.lower()
 
-        # Foster parent if in table context (but not in a cell or caption)
+        # Foster parent if in table context (but not in a cell or caption or select)
         if (
             tag_name_lower in ("svg", "math")
             and context.current_context not in ("svg", "math")
@@ -5709,8 +5593,8 @@ class ForeignTagHandler(TagHandler):
                 DocumentState.IN_ROW,
             )
         ):
-            # If we are in a cell or caption, handle normally (don't foster)
-            if not is_in_cell_or_caption(context):
+            # If we are in a cell, caption, or select, handle normally (don't foster)
+            if not is_in_cell_or_caption(context) and not context.current_parent.is_inside_tag("select"):
                 table = find_current_table(context)
                 if table and table.parent:
                     self.debug(
@@ -5968,10 +5852,8 @@ class ForeignTagHandler(TagHandler):
                 if not inside:
                     context.current_context = None
 
-        # 1. Restricted contexts: inside <select> we don't start foreign elements (including MathML leafs)
-        if context.current_parent.is_inside_tag("select"):
-            if tag_name in ("svg", "math") or tag_name in MATHML_ELEMENTS:
-                return False
+        # Relaxed select parser: allow foreign elements (svg, math) inside select
+        # (removed the old restriction that prevented foreign content in select)
 
         # 1b. SVG integration point fragment contexts: delegate HTML elements before generic SVG handling.
         if self.parser.fragment_context in (
@@ -8038,9 +7920,7 @@ class MenuitemTagHandler(TagHandler):
         tag_name = token.tag_name
         if tag_name != "menuitem":
             return False
-        if context.current_parent.find_ancestor("select"):
-            self.debug("Ignoring menuitem inside select")
-            return True
+        # Relaxed select parser: allow menuitem inside select
         reconstruct_active_formatting_elements(self.parser, context)
 
         parent_before = context.current_parent
