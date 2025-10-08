@@ -645,13 +645,10 @@ class HTMLTokenizer:
                     )
                     return HTMLToken("Character", data="")
                 if unclosed_to_eof and attributes.strip():
-                    text_repr = self._serialize_malformed_attribute_chunk(
-                        attributes,
+                    # Emit the attributes as text when tag is unterminated at EOF
+                    self.pending_tokens.append(
+                        HTMLToken("Character", data=attributes),
                     )
-                    if text_repr:
-                        self.pending_tokens.append(
-                            HTMLToken("Character", data=text_repr),
-                        )
                     return HTMLToken(
                         "StartTag",
                         tag_name=tag_name,
@@ -1161,80 +1158,35 @@ class HTMLTokenizer:
             i += 1
         return "".join(result)
 
+    # Pre-compile invalid character ranges for fast checking
+    _INVALID_CHARS_SET = frozenset(range(0x01, 0x09)) | frozenset([0x0B]) | frozenset(range(0x0E, 0x20)) | frozenset([0x7F]) | frozenset(range(0xFDD0, 0xFDF0))
+
     def _replace_invalid_characters(self, text):
         """Replace invalid characters according to HTML5 spec."""
         if not text:
             return text
 
+        # Fast path: check if text contains any invalid characters
+        # Most text won't have any, so we can skip the expensive loop
+        has_invalid = False
+        for char in text:
+            cp = ord(char)
+            if (cp == 0x00 or cp in self._INVALID_CHARS_SET or
+                0xD800 <= cp <= 0xDFFF or (cp & 0xFFFF) in (0xFFFE, 0xFFFF)):
+                has_invalid = True
+                break
+
+        if not has_invalid:
+            return text
+
+        # Slow path: replace invalid characters
         result = []
         for char in text:
             codepoint = ord(char)
 
             # NULL character: HTML5 tokenizer emits U+FFFD (parse error). We keep it here;
             # context-aware sanitization (dropping in some normal data contexts) happens later in TextHandler.
-            if codepoint == 0x00 or codepoint in (
-                0x01,
-                0x02,
-                0x03,
-                0x04,
-                0x05,
-                0x06,
-                0x07,
-                0x08,
-                0x0B,
-                0x0E,
-                0x0F,
-                0x10,
-                0x11,
-                0x12,
-                0x13,
-                0x14,
-                0x15,
-                0x16,
-                0x17,
-                0x18,
-                0x19,
-                0x1A,
-                0x1B,
-                0x1C,
-                0x1D,
-                0x1E,
-                0x1F,
-                0x7F,
-            ) or 0xD800 <= codepoint <= 0xDFFF or codepoint in (
-                0xFDD0,
-                0xFDD1,
-                0xFDD2,
-                0xFDD3,
-                0xFDD4,
-                0xFDD5,
-                0xFDD6,
-                0xFDD7,
-                0xFDD8,
-                0xFDD9,
-                0xFDDA,
-                0xFDDB,
-                0xFDDC,
-                0xFDDD,
-                0xFDDE,
-                0xFDDF,
-                0xFDE0,
-                0xFDE1,
-                0xFDE2,
-                0xFDE3,
-                0xFDE4,
-                0xFDE5,
-                0xFDE6,
-                0xFDE7,
-                0xFDE8,
-                0xFDE9,
-                0xFDEA,
-                0xFDEB,
-                0xFDEC,
-                0xFDED,
-                0xFDEE,
-                0xFDEF,
-            ) or (codepoint & 0xFFFF) in (0xFFFE, 0xFFFF):
+            if codepoint == 0x00 or codepoint in self._INVALID_CHARS_SET or 0xD800 <= codepoint <= 0xDFFF or (codepoint & 0xFFFF) in (0xFFFE, 0xFFFF):
                 result.append("\ufffd")
             else:
                 result.append(char)

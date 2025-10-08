@@ -78,8 +78,10 @@ class TagHandler(ForeignContentAware):
         return HTMLToken("StartTag", tag_name, tag_name, {}, False, False)
 
     def debug(self, message, indent=4):
-        class_name = self.__class__.__name__
-        self.parser.debug(f"{class_name}: {message}", indent=indent)
+        # Only call parser.debug if debugging is on - avoid string formatting overhead
+        if self.parser.env_debug:
+            class_name = self.__class__.__name__
+            self.parser.debug(f"{class_name}: {message}", indent=indent)
 
     # Pre-dispatch hooks (token guards and preprocessing, called before handler dispatch)
     def preprocess_start(self, token, context):
