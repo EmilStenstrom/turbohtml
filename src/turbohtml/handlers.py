@@ -1178,6 +1178,10 @@ class TextHandler(TagHandler):
         # tag was swallowed), re-enter the deepest such integration point so trailing character data stays inside.
         # Transient routing sentinel logic inlined here.
 
+        # Cache frequently accessed values
+        doc_state = context.document_state
+        in_template = in_template_content(context)
+
         # One-shot post-adoption reconstruction: if the adoption agency algorithm executed on the
         # previous token (end tag of a formatting element) it sets a transient flag on the context.
         # Consume that flag here (only once) and perform reconstruction before inserting this text -
@@ -1185,16 +1189,13 @@ class TextHandler(TagHandler):
         # immediately following character token without broad per-character scanning (which caused
         # Guard against over-cloning regressions when generalized.
         if context.needs_reconstruction:
-            if (
-                context.document_state == DocumentState.IN_BODY
-                and not in_template_content(context)
-            ):
+            if doc_state == DocumentState.IN_BODY and not in_template:
                 self.debug("Post-adoption one-shot reconstruction before character insertion")
                 reconstruct_active_formatting_elements(self.parser, context)
             context.needs_reconstruction = False
         # Stale formatting fallback: if no one-shot flag but there exists a stale active formatting element
         # (entry element not on open elements stack) and we are about to insert text in body, reconstruct.
-        elif context.document_state == DocumentState.IN_BODY and not in_template_content(context):
+        elif doc_state == DocumentState.IN_BODY and not in_template:
             self.debug(f"Checking for stale AFE: active_formatting={[e.element.tag_name if e.element else 'marker' for e in context.active_formatting_elements]}, open_stack={[el.tag_name for el in context.open_elements]}")
             for entry in context.active_formatting_elements:
                 el = entry.element
@@ -1223,10 +1224,7 @@ class TextHandler(TagHandler):
         # point was inside template content and we've moved outside that template.
 
         # AFTER_HEAD: whitespace -> html root; non-whitespace forces body creation
-        if (
-            context.document_state == DocumentState.AFTER_HEAD
-            and not in_template_content(context)
-        ):
+        if doc_state == DocumentState.AFTER_HEAD and not in_template:
             if text.isspace():
                 if self.parser.html_node:
                     # Use centralized insert_text (merging enabled for consecutive whitespace)

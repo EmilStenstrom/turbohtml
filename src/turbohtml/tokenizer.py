@@ -11,6 +11,7 @@ from turbohtml.constants import (
 # NUMERIC_ENTITY_INVALID_SENTINEL imported from constants (see constants.NUMERIC_ENTITY_INVALID_SENTINEL)
 
 TAG_OPEN_RE = re.compile(r"<(!?)(/)?([^\s/>]+)([^>]*)>")
+TAG_NAME_RE = re.compile(r"<(!?)(/)?([^\s/>]+)")
 # Attribute name: any run of characters excluding whitespace, '=', '/', '>' (allows '<', quotes, backticks, backslashes)
 # NOTE: We allow '>' inside quoted attribute values; initial regex match may terminate early at a '>' inside quotes.
 # We post-process below when attribute quotes are unbalanced to continue scanning until the real closing '>'.
@@ -599,13 +600,14 @@ class HTMLTokenizer:
             return HTMLToken("Character", data="</")
 
         # Try to match a tag using TAG_OPEN_RE
-        match = TAG_OPEN_RE.match(self.html[self.pos :])
+        # Use pos parameter to avoid creating string slice
+        match = TAG_OPEN_RE.match(self.html, self.pos)
         self.debug(f"Trying to match tag: {match and match.groups()}")
 
         # If no match with >, try to match without it for unclosed tags
         if not match:
             # Look for tag name - be more permissive about what constitutes a tag
-            tag_match = re.match(r"<(!?)(/)?([^\s/>]+)", self.html[self.pos :])
+            tag_match = TAG_NAME_RE.match(self.html, self.pos)
             if tag_match:
                 self.debug(f"Found unclosed tag: {tag_match.groups()}")
                 bang, is_end_tag, tag_name = tag_match.groups()
@@ -797,17 +799,21 @@ class HTMLTokenizer:
             return None
 
         start = self.pos
+        html = self.html
 
         # If we're starting with '<', don't try to parse as text
-        if self.html[start] == "<":
+        if html[start] == "<":
             return None
 
-        while self.pos < self.length:
-            if self.html[self.pos] == "<":
-                break
-            self.pos += 1
+        # Find end of text (next '<' or end of string)
+        pos = start
+        length = self.length
+        while pos < length and html[pos] != "<":
+            pos += 1
 
-        text = self.html[start : self.pos]
+        self.pos = pos
+        text = html[start:pos]
+
         # Only emit non-empty text tokens
         if not text:
             return None
@@ -1053,8 +1059,10 @@ class HTMLTokenizer:
 
     def _decode_entities(self, text, in_attribute=False):
         """Decode HTML entities in text according to HTML5 spec."""
+        # Fast path: no entities at all
         if "&" not in text:
             return text
+
         # Named entities that MUST have a terminating semicolon in attribute values (per spec)
         semicolon_required_in_attr = {"prod"}
 
@@ -1069,10 +1077,14 @@ class HTMLTokenizer:
         result = []
         i = 0
         length = len(text)
+
+        # Cache frequently used methods
+        result_append = result.append
+
         while i < length:
             ch = text[i]
             if ch != "&":
-                result.append(ch)
+                result_append(ch)
                 i += 1
                 continue
 
@@ -1080,11 +1092,11 @@ class HTMLTokenizer:
             # Required by spec for cases: &gt0, &gt9, &gta, &gtZ should remain literal rather than decoding to '>'
             if (
                 in_attribute
-                and text.startswith("&gt", i)
                 and i + 3 < length
+                and text[i:i+3] == "&gt"
                 and text[i + 3].isalnum()
             ):
-                result.append("&gt")
+                result_append("&gt")
                 i += 3  # advance past '&gt'
                 continue
 
@@ -1105,7 +1117,7 @@ class HTMLTokenizer:
                         j += 1
                     digits = text[start_digits:j]
                 if not digits:
-                    result.append("&")
+                    result_append("&")
                     i += 1
                     continue
                 has_semicolon = j < length and text[j] == ";"
@@ -1118,9 +1130,9 @@ class HTMLTokenizer:
                     decoded_char = self._codepoint_to_char(codepoint)
                     if decoded_char == "\ufffd":
                         decoded_char = NUMERIC_ENTITY_INVALID_SENTINEL
-                    result.append(decoded_char)
+                    result_append(decoded_char)
                 else:
-                    result.append(text[i:j])
+                    result_append(text[i:j])
                 i = j
                 continue
 
@@ -1143,55 +1155,39 @@ class HTMLTokenizer:
                         and (next_char.isalnum() or next_char == "=")
                         and not _allow_decode_without_semicolon_follow(entity_name)
                     ):
-                        result.append("&")
+                        result_append("&")
                         i += 1
                         continue
                     if entity_name in semicolon_required_in_attr and not has_semicolon:
-                        result.append("&")
+                        result_append("&")
                         i += 1
                         continue
-                result.append(decoded)
+                result_append(decoded)
                 i = j
                 continue
             # Literal '&'
-            result.append("&")
+            result_append("&")
             i += 1
         return "".join(result)
 
-    # Pre-compile invalid character ranges for fast checking
-    _INVALID_CHARS_SET = frozenset(range(0x01, 0x09)) | frozenset([0x0B]) | frozenset(range(0x0E, 0x20)) | frozenset([0x7F]) | frozenset(range(0xFDD0, 0xFDF0))
+    # Pre-build translation table for invalid characters (do once at class level)
+    _INVALID_CHARS_TRANSLATION = str.maketrans({
+        chr(i): '\ufffd' for i in 
+        list(range(0x00, 0x09)) + [0x0B] + list(range(0x0E, 0x20)) + [0x7F] + 
+        list(range(0xD800, 0xE000)) + list(range(0xFDD0, 0xFDF0)) +
+        [0xFFFE, 0xFFFF, 0x1FFFE, 0x1FFFF, 0x2FFFE, 0x2FFFF, 0x3FFFE, 0x3FFFF,
+         0x4FFFE, 0x4FFFF, 0x5FFFE, 0x5FFFF, 0x6FFFE, 0x6FFFF, 0x7FFFE, 0x7FFFF,
+         0x8FFFE, 0x8FFFF, 0x9FFFE, 0x9FFFF, 0xAFFFE, 0xAFFFF, 0xBFFFE, 0xBFFFF,
+         0xCFFFE, 0xCFFFF, 0xDFFFE, 0xDFFFF, 0xEFFFE, 0xEFFFF, 0xFFFFE, 0xFFFFF,
+         0x10FFFE, 0x10FFFF]
+    })
 
     def _replace_invalid_characters(self, text):
         """Replace invalid characters according to HTML5 spec."""
         if not text:
             return text
-
-        # Fast path: check if text contains any invalid characters
-        # Most text won't have any, so we can skip the expensive loop
-        has_invalid = False
-        for char in text:
-            cp = ord(char)
-            if (cp == 0x00 or cp in self._INVALID_CHARS_SET or
-                0xD800 <= cp <= 0xDFFF or (cp & 0xFFFF) in (0xFFFE, 0xFFFF)):
-                has_invalid = True
-                break
-
-        if not has_invalid:
-            return text
-
-        # Slow path: replace invalid characters
-        result = []
-        for char in text:
-            codepoint = ord(char)
-
-            # NULL character: HTML5 tokenizer emits U+FFFD (parse error). We keep it here;
-            # context-aware sanitization (dropping in some normal data contexts) happens later in TextHandler.
-            if codepoint == 0x00 or codepoint in self._INVALID_CHARS_SET or 0xD800 <= codepoint <= 0xDFFF or (codepoint & 0xFFFF) in (0xFFFE, 0xFFFF):
-                result.append("\ufffd")
-            else:
-                result.append(char)
-
-        return "".join(result)
+        # Use fast translate() method instead of loops
+        return text.translate(self._INVALID_CHARS_TRANSLATION)
 
     def _codepoint_to_char(self, codepoint):
         """Convert a numeric codepoint to character with HTML5 replacements."""
