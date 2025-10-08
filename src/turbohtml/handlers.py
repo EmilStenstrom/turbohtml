@@ -2039,10 +2039,12 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         # BUT only if we're not in template content (template elements should be handled by template handlers)
         # AND not in foreign content (svg/math) where foreign handler should process children
         # Check if current parent is actually a foreign element (not just foreign ancestor)
+        inside_select = context.current_parent.is_inside_tag("select")
+        is_foreign = context.current_parent.is_svg or context.current_parent.is_mathml
         if (
-            context.current_parent.is_inside_tag("select")
+            inside_select
             and not in_template_content(context)
-            and not (context.current_parent.is_svg or context.current_parent.is_mathml)
+            and not is_foreign
         ):
             return True  # Intercept every tag inside <select>
         return tag_name in {"select", "option", "optgroup", "datalist"}
@@ -2561,6 +2563,7 @@ class ParagraphTagHandler(TagHandler):
         if (
             token.tag_name == "p"
             and not in_template_content(context)
+            and not context.current_parent.is_inside_tag("select")
             and (
                 context.document_state
                 in (
@@ -5755,8 +5758,11 @@ class ForeignTagHandler(TagHandler):
                 lambda n: n.tag_name in {"td", "th", "caption"},
             )
 
+            # Check if we're inside select - HTML breakout should stay in select, not foster parent
+            in_select = context.current_parent.is_inside_tag("select")
+
             # Check if we need to foster parent before exiting foreign context
-            if table and table.parent and not in_caption_or_cell:
+            if table and table.parent and not in_caption_or_cell and not in_select:
                 # Foster parent the HTML element before the table
                 self.debug(
                     f"Foster parenting HTML element <{tag_name_lower}> before table",
@@ -5778,13 +5784,17 @@ class ForeignTagHandler(TagHandler):
                 context.transition_to_state( DocumentState.IN_TABLE)
                 return True
 
-            # If we're in caption/cell, move to that container instead of foster parenting
-            if in_caption_or_cell:
-                self.debug(
-                    f"HTML element {tag_name_lower} breaking out inside {in_caption_or_cell.tag_name}",
+            # If we're in caption/cell (or select), move to that container instead of foster parenting
+            if in_caption_or_cell or in_select:
+                target = context.current_parent.find_ancestor(
+                    lambda n: n.tag_name in {"td", "th", "caption", "select"},
                 )
-                context.move_to_element(in_caption_or_cell)
-                return False  # Let other handlers process this element
+                if target:
+                    self.debug(
+                        f"HTML element {tag_name_lower} breaking out inside {target.tag_name}",
+                    )
+                    context.move_to_element(target)
+                    return False  # Let other handlers process this element
 
             if context.current_parent:
                 if self.parser.fragment_context:
@@ -6148,17 +6158,11 @@ class ForeignTagHandler(TagHandler):
                 )
                 return True
 
-            # Inside a <select>, suppress creation of MathML subtree including leaf elements (flatten to text)
-            if context.current_parent.is_inside_tag("select"):
-                return True
-
             # Special case: Nested MathML text integration point elements (mi/mo/mn/ms/mtext)
             # inside an existing MathML text integration point should be treated as HTML elements
             # (no MathML prefix) in foreign-fragment leaf contexts. Example:
             # context element <math ms> then encountering <ms/> should yield <ms> not <math ms>.
             if tag_name_lower in {"mi", "mo", "mn", "ms", "mtext"}:
-                if context.current_parent.is_inside_tag("select"):
-                    return True
                 ancestor_text_ip = context.current_parent.find_ancestor(
                     lambda n: n.tag_name
                     in (
