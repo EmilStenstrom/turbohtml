@@ -2074,15 +2074,6 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
     ):
         tag_name = token.tag_name
 
-        # Suppress malformed start tags inside select subtree
-        if "<" in tag_name:
-            cur = context.current_parent
-            while cur:
-                if cur.tag_name in {"select", "option", "optgroup"}:
-                    self.debug(f"Suppressing malformed start tag <{tag_name}> inside select subtree")
-                    return True  # Consume/suppress the token
-                cur = cur.parent
-
         self.debug(
             f"Handling {tag_name} in select context, current_parent={context.current_parent}",
         )
@@ -2093,7 +2084,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             # Inside template content, suppress select-specific behavior entirely
             return True
 
-        if tag_name in ("select", "datalist"):
+        if tag_name == "select":
             # If direct child of table before any row group/caption, foster-parent select BEFORE table
             if context.current_parent.tag_name == "table":
                 table = context.current_parent
@@ -2145,9 +2136,19 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                 # Ignore the nested <select> token itself (do not create new select)
                 return True
 
-            # Create new select/datalist using standardized insertion
+            # Create new select using standardized insertion
             self.parser.insert_element(token, context, mode="normal")
             self.debug(f"Created new {tag_name}: parent now: {context.current_parent}")
+            return True
+
+        # Relaxed select parser: datalist is now allowed inside select as a normal child
+        if tag_name == "datalist":
+            if context.current_parent.is_inside_tag("select"):
+                # Create datalist as normal child of select (or current element inside select)
+                self.parser.insert_element(token, context, mode="normal")
+                return True
+            # Outside select, create datalist normally
+            self.parser.insert_element(token, context, mode="normal")
             return True
 
         # Relaxed select parser: input and textarea still close select (but keygen is now allowed inside)
@@ -2347,21 +2348,11 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                 return True
             # option
             self.debug("Creating option inside select/datalist")
-            # If we're inside a formatting element, move up to select
-            formatting = context.current_parent.find_ancestor(
-                lambda n: n.tag_name in FORMATTING_ELEMENTS,
-            )
-            if not formatting and context.current_parent.tag_name not in (
-                "select",
-                "datalist",
-                "optgroup",
-            ):
-                self.debug("Moving up to select/datalist/optgroup level")
-                parent = context.current_parent.find_ancestor(
-                    lambda n: n.tag_name in ("select", "datalist", "optgroup"),
-                )
-                if parent:
-                    context.move_to_element(parent)
+            # Relaxed select parser: option is created at current insertion point
+            # BUT if current parent is option, implicitly close it first (options don't nest)
+            if context.current_parent.tag_name == "option":
+                self.debug("Implicitly closing option before new option")
+                context.move_up_one_level()
             new_option = self.parser.insert_element(
                 token, context, mode="normal", enter=True,
             )
