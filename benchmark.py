@@ -229,51 +229,13 @@ def benchmark_bs4(html_files: list) -> dict:
     }
 
 
-def benchmark_pyquery(html_files: list) -> dict:
-    """Benchmark PyQuery parser."""
-    try:
-        from pyquery import PyQuery
-    except ImportError:
-        return {"error": "pyquery not installed (pip install pyquery)"}
-
-    times = []
-    errors = 0
-
-    # Warmup run to eliminate first-call overhead
-    if html_files:
-        try:
-            PyQuery(html_files[0][1])
-        except Exception:
-            pass
-
-    for _, html in html_files:
-        try:
-            start = time.perf_counter()
-            result = PyQuery(html)
-            elapsed = time.perf_counter() - start
-            times.append(elapsed)
-            # Touch the result to ensure parsing completed
-            _ = result
-        except Exception:
-            errors += 1
-
-    return {
-        "total_time": sum(times),
-        "mean_time": sum(times) / len(times) if times else 0,
-        "min_time": min(times) if times else 0,
-        "max_time": max(times) if times else 0,
-        "errors": errors,
-        "success_count": len(times),
-    }
-
-
 def print_results(results: dict, file_count: int):
     """Pretty print benchmark results."""
     print("\n" + "=" * 80)
     print(f"BENCHMARK RESULTS ({file_count} HTML files)")
     print("=" * 80)
 
-    parsers = ["turbohtml", "html5lib", "lxml", "bs4", "pyquery"]
+    parsers = ["turbohtml", "html5lib", "lxml", "bs4"]
 
     # Print header
     print(f"\n{'Parser':<15} {'Total (s)':<12} {'Mean (ms)':<12} {'Min (ms)':<12} {'Max (ms)':<12} {'Errors':<8}")
@@ -310,7 +272,7 @@ def print_results(results: dict, file_count: int):
     # Print speedup summary
     if turbohtml_time > 0:
         print("\nSpeedup vs TurboHTML:")
-        for parser in ["html5lib", "lxml", "bs4", "pyquery"]:
+        for parser in ["html5lib", "lxml", "bs4"]:
             if parser in results and "error" not in results[parser]:
                 total = results[parser]["total_time"]
                 if total > 0:
@@ -357,8 +319,8 @@ def main():
     parser.add_argument(
         "--parsers",
         nargs="+",
-        choices=["turbohtml", "html5lib", "lxml", "bs4", "pyquery"],
-        default=["turbohtml", "html5lib", "lxml", "bs4", "pyquery"],
+        choices=["turbohtml", "html5lib", "lxml", "bs4"],
+        default=["turbohtml", "html5lib", "lxml", "bs4"],
         help="Parsers to benchmark (default: all)",
     )
 
@@ -391,7 +353,6 @@ def main():
         "html5lib": benchmark_html5lib,
         "lxml": benchmark_lxml,
         "bs4": benchmark_bs4,
-        "pyquery": benchmark_pyquery,
     }
 
     for parser_name in args.parsers:
