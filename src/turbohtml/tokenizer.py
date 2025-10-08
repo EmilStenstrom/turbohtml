@@ -532,53 +532,54 @@ class HTMLTokenizer:
             return HTMLToken("Character", data="<")
 
         # Handle DOCTYPE first (case-insensitive per HTML5 spec)
-        # Optimize: check first character before slice
-        if html[pos + 1] == "!" and html[pos + 2 : pos + 9].upper() == "DOCTYPE":
-            self.pos = pos + 9  # Skip <!DOCTYPE
-            # Skip whitespace
-            while self.pos < length and html[self.pos].isspace():
-                self.pos += 1
-            # Collect DOCTYPE value
-            start = self.pos
-            while self.pos < length and html[self.pos] != ">":
-                self.pos += 1
-            doctype = html[start : self.pos].strip()
-            if self.pos < length:  # Skip closing >
-                self.pos += 1
-            return HTMLToken("DOCTYPE", data=doctype)
+        # Optimize: check first character then upper() only the 7-char chunk
+        if pos + 9 <= length and html[pos + 1] == "!":
+            # Check for <!DOCTYPE case-insensitively
+            chunk = html[pos + 2 : pos + 9]
+            if chunk.upper() == "DOCTYPE":
+                self.pos = pos + 9  # Skip <!DOCTYPE
+                # Skip whitespace
+                while self.pos < length and html[self.pos].isspace():
+                    self.pos += 1
+                # Collect DOCTYPE value
+                start = self.pos
+                while self.pos < length and html[self.pos] != ">":
+                    self.pos += 1
+                doctype = html[start : self.pos].strip()
+                if self.pos < length:  # Skip closing >
+                    self.pos += 1
+                return HTMLToken("DOCTYPE", data=doctype)
         # Recovery: malformed escaped form "<\!doctype" (common author error). Treat as DOCTYPE instead of text
         # so that downstream frameset/body logic sees an early DOCTYPE token and does not prematurely create <body>.
-        if pos + 10 <= length:
-            chunk = html[pos : pos + 10].lower()
-            if chunk.startswith("<\\!doctype"):
+        if pos + 10 <= length and html[pos : pos + 3] == "<\\!":
+            chunk = html[pos + 3 : pos + 10]
+            if chunk.upper() == "DOCTYPE":
                 # Skip "<\" then the literal "!doctype"
-                self.pos = pos + 2  # <\
-                if html[self.pos : self.pos + 7].lower() == "!doctype":
-                    self.pos += 7
-                    while self.pos < length and html[self.pos].isspace():
-                        self.pos += 1
-                    start = self.pos
-                    while self.pos < length and html[self.pos] != ">":
-                        self.pos += 1
-                    doctype = html[start : self.pos].strip()
-                    if self.pos < length:
-                        self.pos += 1
-                    return HTMLToken("DOCTYPE", data=doctype)
+                self.pos = pos + 10
+                while self.pos < length and html[self.pos].isspace():
+                    self.pos += 1
+                start = self.pos
+                while self.pos < length and html[self.pos] != ">":
+                    self.pos += 1
+                doctype = html[start : self.pos].strip()
+                if self.pos < length:
+                    self.pos += 1
+                return HTMLToken("DOCTYPE", data=doctype)
 
         # Only handle comments in DATA state
         if self.state == "DATA":
-            if self.html.startswith("<!--", self.pos):
+            if pos + 4 <= length and html[pos:pos+4] == "<!--":
                 # Special case: <!--> is treated as <!-- -->
-                if self.pos + 4 < self.length and self.html[self.pos + 4] == ">":
-                    self.pos += 5
+                if pos + 4 < length and html[pos + 4] == ">":
+                    self.pos = pos + 5
                     return HTMLToken("Comment", data="")
                 return self._handle_comment()
             # Handle all bogus comment cases according to spec:
 
             # Check for end tag start and invalid immediate char after '</'
-            is_end_tag_start = self.html.startswith("</", self.pos)
-            has_invalid_char = self.pos + 2 < self.length and not (
-                self.html[self.pos + 2].isascii() and self.html[self.pos + 2].isalpha()
+            is_end_tag_start = pos + 2 <= length and html[pos:pos+2] == "</"
+            has_invalid_char = pos + 2 < length and not (
+                html[pos + 2].isascii() and html[pos + 2].isalpha()
             )
             # End tags with attributes are parse errors but still emit an EndTag token (attributes ignored).
             # A potential end tag is treated as a bogus comment only when the character after '</' cannot
@@ -588,15 +589,15 @@ class HTMLTokenizer:
             self.debug(f"  has_invalid_char: {has_invalid_char}")
             if (
                 (is_end_tag_start and has_invalid_char)
-                or self.html.startswith("<!", self.pos)
-                or self.html.startswith("<?", self.pos)
+                or (pos + 2 <= length and html[pos:pos+2] == "<!")
+                or (pos + 2 <= length and html[pos:pos+2] == "<?")
             ):
                 self.debug("Found bogus comment case")
                 return self._handle_bogus_comment(from_end_tag=False)
 
         # Special case: </ at EOF should be treated as text
-        if self.html.startswith("</", self.pos) and self.pos + 2 >= self.length:
-            self.pos = self.length  # Consume all remaining input
+        if pos + 2 > length:
+            self.pos = length  # Consume all remaining input
             return HTMLToken("Character", data="</")
 
         # Try to match a tag using TAG_OPEN_RE
@@ -1063,23 +1064,14 @@ class HTMLTokenizer:
         if "&" not in text:
             return text
 
-        # Named entities that MUST have a terminating semicolon in attribute values (per spec)
-        semicolon_required_in_attr = {"prod"}
-
-        # Entities for which we DO decode even if followed by '=' or alnum when semicolon omitted
-        # (uppercase legacy names like AElig per entities02 expectations)
-        def _allow_decode_without_semicolon_follow(entity_name):
-            # Disallow basic entities like gt when followed by alnum; allow longer uppercase legacy forms
-            if entity_name in {"gt", "lt", "amp", "quot", "apos"}:
-                return False
-            return entity_name and entity_name[0].isupper() and len(entity_name) > 2
-
         result = []
         i = 0
         length = len(text)
 
-        # Cache frequently used methods
+        # Cache frequently used methods and constants
         result_append = result.append
+        semicolon_required = self._SEMICOLON_REQUIRED_IN_ATTR
+        allow_decode = self._allow_decode_without_semicolon_follow
 
         while i < length:
             ch = text[i]
@@ -1153,12 +1145,12 @@ class HTMLTokenizer:
                     if (
                         next_char
                         and (next_char.isalnum() or next_char == "=")
-                        and not _allow_decode_without_semicolon_follow(entity_name)
+                        and not allow_decode(entity_name)
                     ):
                         result_append("&")
                         i += 1
                         continue
-                    if entity_name in semicolon_required_in_attr and not has_semicolon:
+                    if entity_name in semicolon_required and not has_semicolon:
                         result_append("&")
                         i += 1
                         continue
@@ -1181,6 +1173,17 @@ class HTMLTokenizer:
          0xCFFFE, 0xCFFFF, 0xDFFFE, 0xDFFFF, 0xEFFFE, 0xEFFFF, 0xFFFFE, 0xFFFFF,
          0x10FFFE, 0x10FFFF]
     })
+
+    # Entity decoding constants
+    _SEMICOLON_REQUIRED_IN_ATTR = frozenset(["prod"])
+    _BASIC_ENTITIES = frozenset(["gt", "lt", "amp", "quot", "apos"])
+
+    @staticmethod
+    def _allow_decode_without_semicolon_follow(entity_name):
+        """Check if entity can be decoded without semicolon when followed by = or alnum."""
+        if entity_name in HTMLTokenizer._BASIC_ENTITIES:
+            return False
+        return entity_name and entity_name[0].isupper() and len(entity_name) > 2
 
     def _replace_invalid_characters(self, text):
         """Replace invalid characters according to HTML5 spec."""

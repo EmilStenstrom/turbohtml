@@ -137,19 +137,26 @@ class Node:
 
     def _would_create_circular_reference(self, child):
         """Check if adding child would create a circular reference."""
+        # Fast path: if child has no parent, it can't be our ancestor
+        if not child.parent:
+            return False
+
         # Check if self is a descendant of child
         current = self
         visited = set()
         depth = 0
 
         while current and depth < 100:  # Safety limit
-            if id(current) in visited:
-                return True  # Already found circular reference in current tree
-
             if current == child:
                 return True  # Self is a descendant of child
 
-            visited.add(id(current))
+            # Only track visited if we have a parent (to detect cycles in existing tree)
+            if current.parent:
+                node_id = id(current)
+                if node_id in visited:
+                    return True  # Already found circular reference in current tree
+                visited.add(node_id)
+
             current = current.parent
             depth += 1
 

@@ -207,10 +207,10 @@ class TurboHTML:
                 # Check for SVG integration points
                 in_svg_integration_point = False
                 if context.current_context == "svg":
-                    if context.current_parent.is_svg and context.current_parent.tag_name in {"foreignObject", "desc", "title"}:
+                    if context.current_parent.namespace == "svg" and context.current_parent.tag_name in {"foreignObject", "desc", "title"}:
                         in_svg_integration_point = True
                     elif context.current_parent.has_ancestor_matching(
-                        lambda n: n.is_svg and n.tag_name in {"foreignObject", "desc", "title"},
+                        lambda n: n.namespace == "svg" and n.tag_name in {"foreignObject", "desc", "title"},
                     ):
                         in_svg_integration_point = True
 
@@ -218,14 +218,14 @@ class TurboHTML:
                 in_math_integration_point = False
                 if context.current_context == "math":
                     # MathML text integration points: mi, mo, mn, ms, mtext
-                    if context.current_parent.is_mathml and context.current_parent.tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
+                    if context.current_parent.namespace == "math" and context.current_parent.tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
                         in_math_integration_point = True
                     elif context.current_parent.find_ancestor(
-                        lambda n: n.is_mathml and n.tag_name in {"mi", "mo", "mn", "ms", "mtext"},
+                        lambda n: n.namespace == "math" and n.tag_name in {"mi", "mo", "mn", "ms", "mtext"},
                     ):
                         in_math_integration_point = True
                     # annotation-xml with HTML encoding
-                    elif context.current_parent.is_mathml and context.current_parent.tag_name == "annotation-xml":
+                    elif context.current_parent.namespace == "math" and context.current_parent.tag_name == "annotation-xml":
                         encoding = context.current_parent.attributes.get("encoding", "").lower()
                         if encoding in ("application/xhtml+xml", "text/html"):
                             in_math_integration_point = True
@@ -341,7 +341,7 @@ class TurboHTML:
             # Preserve in SVG content (but NOT in HTML integration points)
             if (
                 not preserve
-                and target_parent.is_svg
+                and target_parent.namespace == "svg"
                 and target_parent.tag_name not in ("foreignObject", "desc", "title")
             ):
                 preserve = True
