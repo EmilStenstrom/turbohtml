@@ -665,7 +665,7 @@ class HTMLTokenizer:
         if match:
             bang, is_end_tag, tag_name, attributes = match.groups()
             # Detect unbalanced quotes in the raw attributes substring; if we see an odd count of single or
-            # double quotes, continue scanning input until quotes balance and an unquoted '>' is found, or until
+            # double quotes, continue scanning input until quotes balance and an unquoted ">" is found, or until
             # EOF (still inside quoted value). If EOF occurs while still inside a quoted attribute value the
             # start tag is suppressed (EOF-in-attribute-value) so no element is emitted.
             if attributes:

@@ -145,6 +145,8 @@ class OpenElementsStack:
         return self._stack[-1] if self._stack else None
     def is_empty(self):
         return not self._stack
+    def __len__(self):
+        return len(self._stack)
 
     # --- membership / search ---
     def contains(self, element):

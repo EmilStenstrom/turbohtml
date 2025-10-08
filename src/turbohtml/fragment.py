@@ -73,21 +73,6 @@ def _supp_doctype(parser, context, token, fragment_context):  # spec: ignore doc
     return token.type == "DOCTYPE"
 
 
-def _supp_malformed_select_like(parser, context, token, fragment_context):
-    # Skip malformed start tags that still contain a literal '<' inside a select-like context.
-    if token.type != "StartTag":
-        return False
-    tag_name = token.tag_name
-    if "<" not in tag_name:
-        return False
-    if context.current_parent.tag_name in {"select", "option", "optgroup"}:
-        return True
-    anc = context.current_parent.find_ancestor(
-        lambda n: n.tag_name in {"select", "option", "optgroup"},
-    )
-    return anc is not None
-
-
 def _supp_colgroup_whitespace(parser, context, token, fragment_context):
     # Broadened: suppress all character tokens (including whitespace) at the root level of a colgroup fragment.
     # Spec fragment parsing for <colgroup>: character tokens in the colgroup context are generally ignored
@@ -256,7 +241,6 @@ FRAGMENT_SPECS = {
         ignored_start_tags={"html", "title", "meta"},
         suppression_predicates=[
             _supp_doctype,
-            _supp_malformed_select_like,
             _supp_fragment_nonhtml_structure,
         ],
     ),

@@ -2029,6 +2029,7 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
 
     def __init__(self, parser=None):
         super().__init__(parser)
+        self.cloned_options = set()  # Track which options have been cloned to selectedcontent
         # Tracks a table node recently emitted outside a select context so that subsequent
         # formatting elements can be positioned before it if required. Replaces prior
         # dynamic context attribute monkey patching.
@@ -2057,7 +2058,8 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             cur = context.current_parent
             while cur:
                 if cur.tag_name in {"select", "option", "optgroup"}:
-                    return True  # Will suppress in handle_start
+                    self.debug(f"SelectTagHandler: Intercepting malformed tag {tag_name}")
+                    return True  # Will handle in handle_start
                 cur = cur.parent
 
         if (
@@ -2077,6 +2079,11 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         self.debug(
             f"Handling {tag_name} in select context, current_parent={context.current_parent}",
         )
+
+        # Handle malformed tag names containing "<" - insert as normal element
+        if "<" in tag_name and context.current_parent.is_inside_tag(("select", "option", "optgroup")):
+            self.parser.insert_element(token, context, mode="normal")
+            return True
 
         # If we're inside template content, block select semantics entirely. The content filter
         # will represent option/optgroup/select as plain elements without promotion or relocation.
@@ -2384,6 +2391,19 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         )
 
         if tag_name in ("select", "datalist"):
+            # Before closing select, clone any open option to selectedcontent
+            if tag_name == "select":
+                # Check if there's an open option
+                for el in reversed(context.open_elements):
+                    if el.tag_name == "option":
+                        # Move to the option temporarily
+                        saved_parent = context.current_parent
+                        context.move_to_element(el)
+                        self.clone_option_to_selectedcontent(context)
+                        # Move back
+                        context.move_to_element(saved_parent)
+                        break
+
             # Pop open elements stack up to and including the select/datalist; implicitly close option/optgroup
             target = context.current_parent.find_ancestor(tag_name)
             if not target:
@@ -2401,9 +2421,83 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                 self.debug(f"Closed <{tag_name}> (popped including descendants)")
             return True
         if tag_name in ("optgroup", "option"):
+            # For option end tags, clone content into any preceding selectedcontent element
+            if tag_name == "option":
+                self.clone_option_to_selectedcontent(context)
             return self.handle_end_by_ancestor(token, context)
 
         return False
+
+    def clone_option_to_selectedcontent(self, context):
+        """Clone option content into the preceding selectedcontent element."""
+        # Find the option element that's closing
+        option = context.current_parent
+        if option.tag_name != "option":
+            # Current parent might be a descendant of option, find the option ancestor
+            option = context.current_parent.find_ancestor("option")
+
+        if not option:
+            return
+
+        # Check if we've already cloned this option (to avoid double cloning)
+        if id(option) in self.cloned_options:
+            return
+        self.cloned_options.add(id(option))
+
+        # Find the select ancestor
+        select = option.find_ancestor("select")
+        if not select:
+            return
+
+        # Find any selectedcontent element in the select (should be before this option)
+        selectedcontent = None
+        for child in select.children:
+            if child.tag_name == "selectedcontent":
+                selectedcontent = child
+                break
+            # selectedcontent might be nested in button or other elements
+            def find_selectedcontent(node):
+                if node.tag_name == "selectedcontent":
+                    return node
+                for ch in node.children:
+                    result = find_selectedcontent(ch)
+                    if result:
+                        return result
+                return None
+
+            result = find_selectedcontent(child)
+            if result:
+                selectedcontent = result
+                break
+
+        if not selectedcontent:
+            return
+
+        # Clone all children from option to selectedcontent
+        self.debug(f"Cloning option content to selectedcontent: {len(option.children)} children")
+        for child in option.children:
+            cloned = self._deep_clone_node(child)
+            selectedcontent.append_child(cloned)
+
+    def _deep_clone_node(self, node):
+        """Deep clone a node and all its children."""
+        # Clone the node itself
+        cloned = Node(
+            tag_name=node.tag_name,
+            attributes=dict(node.attributes) if node.attributes else {},
+            namespace=node.namespace,
+        )
+
+        # For text nodes, copy the text content
+        if node.tag_name == "#text":
+            cloned.text_content = node.text_content
+
+        # Recursively clone children
+        for child in node.children:
+            cloned_child = self._deep_clone_node(child)
+            cloned.append_child(cloned_child)
+
+        return cloned
 
 
 class ParagraphTagHandler(TagHandler):

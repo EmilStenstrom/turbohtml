@@ -468,6 +468,21 @@ class TurboHTML:
                             if handler.handle_text(data, context):
                                 break
 
+        # At EOF, handle any unclosed option elements for selectedcontent cloning
+        # This is spec-compliant: selectedcontent mirrors the selected option's content
+        for elem in reversed(list(context.open_elements)):
+            if elem.tag_name == "option":
+                # Find SelectTagHandler and call its cloning logic
+                for handler in self.tag_handlers:
+                    if handler.__class__.__name__ == "SelectTagHandler":
+                        # Temporarily move to the option to clone its content
+                        saved_parent = context.current_parent
+                        context.move_to_element(elem)
+                        handler.clone_option_to_selectedcontent(context)
+                        context.move_to_element(saved_parent)
+                        break
+                break  # Only handle the first (innermost) option
+
     def handle_start_tag(self, token, context):
         """Handle all opening HTML tags."""
         tag_name = token.tag_name
