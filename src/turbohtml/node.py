@@ -296,16 +296,26 @@ class Node:
             The matching ancestor Node or None if not found
 
         """
+        # Optimize: check callable once, not in loop
+        is_callable = callable(tag_name_or_predicate)
         current = self
-        while current:
-            if callable(tag_name_or_predicate):
+
+        if is_callable:
+            # Callable predicate path
+            while current:
                 if tag_name_or_predicate(current):
                     return current
-            elif current.tag_name == tag_name_or_predicate:
-                return current
-            if stop_at_boundary and current.tag_name in BOUNDARY_ELEMENTS:
-                return None
-            current = current.parent
+                if stop_at_boundary and current.tag_name in BOUNDARY_ELEMENTS:
+                    return None
+                current = current.parent
+        else:
+            # String tag name path (most common)
+            while current:
+                if current.tag_name == tag_name_or_predicate:
+                    return current
+                if stop_at_boundary and current.tag_name in BOUNDARY_ELEMENTS:
+                    return None
+                current = current.parent
         return None
 
     def remove_child(self, child):

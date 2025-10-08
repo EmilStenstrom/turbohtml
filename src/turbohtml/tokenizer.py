@@ -501,11 +501,14 @@ class HTMLTokenizer:
 
     def _try_tag(self):
         """Try to match a tag at current position."""
-        if not self.html.startswith("<", self.pos):
+        # Inline check - avoid function call overhead
+        pos = self.pos
+        html = self.html
+        if html[pos] != "<":
             return None
 
         self.debug(
-            f"_try_tag: pos={self.pos}, state={self.state}, next_chars={self.html[self.pos : self.pos + 10]!r}",
+            f"_try_tag: pos={pos}, state={self.state}, next_chars={html[pos : pos + 10]!r}",
         )
 
         # HTML5 spec: In the data state, after a '<' we only start tag / markup parsing if the next
@@ -513,49 +516,53 @@ class HTMLTokenizer:
         # '/' (end tag), or '?' (bogus comment / processing instruction). Any other character means
         # the '<' was just literal text and should be emitted as a character token. This prevents
         # inputs like '<#' from being treated as a start tag with name '#'. (bogus tag guard)
-        if self.pos + 1 < self.length:
-            nxt = self.html[self.pos + 1]
+        length = self.length
+        if pos + 1 < length:
+            nxt = html[pos + 1]
             # HTML Standard (Data state): after '<' only letter / '!' / '/' / '?' may begin markup.
             # A space must NOT trigger tag parsing ("< text" => literal '<').
             if not (nxt.isalpha() or nxt in "!/?"):
-                self.pos += 1
+                self.pos = pos + 1
                 return HTMLToken("Character", data="<")
 
         # If this is the last character, treat it as text
-        if self.pos + 1 >= self.length:
-            self.pos += 1
+        if pos + 1 >= length:
+            self.pos = pos + 1
             return HTMLToken("Character", data="<")
 
         # Handle DOCTYPE first (case-insensitive per HTML5 spec)
-        if self.html[self.pos : self.pos + 9].upper() == "<!DOCTYPE":
-            self.pos += 9  # Skip <!DOCTYPE
+        # Optimize: check first character before slice
+        if html[pos + 1] == "!" and html[pos + 2 : pos + 9].upper() == "DOCTYPE":
+            self.pos = pos + 9  # Skip <!DOCTYPE
             # Skip whitespace
-            while self.pos < self.length and self.html[self.pos].isspace():
+            while self.pos < length and html[self.pos].isspace():
                 self.pos += 1
             # Collect DOCTYPE value
             start = self.pos
-            while self.pos < self.length and self.html[self.pos] != ">":
+            while self.pos < length and html[self.pos] != ">":
                 self.pos += 1
-            doctype = self.html[start : self.pos].strip()
-            if self.pos < self.length:  # Skip closing >
+            doctype = html[start : self.pos].strip()
+            if self.pos < length:  # Skip closing >
                 self.pos += 1
             return HTMLToken("DOCTYPE", data=doctype)
         # Recovery: malformed escaped form "<\!doctype" (common author error). Treat as DOCTYPE instead of text
         # so that downstream frameset/body logic sees an early DOCTYPE token and does not prematurely create <body>.
-        if self.html[self.pos : self.pos + 10].lower().startswith("<\\!doctype"):
-            # Skip "<\" then the literal "!doctype"
-            self.pos += 2  # <\
-            if self.html[self.pos : self.pos + 7].lower() == "!doctype":
-                self.pos += 7
-                while self.pos < self.length and self.html[self.pos].isspace():
-                    self.pos += 1
-                start = self.pos
-                while self.pos < self.length and self.html[self.pos] != ">":
-                    self.pos += 1
-                doctype = self.html[start : self.pos].strip()
-                if self.pos < self.length:
-                    self.pos += 1
-                return HTMLToken("DOCTYPE", data=doctype)
+        if pos + 10 <= length:
+            chunk = html[pos : pos + 10].lower()
+            if chunk.startswith("<\\!doctype"):
+                # Skip "<\" then the literal "!doctype"
+                self.pos = pos + 2  # <\
+                if html[self.pos : self.pos + 7].lower() == "!doctype":
+                    self.pos += 7
+                    while self.pos < length and html[self.pos].isspace():
+                        self.pos += 1
+                    start = self.pos
+                    while self.pos < length and html[self.pos] != ">":
+                        self.pos += 1
+                    doctype = html[start : self.pos].strip()
+                    if self.pos < length:
+                        self.pos += 1
+                    return HTMLToken("DOCTYPE", data=doctype)
 
         # Only handle comments in DATA state
         if self.state == "DATA":

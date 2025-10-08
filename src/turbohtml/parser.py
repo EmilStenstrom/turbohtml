@@ -127,6 +127,7 @@ class TurboHTML:
         return f"<TurboHTML root={self.root}>"
 
     def debug(self, *args, indent=4, **kwargs):
+        # Early return before any string formatting - args aren't evaluated if debug is off
         if not self.env_debug:
             return
         print(f"{' ' * indent}{args[0]}", *args[1:], **kwargs)
