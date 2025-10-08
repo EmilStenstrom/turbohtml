@@ -229,13 +229,106 @@ def benchmark_bs4(html_files: list) -> dict:
     }
 
 
+def benchmark_html_parser(html_files: list) -> dict:
+    """Benchmark stdlib html.parser."""
+    try:
+        from html.parser import HTMLParser
+    except ImportError:
+        return {"error": "html.parser not available (stdlib)"}
+
+    # Create a simple parser that just builds the tree
+    class SimpleHTMLParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.data = []
+
+        def handle_starttag(self, tag, attrs):
+            self.data.append(("start", tag, attrs))
+
+        def handle_endtag(self, tag):
+            self.data.append(("end", tag))
+
+        def handle_data(self, data):
+            self.data.append(("data", data))
+
+    times = []
+    errors = 0
+
+    # Warmup run to eliminate first-call overhead
+    if html_files:
+        try:
+            parser = SimpleHTMLParser()
+            parser.feed(html_files[0][1])
+        except Exception:
+            pass
+
+    for _, html in html_files:
+        try:
+            start = time.perf_counter()
+            parser = SimpleHTMLParser()
+            parser.feed(html)
+            elapsed = time.perf_counter() - start
+            times.append(elapsed)
+            # Touch the result to ensure parsing completed
+            _ = parser.data
+        except Exception:
+            errors += 1
+
+    return {
+        "total_time": sum(times),
+        "mean_time": sum(times) / len(times) if times else 0,
+        "min_time": min(times) if times else 0,
+        "max_time": max(times) if times else 0,
+        "errors": errors,
+        "success_count": len(times),
+    }
+
+
+def benchmark_selectolax(html_files: list) -> dict:
+    """Benchmark selectolax parser."""
+    try:
+        from selectolax.parser import HTMLParser
+    except ImportError:
+        return {"error": "selectolax not installed (pip install selectolax)"}
+
+    times = []
+    errors = 0
+
+    # Warmup run to eliminate first-call overhead
+    if html_files:
+        try:
+            HTMLParser(html_files[0][1])
+        except Exception:
+            pass
+
+    for _, html in html_files:
+        try:
+            start = time.perf_counter()
+            result = HTMLParser(html)
+            elapsed = time.perf_counter() - start
+            times.append(elapsed)
+            # Touch the result to ensure parsing completed
+            _ = result.root
+        except Exception:
+            errors += 1
+
+    return {
+        "total_time": sum(times),
+        "mean_time": sum(times) / len(times) if times else 0,
+        "min_time": min(times) if times else 0,
+        "max_time": max(times) if times else 0,
+        "errors": errors,
+        "success_count": len(times),
+    }
+
+
 def print_results(results: dict, file_count: int):
     """Pretty print benchmark results."""
     print("\n" + "=" * 80)
     print(f"BENCHMARK RESULTS ({file_count} HTML files)")
     print("=" * 80)
 
-    parsers = ["turbohtml", "html5lib", "lxml", "bs4"]
+    parsers = ["turbohtml", "html5lib", "lxml", "bs4", "html.parser", "selectolax"]
 
     # Print header
     print(f"\n{'Parser':<15} {'Total (s)':<12} {'Mean (ms)':<12} {'Min (ms)':<12} {'Max (ms)':<12} {'Errors':<8}")
@@ -271,13 +364,13 @@ def print_results(results: dict, file_count: int):
 
     # Print speedup summary
     if turbohtml_time > 0:
-        print("\nSpeedup vs TurboHTML:")
-        for parser in ["html5lib", "lxml", "bs4"]:
+        print("\nTurboHTML vs other parsers:")
+        for parser in ["html5lib", "lxml", "bs4", "html.parser", "selectolax"]:
             if parser in results and "error" not in results[parser]:
                 total = results[parser]["total_time"]
                 if total > 0:
-                    speedup = total / turbohtml_time
-                    print(f"  {parser:<15} {speedup:>6.2f}x {'slower' if speedup > 1 else 'faster'}")
+                    speedup = turbohtml_time / total
+                    print(f"  {parser:<15} {speedup:>6.2f}x {'slower' if speedup < 1 else 'faster'}")
         print()
 
     # Print error details for parsers that had errors
@@ -319,8 +412,8 @@ def main():
     parser.add_argument(
         "--parsers",
         nargs="+",
-        choices=["turbohtml", "html5lib", "lxml", "bs4"],
-        default=["turbohtml", "html5lib", "lxml", "bs4"],
+        choices=["turbohtml", "html5lib", "lxml", "bs4", "html.parser", "selectolax"],
+        default=["turbohtml", "html5lib", "lxml", "bs4", "html.parser", "selectolax"],
         help="Parsers to benchmark (default: all)",
     )
 
@@ -353,6 +446,8 @@ def main():
         "html5lib": benchmark_html5lib,
         "lxml": benchmark_lxml,
         "bs4": benchmark_bs4,
+        "html.parser": benchmark_html_parser,
+        "selectolax": benchmark_selectolax,
     }
 
     for parser_name in args.parsers:
