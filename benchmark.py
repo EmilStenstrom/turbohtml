@@ -74,14 +74,14 @@ def iter_html_from_batch(
     return results
 
 
-def benchmark_turbohtml(html_files: list) -> dict:
+def benchmark_turbohtml(html_files: list, iterations: int = 1) -> dict:
     """Benchmark TurboHTML parser."""
     try:
         from turbohtml import TurboHTML
     except ImportError:
         return {"error": "TurboHTML not importable"}
 
-    times = []
+    all_times = []
     errors = 0
     error_files = []
 
@@ -92,37 +92,38 @@ def benchmark_turbohtml(html_files: list) -> dict:
         except Exception:
             pass
 
-    for filename, html in html_files:
-        try:
-            start = time.perf_counter()
-            result = TurboHTML(html)
-            elapsed = time.perf_counter() - start
-            times.append(elapsed)
-            # Touch the result to ensure parsing completed
-            _ = result.root
-        except Exception as e:
-            errors += 1
-            error_files.append((filename, str(e)))
+    for _ in range(iterations):
+        for filename, html in html_files:
+            try:
+                start = time.perf_counter()
+                result = TurboHTML(html)
+                elapsed = time.perf_counter() - start
+                all_times.append(elapsed)
+                # Touch the result to ensure parsing completed
+                _ = result.root
+            except Exception as e:
+                errors += 1
+                error_files.append((filename, str(e)))
 
     return {
-        "total_time": sum(times),
-        "mean_time": sum(times) / len(times) if times else 0,
-        "min_time": min(times) if times else 0,
-        "max_time": max(times) if times else 0,
+        "total_time": sum(all_times),
+        "mean_time": sum(all_times) / len(all_times) if all_times else 0,
+        "min_time": min(all_times) if all_times else 0,
+        "max_time": max(all_times) if all_times else 0,
         "errors": errors,
-        "success_count": len(times),
+        "success_count": len(all_times),
         "error_files": error_files,
     }
 
 
-def benchmark_html5lib(html_files: list) -> dict:
+def benchmark_html5lib(html_files: list, iterations: int = 1) -> dict:
     """Benchmark html5lib parser."""
     try:
         import html5lib
     except ImportError:
         return {"error": "html5lib not installed (pip install html5lib)"}
 
-    times = []
+    all_times = []
     errors = 0
 
     # Warmup run to eliminate first-call overhead
@@ -132,28 +133,29 @@ def benchmark_html5lib(html_files: list) -> dict:
         except Exception:
             pass
 
-    for _, html in html_files:
-        try:
-            start = time.perf_counter()
-            result = html5lib.parse(html)
-            elapsed = time.perf_counter() - start
-            times.append(elapsed)
-            # Touch the result to ensure parsing completed
-            _ = result
-        except Exception:
-            errors += 1
+    for _ in range(iterations):
+        for _, html in html_files:
+            try:
+                start = time.perf_counter()
+                result = html5lib.parse(html)
+                elapsed = time.perf_counter() - start
+                all_times.append(elapsed)
+                # Touch the result to ensure parsing completed
+                _ = result
+            except Exception:
+                errors += 1
 
     return {
-        "total_time": sum(times),
-        "mean_time": sum(times) / len(times) if times else 0,
-        "min_time": min(times) if times else 0,
-        "max_time": max(times) if times else 0,
+        "total_time": sum(all_times),
+        "mean_time": sum(all_times) / len(all_times) if all_times else 0,
+        "min_time": min(all_times) if all_times else 0,
+        "max_time": max(all_times) if all_times else 0,
         "errors": errors,
-        "success_count": len(times),
+        "success_count": len(all_times),
     }
 
 
-def benchmark_lxml(html_files: list) -> dict:
+def benchmark_lxml(html_files: list, iterations: int = 1) -> dict:
     """Benchmark lxml parser."""
     try:
         from lxml import html as lxml_html
@@ -170,16 +172,17 @@ def benchmark_lxml(html_files: list) -> dict:
         except Exception:
             pass
 
-    for _, content in html_files:
-        try:
-            start = time.perf_counter()
-            result = lxml_html.fromstring(content)
-            elapsed = time.perf_counter() - start
-            times.append(elapsed)
-            # Touch the result to ensure parsing completed
-            _ = result
-        except Exception:
-            errors += 1
+    for _ in range(iterations):
+        for _, content in html_files:
+            try:
+                start = time.perf_counter()
+                result = lxml_html.fromstring(content)
+                elapsed = time.perf_counter() - start
+                times.append(elapsed)
+                # Touch the result to ensure parsing completed
+                _ = result
+            except Exception:
+                errors += 1
 
     return {
         "total_time": sum(times),
@@ -191,7 +194,7 @@ def benchmark_lxml(html_files: list) -> dict:
     }
 
 
-def benchmark_bs4(html_files: list) -> dict:
+def benchmark_bs4(html_files: list, iterations: int = 1) -> dict:
     """Benchmark BeautifulSoup4 parser."""
     try:
         from bs4 import BeautifulSoup
@@ -208,16 +211,17 @@ def benchmark_bs4(html_files: list) -> dict:
         except Exception:
             pass
 
-    for _, html in html_files:
-        try:
-            start = time.perf_counter()
-            result = BeautifulSoup(html, "html.parser")
-            elapsed = time.perf_counter() - start
-            times.append(elapsed)
-            # Touch the result to ensure parsing completed
-            _ = result.name
-        except Exception:
-            errors += 1
+    for _ in range(iterations):
+        for _, html in html_files:
+            try:
+                start = time.perf_counter()
+                result = BeautifulSoup(html, "html.parser")
+                elapsed = time.perf_counter() - start
+                times.append(elapsed)
+                # Touch the result to ensure parsing completed
+                _ = result.name
+            except Exception:
+                errors += 1
 
     return {
         "total_time": sum(times),
@@ -229,7 +233,7 @@ def benchmark_bs4(html_files: list) -> dict:
     }
 
 
-def benchmark_html_parser(html_files: list) -> dict:
+def benchmark_html_parser(html_files: list, iterations: int = 1) -> dict:
     """Benchmark stdlib html.parser."""
     try:
         from html.parser import HTMLParser
@@ -262,17 +266,18 @@ def benchmark_html_parser(html_files: list) -> dict:
         except Exception:
             pass
 
-    for _, html in html_files:
-        try:
-            start = time.perf_counter()
-            parser = SimpleHTMLParser()
-            parser.feed(html)
-            elapsed = time.perf_counter() - start
-            times.append(elapsed)
-            # Touch the result to ensure parsing completed
-            _ = parser.data
-        except Exception:
-            errors += 1
+    for _ in range(iterations):
+        for _, html in html_files:
+            try:
+                start = time.perf_counter()
+                parser = SimpleHTMLParser()
+                parser.feed(html)
+                elapsed = time.perf_counter() - start
+                times.append(elapsed)
+                # Touch the result to ensure parsing completed
+                _ = parser.data
+            except Exception:
+                errors += 1
 
     return {
         "total_time": sum(times),
@@ -284,7 +289,7 @@ def benchmark_html_parser(html_files: list) -> dict:
     }
 
 
-def benchmark_selectolax(html_files: list) -> dict:
+def benchmark_selectolax(html_files: list, iterations: int = 1) -> dict:
     """Benchmark selectolax parser."""
     try:
         from selectolax.parser import HTMLParser
@@ -301,16 +306,17 @@ def benchmark_selectolax(html_files: list) -> dict:
         except Exception:
             pass
 
-    for _, html in html_files:
-        try:
-            start = time.perf_counter()
-            result = HTMLParser(html)
-            elapsed = time.perf_counter() - start
-            times.append(elapsed)
-            # Touch the result to ensure parsing completed
-            _ = result.root
-        except Exception:
-            errors += 1
+    for _ in range(iterations):
+        for _, html in html_files:
+            try:
+                start = time.perf_counter()
+                result = HTMLParser(html)
+                elapsed = time.perf_counter() - start
+                times.append(elapsed)
+                # Touch the result to ensure parsing completed
+                _ = result.root
+            except Exception:
+                errors += 1
 
     return {
         "total_time": sum(times),
@@ -322,16 +328,22 @@ def benchmark_selectolax(html_files: list) -> dict:
     }
 
 
-def print_results(results: dict, file_count: int):
+def print_results(results: dict, file_count: int, iterations: int = 1):
     """Pretty print benchmark results."""
     print("\n" + "=" * 80)
-    print(f"BENCHMARK RESULTS ({file_count} HTML files)")
+    if iterations > 1:
+        print(f"BENCHMARK RESULTS ({file_count} HTML files x {iterations} iterations)")
+    else:
+        print(f"BENCHMARK RESULTS ({file_count} HTML files)")
     print("=" * 80)
 
     parsers = ["turbohtml", "html5lib", "lxml", "bs4", "html.parser", "selectolax"]
 
     # Print header
-    print(f"\n{'Parser':<15} {'Total (s)':<12} {'Mean (ms)':<12} {'Min (ms)':<12} {'Max (ms)':<12} {'Errors':<8}")
+    if iterations > 1:
+        print(f"\n{'Parser':<15} {'Total (s)':<12} {'Per iter (s)':<13} {'Mean (ms)':<12} {'Errors':<8}")
+    else:
+        print(f"\n{'Parser':<15} {'Total (s)':<12} {'Mean (ms)':<12} {'Min (ms)':<12} {'Max (ms)':<12} {'Errors':<8}")
     print("-" * 80)
 
     # Collect times for speedup calculation
@@ -358,7 +370,11 @@ def print_results(results: dict, file_count: int):
             speedup_factor = total / turbohtml_time
             speedup = f" ({speedup_factor:.2f}x)"
 
-        print(f"{parser:<15} {total:<12.3f} {mean_ms:<12.3f} {min_ms:<12.3f} {max_ms:<12.3f} {errors:<8}{speedup}")
+        if iterations > 1:
+            per_iter = total / iterations
+            print(f"{parser:<15} {total:<12.3f} {per_iter:<13.3f} {mean_ms:<12.3f} {errors:<8}{speedup}")
+        else:
+            print(f"{parser:<15} {total:<12.3f} {mean_ms:<12.3f} {min_ms:<12.3f} {max_ms:<12.3f} {errors:<8}{speedup}")
 
     print("\n" + "=" * 80)
 
@@ -410,6 +426,12 @@ def main():
         help="Limit number of files to test (default: 100, use 0 for all)",
     )
     parser.add_argument(
+        "--iterations",
+        type=int,
+        default=5,
+        help="Number of iterations to run for averaging (default: 3)",
+    )
+    parser.add_argument(
         "--parsers",
         nargs="+",
         choices=["turbohtml", "html5lib", "lxml", "bs4", "html.parser", "selectolax"],
@@ -452,14 +474,14 @@ def main():
 
     for parser_name in args.parsers:
         print(f"\nBenchmarking {parser_name}...", end="", flush=True)
-        results[parser_name] = benchmarks[parser_name](html_files)
+        results[parser_name] = benchmarks[parser_name](html_files, args.iterations)
         if "error" in results[parser_name]:
             print(f" SKIPPED ({results[parser_name]['error']})")
         else:
             print(f" DONE ({results[parser_name]['total_time']:.3f}s)")
 
     # Print results
-    print_results(results, len(html_files))
+    print_results(results, len(html_files), args.iterations)
 
 
 if __name__ == "__main__":
