@@ -1,4 +1,4 @@
-import html  # Add to top of file
+import html
 import re
 
 from turbohtml.constants import (
@@ -8,21 +8,16 @@ from turbohtml.constants import (
     VOID_ELEMENTS,
 )
 
-# NUMERIC_ENTITY_INVALID_SENTINEL imported from constants (see constants.NUMERIC_ENTITY_INVALID_SENTINEL)
-
 TAG_OPEN_RE = re.compile(r"<(!?)(/)?([^\s/>]+)([^>]*)>")
 TAG_NAME_RE = re.compile(r"<(!?)(/)?([^\s/>]+)")
-# Attribute name: any run of characters excluding whitespace, '=', '/', '>' (allows '<', quotes, backticks, backslashes)
-# NOTE: We allow '>' inside quoted attribute values; initial regex match may terminate early at a '>' inside quotes.
-# We post-process below when attribute quotes are unbalanced to continue scanning until the real closing '>'.
-# Attribute parsing regex:
-# - Attribute name: one or more non whitespace/=/> characters
-# - Optional value: = followed by double-quoted, single-quoted, or unquoted run (up to whitespace, '>', or '/')
-# - Lookahead now also permits a trailing '/' so constructs like id='foo'/ are tokenized as id="foo" with a
-#   separate trailing slash considered by self-closing detection logic instead of being folded into the value.
 ATTR_RE = re.compile(
     r'([^\s=/>]+)(?:\s*=\s*"([^"]*)"|\s*=\s*\'([^\']*)\'|\s*=\s*([^>\s]+)|)(?=\s|$|/|>)',
 )
+
+WHITESPACE_RE = re.compile(r'\s+')
+TAG_CHARS_RE = re.compile(r'[a-zA-Z]+')
+ATTR_CHARS_RE = re.compile(r'[^\s=>]+')
+UNTIL_GT_RE = re.compile(r'[^>]*')
 
 
 class HTMLToken:
@@ -177,13 +172,14 @@ class HTMLTokenizer:
         if self.html.startswith("</", self.pos):
             self.debug("  found </: checking for script end tag")
             tag_start = self.pos + 2
-            i = tag_start
-            potential_tag = ""
 
-            # Collect tag name
-            while i < self.length and self.html[i].isascii() and self.html[i].isalpha():
-                potential_tag += self.html[i].lower()
-                i += 1
+            match = TAG_CHARS_RE.match(self.html, tag_start)
+            if match:
+                potential_tag = match.group(0).lower()
+                i = match.end()
+            else:
+                potential_tag = ""
+                i = tag_start
 
             self.debug(f"  potential_tag={potential_tag!r}")
 
@@ -423,29 +419,30 @@ class HTMLTokenizer:
         if self.html.startswith("</", self.pos):
             self.debug("  found </: looking for end tag")
             tag_start = self.pos + 2
-            i = tag_start
-            potential_tag = ""
 
-            # Collect tag name
-            while i < self.length and self.html[i].isascii() and self.html[i].isalpha():
-                potential_tag += self.html[i].lower()
-                i += 1
+            match = TAG_CHARS_RE.match(self.html, tag_start)
+            if match:
+                potential_tag = match.group(0).lower()
+                i = match.end()
+            else:
+                potential_tag = ""
+                i = tag_start
 
             self.debug(
                 f"  potential_tag={potential_tag!r}, rawtext_tag={self.rawtext_tag!r}",
             )
 
-            # Skip whitespace
-            while i < self.length and self.html[i].isspace():
-                i += 1
+            ws_match = WHITESPACE_RE.match(self.html, i)
+            if ws_match:
+                i = ws_match.end()
 
             # Skip any "/" characters (self-closing syntax on end tags should be ignored)
             while i < self.length and self.html[i] == "/":
                 i += 1
 
-            # Skip more whitespace after /
-            while i < self.length and self.html[i].isspace():
-                i += 1
+            ws_match = WHITESPACE_RE.match(self.html, i)
+            if ws_match:
+                i = ws_match.end()
 
             # Check if it's our end tag
             if (
@@ -538,32 +535,33 @@ class HTMLTokenizer:
             chunk = html[pos + 2 : pos + 9]
             if chunk.upper() == "DOCTYPE":
                 self.pos = pos + 9  # Skip <!DOCTYPE
-                # Skip whitespace
-                while self.pos < length and html[self.pos].isspace():
-                    self.pos += 1
-                # Collect DOCTYPE value
-                start = self.pos
-                while self.pos < length and html[self.pos] != ">":
-                    self.pos += 1
-                doctype = html[start : self.pos].strip()
-                if self.pos < length:  # Skip closing >
-                    self.pos += 1
+                ws_match = WHITESPACE_RE.match(html, self.pos)
+                if ws_match:
+                    self.pos = ws_match.end()
+                gt_pos = html.find(">", self.pos)
+                if gt_pos == -1:
+                    doctype = html[self.pos:].strip()
+                    self.pos = length
+                else:
+                    doctype = html[self.pos:gt_pos].strip()
+                    self.pos = gt_pos + 1
                 return HTMLToken("DOCTYPE", data=doctype)
         # Recovery: malformed escaped form "<\!doctype" (common author error). Treat as DOCTYPE instead of text
         # so that downstream frameset/body logic sees an early DOCTYPE token and does not prematurely create <body>.
         if pos + 10 <= length and html[pos : pos + 3] == "<\\!":
             chunk = html[pos + 3 : pos + 10]
             if chunk.upper() == "DOCTYPE":
-                # Skip "<\" then the literal "!doctype"
                 self.pos = pos + 10
-                while self.pos < length and html[self.pos].isspace():
-                    self.pos += 1
-                start = self.pos
-                while self.pos < length and html[self.pos] != ">":
-                    self.pos += 1
-                doctype = html[start : self.pos].strip()
-                if self.pos < length:
-                    self.pos += 1
+                ws_match = WHITESPACE_RE.match(html, self.pos)
+                if ws_match:
+                    self.pos = ws_match.end()
+                gt_pos = html.find(">", self.pos)
+                if gt_pos == -1:
+                    doctype = html[self.pos:].strip()
+                    self.pos = length
+                else:
+                    doctype = html[self.pos:gt_pos].strip()
+                    self.pos = gt_pos + 1
                 return HTMLToken("DOCTYPE", data=doctype)
 
         # Only handle comments in DATA state
@@ -806,14 +804,13 @@ class HTMLTokenizer:
         if html[start] == "<":
             return None
 
-        # Find end of text (next '<' or end of string)
-        pos = start
-        length = self.length
-        while pos < length and html[pos] != "<":
-            pos += 1
-
-        self.pos = pos
-        text = html[start:pos]
+        next_lt = html.find("<", start)
+        if next_lt == -1:
+            self.pos = self.length
+            text = html[start:]
+        else:
+            self.pos = next_lt
+            text = html[start:next_lt]
 
         # Only emit non-empty text tokens
         if not text:
@@ -971,31 +968,23 @@ class HTMLTokenizer:
             self.pos += 2  # Skip ->
             return HTMLToken("Comment", data="")
 
-        # Look for end of comment
-        while self.pos + 2 < self.length:
-            if self.html[self.pos : self.pos + 3] == "-->":
-                comment_text = self.html[start : self.pos]
-                comment_text = self._replace_invalid_characters(comment_text)
-                self.pos += 3  # Skip -->
-                return HTMLToken("Comment", data=comment_text)
-            # Handle --!> ending (spec says to ignore the !)
-            if (
-                self.pos + 3 < self.length
-                and self.html[self.pos : self.pos + 2] == "--"
-                and self.html[self.pos + 2] == "!"
-                and self.html[self.pos + 3] == ">"
-            ):
-                comment_text = self.html[start : self.pos]
-                comment_text = self._replace_invalid_characters(comment_text)
-                self.pos += 4  # Skip --!>
-                return HTMLToken("Comment", data=comment_text)
-            self.pos += 1
+        end_pos = self.html.find("-->", self.pos)
+        if end_pos != -1:
+            comment_text = self.html[start:end_pos]
+            comment_text = self._replace_invalid_characters(comment_text)
+            self.pos = end_pos + 3
+            return HTMLToken("Comment", data=comment_text)
 
-        # If we reach here, no proper end to comment was found
+        end_pos = self.html.find("--!>", self.pos)
+        if end_pos != -1:
+            comment_text = self.html[start:end_pos]
+            comment_text = self._replace_invalid_characters(comment_text)
+            self.pos = end_pos + 4
+            return HTMLToken("Comment", data=comment_text)
+
         comment_text = self.html[start:]
         comment_text = self._replace_invalid_characters(comment_text)
 
-        # Special case: if comment ends with --, remove them and add a space
         if comment_text.endswith("--"):
             comment_text = comment_text[:-2]
 
