@@ -424,8 +424,8 @@ class TurboHTML:
         if self.use_rust:
             try:
                 from rust_tokenizer import RustTokenizer
-                self.tokenizer = None  # Rust tokenizer doesn't expose mutable state
-                tokens = RustTokenizer(html)
+                self.tokenizer = RustTokenizer(html, debug=self.env_debug)
+                tokens = self.tokenizer
             except ImportError:
                 self.debug("Rust tokenizer not available, falling back to Python tokenizer")
                 self.tokenizer = HTMLTokenizer(html)

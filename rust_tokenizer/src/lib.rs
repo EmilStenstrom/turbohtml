@@ -1,137 +1,116 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule};
-use indexmap::IndexMap;
-use std::sync::OnceLock;
-
-// Shared empty IndexMap to avoid allocations for tokens without attributes
-static EMPTY_ATTRS: OnceLock<IndexMap<String, String>> = OnceLock::new();
-
-fn get_empty_attrs() -> &'static IndexMap<String, String> {
-    EMPTY_ATTRS.get_or_init(|| IndexMap::new())
-}
+use pyo3::types::PyModule;
+use std::collections::HashMap;
 
 #[pyclass]
-struct HTMLToken {
+#[derive(Clone)]
+pub struct HTMLToken {
     #[pyo3(get, set)]
-    type_: String,
+    pub type_: String,
     #[pyo3(get, set)]
-    data: String,
+    pub data: String,
     #[pyo3(get, set)]
-    tag_name: String,
-    // Internal storage as IndexMap (preserves order)
-    attributes_map: IndexMap<String, String>,
+    pub tag_name: String,
     #[pyo3(get, set)]
-    is_self_closing: bool,
+    pub attributes: HashMap<String, String>,
     #[pyo3(get, set)]
-    is_last_token: bool,
+    pub is_self_closing: bool,
     #[pyo3(get, set)]
-    needs_rawtext: bool,
+    pub is_last_token: bool,
     #[pyo3(get, set)]
-    ignored_end_tag: bool,
+    pub needs_rawtext: bool,
+    #[pyo3(get, set)]
+    pub ignored_end_tag: bool,
 }
 
 #[pymethods]
 impl HTMLToken {
     #[new]
-    #[pyo3(signature = (type_, data="".to_string(), tag_name="".to_string(), attributes=None, is_self_closing=false, is_last_token=false, needs_rawtext=false))]
-    fn new(
-        py: Python,
+    #[pyo3(signature = (type_, data=None, tag_name=None, attributes=None, is_self_closing=None, is_last_token=None, needs_rawtext=None))]
+    fn py_new(
         type_: String,
-        data: String,
-        tag_name: String,
-        attributes: Option<Bound<'_, PyDict>>,
-        is_self_closing: bool,
-        is_last_token: bool,
-        needs_rawtext: bool,
-    ) -> PyResult<Self> {
-        let mut attributes_map = IndexMap::new();
-        if let Some(dict) = attributes {
-            for (key, value) in dict.iter() {
-                attributes_map.insert(
-                    key.extract::<String>()?,
-                    value.extract::<String>()?,
-                );
-            }
-        }
-
-        Ok(HTMLToken {
+        data: Option<String>,
+        tag_name: Option<String>,
+        attributes: Option<HashMap<String, String>>,
+        is_self_closing: Option<bool>,
+        is_last_token: Option<bool>,
+        needs_rawtext: Option<bool>,
+    ) -> Self {
+        HTMLToken {
             type_,
-            data,
-            tag_name: tag_name.to_lowercase(),
-            attributes_map,
-            is_self_closing,
-            is_last_token,
-            needs_rawtext,
+            data: data.unwrap_or_default(),
+            tag_name: tag_name.unwrap_or_default().to_lowercase(),
+            attributes: attributes.unwrap_or_default(),
+            is_self_closing: is_self_closing.unwrap_or(false),
+            is_last_token: is_last_token.unwrap_or(false),
+            needs_rawtext: needs_rawtext.unwrap_or(false),
             ignored_end_tag: false,
-        })
-    }
-
-    #[getter]
-    fn attributes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let dict = PyDict::new(py);
-        for (key, value) in &self.attributes_map {
-            dict.set_item(key, value)?;
         }
-        Ok(dict)
-    }
-
-    #[setter]
-    fn set_attributes(&mut self, py: Python, dict: Bound<'_, PyDict>) -> PyResult<()> {
-        self.attributes_map.clear();
-        for (key, value) in dict.iter() {
-            self.attributes_map.insert(
-                key.extract::<String>()?,
-                value.extract::<String>()?,
-            );
-        }
-        Ok(())
     }
 
     fn __repr__(&self) -> String {
         match self.type_.as_str() {
-            "Character" => {
+            "Character" | "Comment" => {
                 let preview: String = self.data.chars().take(20).collect();
                 let suffix = if self.data.len() > 20 { "..." } else { "" };
                 format!("<{}: '{}{}'>", self.type_, preview, suffix)
             }
-            "Comment" => {
-                let preview: String = self.data.chars().take(20).collect();
-                let suffix = if self.data.len() > 20 { "..." } else { "" };
-                format!("<{}: '{}{}'>", self.type_, preview, suffix)
-            }
-            _ => format!("<{}: {}>", self.type_, if !self.tag_name.is_empty() { &self.tag_name } else { &self.data }),
+            _ => format!(
+                "<{}: {}>",
+                self.type_,
+                if !self.tag_name.is_empty() {
+                    &self.tag_name
+                } else {
+                    &self.data
+                }
+            ),
         }
     }
 
+    // Compatibility property for Python code that uses .type instead of .type_
+    #[pyo3(name = "type")]
     #[getter]
-    fn r#type(&self) -> String {
+    fn get_type(&self) -> String {
         self.type_.clone()
     }
 }
 
+
 #[pyclass]
-struct RustTokenizer {
+pub struct RustTokenizer {
     html: String,
+    length: usize,
     pos: usize,
-    len: usize,
-    debug: bool,
-    state: String,  // "DATA", "RAWTEXT", or "PLAINTEXT"
-    rawtext_tag: String,
+    state: String,
+    rawtext_tag: Option<String>,
+    last_pos: usize,
+    env_debug: bool,
+    script_content: String,
+    script_non_executable: bool,
+    script_suppressed_end_once: bool,
+    script_type_value: String,
+    pending_tokens: Vec<HTMLToken>,
 }
 
 #[pymethods]
 impl RustTokenizer {
     #[new]
     #[pyo3(signature = (html, debug=false))]
-    fn new(html: String, debug: bool) -> Self {
-        let len = html.len();
+    fn py_new(html: String, debug: bool) -> Self {
+        let length = html.len();
         RustTokenizer {
             html,
+            length,
             pos: 0,
-            len,
-            debug,
             state: "DATA".to_string(),
-            rawtext_tag: String::new(),
+            rawtext_tag: None,
+            last_pos: length,
+            env_debug: debug,
+            script_content: String::new(),
+            script_non_executable: false,
+            script_suppressed_end_once: false,
+            script_type_value: String::new(),
+            pending_tokens: Vec::new(),
         }
     }
 
@@ -140,544 +119,1214 @@ impl RustTokenizer {
     }
 
     fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<HTMLToken>> {
-        if slf.pos >= slf.len {
-            return Ok(None);
-        }
-
-        // Handle PLAINTEXT mode - consume everything remaining
-        if slf.state == "PLAINTEXT" {
-            let remaining = slf.html[slf.pos..].to_string();
-            slf.pos = slf.len;
-
-            // Decode entities in plaintext content
-            let decoded = Python::with_gil(|py| {
-                let html_module = PyModule::import(py, "html")?;
-                let unescape = html_module.getattr("unescape")?;
-                let result = unescape.call1((remaining,))?;
-                result.extract::<String>()
-            })?;
-
-            return Ok(Some(RustTokenizer::new_token(
-                "Character".to_string(),
-                decoded,
-                String::new(),
-                None,
-                false,
-                true,  // is_last_token
-            )));
-        }
-
-        // Handle RAWTEXT mode (script, style, etc.)
-        if slf.state == "RAWTEXT" {
-            if let Some(token) = slf.try_rawtext_end()? {
+        loop {
+            // Yield pending tokens first
+            if !slf.pending_tokens.is_empty() {
+                let mut token = slf.pending_tokens.remove(0);
+                slf.debug(&format!("PENDING token: {}", token.type_));
+                token.is_last_token = slf.pos >= slf.last_pos && slf.pending_tokens.is_empty();
                 return Ok(Some(token));
             }
-        }
 
-        // Try to parse a tag
-        if slf.current_char() == Some('<') {
-            match slf.try_tag()? {
-                Some(token) => return Ok(Some(token)),
-                None => {
-                    // Invalid tag - consume the '<' as character data and continue
-                    slf.pos += 1;
-                    let text = "<".to_string();
-                    return Ok(Some(RustTokenizer::new_token(
-                        "Character".to_string(),
-                        text,
-                        String::new(),
-                        None,
-                        false,
-                        false,
-                    )));
+            if slf.pos >= slf.length {
+                return Ok(None);
+            }
+
+            slf.debug(&format!(
+                "tokenize: pos={}, state={}, char={:?}",
+                slf.pos,
+                slf.state,
+                slf.current_char()
+            ));
+
+            match slf.state.as_str() {
+                "DATA" => {
+                    let token = slf.try_tag()?.or_else(|| slf.try_text());
+                    if let Some(mut token) = token {
+                        slf.debug(&format!("DATA token: {}", token.type_));
+                        token.is_last_token = slf.pos >= slf.last_pos;
+                        return Ok(Some(token));
+                    } else if slf.pos < slf.length {
+                        slf.pos += 1;
+                        // Continue loop
+                    } else {
+                        return Ok(None);
+                    }
                 }
+                "RAWTEXT" => {
+                    if let Some(mut token) = slf.tokenize_rawtext()? {
+                        slf.debug(&format!("RAWTEXT token: {}", token.type_));
+                        token.is_last_token = slf.pos >= slf.last_pos;
+                        return Ok(Some(token));
+                    } else {
+                        return Ok(None);
+                    }
+                }
+                "PLAINTEXT" => {
+                    if slf.pos < slf.length {
+                        let raw = &slf.html[slf.pos..];
+                        let data = slf.replace_invalid_characters(raw);
+                        slf.pos = slf.length;
+                        let token = HTMLToken::py_new(
+                            "Character".to_string(),
+                            Some(data),
+                            None,
+                            None,
+                            None,
+                            Some(true),
+                            None,
+                        );
+                        return Ok(Some(token));
+                    } else {
+                        return Ok(None);
+                    }
+                }
+                _ => return Ok(None),
             }
         }
+    }
 
-        // Otherwise, consume character data
-        Ok(Some(slf.consume_character_data()?))
+    fn start_rawtext(&mut self, tag_name: String) {
+        self.state = "RAWTEXT".to_string();
+        self.rawtext_tag = Some(tag_name.to_lowercase());
+        if self.rawtext_tag.as_deref() == Some("script") {
+            self.script_content.clear();
+        }
+    }
+
+    fn start_plaintext(&mut self) {
+        self.state = "PLAINTEXT".to_string();
+        self.rawtext_tag = None;
+    }
+
+    #[getter]
+    fn state(&self) -> String {
+        self.state.clone()
+    }
+
+    #[setter]
+    fn set_state(&mut self, state: String) {
+        self.state = state;
+    }
+
+    #[getter]
+    fn rawtext_tag(&self) -> Option<String> {
+        self.rawtext_tag.clone()
+    }
+
+    #[setter]
+    fn set_rawtext_tag(&mut self, tag: Option<String>) {
+        self.rawtext_tag = tag;
     }
 }
 
+// Implementation methods (not exposed to Python)
 impl RustTokenizer {
-    // Helper to create tokens with IndexMap attributes directly (internal use)
-    fn new_token(
-        type_: String,
-        data: String,
-        tag_name: String,
-        attributes: Option<IndexMap<String, String>>,
-        is_self_closing: bool,
-        needs_rawtext: bool,
-    ) -> HTMLToken {
-        HTMLToken {
-            type_,
-            data,
-            tag_name: tag_name.to_lowercase(),
-            attributes_map: attributes.unwrap_or_default(),
-            is_self_closing,
-            is_last_token: false,
-            needs_rawtext,
-            ignored_end_tag: false,
-        }
-    }
-
-    #[inline(always)]
-    fn current_byte(&self) -> Option<u8> {
-        self.html.as_bytes().get(self.pos).copied()
-    }
-
     fn current_char(&self) -> Option<char> {
-        self.current_byte().map(|b| b as char)
+        self.html[self.pos..].chars().next()
     }
 
-    fn peek_char(&self, offset: usize) -> Option<char> {
-        self.html.as_bytes().get(self.pos + offset).map(|&b| b as char)
-    }
-
-    #[inline(always)]
-    fn consume_char(&mut self) -> Option<char> {
-        if self.pos < self.len {
-            self.pos += 1;
-            Some(self.html.as_bytes()[self.pos - 1] as char)
-        } else {
-            None
+    fn debug(&self, msg: &str) {
+        if self.env_debug {
+            println!("    {}", msg);
         }
     }
 
-    fn try_rawtext_end(&mut self) -> PyResult<Option<HTMLToken>> {
-        // Look for </script>, </style>, etc.
-        let remaining = &self.html[self.pos..];
-        let end_tag_prefix = format!("</{}", self.rawtext_tag);
-
-        if let Some(idx) = remaining.find(&end_tag_prefix) {
-            // Check if this is actually an end tag (followed by space, '/', or '>')
-            let check_pos = idx + end_tag_prefix.len();
-            let is_valid_end = if check_pos < remaining.len() {
-                let next_char = remaining.as_bytes()[check_pos] as char;
-                next_char.is_whitespace() || next_char == '>' || next_char == '/'
-            } else {
-                // At EOF after </tagname - treat as end tag
-                true
-            };
-
-            if is_valid_end {
-                // Consume text before the end tag
-                if idx > 0 {
-                    let text = remaining[..idx].to_string();
-                    self.pos += idx;
-                    return Ok(Some(Self::new_token(
-                        "Character".to_string(),
-                        text,
-                        String::new(),
-                        None,
-                        false,
-                        false,
-                    )));
+    fn replace_invalid_characters(&self, text: &str) -> String {
+        text.chars()
+            .map(|ch| {
+                let code = ch as u32;
+                if code == 0x00
+                    || (0x01..=0x1F).contains(&code)
+                        && !matches!(ch, '\t' | '\n' | '\r' | '\x0C')
+                {
+                    '\u{FFFD}'
+                } else {
+                    ch
                 }
-                // Parse the end tag
-                self.state = "DATA".to_string();
-                self.rawtext_tag.clear();
-                return self.try_tag();
-            } else {
-                // False match - continue looking or consume as text
-                // For simplicity, consume up to the false match + the prefix
-                let consume_len = idx + end_tag_prefix.len();
-                if consume_len < remaining.len() {
-                    let text = remaining[..consume_len].to_string();
-                    self.pos += consume_len;
-                    return Ok(Some(Self::new_token(
-                        "Character".to_string(),
-                        text,
-                        String::new(),
-                        None,
-                        false,
-                        false,
-                    )));
+            })
+            .collect()
+    }
+
+    fn decode_entities(&self, text: &str) -> String {
+        // Full HTML5 entity decoding matching Python tokenizer
+        if !text.contains('&') {
+            return text.to_string();
+        }
+
+        // Use Python's html.unescape for complete entity handling
+        Python::with_gil(|py| {
+            // Import constants module to get NUMERIC_ENTITY_INVALID_SENTINEL
+            let constants = PyModule::import(py, "turbohtml.constants").ok();
+            let sentinel = constants
+                .and_then(|m| m.getattr("NUMERIC_ENTITY_INVALID_SENTINEL").ok())
+                .and_then(|s| s.extract::<String>().ok())
+                .unwrap_or_else(|| "\u{f000}".to_string());
+
+            // Call Python's tokenizer decode logic
+            let tokenizer_mod = PyModule::import(py, "turbohtml.tokenizer").ok();
+            if let Some(tok_mod) = tokenizer_mod {
+                // Get _codepoint_to_char function
+                if let Ok(codepoint_fn) = tok_mod.getattr("_codepoint_to_char") {
+                    // Implement numeric entity parsing
+                    let mut result = String::new();
+                    let chars: Vec<char> = text.chars().collect();
+                    let mut i = 0;
+
+                    while i < chars.len() {
+                        if chars[i] != '&' {
+                            result.push(chars[i]);
+                            i += 1;
+                            continue;
+                        }
+
+                        // Check for numeric entity &#...
+                        if i + 1 < chars.len() && chars[i + 1] == '#' {
+                            let mut j = i + 2;
+                            let is_hex = j < chars.len() && (chars[j] == 'x' || chars[j] == 'X');
+
+                            if is_hex {
+                                j += 1;
+                            }
+
+                            let start_digits = j;
+                            if is_hex {
+                                while j < chars.len() && chars[j].is_ascii_hexdigit() {
+                                    j += 1;
+                                }
+                            } else {
+                                while j < chars.len() && chars[j].is_ascii_digit() {
+                                    j += 1;
+                                }
+                            }
+
+                            let digits: String = chars[start_digits..j].iter().collect();
+                            if !digits.is_empty() {
+                                let has_semicolon = j < chars.len() && chars[j] == ';';
+                                if has_semicolon {
+                                    j += 1;
+                                }
+
+                                let base = if is_hex { 16 } else { 10 };
+                                if let Ok(codepoint) = u32::from_str_radix(&digits, base) {
+                                    // Call Python's _codepoint_to_char for proper handling
+                                    if let Ok(py_result) = codepoint_fn.call1((codepoint,)) {
+                                        if let Ok(decoded_char) = py_result.extract::<String>() {
+                                            // Check if it's the invalid sentinel
+                                            if decoded_char == "\u{fffd}" {
+                                                result.push_str(&sentinel);
+                                            } else {
+                                                result.push_str(&decoded_char);
+                                            }
+                                        }
+                                    }
+                                }
+                                i = j;
+                                continue;
+                            }
+                        }
+
+                        // Try named entity using html.unescape
+                        let html_mod = PyModule::import(py, "html").ok();
+                        if let Some(html) = html_mod {
+                            let mut j = i + 1;
+                            while j < chars.len() && chars[j].is_alphanumeric() {
+                                j += 1;
+                            }
+                            let mut name: String = chars[i..j].iter().collect();
+                            let has_semicolon = j < chars.len() && chars[j] == ';';
+                            if has_semicolon {
+                                name.push(';');
+                                j += 1;
+                            }
+
+                            if let Ok(unescape_fn) = html.getattr("unescape") {
+                                if let Ok(decoded) = unescape_fn.call1((&name,)) {
+                                    if let Ok(decoded_str) = decoded.extract::<String>() {
+                                        if decoded_str != name {
+                                            result.push_str(&decoded_str);
+                                            i = j;
+                                            continue;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Literal '&'
+                        result.push('&');
+                        i += 1;
+                    }
+
+                    return result;
+                }
+            }
+
+            // Fallback to html.unescape
+            let html_module = PyModule::import(py, "html");
+            if let Ok(html_mod) = html_module {
+                if let Ok(unescape_fn) = html_mod.getattr("unescape") {
+                    if let Ok(result) = unescape_fn.call1((text,)) {
+                        if let Ok(decoded) = result.extract::<String>() {
+                            return decoded;
+                        }
+                    }
+                }
+            }
+            text.to_string()
+        })
+    }
+
+    fn tokenize_rawtext(&mut self) -> PyResult<Option<HTMLToken>> {
+        self.debug(&format!(
+            "_tokenize_rawtext: pos={}, next_chars={:?}",
+            self.pos,
+            &self.html[self.pos..]
+                .chars()
+                .take(10)
+                .collect::<String>()
+        ));
+
+        if self.rawtext_tag.as_deref() == Some("script") {
+            self.tokenize_script_content()
+        } else {
+            self.tokenize_regular_rawtext()
+        }
+    }
+
+    fn tokenize_script_content(&mut self) -> PyResult<Option<HTMLToken>> {
+        // Script content with HTML5 comment escaping
+        if self.html[self.pos..].starts_with("</") {
+            self.debug("  found </: checking if should honor end tag");
+            let tag_start = self.pos + 2;
+
+            // Parse tag name
+            let mut i = tag_start;
+            while i < self.length && self.html.as_bytes()[i].is_ascii_alphabetic() {
+                i += 1;
+            }
+
+            let potential_tag = self.html[tag_start..i].to_lowercase();
+
+            if potential_tag == "script" {
+                // Skip whitespace
+                while i < self.length && self.html.as_bytes()[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+
+                // Skip any "/" characters
+                while i < self.length && self.html.as_bytes()[i] == b'/' {
+                    i += 1;
+                }
+
+                // Skip whitespace again
+                while i < self.length && self.html.as_bytes()[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+
+                // Check if there's a closing '>'
+                let has_closing_gt = i < self.length && self.html.as_bytes()[i] == b'>';
+
+                // Build script content up to this point
+                let text_before = self.html[self.pos..tag_start - 2].to_string();
+                let full_content = format!("{}{}", self.script_content, text_before);
+
+                if has_closing_gt {
+                    // Complete end tag </script>
+                    if self.should_honor_script_end_tag(&full_content) {
+                        self.debug("  honoring script end tag");
+                        self.pos = i + 1;
+
+                        self.state = "DATA".to_string();
+                        self.rawtext_tag = None;
+                        self.script_content.clear();
+                        self.script_suppressed_end_once = false;
+
+                        if !text_before.is_empty() {
+                            let text_before = self.replace_invalid_characters(&text_before);
+                            self.pending_tokens.push(HTMLToken::py_new(
+                                "EndTag".to_string(),
+                                None,
+                                Some(potential_tag),
+                                None,
+                                None,
+                                None,
+                                None,
+                            ));
+                            return Ok(Some(HTMLToken::py_new(
+                                "Character".to_string(),
+                                Some(text_before),
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                            )));
+                        }
+                        return Ok(Some(HTMLToken::py_new(
+                            "EndTag".to_string(),
+                            None,
+                            Some(potential_tag),
+                            None,
+                            None,
+                            None,
+                            None,
+                        )));
+                    } else {
+                        self.debug("  suppressing script end tag (escaped comment)");
+                    }
+                } else {
+                    // Partial end tag </script without '>'
+                    // Still check if we should honor for suppression counter
+                    let honor_if_complete = self.should_honor_script_end_tag(&full_content);
+                    if honor_if_complete {
+                        self.debug("  implicit script end on partial </script (no '>')");
+                        // Treat as implicit end
+                        self.pos = self.length;
+                        self.state = "DATA".to_string();
+                        self.rawtext_tag = None;
+                        self.script_content.clear();
+                        self.script_suppressed_end_once = false;
+
+                        if !text_before.is_empty() {
+                            let text_before = self.replace_invalid_characters(&text_before);
+                            self.pending_tokens.push(HTMLToken::py_new(
+                                "EndTag".to_string(),
+                                None,
+                                Some(potential_tag),
+                                None,
+                                None,
+                                None,
+                                None,
+                            ));
+                            return Ok(Some(HTMLToken::py_new(
+                                "Character".to_string(),
+                                Some(text_before),
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                            )));
+                        }
+                        return Ok(Some(HTMLToken::py_new(
+                            "EndTag".to_string(),
+                            None,
+                            Some(potential_tag),
+                            None,
+                            None,
+                            None,
+                            None,
+                        )));
+                    } else {
+                        self.debug("  suppressing partial </script (escaped comment)");
+                    }
                 }
             }
         }
 
-        // No end tag found, consume rest as text
-        let text = remaining.to_string();
-        self.pos = self.len;
-        Ok(Some(Self::new_token(
-            "Character".to_string(),
-            text,
-            String::new(),
-            None,
-            false,
-            false,
-        )))
+        // Find next potential end tag or EOF
+        let start = self.pos;
+        if let Some(next_close) = self.html[start + 1..].find("</") {
+            self.pos = start + 1 + next_close;
+        } else {
+            self.pos = self.length;
+        }
+
+        let text = self.html[start..self.pos].to_string();
+        if !text.is_empty() {
+            self.script_content.push_str(&text);
+            let text = self.replace_invalid_characters(&text);
+            return Ok(Some(HTMLToken::py_new(
+                "Character".to_string(),
+                Some(text),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )));
+        }
+
+        Ok(None)
+    }
+
+    fn should_honor_script_end_tag(&mut self, script_content: &str) -> bool {
+        self.debug(&format!("  checking script content: {:?}", script_content));
+        let lower = script_content.to_lowercase();
+
+        // If no comment opener, always honor
+        if !lower.contains("<!--") {
+            self.debug("  no comments found, honoring end tag");
+            return true;
+        }
+
+        // Check if in escaped script comment
+        if Self::in_escaped_script_comment(&lower) {
+            if !self.script_suppressed_end_once {
+                self.script_suppressed_end_once = true;
+                self.debug("  suppressing FIRST end tag inside <!-- <script pattern (no --> yet)");
+                return false;
+            }
+            self.debug("  already suppressed once in <!-- <script pattern; honoring end tag");
+        }
+
+        self.debug("  honoring end tag");
+        true
+    }
+
+    fn in_escaped_script_comment(script_content: &str) -> bool {
+        let lower = script_content.to_lowercase();
+
+        // If there's a closing -->, not in escaped state
+        if lower.contains("-->") {
+            return false;
+        }
+
+        // Find <!--
+        if let Some(idx) = lower.find("<!--") {
+            let after = &lower[idx + 4..];
+
+            // Skip whitespace
+            let mut k = 0;
+            while k < after.len() && matches!(after.as_bytes()[k], b' ' | b'\t' | b'\n' | b'\r' | b'\x0c') {
+                k += 1;
+            }
+
+            // Must start with '<script'
+            if after[k..].starts_with("<script") {
+                let tag_end = k + "<script".len();
+                if tag_end < after.len() {
+                    let following = after.as_bytes()[tag_end];
+                    // Must be followed by delimiter
+                    return matches!(following, b' ' | b'/' | b'\t' | b'\n' | b'\r' | b'\x0c' | b'>');
+                }
+            }
+        }
+
+        false
+    }
+
+    fn tokenize_regular_rawtext(&mut self) -> PyResult<Option<HTMLToken>> {
+        // Look for matching end tag
+        if self.html[self.pos..].starts_with("</") {
+            self.debug("  found </: looking for end tag");
+            let tag_start = self.pos + 2;
+
+            // Parse tag name
+            let mut i = tag_start;
+            while i < self.length {
+                let ch = self.html.as_bytes()[i];
+                if ch.is_ascii_alphabetic() {
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+
+            let potential_tag = self.html[tag_start..i].to_lowercase();
+
+            self.debug(&format!(
+                "  potential_tag={:?}, rawtext_tag={:?}",
+                potential_tag, self.rawtext_tag
+            ));
+
+            // Skip whitespace
+            while i < self.length && self.html.as_bytes()[i].is_ascii_whitespace() {
+                i += 1;
+            }
+
+            // Skip any "/" characters
+            while i < self.length && self.html.as_bytes()[i] == b'/' {
+                i += 1;
+            }
+
+            // Skip whitespace again
+            while i < self.length && self.html.as_bytes()[i].is_ascii_whitespace() {
+                i += 1;
+            }
+
+            // Check if it's our end tag
+            if Some(&potential_tag) == self.rawtext_tag.as_ref()
+                && i < self.length
+                && self.html.as_bytes()[i] == b'>'
+            {
+                self.debug("  found matching end tag");
+                // Found valid end tag
+                let text_before = self.html[self.pos..tag_start - 2].to_string();
+                self.pos = i + 1;
+
+                let current_rawtext = self.rawtext_tag.clone();
+                self.state = "DATA".to_string();
+                self.rawtext_tag = None;
+
+                // Return text if any, then queue end tag
+                if !text_before.is_empty() {
+                    let text_before = self.replace_invalid_characters(&text_before);
+                    // Decode entities for RCDATA elements (title/textarea)
+                    let text_before = if matches!(current_rawtext.as_deref(), Some("title") | Some("textarea")) {
+                        self.decode_entities(&text_before)
+                    } else {
+                        text_before
+                    };
+                    self.pending_tokens.push(HTMLToken::py_new(
+                        "EndTag".to_string(),
+                        None,
+                        Some(potential_tag),
+                        None,
+                        None,
+                        None,
+                        None,
+                    ));
+                    return Ok(Some(HTMLToken::py_new(
+                        "Character".to_string(),
+                        Some(text_before),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )));
+                }
+                // No text - emit end tag directly
+                return Ok(Some(HTMLToken::py_new(
+                    "EndTag".to_string(),
+                    None,
+                    Some(potential_tag),
+                    None,
+                    None,
+                    None,
+                    None,
+                )));
+            }
+        }
+
+        // Find next potential end tag or EOF
+        let start = self.pos;
+        if let Some(next_close) = self.html[start + 1..].find("</") {
+            self.pos = start + 1 + next_close;
+        } else {
+            self.pos = self.length;
+        }
+
+        // Return text we found
+        let text = self.html[start..self.pos].to_string();
+        if !text.is_empty() {
+            let text = self.replace_invalid_characters(&text);
+            // Decode entities for RCDATA elements (title/textarea)
+            let text = if matches!(self.rawtext_tag.as_deref(), Some("title") | Some("textarea")) {
+                self.decode_entities(&text)
+            } else {
+                text
+            };
+            return Ok(Some(HTMLToken::py_new(
+                "Character".to_string(),
+                Some(text),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )));
+        }
+
+        Ok(None)
     }
 
     fn try_tag(&mut self) -> PyResult<Option<HTMLToken>> {
-        let entry_pos = self.pos;
+        let pos = self.pos;
+        let html = &self.html;
+        let length = self.length;
 
-        if self.consume_char() != Some('<') {
+        // Must start with '<'
+        if pos >= length || !html[pos..].starts_with('<') {
             return Ok(None);
         }
 
-        // Check for CDATA section (must check before comment)
-        if self.html[self.pos..].starts_with("![CDATA[") {
-            return self.parse_cdata();
-        }
+        self.debug(&format!(
+            "_try_tag: pos={}, state={}, next_chars={:?}",
+            pos,
+            self.state,
+            &html[pos..].chars().take(10).collect::<String>()
+        ));
 
-        // Check for comment
-        if self.html[self.pos..].starts_with("!--") {
-            return self.parse_comment();
-        }
-
-        // Check for DOCTYPE (case-insensitive)
-        let remaining = &self.html[self.pos..];
-        if remaining.len() >= 8 {
-            // Check first 8 bytes (ASCII safe)
-            let bytes = remaining.as_bytes();
-            if bytes[0] == b'!' &&
-               (bytes[1] == b'd' || bytes[1] == b'D') &&
-               (bytes[2] == b'o' || bytes[2] == b'O') &&
-               (bytes[3] == b'c' || bytes[3] == b'C') &&
-               (bytes[4] == b't' || bytes[4] == b'T') &&
-               (bytes[5] == b'y' || bytes[5] == b'Y') &&
-               (bytes[6] == b'p' || bytes[6] == b'P') &&
-               (bytes[7] == b'e' || bytes[7] == b'E') {
-                return self.parse_doctype();
+        // HTML5 spec: After '<' only letter / '!' / '/' / '?' may begin markup
+        if pos + 1 < length {
+            let nxt = html.as_bytes()[pos + 1];
+            if !nxt.is_ascii_alphabetic() && !matches!(nxt, b'!' | b'/' | b'?') {
+                self.pos = pos + 1;
+                return Ok(Some(HTMLToken::py_new(
+                    "Character".to_string(),
+                    Some("<".to_string()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )));
             }
         }
 
+        // If '<' is at EOF, treat as text
+        if pos + 1 >= length {
+            self.pos = pos + 1;
+            return Ok(Some(HTMLToken::py_new(
+                "Character".to_string(),
+                Some("<".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )));
+        }
+
+        // Handle DOCTYPE (case-insensitive)
+        if pos + 9 <= length && html.as_bytes()[pos + 1] == b'!' {
+            let end_check = (pos + 9).min(length);
+            if end_check >= pos + 9 {
+                let chunk = &html[pos+2..pos+9];
+                if chunk.eq_ignore_ascii_case("DOCTYPE") {
+                    self.pos = pos + 9;
+                    // Skip whitespace
+                    while self.pos < length && html.as_bytes()[self.pos].is_ascii_whitespace() {
+                        self.pos += 1;
+                    }
+                    // Find closing '>'
+                    if let Some(gt_pos) = html[self.pos..].find('>') {
+                        let doctype = html[self.pos..self.pos + gt_pos].trim().to_string();
+                        self.pos += gt_pos + 1;
+                        return Ok(Some(HTMLToken::py_new(
+                            "DOCTYPE".to_string(),
+                            Some(doctype),
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )));
+                    } else {
+                        let doctype = html[self.pos..].trim().to_string();
+                        self.pos = length;
+                        return Ok(Some(HTMLToken::py_new(
+                            "DOCTYPE".to_string(),
+                            Some(doctype),
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )));
+                    }
+                }
+            }
+        }
+
+        // Handle comments (only in DATA state)
+        if self.state == "DATA" && pos + 4 <= length && html[pos..].starts_with("<!--") {
+            // Special case: <!--> is treated as empty comment
+            if pos + 4 < length && html.as_bytes()[pos + 4] == b'>' {
+                self.pos = pos + 5;
+                return Ok(Some(HTMLToken::py_new(
+                    "Comment".to_string(),
+                    Some(String::new()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )));
+            }
+            return self.handle_comment();
+        }
+
+        // Handle bogus comments (only in DATA state)
+        if self.state == "DATA" {
+            let is_end_tag_start = pos + 2 <= length && html[pos..].starts_with("</");
+            let has_invalid_char = pos + 2 < length && {
+                let ch = html.as_bytes()[pos + 2];
+                !ch.is_ascii_alphabetic()
+            };
+
+            if (is_end_tag_start && has_invalid_char)
+                || (pos + 2 <= length && html[pos..].starts_with("<!"))
+                || (pos + 2 <= length && html[pos..].starts_with("<?"))
+            {
+                self.debug("Found bogus comment case");
+                return self.handle_bogus_comment(false);
+            }
+        }
+
+        // Try to parse a simple tag
+        if let Some(token) = self.parse_simple_tag()? {
+            return Ok(Some(token));
+        }
+
+        // Couldn't parse - emit '<' as character
+        self.pos = pos + 1;
+        Ok(Some(HTMLToken::py_new(
+            "Character".to_string(),
+            Some("<".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )))
+    }
+
+    fn parse_simple_tag(&mut self) -> PyResult<Option<HTMLToken>> {
+        // Full tag parser - handles tags with attributes
+        let start_pos = self.pos;
+
+        // Already checked that we start with '<'
+        self.pos += 1;
+
         // Check for end tag
-        let is_end_tag = self.current_char() == Some('/');
+        let is_end_tag = self.pos < self.length && self.html.as_bytes()[self.pos] == b'/';
         if is_end_tag {
-            self.consume_char();
+            self.pos += 1;
         }
 
         // Parse tag name
-        let tag_name = self.consume_tag_name();
-        if tag_name.is_empty() {
-            // Invalid tag, restore position and treat '<' as character data
-            self.pos = entry_pos;
+        let tag_name_start = self.pos;
+        while self.pos < self.length {
+            let ch = self.html.as_bytes()[self.pos];
+            // Allow alphanumeric, hyphen, colon, and < (for malformed tags like <di<a>)
+            // Spec: tag name is anything except whitespace, /, and >
+            if !matches!(ch, b' ' | b'\t' | b'\n' | b'\r' | b'\x0c' | b'/' | b'>') {
+                self.pos += 1;
+            } else {
+                break;
+            }
+        }
+
+        if self.pos == tag_name_start {
+            // No tag name found - reset and return None
+            self.pos = start_pos;
             return Ok(None);
         }
+
+        let tag_name = self.html[tag_name_start..self.pos].to_lowercase();
 
         // Skip whitespace
-        self.skip_whitespace();
-
-        // Parse attributes (only for start tags)
-        let attributes = if !is_end_tag {
-            Some(self.parse_attributes()?)
-        } else {
-            None
-        };
-
-        // Check for self-closing
-        let is_self_closing = self.current_char() == Some('/');
-        if is_self_closing {
-            self.consume_char();
+        while self.pos < self.length && self.html.as_bytes()[self.pos].is_ascii_whitespace() {
+            self.pos += 1;
         }
 
-        // Consume closing >
-        if self.consume_char() != Some('>') {
-            // Invalid tag - restore position and treat '<' as character data
-            self.pos = entry_pos;
+        // Parse attributes
+        let attr_start = self.pos;
+        let mut attr_end = self.pos;
+
+        // Find the end of attributes (either '/>' or '>')
+        // Note: We scan for the closing '>' but handle quotes along the way
+        // The Python tokenizer has complex unbalanced quote handling, but for now
+        // we just track quotes and look for '>'. If we hit '>' even inside quotes,
+        // that's where the tag ends (per HTML5 spec for malformed markup).
+        let mut in_quote: Option<u8> = None;
+        while self.pos < self.length {
+            let ch = self.html.as_bytes()[self.pos];
+
+            if ch == b'>' {
+                // Always break on '>', even if inside quotes (malformed HTML)
+                attr_end = self.pos;
+                break;
+            }
+
+            if let Some(quote_char) = in_quote {
+                if ch == quote_char && self.pos > 0 && self.html.as_bytes()[self.pos - 1] != b'\\' {
+                    in_quote = None;
+                }
+            } else if ch == b'"' || ch == b'\'' {
+                in_quote = Some(ch);
+            }
+
+            self.pos += 1;
+            attr_end = self.pos;
+        }
+
+        // Parse the attributes substring
+        let attr_string = if attr_end > attr_start {
+            self.html[attr_start..attr_end].trim()
+        } else {
+            ""
+        };
+
+        let (is_self_closing, attributes) = self.parse_attributes(attr_string);
+
+        // Must have closing '>'
+        if self.pos >= self.length || self.html.as_bytes()[self.pos] != b'>' {
+            // Invalid tag - reset
+            self.pos = start_pos;
             return Ok(None);
         }
 
+        self.pos += 1; // Skip '>'
+
         let token_type = if is_end_tag {
-            "EndTag".to_string()
+            "EndTag"
         } else {
-            "StartTag".to_string()
+            "StartTag"
         };
 
         // Check if this starts RAWTEXT mode
         let needs_rawtext = !is_end_tag && matches!(
-            tag_name.to_lowercase().as_str(),
+            tag_name.as_str(),
             "script" | "style" | "xmp" | "iframe" | "noembed" | "noframes" | "noscript" | "textarea" | "title"
         );
 
         if needs_rawtext {
             self.state = "RAWTEXT".to_string();
-            self.rawtext_tag = tag_name.to_lowercase();
+            self.rawtext_tag = Some(tag_name.clone());
+            if tag_name == "script" {
+                self.script_content.clear();
+            }
         }
 
         // Check if this starts PLAINTEXT mode
-        let is_plaintext = !is_end_tag && tag_name.to_lowercase() == "plaintext";
-        if is_plaintext {
+        if !is_end_tag && tag_name == "plaintext" {
             self.state = "PLAINTEXT".to_string();
         }
 
-        Ok(Some(Self::new_token(
-            token_type,
-            String::new(),
-            tag_name,
-            attributes,
-            is_self_closing,
-            needs_rawtext,
+        Ok(Some(HTMLToken::py_new(
+            token_type.to_string(),
+            None,
+            Some(tag_name),
+            Some(attributes),
+            Some(is_self_closing),
+            None,
+            Some(needs_rawtext),
         )))
     }
 
-    fn parse_cdata(&mut self) -> PyResult<Option<HTMLToken>> {
-        // Skip "![CDATA["
-        self.pos += 8;
+    fn parse_attributes(&self, attr_string: &str) -> (bool, HashMap<String, String>) {
+        let mut attributes = HashMap::new();
 
-        let start_pos = self.pos;
-        let remaining = &self.html[self.pos..];
-
-        if let Some(idx) = remaining.find("]]>") {
-            let inner = remaining[..idx].to_string();
-            self.pos += idx + 3;
-            // Return as Comment token with [CDATA[...]] format (per Python tokenizer)
-            Ok(Some(Self::new_token(
-                "Comment".to_string(),
-                format!("[CDATA[{}]]", inner),
-                String::new(),
-                None,
-                false,
-                false,
-            )))
-        } else {
-            // Unterminated CDATA
-            let inner = remaining.to_string();
-            self.pos = self.len;
-            // If inner ends with ']]' append space to disambiguate
-            let data = if inner.ends_with("]]") {
-                format!("[CDATA[{} ", inner)
-            } else {
-                format!("[CDATA[{}", inner)
-            };
-            Ok(Some(Self::new_token(
-                "Comment".to_string(),
-                data,
-                String::new(),
-                None,
-                false,
-                false,
-            )))
+        if attr_string.is_empty() {
+            return (false, attributes);
         }
-    }
 
-    fn parse_comment(&mut self) -> PyResult<Option<HTMLToken>> {
-        // Skip "!--"
-        self.pos += 3;
+        let trimmed = attr_string.trim();
 
-        let remaining = &self.html[self.pos..];
-
-        // Look for comment end markers: --> or --!>
-        // Per HTML5 spec, both are valid (though --!> is an error)
-        let normal_end = remaining.find("-->");
-        let bang_end = remaining.find("--!>");
-
-        let (end_idx, end_len) = match (normal_end, bang_end) {
-            (Some(n), Some(b)) if b < n => (b, 4),  // --!> comes first
-            (Some(n), _) => (n, 3),                 // --> (or comes first)
-            (None, Some(b)) => (b, 4),              // only --!>
-            (None, None) => {
-                // Unclosed comment, consume rest
-                let comment_text = remaining.to_string();
-                self.pos = self.len;
-                return Ok(Some(Self::new_token(
-                    "Comment".to_string(),
-                    comment_text,
-                    String::new(),
-                    None,
-                    false,
-                    false,
-                )));
-            }
+        // Check for self-closing slash
+        let is_self_closing = trimmed.ends_with('/') || trimmed.ends_with(" /");
+        let attr_to_parse = if is_self_closing {
+            trimmed.trim_end_matches('/').trim()
+        } else {
+            trimmed
         };
 
-        let comment_text = remaining[..end_idx].to_string();
-        self.pos += end_idx + end_len;
-        Ok(Some(Self::new_token(
-            "Comment".to_string(),
-            comment_text,
-            String::new(),
-            None,
-            false,
-            false,
-        )))
-    }
-
-    fn parse_doctype(&mut self) -> PyResult<Option<HTMLToken>> {
-        // Skip "!doctype" (8 bytes, case-insensitive already checked)
-        self.pos += 8;
-
-        // Skip whitespace
-        self.skip_whitespace();
-
-        // Find closing >
-        let remaining = &self.html[self.pos..];
-        if let Some(idx) = remaining.find('>') {
-            let doctype_content = remaining[..idx].trim().to_string();
-            self.pos += idx + 1;
-            Ok(Some(Self::new_token(
-                "DOCTYPE".to_string(),
-                doctype_content,
-                String::new(),
-                None,
-                false,
-                false,
-            )))
-        } else {
-            // Unclosed DOCTYPE
-            let doctype_content = remaining.trim().to_string();
-            self.pos = self.len;
-            Ok(Some(Self::new_token(
-                "DOCTYPE".to_string(),
-                doctype_content,
-                String::new(),
-                None,
-                false,
-                false,
-            )))
+        if attr_to_parse.is_empty() {
+            return (is_self_closing, attributes);
         }
-    }
 
-    fn consume_tag_name(&mut self) -> String {
-        let start = self.pos;
-        while let Some(ch) = self.current_char() {
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == ':' {
-                self.consume_char();
+        // Handle slash-delimited attribute sequences (like //problem/6869687)
+        if attr_to_parse.contains('/')
+            && !attr_to_parse.contains(' ')
+            && !attr_to_parse.contains('=')
+            && !attr_to_parse.contains('"')
+            && !attr_to_parse.contains('\'')
+            && !attr_to_parse.contains('<')
+        {
+            if attr_to_parse.starts_with("//") {
+                // Double slash: reverse order (//problem/6869687 -> 6869687, problem)
+                let parts: Vec<&str> = attr_to_parse.split('/').filter(|p| !p.is_empty()).collect();
+                for part in parts.iter().rev() {
+                    attributes.insert(part.to_string(), String::new());
+                }
             } else {
-                break;
+                // Single leading slash: natural order (/x/y/z -> x, y, z)
+                let parts: Vec<&str> = attr_to_parse.split('/').filter(|p| !p.is_empty()).collect();
+                for part in parts {
+                    attributes.insert(part.to_string(), String::new());
+                }
             }
+            return (is_self_closing, attributes);
         }
-        self.html[start..self.pos].to_string()
-    }
 
-    fn skip_whitespace(&mut self) {
-        while let Some(ch) = self.current_char() {
-            if ch.is_whitespace() {
-                self.consume_char();
-            } else {
-                break;
+        // Simple attribute parser using a state machine
+        let mut i = 0;
+        let bytes = attr_to_parse.as_bytes();
+        let len = bytes.len();
+
+        while i < len {
+            // Skip whitespace
+            while i < len && bytes[i].is_ascii_whitespace() {
+                i += 1;
             }
-        }
-    }
 
-    fn parse_attributes(&mut self) -> PyResult<IndexMap<String, String>> {
-        let mut attrs = IndexMap::new();
-
-        loop {
-            self.skip_whitespace();
-
-            // Check if we've reached end of tag
-            if matches!(self.current_char(), Some('>') | Some('/') | None) {
+            if i >= len {
                 break;
             }
 
             // Parse attribute name
-            let attr_name = self.consume_attr_name();
-            if attr_name.is_empty() {
+            let name_start = i;
+            while i < len {
+                let ch = bytes[i];
+                if ch.is_ascii_whitespace() || ch == b'=' || ch == b'>' || ch == b'/' {
+                    break;
+                }
+                i += 1;
+            }
+
+            if i == name_start {
                 break;
             }
 
-            self.skip_whitespace();
+            let name = attr_to_parse[name_start..i].to_lowercase();
 
-            // Check for = sign
-            let attr_value = if self.current_char() == Some('=') {
-                self.consume_char();
-                self.skip_whitespace();
-                self.consume_attr_value()
+            // Skip whitespace after name
+            while i < len && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+
+            // Check for '='
+            if i < len && bytes[i] == b'=' {
+                i += 1; // Skip '='
+
+                // Skip whitespace after '='
+                while i < len && bytes[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+
+                // Parse value
+                let value = if i < len {
+                    let quote = bytes[i];
+                    if quote == b'"' || quote == b'\'' {
+                        // Quoted value
+                        i += 1; // Skip opening quote
+                        let val_start = i;
+                        while i < len && bytes[i] != quote {
+                            i += 1;
+                        }
+                        let val = attr_to_parse[val_start..i].to_string();
+                        if i < len {
+                            i += 1; // Skip closing quote
+                        }
+                        val
+                    } else {
+                        // Unquoted value
+                        let val_start = i;
+                        while i < len {
+                            let ch = bytes[i];
+                            if ch.is_ascii_whitespace() || ch == b'>' {
+                                break;
+                            }
+                            i += 1;
+                        }
+                        attr_to_parse[val_start..i].to_string()
+                    }
+                } else {
+                    String::new()
+                };
+
+                // Decode entities in attribute values
+                let value = self.decode_entities(&value);
+                attributes.insert(name, value);
             } else {
-                String::new()
-            };
-
-            attrs.insert(attr_name, attr_value);
+                // Boolean attribute (no value)
+                attributes.insert(name, String::new());
+            }
         }
 
-        Ok(attrs)
+        (is_self_closing, attributes)
     }
 
-    fn consume_attr_name(&mut self) -> String {
+    fn handle_comment(&mut self) -> PyResult<Option<HTMLToken>> {
+        self.debug(&format!("_handle_comment: pos={}, state={}", self.pos, self.state));
+        self.pos += 4; // Skip <!--
         let start = self.pos;
-        while let Some(ch) = self.current_char() {
-            if matches!(ch, '=' | '>' | '/' ) || ch.is_whitespace() {
-                break;
-            }
-            self.consume_char();
+
+        // Special case: <!--> already handled
+        // Special case: <!--- followed by >
+        if self.pos < self.length
+            && self.html.as_bytes()[self.pos] == b'-'
+            && self.pos + 1 < self.length
+            && self.html.as_bytes()[self.pos + 1] == b'>'
+        {
+            self.pos += 2;
+            return Ok(Some(HTMLToken::py_new(
+                "Comment".to_string(),
+                Some(String::new()),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )));
         }
-        self.html[start..self.pos].to_string()
+
+        // Find -->
+        if let Some(end_pos) = self.html[self.pos..].find("-->") {
+            let comment_text = self.html[start..self.pos + end_pos].to_string();
+            let comment_text = self.replace_invalid_characters(&comment_text);
+            self.pos += end_pos + 3;
+            return Ok(Some(HTMLToken::py_new(
+                "Comment".to_string(),
+                Some(comment_text),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )));
+        }
+
+        // Find --!>
+        if let Some(end_pos) = self.html[self.pos..].find("--!>") {
+            let comment_text = self.html[start..self.pos + end_pos].to_string();
+            let comment_text = self.replace_invalid_characters(&comment_text);
+            self.pos += end_pos + 4;
+            return Ok(Some(HTMLToken::py_new(
+                "Comment".to_string(),
+                Some(comment_text),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )));
+        }
+
+        // EOF - emit what we have
+        let mut comment_text = self.html[start..].to_string();
+        comment_text = self.replace_invalid_characters(&comment_text);
+
+        if comment_text.ends_with("--") {
+            comment_text = comment_text[..comment_text.len() - 2].to_string();
+        }
+
+        self.pos = self.length;
+        Ok(Some(HTMLToken::py_new(
+            "Comment".to_string(),
+            Some(comment_text),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )))
     }
 
-    fn consume_attr_value(&mut self) -> String {
-        let raw_value = match self.current_char() {
-            Some('"') => {
-                self.consume_char();
-                let start = self.pos;
-                while let Some(ch) = self.current_char() {
-                    if ch == '"' {
-                        break;
-                    }
-                    self.consume_char();
-                }
-                let value = self.html[start..self.pos].to_string();
-                self.consume_char(); // consume closing "
-                value
+    fn handle_bogus_comment(&mut self, _from_end_tag: bool) -> PyResult<Option<HTMLToken>> {
+        self.debug(&format!(
+            "_handle_bogus_comment: pos={}, state={}",
+            self.pos, self.state
+        ));
+
+        // Handle CDATA specially
+        if self.html[self.pos..].starts_with("<![CDATA[") {
+            let start_pos = self.pos + 9;
+            if let Some(end) = self.html[start_pos..].find("]]>") {
+                let inner = self.html[start_pos..start_pos + end].to_string();
+                self.pos = start_pos + end + 3;
+                let inner = self.replace_invalid_characters(&inner);
+                return Ok(Some(HTMLToken::py_new(
+                    "Comment".to_string(),
+                    Some(format!("[CDATA[{}]]", inner)),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )));
+            } else {
+                let inner = self.html[start_pos..].to_string();
+                self.pos = self.length;
+                let inner = self.replace_invalid_characters(&inner);
+                let comment_data = if inner.ends_with("]]") {
+                    format!("[CDATA[{} ", inner)
+                } else {
+                    format!("[CDATA[{}", inner)
+                };
+                return Ok(Some(HTMLToken::py_new(
+                    "Comment".to_string(),
+                    Some(comment_data),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )));
             }
-            Some('\'') => {
-                self.consume_char();
-                let start = self.pos;
-                while let Some(ch) = self.current_char() {
-                    if ch == '\'' {
-                        break;
-                    }
-                    self.consume_char();
-                }
-                let value = self.html[start..self.pos].to_string();
-                self.consume_char(); // consume closing '
-                value
-            }
-            _ => {
-                // Unquoted attribute value
-                let start = self.pos;
-                while let Some(ch) = self.current_char() {
-                    if matches!(ch, '>' | '/') || ch.is_whitespace() {
-                        break;
-                    }
-                    self.consume_char();
-                }
-                self.html[start..self.pos].to_string()
-            }
+        }
+
+        // For <?, include the ?
+        let start = if self.html[self.pos..].starts_with("<?") {
+            self.pos + 1
+        } else if self.html[self.pos..].starts_with("</") {
+            self.pos + 2
+        } else {
+            self.pos + 2 // <!
         };
 
-        // Decode HTML entities in attribute value
-        let decoded = Python::with_gil(|py| {
-            let html_module = PyModule::import(py, "html").ok()?;
-            let unescape = html_module.getattr("unescape").ok()?;
-            let result = unescape.call1((&raw_value,)).ok()?;
-            result.extract::<String>().ok()
-        });
-
-        decoded.unwrap_or(raw_value)
-    }
-
-    fn consume_character_data(&mut self) -> PyResult<HTMLToken> {
-        let start = self.pos;
-
-        // Consume until we hit a '<' or end of string
-        while self.pos < self.len {
-            if self.current_char() == Some('<') {
-                break;
-            }
-            self.consume_char();
+        // Find next >
+        if let Some(gt_pos) = self.html[start..].find('>') {
+            let comment_text = self.html[start..start + gt_pos].to_string();
+            self.pos = start + gt_pos + 1;
+            let comment_text = self.replace_invalid_characters(&comment_text);
+            return Ok(Some(HTMLToken::py_new(
+                "Comment".to_string(),
+                Some(comment_text),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )));
         }
 
-        let text = self.html[start..self.pos].to_string();
-
-        // Decode HTML entities using Python's html.unescape
-        let decoded_text = Python::with_gil(|py| {
-            let html_module = PyModule::import(py, "html")?;
-            let unescape = html_module.getattr("unescape")?;
-            let result = unescape.call1((text,))?;
-            result.extract::<String>()
-        })?;
-
-        Ok(Self::new_token(
-            "Character".to_string(),
-            decoded_text,
-            String::new(),
+        // EOF
+        let comment_text = self.html[start..].to_string();
+        self.pos = self.length;
+        let comment_text = self.replace_invalid_characters(&comment_text);
+        Ok(Some(HTMLToken::py_new(
+            "Comment".to_string(),
+            Some(comment_text),
             None,
-            false,
-            false,
+            None,
+            None,
+            None,
+            None,
+        )))
+    }
+
+    fn try_text(&mut self) -> Option<HTMLToken> {
+        if self.pos >= self.length {
+            return None;
+        }
+
+        let start = self.pos;
+        let html = &self.html;
+
+        // Don't parse '<' as text
+        if html[start..].starts_with('<') {
+            return None;
+        }
+
+        // Find next '<' or EOF
+        let next_lt = html[start..].find('<').map(|i| start + i);
+        let end = next_lt.unwrap_or(self.length);
+
+        if end == start {
+            return None;
+        }
+
+        let text = &html[start..end];
+        self.pos = end;
+
+        // Replace invalid characters first, then decode entities
+        let text = self.replace_invalid_characters(text);
+        let decoded = self.decode_entities(&text);
+
+        Some(HTMLToken::py_new(
+            "Character".to_string(),
+            Some(decoded),
+            None,
+            None,
+            None,
+            None,
+            None,
         ))
     }
 }
