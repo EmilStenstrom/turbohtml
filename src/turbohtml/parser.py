@@ -51,16 +51,19 @@ class TurboHTML:
         debug=False,
         fragment_context=None,
         handlers=None,
+        use_rust=False,
     ):
         """Args:
         html: The HTML string to parse
         debug: Whether to enable debug prints
         fragment_context: Context element for fragment parsing (e.g., 'td', 'tr').
         handlers: Optional list of handler classes to use. If None, uses default set.
+        use_rust: Whether to use Rust tokenizer (default: False, use Python tokenizer)
 
         """
         self.env_debug = debug
         self.fragment_context = fragment_context
+        self.use_rust = use_rust
 
         self._init_dom_structure()
         self.adoption_agency = AdoptionAgencyAlgorithm(self)
@@ -416,10 +419,22 @@ class TurboHTML:
         """Parse a full HTML document (token loop delegating to handlers)."""
         # Initialize context with html_node as current_parent
         context = ParseContext(self.html_node, debug_callback=self.debug)
-        self.tokenizer = HTMLTokenizer(html)
 
+        # Select tokenizer based on use_rust parameter
+        if self.use_rust:
+            try:
+                from rust_tokenizer import RustTokenizer
+                self.tokenizer = None  # Rust tokenizer doesn't expose mutable state
+                tokens = RustTokenizer(html)
+            except ImportError:
+                self.debug("Rust tokenizer not available, falling back to Python tokenizer")
+                self.tokenizer = HTMLTokenizer(html)
+                tokens = self.tokenizer.tokenize()
+        else:
+            self.tokenizer = HTMLTokenizer(html)
+            tokens = self.tokenizer.tokenize()
 
-        for token in self.tokenizer.tokenize():
+        for token in tokens:
             # Increment token counter for deduplication tracking
             self._token_counter += 1
 

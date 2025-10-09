@@ -75,7 +75,7 @@ def iter_html_from_batch(
 
 
 def benchmark_turbohtml(html_files: list, iterations: int = 1) -> dict:
-    """Benchmark TurboHTML parser."""
+    """Benchmark TurboHTML parser (Python tokenizer)."""
     try:
         from turbohtml import TurboHTML
     except ImportError:
@@ -88,7 +88,7 @@ def benchmark_turbohtml(html_files: list, iterations: int = 1) -> dict:
     # Warmup run to eliminate first-call overhead
     if html_files:
         try:
-            TurboHTML(html_files[0][1])
+            TurboHTML(html_files[0][1], use_rust=False)
         except Exception:
             pass
 
@@ -96,7 +96,49 @@ def benchmark_turbohtml(html_files: list, iterations: int = 1) -> dict:
         for filename, html in html_files:
             try:
                 start = time.perf_counter()
-                result = TurboHTML(html)
+                result = TurboHTML(html, use_rust=False)
+                elapsed = time.perf_counter() - start
+                all_times.append(elapsed)
+                # Touch the result to ensure parsing completed
+                _ = result.root
+            except Exception as e:
+                errors += 1
+                error_files.append((filename, str(e)))
+
+    return {
+        "total_time": sum(all_times),
+        "mean_time": sum(all_times) / len(all_times) if all_times else 0,
+        "min_time": min(all_times) if all_times else 0,
+        "max_time": max(all_times) if all_times else 0,
+        "errors": errors,
+        "success_count": len(all_times),
+        "error_files": error_files,
+    }
+
+
+def benchmark_turbohtml_rust(html_files: list, iterations: int = 1) -> dict:
+    """Benchmark TurboHTML parser (Rust tokenizer)."""
+    try:
+        from turbohtml import TurboHTML
+    except ImportError:
+        return {"error": "TurboHTML not importable"}
+
+    all_times = []
+    errors = 0
+    error_files = []
+
+    # Warmup run to eliminate first-call overhead
+    if html_files:
+        try:
+            TurboHTML(html_files[0][1], use_rust=True)
+        except Exception:
+            pass
+
+    for _ in range(iterations):
+        for filename, html in html_files:
+            try:
+                start = time.perf_counter()
+                result = TurboHTML(html, use_rust=True)
                 elapsed = time.perf_counter() - start
                 all_times.append(elapsed)
                 # Touch the result to ensure parsing completed
@@ -337,7 +379,7 @@ def print_results(results: dict, file_count: int, iterations: int = 1):
         print(f"BENCHMARK RESULTS ({file_count} HTML files)")
     print("=" * 80)
 
-    parsers = ["turbohtml", "html5lib", "lxml", "bs4", "html.parser", "selectolax"]
+    parsers = ["turbohtml", "turbohtml_rust", "html5lib", "lxml", "bs4", "html.parser", "selectolax"]
 
     # Print header
     if iterations > 1:
@@ -434,8 +476,8 @@ def main():
     parser.add_argument(
         "--parsers",
         nargs="+",
-        choices=["turbohtml", "html5lib", "lxml", "bs4", "html.parser", "selectolax"],
-        default=["turbohtml", "html5lib", "lxml", "bs4", "html.parser", "selectolax"],
+        choices=["turbohtml", "turbohtml_rust", "html5lib", "lxml", "bs4", "html.parser", "selectolax"],
+        default=["turbohtml", "turbohtml_rust", "html5lib", "lxml", "bs4", "html.parser", "selectolax"],
         help="Parsers to benchmark (default: all)",
     )
 
@@ -465,6 +507,7 @@ def main():
 
     benchmarks = {
         "turbohtml": benchmark_turbohtml,
+        "turbohtml_rust": benchmark_turbohtml_rust,
         "html5lib": benchmark_html5lib,
         "lxml": benchmark_lxml,
         "bs4": benchmark_bs4,

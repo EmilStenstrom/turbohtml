@@ -6859,6 +6859,8 @@ class HeadTagHandler(TagHandler):
         # Do not let head element handler interfere inside template content
         if in_template_content(context):
             return False
+        if tag_name == "template":
+            return False
         # Suppress head-level interception for style/script when inside table descendants (caption/row/cell)
         if tag_name in ("style", "script"):
             anc = context.current_parent
