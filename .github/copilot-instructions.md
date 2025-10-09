@@ -11,7 +11,7 @@
 - Keep preambles to a single declarative sentence (“I’m scanning the repo and then drafting a minimal fix.”) — no approval requests.
 
 ### Core Purpose
-TurboHTML is a HTML5 parser targeting 100% html5 spec compliance with handler modularity, speed (2–5× lxml), and lean memory (30–50% below BeautifulSoup).
+TurboHTML is a HTML5 parser targeting 100% html5 spec compliance with handler modularity, speed (comparable to lxml), and lean memory (50% below BeautifulSoup).
 
 ### Architecture Snapshot
 - Tokenizer (`tokenizer.py`): Spec state machines (incl. RAWTEXT). No exception-driven flow.
