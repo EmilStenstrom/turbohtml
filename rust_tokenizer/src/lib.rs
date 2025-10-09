@@ -409,6 +409,45 @@ impl RustTokenizer {
             let potential_tag = self.html[tag_start..i].to_lowercase();
 
             if potential_tag == "script" {
+                // Check if next character after tag name is whitespace, '/', or '>'
+                // EOF directly after "</script" (no trailing char) is NOT a candidate - emit as text
+                if i >= self.length {
+                    // EOF immediately after tag name - not a candidate, emit as text
+                    self.debug("  EOF after </script (no trailing char) - treating as text");
+                    let frag = &self.html[self.pos..];
+                    self.pos = self.length;
+                    let frag = self.replace_invalid_characters(frag);
+                    self.script_content.push_str(&frag);
+                    return Ok(Some(HTMLToken::py_new(
+                        "Character".to_string(),
+                        Some(frag),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )));
+                }
+
+                let next_char = self.html.as_bytes()[i];
+                if !matches!(next_char, b' ' | b'\t' | b'\n' | b'\r' | b'\x0c' | b'/' | b'>') {
+                    // Not a candidate end tag - emit as text
+                    self.debug("  invalid char after </script - treating as text");
+                    let frag = &self.html[self.pos..];
+                    self.pos = self.length;
+                    let frag = self.replace_invalid_characters(frag);
+                    self.script_content.push_str(&frag);
+                    return Ok(Some(HTMLToken::py_new(
+                        "Character".to_string(),
+                        Some(frag),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )));
+                }
+
                 // Skip whitespace
                 while i < self.length && self.html.as_bytes()[i].is_ascii_whitespace() {
                     i += 1;
@@ -954,9 +993,54 @@ impl RustTokenizer {
 
         let (is_self_closing, attributes) = self.parse_attributes(attr_string);
 
-        // Must have closing '>'
-        if self.pos >= self.length || self.html.as_bytes()[self.pos] != b'>' {
-            // Invalid tag - reset
+        // Handle unclosed tag at EOF
+        let unclosed_to_eof = self.pos >= self.length;
+
+        if unclosed_to_eof {
+            // EOF without closing '>'
+            self.pos = self.length;
+
+            if is_end_tag {
+                // End tags at EOF: emit EndTag (attributes are ignored in end tags anyway)
+                return Ok(Some(HTMLToken::py_new(
+                    "EndTag".to_string(),
+                    None,
+                    Some(tag_name),
+                    None,
+                    None,
+                    None,
+                    None,
+                )));
+            }
+
+            // Start tags at EOF
+            if attr_string.trim().is_empty() {
+                // No attributes: emit empty Character token (suppresses both element and text)
+                return Ok(Some(HTMLToken::py_new(
+                    "Character".to_string(),
+                    Some(String::new()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )));
+            } else {
+                // Has attributes: emit attributes as text
+                return Ok(Some(HTMLToken::py_new(
+                    "Character".to_string(),
+                    Some(attr_string.to_string()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )));
+            }
+        }
+
+        if self.html.as_bytes()[self.pos] != b'>' {
+            // Malformed tag - reset
             self.pos = start_pos;
             return Ok(None);
         }
@@ -1124,10 +1208,16 @@ impl RustTokenizer {
 
                 // Decode entities in attribute values
                 let value = self.decode_entities(&value);
-                attributes.insert(name, value);
+                // HTML5 spec: first attribute wins if there are duplicates
+                if !attributes.contains_key(&name) {
+                    attributes.insert(name, value);
+                }
             } else {
                 // Boolean attribute (no value)
-                attributes.insert(name, String::new());
+                // HTML5 spec: first attribute wins if there are duplicates
+                if !attributes.contains_key(&name) {
+                    attributes.insert(name, String::new());
+                }
             }
         }
 
