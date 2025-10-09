@@ -32,40 +32,49 @@ class ContentState(Enum):
 class ParseContext:
     """Mutable parser state: stacks, modes, insertion point."""
 
+    __slots__ = (
+        "_content_state",
+        "_current_parent",
+        "_debug",
+        "_document_state",
+        "active_formatting_elements",
+        "anchor_resume_element",
+        "current_context",
+        "doctype_seen",
+        "form_element",
+        "frameset_ok",
+        "ignored_fragment_context_tag",
+        "in_end_tag_dispatch",
+        "needs_reconstruction",
+        "open_elements",
+        "saw_body_start_tag",
+        "saw_html_end_tag",
+    )
+
     def __init__(self, initial_parent, debug_callback=None):
         if initial_parent is None:
             msg = "ParseContext requires a valid initial parent"
             raise ValueError(msg)
         self._current_parent = initial_parent
-        self.current_context = None  # e.g. 'math' / 'svg'
+        self.current_context = None
 
-        # States
         self._document_state = DocumentState.INITIAL
         self._content_state = ContentState.NONE
         self._debug = debug_callback
         self.doctype_seen = False
         self.frameset_ok = True
 
-        # Tree construction algorithm stacks (HTML5 spec §13.2.4)
         self.active_formatting_elements = ActiveFormattingElements()
         self.open_elements = OpenElementsStack()
 
-        # HTML Standard form element pointer (§4.10.3): tracks most recently opened <form>
-        # outside templates. Additional <form> tags are ignored until pointer is cleared.
         self.form_element = None
 
-        # Frameset-specific flag: Was </html> end tag explicit (vs. implied)?
         self.saw_html_end_tag = False
 
-        # Body start tag tracking: whether literal <body> start tag appeared (affects comment placement)
         self.saw_body_start_tag = False
 
-        # Adoption agency temporal signal: set when adoption restructures tree to trigger
-        # active formatting element reconstruction before next character token (§13.2.6.4.8)
         self.needs_reconstruction = False
 
-        # End tag processing gate: True during end-tag dispatch to prevent adoption agency
-        # anchor segmentation (prevents infinite recursion in edge cases)
         self.in_end_tag_dispatch = False
 
         # Fragment parsing one-shot: tracks if first start tag matching fragment context

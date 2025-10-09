@@ -35,6 +35,8 @@ class FormattingElementEntry:
 class ActiveFormattingElements:
     """Active formatting elements list (spec stack with markers + Noah's Ark clause)."""
 
+    __slots__ = ("_max_size", "_stack")
+
     def __init__(self, max_size=12):
         self._stack = []
         self._max_size = max_size
@@ -132,6 +134,8 @@ class OpenElementsStack:
       * has_element_in_scope (general scope variant sufficient for current tests)
       * _is_special_category (category check used during adoption)
     """
+
+    __slots__ = ("_stack",)
 
     def __init__(self):
         self._stack = []

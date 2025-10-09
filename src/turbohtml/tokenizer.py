@@ -14,14 +14,50 @@ ATTR_RE = re.compile(
     r'([^\s=/>]+)(?:\s*=\s*"([^"]*)"|\s*=\s*\'([^\']*)\'|\s*=\s*([^>\s]+)|)(?=\s|$|/|>)',
 )
 
-WHITESPACE_RE = re.compile(r'\s+')
-TAG_CHARS_RE = re.compile(r'[a-zA-Z]+')
-ATTR_CHARS_RE = re.compile(r'[^\s=>]+')
-UNTIL_GT_RE = re.compile(r'[^>]*')
+WHITESPACE_RE = re.compile(r"\s+")
+TAG_CHARS_RE = re.compile(r"[a-zA-Z]+")
+ATTR_CHARS_RE = re.compile(r"[^\s=>]+")
+UNTIL_GT_RE = re.compile(r"[^>]*")
+
+
+def _allow_decode_without_semicolon_follow(entity_name, basic_entities):
+    """Check if entity can be decoded without semicolon when followed by = or alnum."""
+    if entity_name in basic_entities:
+        return False
+    return entity_name and entity_name[0].isupper() and len(entity_name) > 2
+
+
+def _codepoint_to_char(codepoint):
+    """Convert a numeric codepoint to character with HTML5 replacements."""
+    if codepoint > 0x10FFFF:
+        return "\ufffd"
+
+    if 0xD800 <= codepoint <= 0xDFFF:
+        return "\ufffd"
+
+    if codepoint in HTML5_NUMERIC_REPLACEMENTS:
+        return HTML5_NUMERIC_REPLACEMENTS[codepoint]
+
+    if codepoint == 0x10FFFE:
+        return "\U0010fffe"
+    if codepoint == 0x10FFFF:
+        return "\U0010ffff"
+    return chr(codepoint)
 
 
 class HTMLToken:
     """Represents a token in the HTML stream."""
+
+    __slots__ = (
+        "attributes",
+        "data",
+        "ignored_end_tag",
+        "is_last_token",
+        "is_self_closing",
+        "needs_rawtext",
+        "tag_name",
+        "type",
+    )
 
     def __init__(
         self,
@@ -31,19 +67,15 @@ class HTMLToken:
         attributes=None,
         is_self_closing=False,
         is_last_token=False,
-        needs_rawtext=False,  # deferred rawtext activation flag
+        needs_rawtext=False,
     ):
-        self.type = type_  # 'DOCTYPE', 'StartTag', 'EndTag', 'Comment', 'Character'
+        self.type = type_
         self.data = data
         self.tag_name = tag_name.lower() if tag_name else ""
         self.attributes = attributes or {}
         self.is_self_closing = is_self_closing
         self.is_last_token = is_last_token
         self.ignored_end_tag = False
-        # When True (for start tags of RAWTEXT/RCDATA elements) the tree builder
-        # will activate the tokenizer RAWTEXT state ONLY if it actually inserts
-        # the element. This defers state changes, avoiding rollback complexity
-        # when such start tags are suppressed (e.g. <textarea> inside select fragment).
         self.needs_rawtext = needs_rawtext
 
     def __repr__(self):
@@ -1060,7 +1092,7 @@ class HTMLTokenizer:
         # Cache frequently used methods and constants
         result_append = result.append
         semicolon_required = self._SEMICOLON_REQUIRED_IN_ATTR
-        allow_decode = self._allow_decode_without_semicolon_follow
+        basic_entities = self._BASIC_ENTITIES
 
         while i < length:
             ch = text[i]
@@ -1108,7 +1140,7 @@ class HTMLTokenizer:
                 base = 16 if is_hex else 10
                 if digits:  # redundant guard
                     codepoint = int(digits, base)
-                    decoded_char = self._codepoint_to_char(codepoint)
+                    decoded_char = _codepoint_to_char(codepoint)
                     if decoded_char == "\ufffd":
                         decoded_char = NUMERIC_ENTITY_INVALID_SENTINEL
                     result_append(decoded_char)
@@ -1134,7 +1166,7 @@ class HTMLTokenizer:
                     if (
                         next_char
                         and (next_char.isalnum() or next_char == "=")
-                        and not allow_decode(entity_name)
+                        and not _allow_decode_without_semicolon_follow(entity_name, basic_entities)
                     ):
                         result_append("&")
                         i += 1
@@ -1151,54 +1183,27 @@ class HTMLTokenizer:
             i += 1
         return "".join(result)
 
-    # Pre-build translation table for invalid characters (do once at class level)
     _INVALID_CHARS_TRANSLATION = str.maketrans({
-        chr(i): '\ufffd' for i in 
-        list(range(0x00, 0x09)) + [0x0B] + list(range(0x0E, 0x20)) + [0x7F] + 
-        list(range(0xD800, 0xE000)) + list(range(0xFDD0, 0xFDF0)) +
-        [0xFFFE, 0xFFFF, 0x1FFFE, 0x1FFFF, 0x2FFFE, 0x2FFFF, 0x3FFFE, 0x3FFFF,
-         0x4FFFE, 0x4FFFF, 0x5FFFE, 0x5FFFF, 0x6FFFE, 0x6FFFF, 0x7FFFE, 0x7FFFF,
-         0x8FFFE, 0x8FFFF, 0x9FFFE, 0x9FFFF, 0xAFFFE, 0xAFFFF, 0xBFFFE, 0xBFFFF,
-         0xCFFFE, 0xCFFFF, 0xDFFFE, 0xDFFFF, 0xEFFFE, 0xEFFFF, 0xFFFFE, 0xFFFFF,
-         0x10FFFE, 0x10FFFF]
+        chr(i): "\ufffd" for i in [
+            *range(0x09),
+            0x0B,
+            *range(0x0E, 0x20),
+            0x7F,
+            *range(0xD800, 0xE000),
+            *range(0xFDD0, 0xFDF0),
+            0xFFFE, 0xFFFF, 0x1FFFE, 0x1FFFF, 0x2FFFE, 0x2FFFF, 0x3FFFE, 0x3FFFF,
+            0x4FFFE, 0x4FFFF, 0x5FFFE, 0x5FFFF, 0x6FFFE, 0x6FFFF, 0x7FFFE, 0x7FFFF,
+            0x8FFFE, 0x8FFFF, 0x9FFFE, 0x9FFFF, 0xAFFFE, 0xAFFFF, 0xBFFFE, 0xBFFFF,
+            0xCFFFE, 0xCFFFF, 0xDFFFE, 0xDFFFF, 0xEFFFE, 0xEFFFF, 0xFFFFE, 0xFFFFF,
+            0x10FFFE, 0x10FFFF,
+        ]
     })
 
-    # Entity decoding constants
     _SEMICOLON_REQUIRED_IN_ATTR = frozenset(["prod"])
     _BASIC_ENTITIES = frozenset(["gt", "lt", "amp", "quot", "apos"])
-
-    @staticmethod
-    def _allow_decode_without_semicolon_follow(entity_name):
-        """Check if entity can be decoded without semicolon when followed by = or alnum."""
-        if entity_name in HTMLTokenizer._BASIC_ENTITIES:
-            return False
-        return entity_name and entity_name[0].isupper() and len(entity_name) > 2
 
     def _replace_invalid_characters(self, text):
         """Replace invalid characters according to HTML5 spec."""
         if not text:
             return text
-        # Use fast translate() method instead of loops
         return text.translate(self._INVALID_CHARS_TRANSLATION)
-
-    def _codepoint_to_char(self, codepoint):
-        """Convert a numeric codepoint to character with HTML5 replacements."""
-        # Handle invalid codepoints
-        if codepoint > 0x10FFFF:
-            return "\ufffd"
-
-        # Handle surrogates (0xD800-0xDFFF) - these are invalid in UTF-8
-        if 0xD800 <= codepoint <= 0xDFFF:
-            return "\ufffd"
-
-        # Apply HTML5 numeric character reference replacements
-        if codepoint in HTML5_NUMERIC_REPLACEMENTS:
-            return HTML5_NUMERIC_REPLACEMENTS[codepoint]
-
-        # Handle special cases
-        if codepoint == 0x10FFFE:
-            return "\U0010fffe"
-        if codepoint == 0x10FFFF:
-            return "\U0010ffff"
-        # codepoint already validated to be within Unicode range and not surrogate; direct conversion
-        return chr(codepoint)
