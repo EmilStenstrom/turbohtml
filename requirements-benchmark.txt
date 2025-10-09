@@ -1,0 +1,11 @@
+# Benchmark dependencies for TurboHTML
+# Install with: pip install -r requirements-benchmark.txt
+
+# Dataset compression
+zstandard>=0.22.0
+
+# Comparison parsers
+html5lib>=1.1
+lxml>=5.0.0
+beautifulsoup4>=4.12.0
+selectolax>=0.3.0
