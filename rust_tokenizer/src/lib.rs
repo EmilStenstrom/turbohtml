@@ -1067,11 +1067,6 @@ impl RustTokenizer {
             }
         }
 
-        // Check if this starts PLAINTEXT mode
-        if !is_end_tag && tag_name == "plaintext" {
-            self.state = "PLAINTEXT".to_string();
-        }
-
         Ok(Some(HTMLToken::py_new(
             token_type.to_string(),
             None,
@@ -1136,8 +1131,8 @@ impl RustTokenizer {
         let len = bytes.len();
 
         while i < len {
-            // Skip whitespace
-            while i < len && bytes[i].is_ascii_whitespace() {
+            // Skip whitespace and slashes between attributes
+            while i < len && (bytes[i].is_ascii_whitespace() || bytes[i] == b'/') {
                 i += 1;
             }
 
