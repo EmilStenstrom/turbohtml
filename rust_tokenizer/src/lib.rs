@@ -1009,7 +1009,9 @@ impl RustTokenizer {
         let trimmed = attr_string.trim();
 
         // Check for self-closing slash
-        let is_self_closing = trimmed.ends_with('/') || trimmed.ends_with(" /");
+        // Only treat as self-closing if / is preceded by whitespace or is at the start
+        // Examples: <foo /> or <foo bar="baz" /> but NOT <foo bar=baz/>
+        let is_self_closing = trimmed.ends_with(" /") || trimmed == "/";
         let attr_to_parse = if is_self_closing {
             trimmed.trim_end_matches('/').trim()
         } else {
