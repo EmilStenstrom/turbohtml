@@ -913,15 +913,6 @@ class HTMLTokenizer:
         # Expected output for <div foo<bar=''> is no attribute and text foo<bar="" instead.
         # We'll allow attribute parsing logic below to detect invalid characters and choose not to emit.
 
-        # Special case for malformed <code x</code> pattern - check before regex
-        if "x</code" in attr_string:
-            # This is the specific malformed case from test 9
-            # Expected attributes: code="" and x<=""
-            attributes = {}
-            attributes["code"] = ""
-            attributes["x<"] = ""
-            return attributes
-
         # Handle case where entire string is attribute name or a slash-delimited sequence
         if (
             attr_string
