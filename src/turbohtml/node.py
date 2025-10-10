@@ -1,4 +1,4 @@
-from turbohtml.constants import BOUNDARY_ELEMENTS
+from turbohtml.constants import BOUNDARY_ELEMENTS, FORMATTING_ELEMENTS, SVG_INTEGRATION_POINTS
 
 
 class Node:
@@ -379,7 +379,6 @@ class Node:
 
     def find_svg_integration_point_ancestor(self):
         """Find nearest SVG integration point ancestor."""
-        from turbohtml.constants import SVG_INTEGRATION_POINTS
         current = self
         while current:
             if current.tag_name in SVG_INTEGRATION_POINTS:
@@ -389,7 +388,6 @@ class Node:
 
     def find_formatting_element_ancestor(self):
         """Find nearest formatting element ancestor."""
-        from turbohtml.constants import FORMATTING_ELEMENTS
         current = self
         while current:
             if current.tag_name in FORMATTING_ELEMENTS:
@@ -645,7 +643,6 @@ class Node:
         Returns:
             List of formatting ancestors ordered outermost->innermost (rootward first, nearest last)
         """
-        from .constants import FORMATTING_ELEMENTS
         ancestors = []
         current = self
         while current and current != stop_at:

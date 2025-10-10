@@ -10,16 +10,15 @@ behaviour or test-specific logic resides here.
 from turbohtml import table_modes
 from turbohtml.constants import RAWTEXT_ELEMENTS
 from turbohtml.context import ContentState, DocumentState, ParseContext
-from turbohtml.node import Node
 from turbohtml.handlers import HTMLToken
+from turbohtml.node import Node
+from turbohtml.utils import ensure_body
 
 try:
     from rust_tokenizer import RustTokenizer as HTMLTokenizer
-except ImportError as e:
+except ImportError as err:
     msg = "rust_tokenizer module not found. Build with: cd rust_tokenizer && cargo build --release"
-    raise ImportError(msg) from e
-
-from turbohtml.utils import ensure_body
+    raise ImportError(msg) from err
 
 
 class FragmentSpec:
@@ -539,16 +538,10 @@ def parse_fragment(parser, html):  # pragma: no cover
                 if self.consumed:
                     raise StopIteration
                 self.consumed = True
-                token = HTMLToken("Character", data=self.text)
-                return token
+                return HTMLToken("Character", data=self.text)
 
         parser.tokenizer = RawTextTokenizer(html)
     else:
-        try:
-            from rust_tokenizer import RustTokenizer as HTMLTokenizer
-        except ImportError as e:
-            msg = "rust_tokenizer module not found. Build with: cd rust_tokenizer && cargo build --release"
-            raise ImportError(msg) from e
         parser.tokenizer = HTMLTokenizer(html)
 
     # Some handlers assume parser.html_node exists (mirrors document parsing path). For non-html

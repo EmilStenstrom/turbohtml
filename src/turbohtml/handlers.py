@@ -4,7 +4,6 @@ from turbohtml import table_modes
 from turbohtml.constants import (
     AUTO_CLOSING_TAGS,
     BLOCK_ELEMENTS,
-    BOUNDARY_ELEMENTS,
     CLOSE_ON_PARENT_CLOSE,
     FORMATTING_ELEMENTS,
     HEAD_ELEMENTS,
@@ -43,7 +42,16 @@ from turbohtml.utils import (
 
 class HTMLToken:
     """Simple token class for creating synthetic tokens matching Rust tokenizer interface."""
-    __slots__ = ("type_", "data", "tag_name", "attributes", "is_self_closing", "is_last_token", "needs_rawtext", "ignored_end_tag")
+    __slots__ = (
+        "attributes",
+        "data",
+        "ignored_end_tag",
+        "is_last_token",
+        "is_self_closing",
+        "needs_rawtext",
+        "tag_name",
+        "type_",
+    )
 
     def __init__(self, type_, tag_name=None, data=None, attributes=None, is_self_closing=False, needs_rawtext=False):
         self.type_ = type_
@@ -2119,9 +2127,11 @@ class SelectTagHandler(AncestorCloseHandler):
                 if select_element:
                     # Find formatting elements between select and current position
                     select_index = context.open_elements.index_of(select_element)
-                    for el in list(context.open_elements)[select_index + 1:]:
-                        if el.tag_name in FORMATTING_ELEMENTS:
-                            formatting_to_recreate.append((el.tag_name, el.attributes.copy() if el.attributes else {}))
+                    formatting_to_recreate = [
+                        (el.tag_name, el.attributes.copy() if el.attributes else {})
+                        for el in list(context.open_elements)[select_index + 1:]
+                        if el.tag_name in FORMATTING_ELEMENTS
+                    ]
 
                 # Pop stack until outer select removed
                 while not context.open_elements.is_empty():
@@ -4591,7 +4601,7 @@ class ListTagHandler(TagHandler):
     """Handles list-related elements (ul, ol, li, dl, dt, dd)."""
 
     # Fast-path: tags this handler processes
-    HANDLED_TAGS = frozenset(['li', 'dt', 'dd'])
+    HANDLED_TAGS = frozenset(["li", "dt", "dd"])
 
     def should_handle_start(self, tag_name, context):
         # Early exit if not a list tag
@@ -5549,9 +5559,11 @@ class AutoClosingTagHandler(TagHandler):
                 if inside_select:
                     # Find formatting elements between current block and the insertion point
                     current_index = context.open_elements.index_of(current)
-                    for el in list(context.open_elements)[current_index + 1:]:
-                        if el.tag_name in FORMATTING_ELEMENTS:
-                            formatting_to_recreate.append((el.tag_name, el.attributes.copy() if el.attributes else {}))
+                    formatting_to_recreate = [
+                        (el.tag_name, el.attributes.copy() if el.attributes else {})
+                        for el in list(context.open_elements)[current_index + 1:]
+                        if el.tag_name in FORMATTING_ELEMENTS
+                    ]
 
                 while not context.open_elements.is_empty():
                     popped = context.open_elements.pop()
@@ -6554,11 +6566,10 @@ class ForeignTagHandler(TagHandler):
         if context.current_context in ("svg", "math"):
             return True
         # Otherwise detect if any foreign ancestor remains (context may have been cleared by breakout)
-        has_foreign = (
+        return (
             context.current_parent.find_svg_namespace_ancestor() is not None
             or context.current_parent.find_math_namespace_ancestor() is not None
         )
-        return has_foreign
 
     def handle_end(self, token, context):
         tag_name = token.tag_name.lower()

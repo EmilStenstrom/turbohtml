@@ -590,7 +590,7 @@ def _run_regression_check(runner, reporter):
     baseline_file = "test-summary.txt"
 
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # noqa: S603
             ["git", "show", f"HEAD:{baseline_file}"],  # noqa: S607
             capture_output=True,
             text=True,
