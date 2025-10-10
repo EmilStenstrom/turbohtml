@@ -473,7 +473,21 @@ impl RustTokenizer {
 
                 if has_closing_gt {
                     // Complete end tag </script>
-                    if self.should_honor_script_end_tag(&full_content) {
+                    let mut honor = self.should_honor_script_end_tag(&full_content);
+
+                    // Escaped comment pattern: if inside <!--<script with no -->,
+                    // defer this </script> if another </script exists later
+                    if Self::in_escaped_script_comment(&full_content.to_lowercase()) {
+                        let rest = &self.html[i + 1..].to_lowercase();
+                        if rest.contains("</script") {
+                            self.debug("  escaped pattern: deferring current </script> (another later)");
+                            honor = false;
+                        } else {
+                            self.debug("  escaped pattern: last candidate </script> will terminate script");
+                        }
+                    }
+
+                    if honor {
                         self.debug("  honoring script end tag");
                         self.pos = i + 1;
 
