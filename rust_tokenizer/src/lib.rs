@@ -1084,12 +1084,23 @@ impl RustTokenizer {
             self.pos += 1;
 
             let token_type = if is_end_tag { "EndTag" } else { "StartTag" };
-            let needs_rawtext = !is_end_tag && matches!(
+
+            // Check if this tag requires RAWTEXT mode
+            // Per HTML5 spec: RAWTEXT elements switch tokenizer to RAWTEXT state immediately,
+            // but only <textarea> defers the parser content state transition (needs_rawtext=true).
+            // Other RAWTEXT elements (script, style, title, etc.) don't need deferred activation
+            // because the tokenizer handles their content. This allows the parser to treat them
+            // as normal elements in foreign (SVG/MathML) contexts where RAWTEXT behavior doesn't apply.
+            let is_rawtext_element = !is_end_tag && matches!(
                 tag_name.as_str(),
                 "script" | "style" | "xmp" | "iframe" | "noembed" | "noframes" | "noscript" | "textarea" | "title"
             );
 
-            if needs_rawtext {
+            // Only <textarea> needs deferred RAWTEXT activation (needs_rawtext=true)
+            // This allows the parser to handle foreign content contexts properly
+            let needs_rawtext = !is_end_tag && tag_name == "textarea";
+
+            if is_rawtext_element {
                 self.state = "RAWTEXT".to_string();
                 self.rawtext_tag = Some(tag_name.clone());
                 if tag_name == "script" {
@@ -1168,13 +1179,21 @@ impl RustTokenizer {
             "StartTag"
         };
 
-        // Check if this starts RAWTEXT mode
-        let needs_rawtext = !is_end_tag && matches!(
+        // Check if this tag requires RAWTEXT mode
+        // Per HTML5 spec: RAWTEXT elements switch tokenizer to RAWTEXT state immediately,
+        // but only <textarea> defers the parser content state transition (needs_rawtext=true).
+        // Other RAWTEXT elements (script, style, title, etc.) don't need deferred activation
+        // because the tokenizer handles their content. This allows the parser to treat them
+        // as normal elements in foreign (SVG/MathML) contexts where RAWTEXT behavior doesn't apply.
+        let is_rawtext_element = !is_end_tag && matches!(
             tag_name.as_str(),
             "script" | "style" | "xmp" | "iframe" | "noembed" | "noframes" | "noscript" | "textarea" | "title"
         );
 
-        if needs_rawtext {
+        // Only <textarea> needs deferred RAWTEXT activation (needs_rawtext=true)
+        let needs_rawtext = !is_end_tag && tag_name == "textarea";
+
+        if is_rawtext_element {
             self.state = "RAWTEXT".to_string();
             self.rawtext_tag = Some(tag_name.clone());
             if tag_name == "script" {
