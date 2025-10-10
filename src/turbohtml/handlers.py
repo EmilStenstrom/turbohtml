@@ -4608,8 +4608,6 @@ class ListTagHandler(TagHandler):
             self.debug(
                 f"Found existing {ancestor.tag_name} ancestor - performing implied end handling",
             )
-            # Remember the original current_parent before climbing (needed to avoid cloning elements we're inside)
-            original_parent = context.current_parent
 
             # If currently inside a formatting element child (e.g., <dt><b>|cursor| ...), move up to the dt/dd first
             if (
@@ -4934,15 +4932,7 @@ class RawtextTagHandler(TagHandler):
                 # If a <select> was foster-parented immediately before the <table> and remains open, subsequent rawtext
                 # tokens still belong inside that <select>. If current_parent is the table and its immediate previous
                 # sibling is an open <select>, move insertion into the select and bypass table relocation.
-                cur_parent = context.current_parent
                 skip_table_reloc = False
-                if cur_parent.tag_name == "table" and cur_parent.parent:
-                    parent = cur_parent.parent
-                    table_index = -1
-                    for i, ch in enumerate(parent.children):
-                        if ch is cur_parent:
-                            table_index = i
-                            break
 
                 table = find_current_table(context) if not skip_table_reloc else None
                 if table and not skip_table_reloc:
