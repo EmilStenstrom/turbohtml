@@ -337,7 +337,7 @@ class DocumentStructureHandler(TagHandler):
             target_parent = context.current_parent
             if target_parent and body:
                 # Check if current_parent is a descendant of body
-                if not target_parent.find_ancestor(lambda n: n is body):
+                if not body.is_ancestor_of(target_parent):
                     target_parent = body
             else:
                 target_parent = body if body else self.parser.html_node
@@ -519,12 +519,14 @@ class TemplateContentFilterHandler(TagHandler):
 
     def _handle_nested_template(self, token, context):
         """Handle nested template inside template content."""
-        if (self.parser.foreign_handler and context.current_context in ("svg", "math")) or context.current_parent.has_ancestor_matching(
-            lambda n: n.namespace == "svg"
-            or n.tag_name == "svg"
-            or n.namespace == "math"
-            or n.tag_name == "math",
-        ):
+        in_foreign = self.parser.foreign_handler and context.current_context in ("svg", "math")
+        has_foreign_ancestor = (
+            context.current_parent.find_svg_namespace_ancestor() is not None
+            or context.current_parent.find_math_namespace_ancestor() is not None
+            or context.current_parent.find_ancestor("svg") is not None
+            or context.current_parent.find_ancestor("math") is not None
+        )
+        if in_foreign or has_foreign_ancestor:
             return False
         # Template elements are allowed in table context without foster parenting
         template_node = self.parser.insert_element(
@@ -1507,9 +1509,7 @@ class FormattingTagHandler(TagHandler):
         if tag_name in HEAD_ELEMENTS and tag_name not in {"style", "script", "title"}:
             return False
         in_table_modes = context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW)
-        in_cell_or_caption = bool(
-            context.current_parent.find_ancestor(lambda n: n.tag_name in {"td", "th", "caption"}),
-        )
+        in_cell_or_caption = context.current_parent.find_table_cell_ancestor() is not None
         if in_table_modes and not in_cell_or_caption:
             return False
         # For non-blockish tags reconstruct immediately; blockish handled post element creation in parser
@@ -1778,7 +1778,7 @@ class FormattingTagHandler(TagHandler):
             if (
                 cell
                 and cell is not context.current_parent
-                and not context.current_parent.find_ancestor(lambda n: n is cell)
+                and not cell.is_ancestor_of(context.current_parent)
             ):
                 cell = None
             if cell:
@@ -1958,7 +1958,7 @@ class FormattingTagHandler(TagHandler):
             return True
 
         # Boundary handling (exclude table cells)
-        boundary = context.current_parent.find_ancestor(lambda n: n.tag_name in BOUNDARY_ELEMENTS and n.tag_name not in ("td","th"))
+        boundary = context.current_parent.find_boundary_ancestor(exclude_tags=("td", "th"))
         if boundary:
             current = context.current_parent.find_ancestor(tag_name, stop_at_boundary=True)
             if current:
@@ -2107,7 +2107,7 @@ class SelectTagHandler(AncestorCloseHandler):
                 self.debug(
                     "Found nested select, popping outer <select> from open elements (spec reprocess rule)",
                 )
-                
+
                 # Collect formatting elements that are inside select (for recreation outside)
                 formatting_to_recreate = []
                 select_element = None
@@ -2115,14 +2115,14 @@ class SelectTagHandler(AncestorCloseHandler):
                     if el.tag_name == "select":
                         select_element = el
                         break
-                
+
                 if select_element:
                     # Find formatting elements between select and current position
                     select_index = context.open_elements.index_of(select_element)
                     for el in list(context.open_elements)[select_index + 1:]:
                         if el.tag_name in FORMATTING_ELEMENTS:
                             formatting_to_recreate.append((el.tag_name, el.attributes.copy() if el.attributes else {}))
-                
+
                 # Pop stack until outer select removed
                 while not context.open_elements.is_empty():
                     popped = context.open_elements.pop()
@@ -2130,13 +2130,13 @@ class SelectTagHandler(AncestorCloseHandler):
                         if popped.parent:
                             context.move_to_element(popped.parent)
                         break
-                
+
                 # Recreate formatting elements outside select
                 for fmt_tag, fmt_attrs in formatting_to_recreate:
                     self.debug(f"Recreating formatting element {fmt_tag} outside select")
                     fmt_token = HTMLToken("StartTag", tag_name=fmt_tag, attributes=fmt_attrs)
                     self.parser.insert_element(fmt_token, context, mode="normal", enter=True)
-                
+
                 # Ignore the nested <select> token itself (do not create new select)
                 return True
 
@@ -2281,9 +2281,7 @@ class SelectTagHandler(AncestorCloseHandler):
 
         if tag_name in ("optgroup", "option"):
             # Check if we're in a select or datalist
-            parent = context.current_parent.find_ancestor(
-                lambda n: n.tag_name in ("select", "datalist"),
-            )
+            parent = context.current_parent.find_select_or_datalist_ancestor()
             self.debug(f"Checking for select/datalist ancestor: found={bool(parent)}")
 
             # If we're not in a select/datalist, create elements at body level
@@ -2338,9 +2336,7 @@ class SelectTagHandler(AncestorCloseHandler):
                             context.move_to_element(parent_body)
                 # Ensure insertion at select/datalist level (flatten misnested optgroup nesting)
                 if context.current_parent.tag_name == "optgroup":
-                    container = context.current_parent.find_ancestor(
-                        lambda n: n.tag_name in ("select", "datalist"),
-                    )
+                    container = context.current_parent.find_select_or_datalist_ancestor()
                     if container:
                         context.move_to_element(container)
                 new_optgroup = self.parser.insert_element(
@@ -2382,12 +2378,12 @@ class SelectTagHandler(AncestorCloseHandler):
         # Handle select-related end tags
         if tag_name in {"select", "option", "optgroup", "datalist"}:
             return True
-        
+
         # Handle formatting element end tags when inside select
         if tag_name in FORMATTING_ELEMENTS and context.current_parent.is_inside_tag("select"):
             self.debug(f"SelectTagHandler intercepting </{tag_name}> inside select")
             return True
-        
+
         return False
 
     def handle_end(self, token, context):
@@ -2399,13 +2395,13 @@ class SelectTagHandler(AncestorCloseHandler):
         # Handle formatting element end tags inside select
         if tag_name in FORMATTING_ELEMENTS and context.current_parent.is_inside_tag("select"):
             self.debug(f"Handling formatting element </{tag_name}> inside select")
-            
+
             # Find the formatting element ancestor inside select
             fmt_element = context.current_parent.find_ancestor(tag_name)
             if not fmt_element:
                 self.debug(f"No {tag_name} ancestor found, ignoring")
                 return True
-            
+
             # Collect nested formatting elements inside the closing element (to recreate as siblings)
             nested_formatting = []
             if context.current_parent is not fmt_element:
@@ -2418,14 +2414,14 @@ class SelectTagHandler(AncestorCloseHandler):
             # Close the formatting element by moving to its parent
             self.debug(f"Closing {tag_name} inside select, moving to {fmt_element.parent.tag_name if fmt_element.parent else 'None'}")
             context.move_to_ancestor_parent(fmt_element)
-            
+
             # Recreate nested formatting elements as siblings of the closed element
             if nested_formatting:
                 for nested_tag, nested_attrs in nested_formatting:
                     self.debug(f"Recreating nested formatting element {nested_tag} as sibling of {tag_name}")
                     nested_token = HTMLToken("StartTag", tag_name=nested_tag, attributes=nested_attrs)
                     self.parser.insert_element(nested_token, context, mode="normal", enter=True)
-            
+
             return True
 
         if tag_name in ("select", "datalist"):
@@ -2710,9 +2706,7 @@ class ParagraphTagHandler(TagHandler):
             if context.current_parent.tag_name in (
                 "td",
                 "th",
-            ) or context.current_parent.find_ancestor(
-                lambda n: n.tag_name in {"td", "th"},
-            ):
+            ) or context.current_parent.find_table_cell_no_caption_ancestor() is not None:
                 self.debug(
                     "Inside table cell; skipping foster-parenting <p> (will insert inside cell)",
                 )
@@ -2741,9 +2735,7 @@ class ParagraphTagHandler(TagHandler):
 
         p_ancestor = context.current_parent.find_ancestor("p")
         if p_ancestor:
-            boundary_between = context.current_parent.find_ancestor(
-                lambda n: n.tag_name in SVG_INTEGRATION_POINTS,
-            )
+            boundary_between = context.current_parent.find_svg_integration_point_ancestor()
             if boundary_between and boundary_between != p_ancestor:
                 self.debug(
                     "Found outer <p> beyond integration point boundary; keeping it open",
@@ -2783,9 +2775,7 @@ class ParagraphTagHandler(TagHandler):
                 context.open_elements.replace_stack(new_stack)
 
         # Check if we're inside a container element
-        container_ancestor = context.current_parent.find_ancestor(
-            lambda n: n.tag_name in ("div", "article", "section", "aside", "nav"),
-        )
+        container_ancestor = context.current_parent.find_sectioning_element_ancestor()
         if container_ancestor and container_ancestor == context.current_parent:
             self.debug(
                 f"Inside container element {container_ancestor.tag_name}, keeping p nested",
@@ -2907,12 +2897,9 @@ class ParagraphTagHandler(TagHandler):
         # a table subtree. An implicit empty <p> element should appear around tables in this case.
         # Do NOT apply this behavior inside HTML integration points within foreign content
         # (e.g., inside <svg foreignObject> or MathML text IPs); keep paragraph handling local there.
-        in_svg_ip = context.current_parent.tag_name in SVG_INTEGRATION_POINTS or context.current_parent.has_ancestor_matching(
-            lambda n: n.tag_name in SVG_INTEGRATION_POINTS,
-        )
-        in_math_ip = context.current_parent.find_ancestor(
-            lambda n: n.namespace == "math" and n.tag_name in MATHML_TEXT_INTEGRATION_POINTS,
-        ) is not None or (
+        in_svg_ip = (context.current_parent.tag_name in SVG_INTEGRATION_POINTS
+                     or context.current_parent.find_svg_integration_point_ancestor() is not None)
+        in_math_ip = context.current_parent.find_mathml_text_integration_point_ancestor() is not None or (
             context.current_parent.namespace == "math" and context.current_parent.tag_name == "annotation-xml"
             and context.current_parent.attributes.get("encoding", "").lower()
             in ("text/html", "application/xhtml+xml")
@@ -3165,14 +3152,10 @@ class TableTagHandler(TableElementHandler):
                 if context.current_parent.namespace == "svg" and context.current_parent.tag_name in {"foreignObject", "desc", "title"}:
                     in_integration_point = True
                 # Also check ancestors
-                elif context.current_parent.find_ancestor(
-                    lambda n: n.namespace == "svg" and n.tag_name in {"foreignObject", "desc", "title"},
-                ):
+                elif context.current_parent.find_svg_html_integration_point_ancestor() is not None:
                     in_integration_point = True
             elif context.current_context == "math":
-                annotation_ancestor = context.current_parent.find_ancestor(
-                    lambda n: n.namespace == "math" and n.tag_name == "annotation-xml",
-                )
+                annotation_ancestor = context.current_parent.find_math_annotation_xml_ancestor()
                 if annotation_ancestor:
                     encoding = annotation_ancestor.attributes.get(
                         "encoding", "",
@@ -3389,7 +3372,7 @@ class TableTagHandler(TableElementHandler):
             # Determine if we are effectively inside a cell even if current_parent is formatting element.
             in_cell = (
                 context.current_parent.tag_name in {"td", "th"}
-                or context.current_parent.find_ancestor(lambda n: n.tag_name in {"td", "th"}) is not None
+                or context.current_parent.find_table_cell_no_caption_ancestor() is not None
             )
             if not in_cell:
                 current_table = find_current_table(context)
@@ -3750,12 +3733,12 @@ class TableTagHandler(TableElementHandler):
             DocumentState.IN_ROW,
         ):
             return False
-        if context.current_parent.tag_name in SVG_INTEGRATION_POINTS or context.current_parent.has_ancestor_matching(
-            lambda n: n.tag_name in SVG_INTEGRATION_POINTS,
+        if context.current_parent.tag_name in SVG_INTEGRATION_POINTS or (
+            context.current_parent.find_svg_integration_point_ancestor() is not None
         ):
             return False
-        if context.current_parent.tag_name in {"select", "option", "optgroup"} or context.current_parent.has_ancestor_matching(
-            lambda n: n.tag_name in {"select", "option", "optgroup"},
+        if context.current_parent.tag_name in {"select", "option", "optgroup"} or (
+            context.current_parent.find_select_option_optgroup_ancestor() is not None
         ):
             return False
         return True
@@ -3773,9 +3756,7 @@ class TableTagHandler(TableElementHandler):
             return True
 
         # If we're inside a table cell, append text directly
-        current_cell = context.current_parent.find_ancestor(
-            lambda n: n.tag_name in ["td", "th"],
-        )
+        current_cell = context.current_parent.find_table_cell_no_caption_ancestor()
         if current_cell:
             self.debug(
                 f"Inside table cell {current_cell}, appending text with formatting awareness",
@@ -3914,7 +3895,7 @@ class TableTagHandler(TableElementHandler):
                     if not context.open_elements.contains(node):
                         continue
                     # Check if node lives inside the foster-parented block
-                    if node is block_elem or node.find_ancestor(lambda n: n is block_elem):
+                    if node is block_elem or block_elem.is_ancestor_of(node):
                         target = node
                         break
             # If target is still the block, but its last child is a formatting element that is open, descend to the
@@ -4033,9 +4014,7 @@ class TableTagHandler(TableElementHandler):
         #      sibling <a> for the new foster-parented text run. No generic cloning or broad continuation heuristic.
         # Collect formatting context up to foster parent; reconstruct if stale AFE entries exist.
 
-        formatting_elements = context.current_parent.collect_ancestors_until(
-            foster_parent, lambda n: n.tag_name in FORMATTING_ELEMENTS,
-        )
+        formatting_elements = context.current_parent.collect_formatting_ancestors_until(foster_parent)
         if context.needs_reconstruction and formatting_elements:
             filtered = []
             for elem in formatting_elements:
@@ -4335,7 +4314,7 @@ class TableTagHandler(TableElementHandler):
                         el = entry.element
                         if el is None:
                             continue
-                        if el.find_ancestor(lambda n: n is table_node):
+                        if table_node.is_ancestor_of(el):
                             context.active_formatting_elements.remove_entry(entry)
                 # Find any active formatting element that contained the table
                 formatting_parent = table_node.parent
@@ -4344,10 +4323,9 @@ class TableTagHandler(TableElementHandler):
                 # by looking for foreign ancestors of the table
                 foreign_ancestor = None
                 if table_node:
-                    foreign_ancestor = table_node.find_ancestor(
-                        lambda n: (n.namespace == "svg" and n.tag_name == "foreignObject")
-                        or (n.namespace == "math" and n.tag_name == "annotation-xml"),
-                    )
+                    svg_fo = table_node.find_foreign_object_ancestor()
+                    math_ax = table_node.find_math_annotation_xml_ancestor()
+                    foreign_ancestor = svg_fo or math_ax
 
                 self.debug(
                     f"After </table> pop stack={[el.tag_name for el in context.open_elements]}",
@@ -4677,7 +4655,7 @@ class ListTagHandler(TagHandler):
             # If currently inside a formatting element child (e.g., <dt><b>|cursor| ...), move up to the dt/dd first
             if (
                 context.current_parent is not ancestor
-                and context.current_parent.find_ancestor(lambda n: n is ancestor)
+                and ancestor.is_ancestor_of(context.current_parent)
             ):
                 climb_safety = 0
                 while (
@@ -4706,13 +4684,13 @@ class ListTagHandler(TagHandler):
                 anc_index = context.open_elements.index(ancestor)
                 for el in context.open_elements[anc_index + 1 :]:
                     if (
-                        el.find_ancestor(lambda n: n is ancestor)
+                        ancestor.is_ancestor_of(el)
                         and el.tag_name in FORMATTING_ELEMENTS
                     ):
                         formatting_to_remove.append(el)  # Always remove from stack
                         # Skip cloning if el is original_parent or an ancestor of original_parent
                         is_current = el is original_parent
-                        is_ancestor = original_parent.find_ancestor(lambda n, el=el: n is el) if original_parent else False
+                        is_ancestor = el.is_ancestor_of(original_parent) if original_parent else False
                         if not (is_current or is_ancestor):
                             formatting_descendants.append(el)
             # Ensure direct child formatting also included if not already (covers elements not on stack due to prior closure)
@@ -4724,7 +4702,7 @@ class ListTagHandler(TagHandler):
                 ):
                     # Skip cloning if ch is original_parent or ancestor of original_parent
                     is_current = ch is original_parent
-                    is_ancestor = original_parent.find_ancestor(lambda n, ch=ch: n is ch) if original_parent else False
+                    is_ancestor = ch.is_ancestor_of(original_parent) if original_parent else False
                     if not (is_current or is_ancestor):
                         formatting_descendants.append(ch)
             # Remove formatting descendants from open elements stack (implicit close) but keep active formatting entries
@@ -4789,9 +4767,7 @@ class ListTagHandler(TagHandler):
             self.debug("Current parent is <menuitem>; keeping context for nested <li>")
         else:
             # Look for the nearest list container (ul, ol, menu) ancestor
-            list_ancestor = context.current_parent.find_ancestor(
-                lambda n: n.tag_name in ("ul", "ol", "menu"),
-            )
+            list_ancestor = context.current_parent.find_list_ancestor()
             if list_ancestor:
                 if (
                     context.current_parent.tag_name == "div"
@@ -4843,9 +4819,7 @@ class ListTagHandler(TagHandler):
         self.debug(f"Handling end tag for {tag_name}")
 
         # Find the nearest dt/dd ancestor
-        dt_dd_ancestor = context.current_parent.find_ancestor_until(
-            lambda n: n.tag_name in ("dt", "dd"), self.parser.html_node,
-        )
+        dt_dd_ancestor = context.current_parent.find_dt_or_dd_ancestor()
         if dt_dd_ancestor:
             self.debug(f"Found matching {dt_dd_ancestor.tag_name}")
             # Move to the dl parent
@@ -4888,7 +4862,7 @@ class ListTagHandler(TagHandler):
 
         # Find the matching list container
         matching_container = context.current_parent.find_ancestor_until(
-            lambda n: n.tag_name == tag_name, self.parser.html_node,
+            tag_name, self.parser.html_node,
         )
 
         if matching_container:
@@ -4984,7 +4958,7 @@ class RawtextTagHandler(TagHandler):
         # Special case: disallow textarea inside select
         if tag_name == "textarea" and (
             context.current_parent.tag_name == "select"
-            or context.current_parent.find_ancestor(lambda n: n.tag_name == "select")
+            or context.current_parent.find_ancestor("select") is not None
         ):
             return False
 
@@ -5016,7 +4990,7 @@ class RawtextTagHandler(TagHandler):
             tag_name == "textarea"
             and (
                 context.current_parent.tag_name == "select"
-                or context.current_parent.find_ancestor(lambda n: n.tag_name == "select")
+                or context.current_parent.find_ancestor("select") is not None
             )
         ):
             self.debug("Ignoring <textarea> inside <select> (no rawtext state)")
@@ -5255,9 +5229,7 @@ class VoidTagHandler(TagHandler):
             tag_name == "input"
             and context.document_state == DocumentState.IN_TABLE
             and context.current_parent.tag_name not in ("td", "th")
-            and not context.current_parent.find_ancestor(
-                lambda n: n.tag_name in {"td", "th"},
-            )
+            and not context.current_parent.find_table_cell_no_caption_ancestor()
         ):
             raw_type = token.attributes.get("type", "")
             is_clean_hidden = (
@@ -5388,9 +5360,7 @@ class AutoClosingTagHandler(TagHandler):
         # Handle both formatting cases and auto-closing cases
         return tag_name in AUTO_CLOSING_TAGS or (
             tag_name in BLOCK_ELEMENTS
-            and context.current_parent.find_ancestor(
-                lambda n: n.tag_name in FORMATTING_ELEMENTS,
-            )
+            and context.current_parent.find_formatting_element_ancestor() is not None
         )
 
     def handle_start(
@@ -5406,9 +5376,7 @@ class AutoClosingTagHandler(TagHandler):
         )
 
         # Check if we're inside a formatting element AND this is a block element
-        formatting_element = current.find_ancestor(
-            lambda n: n.tag_name in FORMATTING_ELEMENTS,
-        )
+        formatting_element = current.find_formatting_element_ancestor()
 
         # Also check if there are active formatting elements that need reconstruction
         has_active_formatting = bool(context.active_formatting_elements)
@@ -5550,22 +5518,17 @@ class AutoClosingTagHandler(TagHandler):
             boundary = None
             if context.current_context in ("svg", "math"):
                 # Check if we're in an integration point
-                ip = context.current_parent.find_ancestor(
-                    lambda n: (n.namespace == "svg" and n.tag_name in {"foreignObject", "desc", "title"})
-                    or (n.namespace == "math" and n.tag_name in MATHML_TEXT_INTEGRATION_POINTS),
-                )
+                svg_ip = context.current_parent.find_svg_html_integration_point_ancestor()
+                math_ip = context.current_parent.find_mathml_text_integration_point_ancestor()
+                ip = svg_ip or math_ip
                 if ip:
                     # Integration point becomes the boundary, not the foreign root
                     boundary = ip
                 else:
                     # Not in integration point, use normal boundary logic
-                    boundary = context.current_parent.find_ancestor(
-                        lambda n: n.tag_name in BOUNDARY_ELEMENTS,
-                    )
+                    boundary = context.current_parent.find_boundary_ancestor()
             else:
-                boundary = context.current_parent.find_ancestor(
-                    lambda n: n.tag_name in BOUNDARY_ELEMENTS,
-                )
+                boundary = context.current_parent.find_boundary_ancestor()
             if boundary:
                 self.debug(
                     f"Inside boundary element {boundary.tag_name}, staying inside",
@@ -5656,18 +5619,14 @@ class ForeignTagHandler(TagHandler):
         """Return True if current parent or ancestor is an SVG integration point (foreignObject/desc/title)."""
         if context.current_parent.namespace == "svg" and context.current_parent.tag_name in {"foreignObject", "desc", "title"}:
             return True
-        return context.current_parent.find_ancestor(
-            lambda n: n.namespace == "svg" and n.tag_name in {"foreignObject", "desc", "title"},
-        ) is not None
+        return context.current_parent.find_svg_html_integration_point_ancestor() is not None
 
     def is_in_mathml_integration_point(self, context):
         """Return True if in MathML text integration point or annotation-xml with HTML encoding."""
         # Check text integration points (mtext/mi/mo/mn/ms) - must be MathML elements
         if context.current_parent.namespace == "math" and context.current_parent.tag_name in MATHML_TEXT_INTEGRATION_POINTS:
             return True
-        if context.current_parent.find_ancestor(
-            lambda n: n.namespace == "math" and n.tag_name in MATHML_TEXT_INTEGRATION_POINTS,
-        ):
+        if context.current_parent.find_mathml_text_integration_point_ancestor():
             return True
 
         # Check annotation-xml with HTML encoding
@@ -5677,13 +5636,12 @@ class ForeignTagHandler(TagHandler):
             in ("text/html", "application/xhtml+xml")
         ):
             return True
-        return context.current_parent.find_ancestor(
-            lambda n: (
-                n.namespace == "math" and n.tag_name == "annotation-xml"
-                and n.attributes.get("encoding", "").lower()
-                in ("text/html", "application/xhtml+xml")
-            ),
-        ) is not None
+        # Check for annotation-xml ancestor with HTML encoding
+        annotation_ancestor = context.current_parent.find_math_annotation_xml_ancestor()
+        if annotation_ancestor:
+            encoding = annotation_ancestor.attributes.get("encoding", "").lower()
+            return encoding in ("text/html", "application/xhtml+xml")
+        return False
 
     def get_svg_foreign_breakout_parent(self, context):
         """Find parent and before node for breaking out of SVG context in select.
@@ -5697,9 +5655,7 @@ class ForeignTagHandler(TagHandler):
         # Check if in SVG foreignObject integration point
         in_svg_ip = (
             (context.current_parent.namespace == "svg" and context.current_parent.tag_name == "foreignObject")
-            or context.current_parent.has_ancestor_matching(
-                lambda n: n.namespace == "svg" and n.tag_name == "foreignObject",
-            )
+            or context.current_parent.find_foreign_object_ancestor() is not None
         )
         if not in_svg_ip:
             return None, None
@@ -5843,12 +5799,7 @@ class ForeignTagHandler(TagHandler):
         # but plain <figure> inside text integration points like <ms>, <mi>, etc. We therefore
         # suppress breakout for <figure> unless a text integration point ancestor exists.
         if context.current_context == "math" and tag_name_lower == "figure":
-            has_math_ancestor = (
-                context.current_parent.find_ancestor(
-                    lambda n: n.namespace == "math",
-                )
-                is not None
-            )
+            has_math_ancestor = context.current_parent.find_math_namespace_ancestor() is not None
             # Treat fragment roots 'math math' and 'math annotation-xml' as having a math ancestor for suppression purposes
             if self.parser.fragment_context in ("math math", "math annotation-xml"):
                 has_math_ancestor = True
@@ -5871,22 +5822,15 @@ class ForeignTagHandler(TagHandler):
         # Check for MathML integration points
         if context.current_context == "math":
             # Check if we're inside annotation-xml with HTML encoding
-            annotation_xml = context.current_parent.find_ancestor_until(
-                lambda n: (
-                    n.namespace == "math" and n.tag_name == "annotation-xml"
-                    and n.attributes.get("encoding", "").lower()
-                    in ("application/xhtml+xml", "text/html")
-                ),
-                None,
-            )
+            annotation_xml = context.current_parent.find_math_annotation_xml_ancestor()
             if annotation_xml:
-                in_integration_point = True
+                encoding = annotation_xml.attributes.get("encoding", "").lower()
+                if encoding in ("application/xhtml+xml", "text/html"):
+                    in_integration_point = True
 
             # Check if we're inside mtext/mi/mo/mn/ms which are integration points for ALL HTML elements
             if not in_integration_point:
-                mtext_ancestor = context.current_parent.find_ancestor(
-                    lambda n: n.namespace == "math" and n.tag_name in {"mtext", "mi", "mo", "mn", "ms"},
-                )
+                mtext_ancestor = context.current_parent.find_mathml_text_integration_point_ancestor()
                 if mtext_ancestor:
                     # These are integration points - ALL HTML elements should remain HTML
                     in_integration_point = True
@@ -5894,9 +5838,7 @@ class ForeignTagHandler(TagHandler):
         # Check for SVG integration points
         elif context.current_context == "svg":
             # Check if we're inside foreignObject, desc, or title
-            integration_ancestor = context.current_parent.find_ancestor(
-                lambda n: n.namespace == "svg" and n.tag_name in {"foreignObject", "desc", "title"},
-            )
+            integration_ancestor = context.current_parent.find_svg_html_integration_point_ancestor()
             if integration_ancestor:
                 in_integration_point = True
 
@@ -5928,9 +5870,7 @@ class ForeignTagHandler(TagHandler):
                 table = find_current_table(context)
 
             # Check if we're inside a caption/cell before deciding to foster parent
-            in_caption_or_cell = context.current_parent.find_ancestor(
-                lambda n: n.tag_name in {"td", "th", "caption"},
-            )
+            in_caption_or_cell = context.current_parent.find_table_cell_ancestor() is not None
 
             # Check if we're inside select - HTML breakout should stay in select, not foster parent
             in_select = context.current_parent.is_inside_tag("select")
@@ -5960,9 +5900,7 @@ class ForeignTagHandler(TagHandler):
 
             # If we're in caption/cell (or select), move to that container instead of foster parenting
             if in_caption_or_cell or in_select:
-                target = context.current_parent.find_ancestor(
-                    lambda n: n.tag_name in {"td", "th", "caption", "select"},
-                )
+                target = context.current_parent.find_table_cell_or_select_ancestor()
                 if target:
                     self.debug(
                         f"HTML element {tag_name_lower} breaking out inside {target.tag_name}",
@@ -6069,8 +6007,8 @@ class ForeignTagHandler(TagHandler):
         # 2. Already inside SVG foreign content
         if context.current_context == "svg":
             # SVG integration points (foreignObject/desc/title) switch back to HTML parsing rules
-            if (context.current_parent.namespace == "svg" and context.current_parent.tag_name in {"foreignObject", "desc", "title"}) or context.current_parent.has_ancestor_matching(
-                lambda n: n.namespace == "svg" and n.tag_name in {"foreignObject", "desc", "title"},
+            if (context.current_parent.namespace == "svg" and context.current_parent.tag_name in {"foreignObject", "desc", "title"}) or (
+                context.current_parent.find_svg_html_integration_point_ancestor() is not None
             ):
                 # Exception: table-related tags should STILL be treated as foreign (maintain nested <svg tag>)
                 table_related = {
@@ -6112,12 +6050,7 @@ class ForeignTagHandler(TagHandler):
         # 3. Already inside MathML foreign content
         if context.current_context == "math":
             tag_name_lower = tag_name.lower()
-            in_text_ip = (
-                context.current_parent.find_ancestor(
-                    lambda n: n.namespace == "math" and n.tag_name in MATHML_TEXT_INTEGRATION_POINTS,
-                )
-                is not None
-            )
+            in_text_ip = context.current_parent.find_mathml_text_integration_point_ancestor() is not None
             # Special case: nested <svg> start tag inside a MathML text integration point (<mi>, <mo>, etc.)
             # should create an empty <svg svg> element WITHOUT switching global context or entering it so that
             # subsequent MathML siblings (e.g. <mo>) are still parsed in MathML context and appear as siblings.
@@ -6253,9 +6186,7 @@ class ForeignTagHandler(TagHandler):
             # If we're inside a MathML text integration point (mi/mo/mn/ms/mtext) and encounter <svg>,
             # create a leaf <svg svg> element WITHOUT switching context or entering it (so following
             # MathML siblings remain siblings). This corresponds to logic in should_handle_start.
-            parent_ip = context.current_parent.find_ancestor(
-                lambda n: n.namespace == "math" and n.tag_name in MATHML_TEXT_INTEGRATION_POINTS,
-            )
+            parent_ip = context.current_parent.find_mathml_text_integration_point_ancestor()
             # Nested <foreignObject> immediately following a leaf <svg svg> under a MathML text integration point:
             # move into that svg leaf (activating svg context) so that foreignObject becomes its child.
             if tag_name_lower == "foreignobject" and parent_ip is not None:
@@ -6332,38 +6263,6 @@ class ForeignTagHandler(TagHandler):
                 )
                 return True
 
-            # Special case: Nested MathML text integration point elements (mi/mo/mn/ms/mtext)
-            # inside an existing MathML text integration point should be treated as HTML elements
-            # (no MathML prefix) in foreign-fragment leaf contexts. Example:
-            # context element <math ms> then encountering <ms/> should yield <ms> not <math ms>.
-            if tag_name_lower in {"mi", "mo", "mn", "ms", "mtext"}:
-                ancestor_text_ip = context.current_parent.find_ancestor(
-                    lambda n: n.tag_name
-                    in (
-                        "math mi",
-                        "math mo",
-                        "math mn",
-                        "math ms",
-                        "math mtext",
-                    ),
-                )
-                # Also treat as HTML when fragment root itself is one of these leaf contexts
-                frag_leaf_root = False
-                if (
-                    self.parser.fragment_context
-                    and self.parser.fragment_context.startswith("math ")
-                ):
-                # If fragment context explicitly names one of these (e.g. 'math ms'), treat leaf element occurrences as HTML
-                    pass
-                if (
-                    not frag_leaf_root
-                    and self.parser.fragment_context == f"math {tag_name_lower}"
-                ):
-                    frag_leaf_root = True
-                self.debug(
-                    f"MathML leaf kept prefixed: tag={tag_name_lower}, ancestor_text_ip={ancestor_text_ip is not None}, frag_leaf_root={frag_leaf_root}, fragment_context={self.parser.fragment_context}",
-                )
-
             # Handle HTML elements inside annotation-xml
             if context.current_parent.namespace == "math" and context.current_parent.tag_name == "annotation-xml":
                 # Handle SVG inside annotation-xml (switch to SVG context)
@@ -6419,8 +6318,8 @@ class ForeignTagHandler(TagHandler):
             # If we're inside an SVG integration point (foreignObject, desc, title),
             # delegate ALL tags to HTML handlers. HTML parsing rules apply within these
             # subtrees per the HTML spec.
-            if (context.current_parent.namespace == "svg" and context.current_parent.tag_name in {"foreignObject", "desc", "title"}) or context.current_parent.has_ancestor_matching(
-                lambda n: n.namespace == "svg" and n.tag_name in {"foreignObject", "desc", "title"},
+            if (context.current_parent.namespace == "svg" and context.current_parent.tag_name in {"foreignObject", "desc", "title"}) or (
+                context.current_parent.find_svg_html_integration_point_ancestor() is not None
             ):
                 # foreignObject: treat <math> as math root; leaf math tokens without preceding root act as HTML
                 if context.current_parent.namespace == "svg" and context.current_parent.tag_name == "foreignObject":
@@ -6446,9 +6345,7 @@ class ForeignTagHandler(TagHandler):
                 # Allow descendant <math> under a foreignObject subtree (current parent is deeper HTML element) to start math context
                 if (
                     tag_name_lower == "math"
-                    and context.current_parent.has_ancestor_matching(
-                        lambda n: n.namespace == "svg" and n.tag_name == "foreignObject",
-                    )
+                    and context.current_parent.find_foreign_object_ancestor() is not None
                 ):
                     self.parser.insert_element(
                         token,
@@ -6471,12 +6368,8 @@ class ForeignTagHandler(TagHandler):
                 # while keeping existing behavior for MathML leaf tokens (HTML delegation until root).
                 if (
                     tag_name_lower == "math"
-                    and context.current_parent.has_ancestor_matching(
-                        lambda n: n.namespace == "svg" and n.tag_name == "foreignObject",
-                    )
-                    and not context.current_parent.find_ancestor(
-                        lambda n: n.namespace == "math",
-                    )
+                    and context.current_parent.find_foreign_object_ancestor() is not None
+                    and not context.current_parent.find_math_namespace_ancestor()
                 ):
                     return True
                 # Delegate HTML (and table-related) elements to HTML handlers inside integration points
@@ -6640,8 +6533,8 @@ class ForeignTagHandler(TagHandler):
         """
         # While explicitly in SVG context
         if context.current_context == "svg":
-            in_ip = (context.current_parent.namespace == "svg" and context.current_parent.tag_name in {"foreignObject", "desc", "title"}) or context.current_parent.has_ancestor_matching(
-                lambda n: n.namespace == "svg" and n.tag_name in {"foreignObject", "desc", "title"},
+            in_ip = (context.current_parent.namespace == "svg" and context.current_parent.tag_name in {"foreignObject", "desc", "title"}) or (
+                context.current_parent.find_svg_html_integration_point_ancestor() is not None
             )
             if in_ip:
                 tl = tag_name.lower()
@@ -6649,12 +6542,7 @@ class ForeignTagHandler(TagHandler):
                     return False  # delegate to HTML handlers
         # While explicitly in MathML context
         elif context.current_context == "math":
-            in_text_ip = (
-                context.current_parent.find_ancestor(
-                    lambda n: n.namespace == "math" and n.tag_name in MATHML_TEXT_INTEGRATION_POINTS,
-                )
-                is not None
-            )
+            in_text_ip = context.current_parent.find_mathml_text_integration_point_ancestor() is not None
             tag_name_lower = tag_name.lower()
             if in_text_ip and tag_name_lower in HTML_ELEMENTS:
                 return False
@@ -6666,20 +6554,17 @@ class ForeignTagHandler(TagHandler):
         if context.current_context in ("svg", "math"):
             return True
         # Otherwise detect if any foreign ancestor remains (context may have been cleared by breakout)
-        ancestor = context.current_parent.find_ancestor(
-            lambda n: n.namespace == "svg"
-            or n.namespace == "math"
-            or (n.namespace == "svg" and n.tag_name in ("foreignObject", "annotation-xml")),
+        has_foreign = (
+            context.current_parent.find_svg_namespace_ancestor() is not None
+            or context.current_parent.find_math_namespace_ancestor() is not None
         )
-        return ancestor is not None
+        return has_foreign
 
     def handle_end(self, token, context):
         tag_name = token.tag_name.lower()
         # Find matching element (case-insensitive)
         # tag_name is now the local name (namespace is separate), so no split needed
-        matching_element = context.current_parent.find_ancestor(
-            lambda n: n.tag_name.lower() == tag_name,
-        )
+        matching_element = context.current_parent.find_ancestor_case_insensitive(tag_name)
 
         if matching_element:
             # Do not allow matching to cross an active <foreignObject> boundary with open HTML descendants.
@@ -6724,10 +6609,7 @@ class ForeignTagHandler(TagHandler):
             elif matching_element.namespace == "math" and matching_element.tag_name == "math":
                 context.current_context = None
             # After moving, recompute foreign context if any ancestor remains
-            ancestor = context.current_parent.find_ancestor(
-                lambda n: n.namespace == "svg"
-                or n.namespace == "math",
-            )
+            ancestor = context.current_parent.find_foreign_namespace_ancestor()
             if ancestor:
                 if ancestor.namespace == "svg":
                     context.current_context = "svg"
@@ -6744,13 +6626,11 @@ class ForeignTagHandler(TagHandler):
             # Integration point guard
             in_integration_point = False
             if context.current_context == "svg":
-                in_integration_point = (context.current_parent.namespace == "svg" and context.current_parent.tag_name in {"foreignObject", "desc", "title"}) or context.current_parent.has_ancestor_matching(
-                    lambda n: n.namespace == "svg" and n.tag_name in {"foreignObject", "desc", "title"},
+                in_integration_point = (context.current_parent.namespace == "svg" and context.current_parent.tag_name in {"foreignObject", "desc", "title"}) or (
+                    context.current_parent.find_svg_html_integration_point_ancestor() is not None
                 )
             elif context.current_context == "math":
-                in_integration_point = context.current_parent.find_ancestor(
-                    lambda n: n.namespace == "math" and n.tag_name in MATHML_TEXT_INTEGRATION_POINTS,
-                ) is not None or (
+                in_integration_point = context.current_parent.find_mathml_text_integration_point_ancestor() is not None or (
                     context.current_parent.namespace == "math" and context.current_parent.tag_name == "annotation-xml"
                     and context.current_parent.attributes.get("encoding", "").lower()
                     in ("application/xhtml+xml", "text/html")
@@ -6758,9 +6638,7 @@ class ForeignTagHandler(TagHandler):
                 # Treat being inside an SVG integration point (foreignObject/desc/title) that contains a MathML subtree
                 # as an integration point for purposes of stray HTML end tags so they are ignored instead of
                 # breaking out and moving text outside the foreignObject (tests expect trailing text to remain inside).
-                if not in_integration_point and context.current_parent.find_ancestor(
-                    lambda n: n.namespace == "svg" and n.tag_name in {"foreignObject", "desc", "title"},
-                ):
+                if not in_integration_point and context.current_parent.find_svg_html_integration_point_ancestor() is not None:
                     in_integration_point = True
 
             tl = tag_name
@@ -6776,9 +6654,7 @@ class ForeignTagHandler(TagHandler):
                         return True  # consume silently
                     # If the found ancestor lies OUTSIDE the integration point subtree, treat as unmatched and swallow.
                     # Determine nearest integration point ancestor
-                    ip = context.current_parent.find_ancestor(
-                        lambda n: n.namespace == "svg" and n.tag_name in {"foreignObject", "desc", "title"},
-                    )
+                    ip = context.current_parent.find_svg_html_integration_point_ancestor()
                     if ip is not None:
                         # If opened is an ancestor of ip (i.e., outside subtree), ignore end tag
                         cur = ip.parent
@@ -6796,7 +6672,7 @@ class ForeignTagHandler(TagHandler):
                         # we keep the paragraph inside by swallowing the end tag that would close foreignObject prematurely.
                         if opened is ip:
                             p_inside = context.current_parent.find_ancestor("p")
-                            if p_inside and p_inside.find_ancestor(lambda n: n is ip):
+                            if p_inside and ip.is_ancestor_of(p_inside):
                                 # Keep text inside integration point by ignoring this end tag
                                 return True
                     return False  # matched ancestor handled elsewhere
@@ -7671,9 +7547,7 @@ class MarqueeTagHandler(TagHandler):
 
         self.debug(f"found matching boundary element: {target}")
 
-        formatting_elements = context.current_parent.collect_ancestors_until(
-            stop_at=target, predicate=lambda n: n.tag_name in FORMATTING_ELEMENTS,
-        )
+        formatting_elements = context.current_parent.collect_formatting_ancestors_until(stop_at=target)
         for fmt_elem in formatting_elements:
             self.debug(f"found formatting element to close: {fmt_elem.tag_name}")
 
@@ -7686,12 +7560,7 @@ class MarqueeTagHandler(TagHandler):
             self.debug(f"moved to boundary parent: {context.current_parent}")
 
             # Look for outer formatting element of same type
-            outer_fmt = target.parent.find_ancestor(
-                lambda n: (
-                    n.tag_name in FORMATTING_ELEMENTS
-                    and n.tag_name == formatting_elements[0].tag_name
-                ),
-            )
+            outer_fmt = target.parent.find_matching_formatting_ancestor(formatting_elements[0].tag_name)
 
             if outer_fmt:
                 self.debug(f"found outer formatting element: {outer_fmt}")
@@ -7903,7 +7772,7 @@ class PlaintextHandler(TagHandler):
             cur_a = (
                 context.current_parent
                 if context.current_parent.tag_name == "a"
-                else context.current_parent.find_ancestor(lambda n: n.tag_name == "a")
+                else context.current_parent.find_ancestor("a")
             )
             if cur_a and context.open_elements.contains(cur_a):
                 a_el = cur_a
@@ -8005,9 +7874,7 @@ class PlaintextHandler(TagHandler):
             if context.current_parent.tag_name == "plaintext" and context.current_parent.namespace in ("svg", "math"):
                 target = context.current_parent
             else:
-                target = context.current_parent.find_ancestor(
-                    lambda n: n.tag_name == "plaintext" and n.namespace in ("svg", "math"),
-                )
+                target = context.current_parent.find_foreign_plaintext_ancestor()
             if target:
                 # Pop stack until target
                 while not context.open_elements.is_empty():
@@ -8261,7 +8128,7 @@ class RubyTagHandler(TagHandler):
         self.debug(f"handling end tag {tag_name}")
 
         matching_element = context.current_parent.find_ancestor_until(
-            lambda n: n.tag_name == tag_name,
+            tag_name,
             context.current_parent.find_ancestor("ruby")
             if tag_name != "ruby"
             else None,

@@ -1,14 +1,4 @@
-BOUNDARY_ELEMENTS = {
-    "applet",
-    "caption",
-    "html",
-    "table",
-    "td",
-    "th",
-    "marquee",
-    "object",
-    "template",
-}
+from turbohtml.constants import BOUNDARY_ELEMENTS
 
 
 class Node:
@@ -75,16 +65,6 @@ class Node:
         # Default: real DOM node (False). Fragment bootstrap may set True on ephemeral
         # ancestors that exist only on the open elements stack.
         self.synthetic_stack_only = False
-
-    @property
-    def is_svg(self):
-        """Check if this is an SVG element."""
-        return self.namespace == "svg"
-
-    @property
-    def is_mathml(self):
-        """Check if this is a MathML element."""
-        return self.namespace == "math"
 
     @property
     def is_foreign(self):
@@ -291,38 +271,265 @@ class Node:
             return "\n".join(parts)
         return result
 
-    def find_ancestor(self, tag_name_or_predicate, stop_at_boundary=False):
-        """Find the nearest ancestor matching the given tag name or predicate.
+    def find_ancestor(self, tag_name, stop_at_boundary=False):
+        """Find the nearest ancestor matching the given tag name.
         Includes the current node in the search.
 
         Args:
-            tag_name_or_predicate: Tag name or callable that takes a Node and returns bool
+            tag_name: Tag name to match
             stop_at_boundary: If True, stop searching at boundary elements (HTML5 scoping rules)
 
         Returns:
             The matching ancestor Node or None if not found
 
         """
-        # Optimize: check callable once, not in loop
-        is_callable = callable(tag_name_or_predicate)
         current = self
 
-        if is_callable:
-            # Callable predicate path
+        # Fast path: no boundary checking (most common - ~90% of calls)
+        if not stop_at_boundary:
             while current:
-                if tag_name_or_predicate(current):
+                if current.tag_name == tag_name:
                     return current
-                if stop_at_boundary and current.tag_name in BOUNDARY_ELEMENTS:
-                    return None
+                current = current.parent
+            return None
+
+        # Slow path: with boundary checking
+        while current:
+            if current.tag_name == tag_name:
+                return current
+            if current.tag_name in BOUNDARY_ELEMENTS:
+                return None
+            current = current.parent
+        return None
+
+    def find_ancestor_case_insensitive(self, tag_name, stop_at_boundary=False):
+        """Case-insensitive variant of find_ancestor for HTML tag matching."""
+        target = tag_name.lower()
+        current = self
+
+        if not stop_at_boundary:
+            while current:
+                if current.tag_name.lower() == target:
+                    return current
+                current = current.parent
+            return None
+
+        while current:
+            if current.tag_name.lower() == target:
+                return current
+            if current.tag_name in BOUNDARY_ELEMENTS:
+                return None
+            current = current.parent
+        return None
+
+    def find_table_cell_ancestor(self):
+        """Find nearest td, th, or caption ancestor. Optimized common pattern."""
+        current = self
+        while current:
+            tag = current.tag_name
+            if tag == "td" or tag == "th" or tag == "caption":
+                return current
+            current = current.parent
+        return None
+
+    def find_boundary_ancestor(self, exclude_tags=None):
+        """Find nearest boundary element, optionally excluding some tags."""
+        current = self
+        if exclude_tags:
+            while current:
+                if current.tag_name in BOUNDARY_ELEMENTS:
+                    if current.tag_name not in exclude_tags:
+                        return current
                 current = current.parent
         else:
-            # String tag name path (most common)
             while current:
-                if current.tag_name == tag_name_or_predicate:
+                if current.tag_name in BOUNDARY_ELEMENTS:
                     return current
-                if stop_at_boundary and current.tag_name in BOUNDARY_ELEMENTS:
-                    return None
                 current = current.parent
+        return None
+
+    def is_ancestor_of(self, node):
+        """Check if this node is an ancestor of the given node."""
+        current = node.parent if node else None
+        while current:
+            if current is self:
+                return True
+            current = current.parent
+        return False
+
+    def find_table_cell_no_caption_ancestor(self):
+        """Find nearest td or th ancestor (excluding caption). Optimized common pattern."""
+        current = self
+        while current:
+            tag = current.tag_name
+            if tag == "td" or tag == "th":
+                return current
+            current = current.parent
+        return None
+
+    def find_select_or_datalist_ancestor(self):
+        """Find nearest select or datalist ancestor. Optimized common pattern."""
+        current = self
+        while current:
+            tag = current.tag_name
+            if tag == "select" or tag == "datalist":
+                return current
+            current = current.parent
+        return None
+
+    def find_svg_integration_point_ancestor(self):
+        """Find nearest SVG integration point ancestor."""
+        from turbohtml.constants import SVG_INTEGRATION_POINTS
+        current = self
+        while current:
+            if current.tag_name in SVG_INTEGRATION_POINTS:
+                return current
+            current = current.parent
+        return None
+
+    def find_formatting_element_ancestor(self):
+        """Find nearest formatting element ancestor."""
+        from turbohtml.constants import FORMATTING_ELEMENTS
+        current = self
+        while current:
+            if current.tag_name in FORMATTING_ELEMENTS:
+                return current
+            current = current.parent
+        return None
+
+    def find_list_ancestor(self):
+        """Find nearest ul, ol, or menu ancestor. Optimized common pattern."""
+        current = self
+        while current:
+            tag = current.tag_name
+            if tag == "ul" or tag == "ol" or tag == "menu":
+                return current
+            current = current.parent
+        return None
+
+    def find_sectioning_element_ancestor(self):
+        """Find nearest sectioning element (div, article, section, aside, nav) ancestor."""
+        current = self
+        while current:
+            tag = current.tag_name
+            if tag == "div" or tag == "article" or tag == "section" or tag == "aside" or tag == "nav":
+                return current
+            current = current.parent
+        return None
+
+    def find_foreign_plaintext_ancestor(self):
+        """Find nearest plaintext element in foreign namespace (svg/math). Optimized rare pattern."""
+        current = self
+        while current:
+            if current.tag_name == "plaintext":
+                ns = current.namespace
+                if ns == "svg" or ns == "math":
+                    return current
+            current = current.parent
+        return None
+
+    def find_math_annotation_xml_ancestor(self):
+        """Find nearest MathML annotation-xml ancestor. Optimized common pattern."""
+        current = self
+        while current:
+            if current.namespace == "math" and current.tag_name == "annotation-xml":
+                return current
+            current = current.parent
+        return None
+
+    def find_dt_or_dd_ancestor(self):
+        """Find nearest dt or dd ancestor. Optimized common pattern."""
+        current = self
+        while current:
+            tag = current.tag_name
+            if tag == "dt" or tag == "dd":
+                return current
+            current = current.parent
+        return None
+
+    def find_mathml_text_integration_point_ancestor(self):
+        """Find nearest MathML text integration point ancestor (mi, mo, mn, ms, mtext). Optimized common pattern."""
+        current = self
+        while current:
+            if current.namespace == "math":
+                tag = current.tag_name
+                if tag == "mi" or tag == "mo" or tag == "mn" or tag == "ms" or tag == "mtext":
+                    return current
+            current = current.parent
+        return None
+
+    def find_svg_namespace_ancestor(self):
+        """Find nearest ancestor with SVG namespace. Optimized namespace-only check."""
+        current = self
+        while current:
+            if current.namespace == "svg":
+                return current
+            current = current.parent
+        return None
+
+    def find_math_namespace_ancestor(self):
+        """Find nearest ancestor with MathML namespace. Optimized namespace-only check."""
+        current = self
+        while current:
+            if current.namespace == "math":
+                return current
+            current = current.parent
+        return None
+
+    def find_foreign_object_ancestor(self):
+        """Find nearest SVG foreignObject ancestor. Optimized common pattern."""
+        current = self
+        while current:
+            if current.namespace == "svg" and current.tag_name == "foreignObject":
+                return current
+            current = current.parent
+        return None
+
+    def find_select_option_optgroup_ancestor(self):
+        """Find nearest select, option, or optgroup ancestor. Optimized common pattern."""
+        current = self
+        while current:
+            tag = current.tag_name
+            if tag == "select" or tag == "option" or tag == "optgroup":
+                return current
+            current = current.parent
+        return None
+
+    def find_table_cell_or_select_ancestor(self):
+        """Find nearest td, th, caption, or select ancestor. Optimized for foreign content."""
+        current = self
+        while current:
+            tag = current.tag_name
+            if tag == "td" or tag == "th" or tag == "caption" or tag == "select":
+                return current
+            current = current.parent
+        return None
+
+    def find_svg_html_integration_point_ancestor(self):
+        """Find nearest SVG HTML integration point (foreignObject, desc, title). Optimized common pattern."""
+        current = self
+        while current:
+            if current.namespace == "svg" and current.tag_name in {"foreignObject", "desc", "title"}:
+                return current
+            current = current.parent
+        return None
+
+    def find_foreign_namespace_ancestor(self):
+        """Find nearest SVG or MathML namespace ancestor. Optimized foreign content check."""
+        current = self
+        while current:
+            if current.namespace == "svg" or current.namespace == "math":
+                return current
+            current = current.parent
+        return None
+
+    def find_matching_formatting_ancestor(self, target_tag):
+        """Find nearest formatting element ancestor matching target_tag. Optimized adoption agency."""
+        current = self
+        while current:
+            if current.tag_name in {"a", "b", "big", "code", "em", "font", "i", "nobr", "s", "small", "strike", "strong", "tt", "u"} and current.tag_name == target_tag:
+                return current
+            current = current.parent
         return None
 
     def remove_child(self, child):
@@ -431,6 +638,21 @@ class Node:
             if child.tag_name == tag_name:
                 return child
         return None
+
+    def collect_formatting_ancestors_until(self, stop_at):
+        """Collect formatting element ancestors up to (but not including) stop_at. Optimized common pattern.
+
+        Returns:
+            List of formatting ancestors ordered outermost->innermost (rootward first, nearest last)
+        """
+        from .constants import FORMATTING_ELEMENTS
+        ancestors = []
+        current = self
+        while current and current != stop_at:
+            if current.tag_name in FORMATTING_ELEMENTS:
+                ancestors.insert(0, current)
+            current = current.parent
+        return ancestors
 
     def collect_ancestors_until(self, stop_at, predicate=None):
         """Collect ancestors from this node up to (but not including) stop_at.

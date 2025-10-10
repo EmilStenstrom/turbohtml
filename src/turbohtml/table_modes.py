@@ -94,7 +94,7 @@ def should_foster_parent(tag_name, attrs, context, parser):
     # Inside an existing cell forbids fostering
     if context.current_parent.tag_name in TABLE_CELL_TAGS:
         return False
-    if context.current_parent.find_ancestor(lambda n: n.tag_name in TABLE_CELL_TAGS):
+    if context.current_parent.find_table_cell_ancestor() is not None:
         return False
     # Hidden input exemption (matches inline logic)
     if tag_name == "input":

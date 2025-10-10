@@ -35,9 +35,7 @@ def is_in_table_context(context):
 
 def is_in_cell_or_caption(context):
     """Check if current insertion point is inside a cell or caption."""
-    return bool(
-        context.current_parent.find_ancestor(lambda n: n.tag_name in {"td", "th", "caption"}),
-    )
+    return bool(context.current_parent.find_table_cell_ancestor())
 
 
 def get_body(root):
@@ -260,7 +258,7 @@ def reconstruct_if_needed(parser, context, *, force=False):
         DocumentState.IN_TABLE_BODY,
         DocumentState.IN_ROW,
     ):
-        in_cell_or_caption = bool(context.current_parent.find_ancestor(lambda n: n.tag_name in ("td","th","caption")))
+        in_cell_or_caption = bool(context.current_parent.find_table_cell_ancestor())
         if not in_cell_or_caption:
             return False
     open_stack = context.open_elements

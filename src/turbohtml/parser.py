@@ -216,9 +216,7 @@ class TurboHTML:
                 if context.current_context == "svg":
                     if context.current_parent.namespace == "svg" and context.current_parent.tag_name in {"foreignObject", "desc", "title"}:
                         in_svg_integration_point = True
-                    elif context.current_parent.has_ancestor_matching(
-                        lambda n: n.namespace == "svg" and n.tag_name in {"foreignObject", "desc", "title"},
-                    ):
+                    elif context.current_parent.find_svg_html_integration_point_ancestor() is not None:
                         in_svg_integration_point = True
 
                 # Check for MathML integration points
@@ -227,9 +225,7 @@ class TurboHTML:
                     # MathML text integration points: mi, mo, mn, ms, mtext
                     if context.current_parent.namespace == "math" and context.current_parent.tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
                         in_math_integration_point = True
-                    elif context.current_parent.find_ancestor(
-                        lambda n: n.namespace == "math" and n.tag_name in {"mi", "mo", "mn", "ms", "mtext"},
-                    ):
+                    elif context.current_parent.find_mathml_text_integration_point_ancestor() is not None:
                         in_math_integration_point = True
                     # annotation-xml with HTML encoding
                     elif context.current_parent.namespace == "math" and context.current_parent.tag_name == "annotation-xml":
@@ -245,7 +241,7 @@ class TurboHTML:
             if needs_foster_parenting(context.current_parent):
                 # Check if we're inside a cell or caption (foster parenting doesn't apply there)
                 in_cell_or_caption = bool(
-                    context.current_parent.find_ancestor(lambda n: n.tag_name in {"td", "th", "caption"}),
+                    context.current_parent.find_table_cell_ancestor()
                 )
                 # Don't foster table-related elements or elements specifically allowed in tables (form)
                 tableish = ("table","tbody","thead","tfoot","tr","td","th","caption","colgroup","col","form")
