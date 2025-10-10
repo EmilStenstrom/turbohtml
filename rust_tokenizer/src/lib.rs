@@ -429,23 +429,43 @@ impl RustTokenizer {
                     )));
                 }
 
-                // Skip whitespace
-                while i < self.length && self.html.as_bytes()[i].is_ascii_whitespace() {
-                    i += 1;
+                // Scan through attribute-like content until closing '>', handling quotes
+                let mut scan = i;
+                let mut saw_gt = false;
+                let mut quote: Option<u8> = None;
+
+                while scan < self.length {
+                    let c = self.html.as_bytes()[scan];
+
+                    if let Some(q) = quote {
+                        if c == q {
+                            quote = None;
+                        }
+                        scan += 1;
+                        continue;
+                    }
+
+                    if c == b'"' || c == b'\'' {
+                        quote = Some(c);
+                        scan += 1;
+                        continue;
+                    }
+
+                    if c == b'>' {
+                        saw_gt = true;
+                        break;
+                    }
+
+                    // If we reach a new tag opener for script, stop
+                    if c == b'<' && self.html[scan..].starts_with("</script") {
+                        break;
+                    }
+
+                    scan += 1;
                 }
 
-                // Skip any "/" characters
-                while i < self.length && self.html.as_bytes()[i] == b'/' {
-                    i += 1;
-                }
-
-                // Skip whitespace again
-                while i < self.length && self.html.as_bytes()[i].is_ascii_whitespace() {
-                    i += 1;
-                }
-
-                // Check if there's a closing '>'
-                let has_closing_gt = i < self.length && self.html.as_bytes()[i] == b'>';
+                let has_closing_gt = saw_gt;
+                let i = if saw_gt { scan } else { i };
 
                 // Build script content up to this point
                 let text_before = self.html[self.pos..tag_start - 2].to_string();

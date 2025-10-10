@@ -1,4 +1,4 @@
-Tests passed: 1723/1740 (99.0%) (39 skipped)
+Tests passed: 1724/1740 (99.1%) (39 skipped)
 
 adoption01.dat: 18/18 (100%) [..................]
 adoption02.dat: 2/2 (100%) [..]
@@ -22,7 +22,7 @@ pending-spec-changes.dat: 3/3 (100%) [...]
 plain-text-unsafe.dat: 33/33 (100%) [.................................]
 quirks01.dat: 4/4 (100%) [....]
 ruby.dat: 21/21 (100%) [.....................]
-scriptdata01.dat: 25/26 (96%) [......x...................]
+scriptdata01.dat: 26/26 (100%) [..........................]
 scripted/adoption01.dat: 0/0 (N/A) [s] (1 skipped)
 scripted/ark.dat: 0/0 (N/A) [s] (1 skipped)
 scripted/webkit01.dat: 0/0 (N/A) [ss] (2 skipped)
