@@ -11,7 +11,14 @@ from turbohtml import table_modes
 from turbohtml.constants import RAWTEXT_ELEMENTS
 from turbohtml.context import ContentState, DocumentState, ParseContext
 from turbohtml.node import Node
-from turbohtml.tokenizer import HTMLToken, HTMLTokenizer
+from turbohtml.handlers import HTMLToken
+
+try:
+    from rust_tokenizer import RustTokenizer as HTMLTokenizer
+except ImportError as e:
+    msg = "rust_tokenizer module not found. Build with: cd rust_tokenizer && cargo build --release"
+    raise ImportError(msg) from e
+
 from turbohtml.utils import ensure_body
 
 
@@ -515,8 +522,34 @@ def parse_fragment(parser, html):  # pragma: no cover
     parser.debug(f"Parsing fragment in context: {fragment_context}")
     # Use externalized helper (parser retains wrapper for compatibility)
     context = create_fragment_context(parser, html)
-    parser.tokenizer = HTMLTokenizer(html)
     spec = FRAGMENT_SPECS.get(fragment_context)
+
+    # For RAWTEXT contexts (textarea, style, title, etc.), treat entire content as plain text
+    if spec and spec.treat_all_as_text:
+        # Create a simple iterator that yields a single Character token
+        class RawTextTokenizer:
+            def __init__(self, text):
+                self.text = text
+                self.consumed = False
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                if self.consumed:
+                    raise StopIteration
+                self.consumed = True
+                token = HTMLToken("Character", data=self.text)
+                return token
+
+        parser.tokenizer = RawTextTokenizer(html)
+    else:
+        try:
+            from rust_tokenizer import RustTokenizer as HTMLTokenizer
+        except ImportError as e:
+            msg = "rust_tokenizer module not found. Build with: cd rust_tokenizer && cargo build --release"
+            raise ImportError(msg) from e
+        parser.tokenizer = HTMLTokenizer(html)
 
     # Some handlers assume parser.html_node exists (mirrors document parsing path). For non-html
     # fragments we still synthesize it lazily ONLY if required; create a minimal <html> so that
@@ -534,12 +567,8 @@ def parse_fragment(parser, html):  # pragma: no cover
         spec.suppression_predicates if spec and spec.suppression_predicates else ()
     )
     post_hooks = spec.post_pass_hooks if spec and spec.post_pass_hooks else ()
-    treat_all_as_text = spec.treat_all_as_text if spec else False
 
-    if treat_all_as_text:
-        parser.tokenizer.pending_tokens.append(HTMLToken("Character", data=html))
-        parser.tokenizer.pos = parser.tokenizer.length
-    for token in parser.tokenizer.tokenize():
+    for token in parser.tokenizer:
         parser.debug(f"_parse_fragment: {token}, context: {context}", indent=0)
         if pre_hooks:
             for hook in pre_hooks:

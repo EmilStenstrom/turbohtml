@@ -35,7 +35,14 @@ from turbohtml.handlers import (
     VoidTagHandler,
 )
 from turbohtml.node import Node
-from turbohtml.tokenizer import HTMLTokenizer
+
+try:
+    from rust_tokenizer import RustTokenizer
+except ImportError:
+    raise ImportError(
+        "Rust tokenizer not available. Please install with: "
+        "cd rust_tokenizer && maturin develop --release"
+    )
 
 
 class TurboHTML:
@@ -51,19 +58,16 @@ class TurboHTML:
         debug=False,
         fragment_context=None,
         handlers=None,
-        use_rust=False,
     ):
         """Args:
         html: The HTML string to parse
         debug: Whether to enable debug prints
         fragment_context: Context element for fragment parsing (e.g., 'td', 'tr').
         handlers: Optional list of handler classes to use. If None, uses default set.
-        use_rust: Whether to use Rust tokenizer (default: False, use Python tokenizer)
 
         """
         self.env_debug = debug
         self.fragment_context = fragment_context
-        self.use_rust = use_rust
 
         self._init_dom_structure()
         self.adoption_agency = AdoptionAgencyAlgorithm(self)
@@ -420,19 +424,9 @@ class TurboHTML:
         # Initialize context with html_node as current_parent
         context = ParseContext(self.html_node, debug_callback=self.debug)
 
-        # Select tokenizer based on use_rust parameter
-        if self.use_rust:
-            try:
-                from rust_tokenizer import RustTokenizer
-                self.tokenizer = RustTokenizer(html, debug=self.env_debug)
-                tokens = self.tokenizer
-            except ImportError:
-                self.debug("Rust tokenizer not available, falling back to Python tokenizer")
-                self.tokenizer = HTMLTokenizer(html)
-                tokens = self.tokenizer.tokenize()
-        else:
-            self.tokenizer = HTMLTokenizer(html)
-            tokens = self.tokenizer.tokenize()
+        # Use Rust tokenizer
+        self.tokenizer = RustTokenizer(html, debug=self.env_debug)
+        tokens = self.tokenizer
 
         for token in tokens:
             # Increment token counter for deduplication tracking

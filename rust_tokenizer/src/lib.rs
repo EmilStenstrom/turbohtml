@@ -438,21 +438,15 @@ impl RustTokenizer {
             return text.to_string();
         }
 
-        // Use Python tokenizer's _decode_entities for full spec compliance
+        // Use Python entities module for full spec compliance
         Python::with_gil(|py| {
-            let tokenizer_mod = match PyModule::import(py, "turbohtml.tokenizer") {
+            let entities_mod = match PyModule::import(py, "turbohtml.entities") {
                 Ok(m) => m,
                 Err(_) => return text.to_string(),
             };
 
-            let decode_fn = match tokenizer_mod.getattr("HTMLTokenizer") {
-                Ok(cls) => match cls.call1(("",)) {  // Pass empty string as html argument
-                    Ok(inst) => match inst.getattr("_decode_entities") {
-                        Ok(f) => f,
-                        Err(_) => return text.to_string(),
-                    },
-                    Err(_) => return text.to_string(),
-                },
+            let decode_fn = match entities_mod.getattr("decode_entities") {
+                Ok(f) => f,
                 Err(_) => return text.to_string(),
             };
 

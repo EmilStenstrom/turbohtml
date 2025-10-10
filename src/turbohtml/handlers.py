@@ -25,7 +25,6 @@ from turbohtml.constants import (
 from turbohtml.context import ContentState, DocumentState
 from turbohtml.foster import foster_parent, needs_foster_parenting
 from turbohtml.node import Node
-from turbohtml.tokenizer import HTMLToken
 from turbohtml.utils import (
     ensure_body,
     ensure_head,
@@ -40,6 +39,26 @@ from turbohtml.utils import (
     reconstruct_active_formatting_elements,
     reconstruct_if_needed,
 )
+
+
+class HTMLToken:
+    """Simple token class for creating synthetic tokens matching Rust tokenizer interface."""
+    __slots__ = ("type_", "data", "tag_name", "attributes", "is_self_closing", "is_last_token", "needs_rawtext", "ignored_end_tag")
+
+    def __init__(self, type_, tag_name=None, data=None, attributes=None, is_self_closing=False, needs_rawtext=False):
+        self.type_ = type_
+        self.data = data or ""
+        self.tag_name = (tag_name or "").lower()
+        self.attributes = attributes or {}
+        self.is_self_closing = is_self_closing
+        self.is_last_token = False
+        self.needs_rawtext = needs_rawtext
+        self.ignored_end_tag = False
+
+    @property
+    def type(self):
+        """Compatibility property for .type access."""
+        return self.type_
 
 
 class ForeignContentAware:

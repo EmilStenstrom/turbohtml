@@ -307,7 +307,6 @@ class TestRunner:
                     test.data,
                     debug=True,
                     fragment_context=test.fragment_context,
-                    use_rust=self.config.get("use_rust", False),
                 )
                 actual_tree = parser.root.to_test_format()
             debug_output = f.getvalue()
@@ -315,7 +314,6 @@ class TestRunner:
             parser = TurboHTML(
                 test.data,
                 fragment_context=test.fragment_context,
-                use_rust=self.config.get("use_rust", False),
             )
             actual_tree = parser.root.to_test_format()
 
@@ -387,8 +385,8 @@ class TestReporter:
         header = f"Tests passed: {passed}/{total} ({percentage}%) ({skipped} skipped)"
         full_run = self.is_full_run()
 
-        # Use different summary file for Rust tokenizer
-        summary_file = "test-summary-rust.txt" if self.config.get("use_rust") else "test-summary.txt"
+        # Summary file
+        summary_file = "test-summary.txt"
 
         # If no file breakdown collected, just output header (and write header)
         if not file_results:
@@ -500,7 +498,7 @@ def parse_args():
         "-q",
         "--quiet",
         action="store_true",
-        help="Quiet mode: only print the header line (no per-file breakdown). For a full unfiltered run the detailed summary is still written to test-summary.txt (or test-summary-rust.txt with --use-rust)",
+        help="Quiet mode: only print the header line (no per-file breakdown). For a full unfiltered run the detailed summary is still written to test-summary.txt",
     )
     parser.add_argument(
         "--exclude-errors",
@@ -530,12 +528,7 @@ def parse_args():
     parser.add_argument(
         "--regressions",
         action="store_true",
-        help="After a full (unfiltered) run, compare results to committed HEAD test-summary.txt (or test-summary-rust.txt with --use-rust) and report new failures (exits 1 if regressions).",
-    )
-    parser.add_argument(
-        "--use-rust",
-        action="store_true",
-        help="Use Rust tokenizer instead of Python tokenizer. Test results are written to test-summary-rust.txt instead of test-summary.txt.",
+        help="After a full (unfiltered) run, compare results to committed HEAD test-summary.txt and report new failures (exits 1 if regressions).",
     )
     args = parser.parse_args()
 
@@ -562,7 +555,6 @@ def parse_args():
         "filter_errors": filter_errors,
         "verbosity": args.verbose,
         "regressions": args.regressions,
-        "use_rust": args.use_rust,
     }
 
 
@@ -587,7 +579,7 @@ def main():
 def _run_regression_check(runner, reporter):
     """Compare current in-memory results against committed baseline test-summary.txt.
 
-    Baseline is read via `git show HEAD:test-summary.txt` (or test-summary-rust.txt for Rust).
+    Baseline is read via `git show HEAD:test-summary.txt`.
     If missing, we skip silently.
     Regression definition (per test index):
       - '.' -> 'x'
@@ -595,8 +587,7 @@ def _run_regression_check(runner, reporter):
       - pattern extension where new char is 'x'
     Exit code: 1 if regressions found, else 0.
     """
-    # Use appropriate baseline file based on tokenizer
-    baseline_file = "test-summary-rust.txt" if runner.config.get("use_rust") else "test-summary.txt"
+    baseline_file = "test-summary.txt"
 
     try:
         proc = subprocess.run(
