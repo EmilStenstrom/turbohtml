@@ -71,23 +71,6 @@ class Node:
         """Check if this is a foreign element (SVG or MathML)."""
         return self.namespace in ("svg", "math")
 
-    @property
-    def local_name(self):
-        """Get the local tag name (same as tag_name now that namespace is separate)."""
-        return self.tag_name
-
-    def matches_tag(self, tag_spec):
-        """Check if this node matches a tag specification.
-
-        tag_spec can be:
-        - A simple tag name: "div" matches tag_name="div", namespace=None
-        - A namespaced tag: "svg circle" matches tag_name="circle", namespace="svg"
-        """
-        if " " in tag_spec:
-            ns, local = tag_spec.split(" ", 1)
-            return self.namespace == ns and self.tag_name == local
-        return self.namespace is None and self.tag_name == tag_spec
-
     def append_child(self, child):
         # Check for circular reference before adding
         if self._would_create_circular_reference(child):
@@ -651,24 +634,6 @@ class Node:
             current = current.parent
         return ancestors
 
-    def collect_ancestors_until(self, stop_at, predicate=None):
-        """Collect ancestors from this node up to (but not including) stop_at.
-
-        Args:
-            stop_at: Node to stop at (exclusive)
-            predicate: Optional filter function - only nodes matching this are included
-        Returns:
-            List of matching ancestors ordered outermost->innermost (rootward first, nearest last)
-
-        """
-        ancestors = []
-        current = self
-        while current and current != stop_at:
-            if predicate is None or predicate(current):
-                ancestors.insert(0, current)  # Insert at beginning for reverse order
-            current = current.parent
-        return ancestors
-
     def move_up_while_in_tags(self, tags):
         """Move up the tree while current node has tag in the given list."""
         if isinstance(tags, str):
@@ -680,15 +645,6 @@ class Node:
             else:
                 break
         return current
-
-    def has_ancestor_matching(self, predicate):
-        """Check if any ancestor matches the given predicate."""
-        current = self.parent
-        while current:
-            if predicate(current):
-                return True
-            current = current.parent
-        return False
 
     def contains_text_nodes(self):
         """Recursively check if this node or any descendant is a text node."""

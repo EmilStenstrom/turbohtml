@@ -2374,16 +2374,6 @@ class SelectTagHandler(AncestorCloseHandler):
 
         return False
 
-    def _find_foster_parent_for_table_element_in_current_table(self, table, table_tag):
-        """Find foster parent for table element within current table."""
-        if table_tag == "tr":
-            # Find last tbody/thead/tfoot else None
-            for child in reversed(table.children):
-                if child.tag_name in {"tbody", "thead", "tfoot"}:
-                    return child
-            return None
-        return table if table_tag != "table" else table.parent
-
     def should_handle_end(self, tag_name, context):
         # Handle select-related end tags
         if tag_name in {"select", "option", "optgroup", "datalist"}:
@@ -3080,21 +3070,6 @@ class ParagraphTagHandler(TagHandler):
 
 class TableElementHandler(TagHandler):
     """Base class for table-related element handlers."""
-
-    def _create_table_element(
-        self, token, context,
-    ):
-        """Create a table element and ensure table context."""
-        if not find_current_table(context):
-            # Create table element via unified insertion (push + enter)
-
-        # Create and return the requested element (may be the table or a descendant)
-            pass
-        return self.parser.insert_element(token, context, mode="normal", enter=True)
-
-    def _append_to_table_level(self, element, context):
-        """Append element at table level."""
-
 
 class TableTagHandler(TableElementHandler):
     """Handles table-related elements."""
@@ -5654,40 +5629,6 @@ class ForeignTagHandler(TagHandler):
             encoding = annotation_ancestor.attributes.get("encoding", "").lower()
             return encoding in ("text/html", "application/xhtml+xml")
         return False
-
-    def get_svg_foreign_breakout_parent(self, context):
-        """Find parent and before node for breaking out of SVG context in select.
-
-        Used by SelectTagHandler when inserting formatting elements inside SVG foreignObject.
-        Returns (parent, before) tuple or (None, None) if not applicable.
-        """
-        if context.current_context != "svg":
-            return None, None
-
-        # Check if in SVG foreignObject integration point
-        in_svg_ip = (
-            (context.current_parent.namespace == "svg" and context.current_parent.tag_name == "foreignObject")
-            or context.current_parent.find_foreign_object_ancestor() is not None
-        )
-        if not in_svg_ip:
-            return None, None
-
-        # Find the ancestor just above the entire SVG subtree
-        anchor = context.current_parent
-        while anchor and not (
-            anchor.namespace == "svg"
-            or (anchor.namespace == "svg" and anchor.tag_name == "foreignObject")
-        ):
-            anchor = anchor.parent
-
-        if anchor is None:
-            return None, None
-
-        attach = anchor.parent
-        while attach and attach.namespace == "svg":
-            attach = attach.parent
-
-        return attach, None
 
     def _fix_foreign_attribute_case(self, attributes, element_context):
         """Fix case for SVG/MathML attributes according to HTML5 spec.
