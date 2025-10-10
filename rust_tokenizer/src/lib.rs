@@ -972,29 +972,9 @@ impl RustTokenizer {
         let attr_start = self.pos;
         let mut attr_end = self.pos;
 
-        // Find the end of attributes (either '/>' or '>')
-        // Note: We scan for the closing '>' but handle quotes along the way
-        // The Python tokenizer has complex unbalanced quote handling, but for now
-        // we just track quotes and look for '>'. If we hit '>' even inside quotes,
-        // that's where the tag ends (per HTML5 spec for malformed markup).
-        let mut in_quote: Option<u8> = None;
-        while self.pos < self.length {
-            let ch = self.html.as_bytes()[self.pos];
-
-            if ch == b'>' {
-                // Always break on '>', even if inside quotes (malformed HTML)
-                attr_end = self.pos;
-                break;
-            }
-
-            if let Some(quote_char) = in_quote {
-                if ch == quote_char && self.pos > 0 && self.html.as_bytes()[self.pos - 1] != b'\\' {
-                    in_quote = None;
-                }
-            } else if ch == b'"' || ch == b'\'' {
-                in_quote = Some(ch);
-            }
-
+        // First pass: scan to find the closing '>' like Python's regex [^>]*>
+        // We'll check for unbalanced quotes afterwards
+        while self.pos < self.length && self.html.as_bytes()[self.pos] != b'>' {
             self.pos += 1;
             attr_end = self.pos;
         }
@@ -1006,9 +986,131 @@ impl RustTokenizer {
             ""
         };
 
+        // Check for unbalanced quotes in attributes (Python's approach)
+        // Count quotes, subtracting escaped ones (e.g., \" doesn't count as unbalanced)
+        let dbl_count = attr_string.matches('"').count() - attr_string.matches("\\\"").count();
+        let sgl_count = attr_string.matches('\'').count() - attr_string.matches("\\'").count();
+        let unbalanced = (dbl_count % 2 != 0) || (sgl_count % 2 != 0);
+
+        if unbalanced && attr_end < self.length {
+            // Rescan with proper quote tracking to find the real closing '>'
+            let quote_char = if dbl_count % 2 != 0 { b'"' } else { b'\'' };
+            let mut in_quote = Some(quote_char);
+            let mut scan = self.pos;
+
+            while scan < self.length {
+                let ch = self.html.as_bytes()[scan];
+
+                if let Some(q) = in_quote {
+                    if ch == q {
+                        in_quote = None;
+                    }
+                } else {
+                    if ch == b'"' || ch == b'\'' {
+                        in_quote = Some(ch);
+                    } else if ch == b'>' {
+                        // Found real closing '>' outside quotes
+                        break;
+                    }
+                }
+                scan += 1;
+            }
+
+            // Update position and attributes
+            attr_end = scan;
+            self.pos = scan;
+
+            // Reconstruct attr_string with extended content
+            let extended_attr_string = if attr_end > attr_start {
+                self.html[attr_start..attr_end].trim()
+            } else {
+                ""
+            };
+
+            // Check if still in quote at EOF
+            if in_quote.is_some() && self.pos >= self.length {
+                // Suppress tag: EOF while inside quoted attribute value
+                self.pos = self.length;
+
+                // For void elements, consume to EOF
+                let is_void = matches!(
+                    tag_name.as_str(),
+                    "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input" | "link" | "meta" | "param" | "source" | "track" | "wbr"
+                );
+                if is_void {
+                    self.pos = self.length;
+                }
+
+                return Ok(Some(HTMLToken::new(
+                    "Character".to_string(),
+                    Some(String::new()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )));
+            }
+
+            // Use extended attributes
+            let (is_self_closing, attributes) = self.parse_attributes(extended_attr_string);
+
+            if self.pos >= self.length {
+                // EOF without '>' after quote balancing
+                if is_end_tag {
+                    return Ok(Some(HTMLToken::new(
+                        "EndTag".to_string(),
+                        None,
+                        Some(tag_name),
+                        None,
+                        None,
+                        None,
+                        None,
+                    )));
+                }
+
+                return Ok(Some(HTMLToken::new(
+                    "Character".to_string(),
+                    Some(String::new()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )));
+            }
+
+            // Skip the '>'
+            self.pos += 1;
+
+            let token_type = if is_end_tag { "EndTag" } else { "StartTag" };
+            let needs_rawtext = !is_end_tag && matches!(
+                tag_name.as_str(),
+                "script" | "style" | "xmp" | "iframe" | "noembed" | "noframes" | "noscript" | "textarea" | "title"
+            );
+
+            if needs_rawtext {
+                self.state = "RAWTEXT".to_string();
+                self.rawtext_tag = Some(tag_name.clone());
+                if tag_name == "script" {
+                    self.script_content.clear();
+                }
+            }
+
+            return Ok(Some(HTMLToken::new(
+                token_type.to_string(),
+                None,
+                Some(tag_name),
+                Some(attributes),
+                Some(is_self_closing),
+                None,
+                Some(needs_rawtext),
+            )));
+        }
+
         let (is_self_closing, attributes) = self.parse_attributes(attr_string);
 
-        // Handle unclosed tag at EOF
+        // Handle unclosed tag at EOF (no unbalanced quotes case)
         let unclosed_to_eof = self.pos >= self.length;
 
         if unclosed_to_eof {
@@ -1016,7 +1118,7 @@ impl RustTokenizer {
             self.pos = self.length;
 
             if is_end_tag {
-                // End tags at EOF: emit EndTag (attributes are ignored in end tags anyway)
+                // End tags at EOF: emit EndTag
                 return Ok(Some(HTMLToken::new(
                     "EndTag".to_string(),
                     None,
@@ -1028,9 +1130,8 @@ impl RustTokenizer {
                 )));
             }
 
-            // Start tags at EOF
+            // Start tags at EOF without unbalanced quotes
             if attr_string.trim().is_empty() {
-                // No attributes: emit empty Character token (suppresses both element and text)
                 return Ok(Some(HTMLToken::new(
                     "Character".to_string(),
                     Some(String::new()),
@@ -1041,7 +1142,6 @@ impl RustTokenizer {
                     None,
                 )));
             } else {
-                // Has attributes: emit attributes as text
                 return Ok(Some(HTMLToken::new(
                     "Character".to_string(),
                     Some(attr_string.to_string()),
