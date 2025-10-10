@@ -185,13 +185,6 @@ class OpenElementsStack:
         """Insert an element at the specified index."""
         self._stack.insert(index, element)
 
-    def insert_after(self, reference, new_element):
-        idx = self.index_of(reference)
-        if idx == -1:
-            self._stack.append(new_element)
-        else:
-            self._stack.insert(idx + 1, new_element)
-
     # --- scope handling ---
     def has_element_in_scope(self, tag_name):
         scope_boundaries = {
@@ -238,18 +231,6 @@ class OpenElementsStack:
                 return False
         return False
 
-    # --- category helpers ---
-    def _is_special_category(self, element):
-        return element.tag_name in SPECIAL_CATEGORY_ELEMENTS
-
-    # --- search helpers ---
-    def find_last(self, predicate):
-        """Find the last (deepest) element matching predicate, searching from top of stack."""
-        for el in reversed(self._stack):
-            if predicate(el):
-                return el
-        return None
-
     def find_last_index(self, predicate):
         """Find the index of the last (deepest) element matching predicate, or -1 if not found."""
         for i in range(len(self._stack) - 1, -1, -1):
@@ -270,10 +251,6 @@ class OpenElementsStack:
     def __bool__(self):
         return bool(self._stack)
 
-    def as_list(self):
-        """Return a copy of the stack as a list."""
-        return list(self._stack)
-
     def replace_stack(self, new_stack):
         """Replace the entire stack with a new list of elements."""
         self._stack = new_stack
@@ -283,17 +260,6 @@ class AdoptionAgencyAlgorithm:
     def __init__(self, parser):
         self.parser = parser
         # Pure spec implementation (no metrics / instrumentation state retained).
-
-    # Deterministic descendant iterator used by text normalization (handlers) to inspect
-    # formatting subtrees without relying on reflective attribute probing. Kept simple
-    # and allocation-light (explicit stack) to preserve hot path performance.
-    def _iter_descendants(self, node):  # pragma: no cover - traversal utility
-        stack = list(node.children)
-        while stack:
-            cur = stack.pop()
-            yield cur
-            if cur.children:
-                stack.extend(cur.children)
 
     def _find_active_entry(self, tag_name, context):
         stack = context.active_formatting_elements
