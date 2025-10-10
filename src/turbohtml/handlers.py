@@ -6179,23 +6179,6 @@ class ForeignTagHandler(TagHandler):
                 )
                 return True
 
-            if tag_name_lower in (
-                "tr",
-                "td",
-                "th",
-            ) and context.current_parent.namespace == "math":
-                # Find if we're inside a MathML operator/leaf element that should auto-close
-                auto_close_elements = [
-                    "math mo",
-                    "math mi",
-                    "math mn",
-                    "math mtext",
-                    "math ms",
-                ]
-                if context.current_parent.tag_name in auto_close_elements:
-                    if context.current_parent.parent:
-                        context.move_up_one_level()
-
             # Handle MathML elements
             if tag_name_lower == "annotation-xml":
                 self.parser.insert_element(
@@ -7215,8 +7198,6 @@ class FramesetTagHandler(TagHandler):
                         "param",
                         "source",
                         "track",
-                        "svg svg",
-                        "math math",
                     }
                     meaningful = self._frameset_body_has_meaningful_content(body, allowed_tags)
                     saw_body_start_tag = context.saw_body_start_tag

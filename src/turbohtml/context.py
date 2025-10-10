@@ -145,10 +145,3 @@ class ParseContext:
 
     def enter_element(self, element):
         self._set_current_parent(element)
-
-    def __repr__(self):
-        parent_name = self._current_parent.tag_name if self._current_parent else "None"
-        return (
-            f"<ParseContext: doc_state={self.document_state.name}, "
-            f"content_state={self.content_state.name}, parent={parent_name}>"
-        )

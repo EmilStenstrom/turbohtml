@@ -191,13 +191,6 @@ class Node:
         if new_node.previous_sibling:
             new_node.previous_sibling.next_sibling = new_node
 
-    def __repr__(self):
-        if self.tag_name == "#text":
-            return f"Node(#text='{self.text_content[:30]}')"
-        if self.tag_name == "#comment":
-            return f"Node(#comment='{self.text_content[:30]}')"
-        return f"Node(<{self.tag_name}>, children={len(self.children)})"
-
     def to_test_format(self, indent=0):
         if self.tag_name in {"document", "document-fragment"}:
             return "\n".join(child.to_test_format(0) for child in self.children)
