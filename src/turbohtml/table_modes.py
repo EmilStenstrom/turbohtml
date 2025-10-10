@@ -60,9 +60,9 @@ def _in_integration_point(context):
         if cur.namespace == "svg" and cur.tag_name in {"foreignObject", "desc", "title"}:
             return True
         if cur.namespace == "math" and cur.tag_name == "annotation-xml" and cur.attributes:
-            for attr in cur.attributes:
-                name_lower = attr.name.lower()
-                value_lower = attr.value.lower()
+            for name, value in cur.attributes.items():
+                name_lower = name.lower()
+                value_lower = (value or "").lower()
                 if name_lower == "encoding" and value_lower in ("text/html", "application/xhtml+xml"):
                     return True
         cur = cur.parent
@@ -96,11 +96,6 @@ def should_foster_parent(tag_name, attrs, context, parser):
         return False
     if context.current_parent.find_table_cell_ancestor() is not None:
         return False
-    # Hidden input exemption (matches inline logic)
-    if tag_name == "input":
-        t = (attrs.get("type", "") or "").lower()
-        if t == "hidden" and attrs.get("type", "") == attrs.get("type", "").strip():
-            return False
     return True
 
 
