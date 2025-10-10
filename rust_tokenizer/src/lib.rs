@@ -321,131 +321,40 @@ impl RustTokenizer {
     }
 
     fn decode_entities(&self, text: &str) -> String {
-        // Full HTML5 entity decoding matching Python tokenizer
+        self.decode_entities_impl(text, false)
+    }
+
+    fn decode_entities_in_attribute(&self, text: &str) -> String {
+        self.decode_entities_impl(text, true)
+    }
+
+    fn decode_entities_impl(&self, text: &str, in_attribute: bool) -> String {
+        // Use Python tokenizer's _decode_entities for spec compliance
         if !text.contains('&') {
             return text.to_string();
         }
 
-        // Use Python's html.unescape for complete entity handling
         Python::with_gil(|py| {
-            // Import constants module to get NUMERIC_ENTITY_INVALID_SENTINEL
-            let constants = PyModule::import(py, "turbohtml.constants").ok();
-            let sentinel = constants
-                .and_then(|m| m.getattr("NUMERIC_ENTITY_INVALID_SENTINEL").ok())
-                .and_then(|s| s.extract::<String>().ok())
-                .unwrap_or_else(|| "\u{f000}".to_string());
+            let tokenizer_mod = match PyModule::import(py, "turbohtml.tokenizer") {
+                Ok(m) => m,
+                Err(_) => return text.to_string(),
+            };
 
-            // Call Python's tokenizer decode logic
-            let tokenizer_mod = PyModule::import(py, "turbohtml.tokenizer").ok();
-            if let Some(tok_mod) = tokenizer_mod {
-                // Get _codepoint_to_char function
-                if let Ok(codepoint_fn) = tok_mod.getattr("_codepoint_to_char") {
-                    // Implement numeric entity parsing
-                    let mut result = String::new();
-                    let chars: Vec<char> = text.chars().collect();
-                    let mut i = 0;
+            let decode_fn = match tokenizer_mod.getattr("HTMLTokenizer") {
+                Ok(cls) => match cls.call1(("",)) {  // Pass empty string as html argument
+                    Ok(inst) => match inst.getattr("_decode_entities") {
+                        Ok(f) => f,
+                        Err(_) => return text.to_string(),
+                    },
+                    Err(_) => return text.to_string(),
+                },
+                Err(_) => return text.to_string(),
+            };
 
-                    while i < chars.len() {
-                        if chars[i] != '&' {
-                            result.push(chars[i]);
-                            i += 1;
-                            continue;
-                        }
-
-                        // Check for numeric entity &#...
-                        if i + 1 < chars.len() && chars[i + 1] == '#' {
-                            let mut j = i + 2;
-                            let is_hex = j < chars.len() && (chars[j] == 'x' || chars[j] == 'X');
-
-                            if is_hex {
-                                j += 1;
-                            }
-
-                            let start_digits = j;
-                            if is_hex {
-                                while j < chars.len() && chars[j].is_ascii_hexdigit() {
-                                    j += 1;
-                                }
-                            } else {
-                                while j < chars.len() && chars[j].is_ascii_digit() {
-                                    j += 1;
-                                }
-                            }
-
-                            let digits: String = chars[start_digits..j].iter().collect();
-                            if !digits.is_empty() {
-                                let has_semicolon = j < chars.len() && chars[j] == ';';
-                                if has_semicolon {
-                                    j += 1;
-                                }
-
-                                let base = if is_hex { 16 } else { 10 };
-                                if let Ok(codepoint) = u32::from_str_radix(&digits, base) {
-                                    // Call Python's _codepoint_to_char for proper handling
-                                    if let Ok(py_result) = codepoint_fn.call1((codepoint,)) {
-                                        if let Ok(decoded_char) = py_result.extract::<String>() {
-                                            // Check if it's the invalid sentinel
-                                            if decoded_char == "\u{fffd}" {
-                                                result.push_str(&sentinel);
-                                            } else {
-                                                result.push_str(&decoded_char);
-                                            }
-                                        }
-                                    }
-                                }
-                                i = j;
-                                continue;
-                            }
-                        }
-
-                        // Try named entity using html.unescape
-                        let html_mod = PyModule::import(py, "html").ok();
-                        if let Some(html) = html_mod {
-                            let mut j = i + 1;
-                            while j < chars.len() && chars[j].is_alphanumeric() {
-                                j += 1;
-                            }
-                            let mut name: String = chars[i..j].iter().collect();
-                            let has_semicolon = j < chars.len() && chars[j] == ';';
-                            if has_semicolon {
-                                name.push(';');
-                                j += 1;
-                            }
-
-                            if let Ok(unescape_fn) = html.getattr("unescape") {
-                                if let Ok(decoded) = unescape_fn.call1((&name,)) {
-                                    if let Ok(decoded_str) = decoded.extract::<String>() {
-                                        if decoded_str != name {
-                                            result.push_str(&decoded_str);
-                                            i = j;
-                                            continue;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Literal '&'
-                        result.push('&');
-                        i += 1;
-                    }
-
-                    return result;
-                }
+            match decode_fn.call1((text, in_attribute)) {
+                Ok(result) => result.extract::<String>().unwrap_or_else(|_| text.to_string()),
+                Err(_) => text.to_string(),
             }
-
-            // Fallback to html.unescape
-            let html_module = PyModule::import(py, "html");
-            if let Ok(html_mod) = html_module {
-                if let Ok(unescape_fn) = html_mod.getattr("unescape") {
-                    if let Ok(result) = unescape_fn.call1((text,)) {
-                        if let Ok(decoded) = result.extract::<String>() {
-                            return decoded;
-                        }
-                    }
-                }
-            }
-            text.to_string()
         })
     }
 
@@ -1273,8 +1182,8 @@ impl RustTokenizer {
                     String::new()
                 };
 
-                // Decode entities in attribute values
-                let value = self.decode_entities(&value);
+                // Decode entities in attribute values with spec-compliant rules
+                let value = self.decode_entities_in_attribute(&value);
                 // HTML5 spec: first attribute wins if there are duplicates
                 if !attributes.contains_key(&name) {
                     attributes.insert(name, value);
