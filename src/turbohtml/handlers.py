@@ -3068,10 +3068,7 @@ class ParagraphTagHandler(TagHandler):
         return True
 
 
-class TableElementHandler(TagHandler):
-    """Base class for table-related element handlers."""
-
-class TableTagHandler(TableElementHandler):
+class TableTagHandler(TagHandler):
     """Handles table-related elements."""
 
     def should_handle_start(self, tag_name, context):

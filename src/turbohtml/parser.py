@@ -130,19 +130,11 @@ class TurboHTML:
         for handler in self.tag_handlers:
             handler.postprocess(self)
 
-    def __repr__(self):
-        return f"<TurboHTML root={self.root}>"
-
     def debug(self, *args, indent=4, **kwargs):
         # Early return before any string formatting - args aren't evaluated if debug is off
         if not self.env_debug:
             return
         print(f"{' ' * indent}{args[0]}", *args[1:], **kwargs)
-
-
-    def get_token_position(self):
-        """Get current token counter (for deduplication guards)."""
-        return self._token_counter
 
     def _init_dom_structure(self):
         """Initialize minimal DOM structure (document root and html element placeholder).
