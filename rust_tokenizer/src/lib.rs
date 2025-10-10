@@ -298,6 +298,28 @@ impl RustTokenizer {
         self.html[self.pos..].chars().next()
     }
 
+    /// Ensure position is on a UTF-8 character boundary by moving forward if needed.
+    /// This is necessary because we use byte-based indexing for performance,
+    /// but Rust strings require slicing at character boundaries.
+    fn ensure_char_boundary(&self, pos: usize) -> usize {
+        if pos >= self.html.len() {
+            return self.html.len();
+        }
+
+        // Check if we're on a character boundary
+        if self.html.is_char_boundary(pos) {
+            return pos;
+        }
+
+        // Move forward to the next character boundary
+        // UTF-8 continuation bytes start with 10xxxxxx (0x80-0xBF)
+        let mut adjusted = pos;
+        while adjusted < self.html.len() && !self.html.is_char_boundary(adjusted) {
+            adjusted += 1;
+        }
+        adjusted
+    }
+
     fn debug(&self, msg: &str) {
         if self.env_debug {
             println!("    {}", msg);
@@ -581,13 +603,15 @@ impl RustTokenizer {
 
         // Find next potential end tag or EOF
         let start = self.pos;
-        if let Some(next_close) = self.html[start + 1..].find("</") {
-            self.pos = start + 1 + next_close;
+        let search_start = self.ensure_char_boundary(start + 1);
+        if let Some(next_close) = self.html[search_start..].find("</") {
+            self.pos = search_start + next_close;
         } else {
             self.pos = self.length;
         }
 
-        let text = self.html[start..self.pos].to_string();
+        let text_end = self.ensure_char_boundary(self.pos);
+        let text = self.html[start..text_end].to_string();
         if !text.is_empty() {
             self.script_content.push_str(&text);
             let text = self.replace_invalid_characters(&text);
@@ -757,14 +781,16 @@ impl RustTokenizer {
 
         // Find next potential end tag or EOF
         let start = self.pos;
-        if let Some(next_close) = self.html[start + 1..].find("</") {
-            self.pos = start + 1 + next_close;
+        let search_start = self.ensure_char_boundary(start + 1);
+        if let Some(next_close) = self.html[search_start..].find("</") {
+            self.pos = search_start + next_close;
         } else {
             self.pos = self.length;
         }
 
         // Return text we found
-        let text = self.html[start..self.pos].to_string();
+        let text_end = self.ensure_char_boundary(self.pos);
+        let text = self.html[start..text_end].to_string();
         if !text.is_empty() {
             let text = self.replace_invalid_characters(&text);
             // Decode entities for RCDATA elements (title/textarea)
@@ -788,6 +814,9 @@ impl RustTokenizer {
     }
 
     fn try_tag(&mut self) -> PyResult<Option<HTMLToken>> {
+        // Ensure we're starting on a character boundary
+        self.pos = self.ensure_char_boundary(self.pos);
+
         let pos = self.pos;
         let html = &self.html;
         let length = self.length;
@@ -839,38 +868,48 @@ impl RustTokenizer {
         if pos + 9 <= length && html.as_bytes()[pos + 1] == b'!' {
             let end_check = (pos + 9).min(length);
             if end_check >= pos + 9 {
-                let chunk = &html[pos+2..pos+9];
-                if chunk.eq_ignore_ascii_case("DOCTYPE") {
-                    self.pos = pos + 9;
-                    // Skip whitespace
-                    while self.pos < length && html.as_bytes()[self.pos].is_ascii_whitespace() {
-                        self.pos += 1;
-                    }
-                    // Find closing '>'
-                    if let Some(gt_pos) = html[self.pos..].find('>') {
-                        let doctype = html[self.pos..self.pos + gt_pos].trim().to_string();
-                        self.pos += gt_pos + 1;
-                        return Ok(Some(HTMLToken::new(
-                            "DOCTYPE".to_string(),
-                            Some(doctype),
-                            None,
-                            None,
-                            None,
-                            None,
-                            None,
-                        )));
-                    } else {
-                        let doctype = html[self.pos..].trim().to_string();
-                        self.pos = length;
-                        return Ok(Some(HTMLToken::new(
-                            "DOCTYPE".to_string(),
-                            Some(doctype),
-                            None,
-                            None,
-                            None,
-                            None,
-                            None,
-                        )));
+                // Ensure we're working with character boundaries
+                let doctype_start = self.ensure_char_boundary(pos + 2);
+                let doctype_end_check = self.ensure_char_boundary(pos + 9);
+                if doctype_end_check > doctype_start && doctype_end_check - doctype_start >= 7 {
+                    let chunk = &html[doctype_start..doctype_end_check];
+                    if chunk.eq_ignore_ascii_case("DOCTYPE") {
+                        self.pos = pos + 9;
+                        // Skip whitespace
+                        while self.pos < length && html.as_bytes()[self.pos].is_ascii_whitespace() {
+                            self.pos += 1;
+                        }
+                        // Ensure we're on a character boundary after byte-level scanning
+                        self.pos = self.ensure_char_boundary(self.pos);
+                        // Find closing '>'
+                        let search_pos = self.ensure_char_boundary(self.pos);
+                        if let Some(gt_pos) = html[search_pos..].find('>') {
+                            let doctype_end = self.ensure_char_boundary(search_pos + gt_pos);
+                            let doctype = html[search_pos..doctype_end].trim().to_string();
+                            self.pos = doctype_end + 1;
+                            return Ok(Some(HTMLToken::new(
+                                "DOCTYPE".to_string(),
+                                Some(doctype),
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                            )));
+                        } else {
+                            let search_pos = self.ensure_char_boundary(self.pos);
+                            let doctype = html[search_pos..].trim().to_string();
+                            self.pos = length;
+                            return Ok(Some(HTMLToken::new(
+                                "DOCTYPE".to_string(),
+                                Some(doctype),
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                            )));
+                        }
                     }
                 }
             }
@@ -1378,10 +1417,12 @@ impl RustTokenizer {
         }
 
         // Find -->
-        if let Some(end_pos) = self.html[self.pos..].find("-->") {
-            let comment_text = self.html[start..self.pos + end_pos].to_string();
+        let search_pos = self.ensure_char_boundary(self.pos);
+        if let Some(end_pos) = self.html[search_pos..].find("-->") {
+            let comment_end = self.ensure_char_boundary(search_pos + end_pos);
+            let comment_text = self.html[start..comment_end].to_string();
             let comment_text = self.replace_invalid_characters(&comment_text);
-            self.pos += end_pos + 3;
+            self.pos = comment_end + 3;
             return Ok(Some(HTMLToken::new(
                 "Comment".to_string(),
                 Some(comment_text),
@@ -1394,10 +1435,12 @@ impl RustTokenizer {
         }
 
         // Find --!>
-        if let Some(end_pos) = self.html[self.pos..].find("--!>") {
-            let comment_text = self.html[start..self.pos + end_pos].to_string();
+        let search_pos = self.ensure_char_boundary(self.pos);
+        if let Some(end_pos) = self.html[search_pos..].find("--!>") {
+            let comment_end = self.ensure_char_boundary(search_pos + end_pos);
+            let comment_text = self.html[start..comment_end].to_string();
             let comment_text = self.replace_invalid_characters(&comment_text);
-            self.pos += end_pos + 4;
+            self.pos = comment_end + 4;
             return Ok(Some(HTMLToken::new(
                 "Comment".to_string(),
                 Some(comment_text),
@@ -1437,10 +1480,12 @@ impl RustTokenizer {
 
         // Handle CDATA specially
         if self.html[self.pos..].starts_with("<![CDATA[") {
-            let start_pos = self.pos + 9;
-            if let Some(end) = self.html[start_pos..].find("]]>") {
-                let inner = self.html[start_pos..start_pos + end].to_string();
-                self.pos = start_pos + end + 3;
+            let start_pos = self.ensure_char_boundary(self.pos + 9);
+            let search_pos = self.ensure_char_boundary(start_pos);
+            if let Some(end) = self.html[search_pos..].find("]]>") {
+                let inner_end = self.ensure_char_boundary(search_pos + end);
+                let inner = self.html[start_pos..inner_end].to_string();
+                self.pos = inner_end + 3;
                 let inner = self.replace_invalid_characters(&inner);
                 return Ok(Some(HTMLToken::new(
                     "Comment".to_string(),
@@ -1474,17 +1519,19 @@ impl RustTokenizer {
 
         // For <?, include the ?
         let start = if self.html[self.pos..].starts_with("<?") {
-            self.pos + 1
+            self.ensure_char_boundary(self.pos + 1)
         } else if self.html[self.pos..].starts_with("</") {
-            self.pos + 2
+            self.ensure_char_boundary(self.pos + 2)
         } else {
-            self.pos + 2 // <!
+            self.ensure_char_boundary(self.pos + 2) // <!
         };
 
         // Find next >
-        if let Some(gt_pos) = self.html[start..].find('>') {
-            let comment_text = self.html[start..start + gt_pos].to_string();
-            self.pos = start + gt_pos + 1;
+        let search_start = self.ensure_char_boundary(start);
+        if let Some(gt_pos) = self.html[search_start..].find('>') {
+            let comment_end = self.ensure_char_boundary(search_start + gt_pos);
+            let comment_text = self.html[start..comment_end].to_string();
+            self.pos = comment_end + 1;
             let comment_text = self.replace_invalid_characters(&comment_text);
             return Ok(Some(HTMLToken::new(
                 "Comment".to_string(),
