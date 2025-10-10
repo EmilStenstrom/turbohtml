@@ -1097,37 +1097,6 @@ class GenericEndTagHandler(TagHandler):
         return True
 
 
-class TemplateAwareHandler(TagHandler):
-    """Mixin for handlers that need to skip template content."""
-
-    def should_handle_start(self, tag_name, context):
-        # Allow some handlers even inside template content (formatting and auto-closing semantics still apply)
-        if in_template_content(context):
-            # Importing class names locally avoids circular references at import time
-            allowed_types = (FormattingTagHandler, AutoClosingTagHandler)
-            if isinstance(self, allowed_types):
-                return self._should_handle_start_impl(tag_name, context)
-            return False
-        return self._should_handle_start_impl(tag_name, context)
-
-    def _should_handle_start_impl(self, tag_name, context):
-        """Override this instead of should_handle_start."""
-        return False
-
-
-class SelectAwareHandler(TagHandler):
-    """Mixin for handlers that need to avoid handling inside select elements."""
-
-    def should_handle_start(self, tag_name, context):
-        if context.current_parent.is_inside_tag("select"):
-            return False
-        return self._should_handle_start_impl(tag_name, context)
-
-    def _should_handle_start_impl(self, tag_name, context):
-        """Override this instead of should_handle_start."""
-        return False
-
-
 class SimpleElementHandler(TagHandler):
     """Base handler for simple elements that create nodes and may nest."""
 
@@ -1536,7 +1505,7 @@ class TextHandler(TagHandler):
         return re.sub(r"&#([0-9]+);", lambda m: chr(int(m.group(1))), text)
 
 
-class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
+class FormattingTagHandler(TagHandler):
     """Handles formatting elements like <b>, <i>, etc. and their reconstruction."""
 
     # Tags treated as block boundaries for deferred reconstruction logic
@@ -1620,8 +1589,19 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
                 context.move_to_element(node)
         return node
 
-    def _should_handle_start_impl(self, tag_name, context):
-        return tag_name in FORMATTING_ELEMENTS
+    def should_handle_start(self, tag_name, context):
+        # Fast path: check tag first (cheap frozenset lookup)
+        if tag_name not in FORMATTING_ELEMENTS:
+            return False
+
+        # Only now check expensive context conditions
+        # Skip if inside select (SelectAware behavior)
+        if context.current_parent.is_inside_tag("select"):
+            return False
+
+        # Allow formatting handlers inside template content (TemplateAware behavior)
+        # Other handlers skip template content, but formatting/auto-closing still apply
+        return True
 
     def handle_start(
         self, token, context,
@@ -1980,15 +1960,15 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
 
     def handle_end(self, token, context):
         tag_name = token.tag_name
-        self.debug(f"FormattingElementHandler: *** START PROCESSING END TAG </{tag_name}> ***")
-        self.debug(f"FormattingElementHandler: handling end tag <{tag_name}>, context={context}")
+        self.debug(f"*** START PROCESSING END TAG </{tag_name}> ***")
+        self.debug(f"handling end tag <{tag_name}>, context={context}")
         prev_processing = context.in_end_tag_dispatch
         context.in_end_tag_dispatch = True
 
         # Run adoption agency
         runs = self.parser.adoption_agency.run_until_stable(tag_name, context, max_runs=8)
         if runs > 0:
-            self.debug(f"FormattingElementHandler: Adoption agency completed after {runs} run(s) for </{tag_name}>")
+            self.debug(f"Adoption agency completed after {runs} run(s) for </{tag_name}>")
             context.in_end_tag_dispatch = prev_processing
             return True
 
@@ -2039,7 +2019,7 @@ class FormattingTagHandler(TemplateAwareHandler, SelectAwareHandler):
         return True
 
 
-class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
+class SelectTagHandler(AncestorCloseHandler):
     """Handles select elements and their children (option, optgroup) and datalist."""
 
     def __init__(self, parser=None):
@@ -2065,26 +2045,31 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
             return True  # Intercept every tag inside <select>
         return tag_name in {"select", "option", "optgroup", "datalist"}
 
-    # Override to widen interception scope inside select (TemplateAwareHandler limits to handled_tags otherwise)
+    # Override to widen interception scope inside select
     def should_handle_start(self, tag_name, context):
+        # Skip template content (TemplateAware behavior inline)
+        if in_template_content(context):
+            return False
+
         # Always intercept to check for malformed tags
         if "<" in tag_name:
             # Malformed tag - check if inside select subtree
             cur = context.current_parent
             while cur:
                 if cur.tag_name in {"select", "option", "optgroup"}:
-                    self.debug(f"SelectTagHandler: Intercepting malformed tag {tag_name}")
+                    self.debug(f"Intercepting malformed tag {tag_name}")
                     return True  # Will handle in handle_start
                 cur = cur.parent
 
         if (
             context.current_parent.is_inside_tag("select")
-            and not in_template_content(context)
             and not (context.current_parent.namespace == "svg" or context.current_parent.namespace == "math")
         ):
-            # Do NOT intercept script/style so RawtextTagHandler can process them within select per spec
-            return tag_name not in ("script", "style")
-        return super().should_handle_start(tag_name, context)
+            # Do NOT intercept script/style/plaintext so RawtextTagHandler/PlaintextHandler can process them
+            return tag_name not in ("script", "style", "plaintext")
+
+        # Not in select, check if this is a select-related tag
+        return self._should_handle_start_impl(tag_name, context)
 
     def handle_start(
         self, token, context,
@@ -2148,6 +2133,22 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                 self.debug(
                     "Found nested select, popping outer <select> from open elements (spec reprocess rule)",
                 )
+                
+                # Collect formatting elements that are inside select (for recreation outside)
+                formatting_to_recreate = []
+                select_element = None
+                for el in context.open_elements:
+                    if el.tag_name == "select":
+                        select_element = el
+                        break
+                
+                if select_element:
+                    # Find formatting elements between select and current position
+                    select_index = context.open_elements.index_of(select_element)
+                    for el in list(context.open_elements)[select_index + 1:]:
+                        if el.tag_name in FORMATTING_ELEMENTS:
+                            formatting_to_recreate.append((el.tag_name, el.attributes.copy() if el.attributes else {}))
+                
                 # Pop stack until outer select removed
                 while not context.open_elements.is_empty():
                     popped = context.open_elements.pop()
@@ -2155,6 +2156,13 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
                         if popped.parent:
                             context.move_to_element(popped.parent)
                         break
+                
+                # Recreate formatting elements outside select
+                for fmt_tag, fmt_attrs in formatting_to_recreate:
+                    self.debug(f"Recreating formatting element {fmt_tag} outside select")
+                    fmt_token = HTMLToken("StartTag", tag_name=fmt_tag, attributes=fmt_attrs)
+                    self.parser.insert_element(fmt_token, context, mode="normal", enter=True)
+                
                 # Ignore the nested <select> token itself (do not create new select)
                 return True
 
@@ -2397,13 +2405,54 @@ class SelectTagHandler(TemplateAwareHandler, AncestorCloseHandler):
         return table if table_tag != "table" else table.parent
 
     def should_handle_end(self, tag_name, context):
-        return tag_name in {"select", "option", "optgroup", "datalist"}
+        # Handle select-related end tags
+        if tag_name in {"select", "option", "optgroup", "datalist"}:
+            return True
+        
+        # Handle formatting element end tags when inside select
+        if tag_name in FORMATTING_ELEMENTS and context.current_parent.is_inside_tag("select"):
+            self.debug(f"SelectTagHandler intercepting </{tag_name}> inside select")
+            return True
+        
+        return False
 
     def handle_end(self, token, context):
         tag_name = token.tag_name
         self.debug(
             f"Handling end tag {tag_name}, current_parent={context.current_parent}",
         )
+
+        # Handle formatting element end tags inside select
+        if tag_name in FORMATTING_ELEMENTS and context.current_parent.is_inside_tag("select"):
+            self.debug(f"Handling formatting element </{tag_name}> inside select")
+            
+            # Find the formatting element ancestor inside select
+            fmt_element = context.current_parent.find_ancestor(tag_name)
+            if not fmt_element:
+                self.debug(f"No {tag_name} ancestor found, ignoring")
+                return True
+            
+            # Collect nested formatting elements inside the closing element (to recreate as siblings)
+            nested_formatting = []
+            if context.current_parent is not fmt_element:
+                current = context.current_parent
+                while current and current is not fmt_element:
+                    if current.tag_name in FORMATTING_ELEMENTS:
+                        nested_formatting.insert(0, (current.tag_name, current.attributes.copy() if current.attributes else {}))
+                    current = current.parent
+
+            # Close the formatting element by moving to its parent
+            self.debug(f"Closing {tag_name} inside select, moving to {fmt_element.parent.tag_name if fmt_element.parent else 'None'}")
+            context.move_to_ancestor_parent(fmt_element)
+            
+            # Recreate nested formatting elements as siblings of the closed element
+            if nested_formatting:
+                for nested_tag, nested_attrs in nested_formatting:
+                    self.debug(f"Recreating nested formatting element {nested_tag} as sibling of {tag_name}")
+                    nested_token = HTMLToken("StartTag", tag_name=nested_tag, attributes=nested_attrs)
+                    self.parser.insert_element(nested_token, context, mode="normal", enter=True)
+            
+            return True
 
         if tag_name in ("select", "datalist"):
             # Before closing select, clone any open option to selectedcontent
@@ -3076,8 +3125,15 @@ class TableElementHandler(TagHandler):
         """Append element at table level."""
 
 
-class TableTagHandler(TemplateAwareHandler, TableElementHandler):
+class TableTagHandler(TableElementHandler):
     """Handles table-related elements."""
+
+    def should_handle_start(self, tag_name, context):
+        # Skip template content (TemplateAware behavior)
+        if in_template_content(context):
+            return False
+
+        return self._should_handle_start_impl(tag_name, context)
 
     def _should_handle_start_impl(self, tag_name, context):
         # Orphan section suppression: ignore thead/tbody/tfoot inside SVG integration point with no table
@@ -4582,13 +4638,20 @@ class FormTagHandler(TagHandler):
 class ListTagHandler(TagHandler):
     """Handles list-related elements (ul, ol, li, dl, dt, dd)."""
 
+    # Fast-path: tags this handler processes
+    HANDLED_TAGS = frozenset(['li', 'dt', 'dd'])
+
     def should_handle_start(self, tag_name, context):
+        # Early exit if not a list tag
+        if tag_name not in self.HANDLED_TAGS:
+            return False
+
         # If we're inside a p tag, defer to AutoClosingTagHandler first
-        if context.current_parent.tag_name == "p" and tag_name in ("dt", "dd", "li"):
+        if context.current_parent.tag_name == "p":
             self.debug(f"Deferring {tag_name} inside p to AutoClosingTagHandler")
             return False
 
-        return tag_name in ("li", "dt", "dd")
+        return True
 
     def handle_start(
         self, token, context,
@@ -4936,30 +4999,30 @@ class HeadingTagHandler(SimpleElementHandler):
         return True
 
 
-class RawtextTagHandler(SelectAwareHandler):
+class RawtextTagHandler(TagHandler):
     """Handles rawtext elements like script, style, title, etc."""
 
-    def _should_handle_start_impl(self, tag_name, context):
-        # Permit script/style/title/xmp/noscript/rawtext-like tags generally.
-        # We intentionally ALLOW script/style inside <select> (spec allows script in select; style behavior differs
-        # but tests expect script element creation). SelectAwareHandler would normally block; we re-allow here by
-        # overriding select filtering in should_handle_start below.
+    def should_handle_start(self, tag_name, context):
+        # Fast path: check tag first
+        if tag_name not in RAWTEXT_ELEMENTS:
+            return False
+
+        # Special case: disallow textarea inside select
         if tag_name == "textarea" and (
             context.current_parent.tag_name == "select"
             or context.current_parent.find_ancestor(lambda n: n.tag_name == "select")
         ):
-            return False  # Disallow textarea rawtext handling inside select per spec (ignored)
-        return tag_name in RAWTEXT_ELEMENTS
+            return False
 
-    def should_handle_start(self, tag_name, context):
+        # SelectAware behavior: skip if inside select (except script/style which are allowed)
+        if tag_name not in ("script", "style") and context.current_parent.is_inside_tag("select"):
+            return False
+
         # Suppress any start tags while in RAWTEXT content state
         if context.content_state == ContentState.RAWTEXT:
             return True  # Will suppress in handle_start
 
-        # Override SelectAwareHandler filtering: allow script/style inside select so they form rawtext elements.
-        if tag_name in ("script", "style"):
-            return self._should_handle_start_impl(tag_name, context)
-        return super().should_handle_start(tag_name, context)
+        return True
 
     def handle_start(
         self, token, context,
@@ -5191,11 +5254,19 @@ class RawtextTagHandler(SelectAwareHandler):
         return True
 
 
-class VoidTagHandler(SelectAwareHandler):
+class VoidTagHandler(TagHandler):
     """Handles void elements that can't have children."""
 
-    def _should_handle_start_impl(self, tag_name, context):
-        return tag_name in VOID_ELEMENTS
+    def should_handle_start(self, tag_name, context):
+        # Fast path: check tag first
+        if tag_name not in VOID_ELEMENTS:
+            return False
+
+        # SelectAware behavior: skip if inside select
+        if context.current_parent.is_inside_tag("select"):
+            return False
+
+        return True
 
     def handle_start(
         self, token, context,
@@ -5317,8 +5388,14 @@ class VoidTagHandler(SelectAwareHandler):
         return True
 
 
-class AutoClosingTagHandler(TemplateAwareHandler):
+class AutoClosingTagHandler(TagHandler):
     """Handles auto-closing behavior for certain tags."""
+
+    def should_handle_start(self, tag_name, context):
+        # TemplateAware behavior: allow inside template content (formatting/auto-closing still apply)
+        # No need to skip template content
+
+        return self._should_handle_start_impl(tag_name, context)
 
     def _should_handle_start_impl(self, tag_name, context):
         # Don't intercept list item tags in table context; let ListTagHandler handle foster parenting
@@ -5459,7 +5536,6 @@ class AutoClosingTagHandler(TemplateAwareHandler):
         )  # Add table elements
 
     def handle_end(self, token, context):
-        self.debug(f"AutoClosingTagHandler.handle_end: {token.tag_name}")
         self.debug(f"Current parent: {context.current_parent}")
 
         # Handle block elements
@@ -5530,10 +5606,34 @@ class AutoClosingTagHandler(TemplateAwareHandler):
 
             # Pop the block element from the open elements stack if present (simple closure)
             if context.open_elements.contains(current):
+                # Before popping, check if we're inside select and need to recreate formatting elements
+                inside_select = current.find_ancestor("select")
+                formatting_to_recreate = []
+                if inside_select:
+                    # Find formatting elements between current block and the insertion point
+                    current_index = context.open_elements.index_of(current)
+                    for el in list(context.open_elements)[current_index + 1:]:
+                        if el.tag_name in FORMATTING_ELEMENTS:
+                            formatting_to_recreate.append((el.tag_name, el.attributes.copy() if el.attributes else {}))
+
                 while not context.open_elements.is_empty():
                     popped = context.open_elements.pop()
                     if popped is current:
                         break
+
+                # Move insertion point to block's parent first
+                context.move_to_element_with_fallback(
+                    current.parent, get_body(self.parser.root),
+                )
+
+                # Then recreate formatting elements at the new insertion point
+                if formatting_to_recreate:
+                    for fmt_tag, fmt_attrs in formatting_to_recreate:
+                        self.debug(f"Recreating formatting element {fmt_tag} after closing {token.tag_name}")
+                        fmt_token = HTMLToken("StartTag", tag_name=fmt_tag, attributes=fmt_attrs)
+                        self.parser.insert_element(fmt_token, context, mode="normal", enter=True)
+                return True
+
             # Move insertion point to its parent (or body fallback)
             context.move_to_element_with_fallback(
                 current.parent, get_body(self.parser.root),
@@ -7703,21 +7803,27 @@ class DoctypeHandler(TagHandler):
         return name
 
 
-class PlaintextHandler(SelectAwareHandler):
+class PlaintextHandler(TagHandler):
     """Handles plaintext element which switches to plaintext mode."""
 
-    def _should_handle_start_impl(self, tag_name, context):
-        # While in PLAINTEXT mode we treat all subsequent tags as literal text here.
+    def should_handle_start(self, tag_name, context):
+        # While in PLAINTEXT mode we treat all subsequent tags as literal text
         if context.content_state == ContentState.PLAINTEXT:
             return True
+
+        # Fast path: check tag first
         if tag_name != "plaintext":
+            # SelectAware behavior would normally return False here, but we need special handling
+            # Skip if inside select (would be ignored anyway)
             return False
+
         # Inside plain SVG/MathML foreign subtree that is NOT an integration point, we should NOT
         # enter HTML PLAINTEXT mode; instead the <plaintext> tag is just another foreign element
         # with normal parsing of its (HTML) end tag token. We still handle it here so we can create
         # the element explicitly and not trigger global PLAINTEXT consumption.
         if self.parser.foreign_handler.is_plain_svg_foreign(context):
             return True
+
         # Always intercept inside select so we can ignore (prevent fallback generic element creation)
         return True
 
@@ -7739,14 +7845,7 @@ class PlaintextHandler(SelectAwareHandler):
             self.debug("Early redirect: moving insertion into trailing <button> inside <p> for plaintext")
             context.move_to_element(context.current_parent.children[-1])
         # Ignore plaintext start tag entirely inside a select subtree (spec: disallowed start tag ignored)
-        if (
-            context.current_parent.tag_name == "select"
-            or context.current_parent.find_ancestor(lambda n: n.tag_name == "select")
-        ):
-            self.debug(
-                "Ignoring <plaintext> inside <select> subtree (no PLAINTEXT mode)",
-            )
-            return True
+        # REMOVED: Tests show plaintext SHOULD work inside select and enter PLAINTEXT mode
 
         # Plain foreign SVG/MathML: create a foreign plaintext element but DO NOT switch tokenizer
         if self.parser.foreign_handler.is_plain_svg_foreign(context):
@@ -7844,6 +7943,7 @@ class PlaintextHandler(SelectAwareHandler):
         if (
             context.document_state == DocumentState.IN_TABLE
             and context.current_parent.tag_name not in ("td", "th", "caption")
+            and not context.current_parent.is_inside_tag("select")  # Don't foster if inside select
         ):
             table = find_current_table(context)
             if table and table.parent:
@@ -7870,6 +7970,8 @@ class PlaintextHandler(SelectAwareHandler):
             context.enter_element(pt_node)
             context.open_elements.push(pt_node)
         else:
+            # Check if we're inside select - if so, disable auto-fostering
+            inside_select = context.current_parent.is_inside_tag("select")
             self.parser.insert_element(
                 token,
                 context,
@@ -7877,6 +7979,7 @@ class PlaintextHandler(SelectAwareHandler):
                 enter=True,
                 tag_name_override="plaintext",
                 push_override=True,
+                auto_foster=not inside_select,  # Disable foster parenting inside select
             )
         # PLAINTEXT content state and tokenizer mode are set automatically by insert_element
         # If we detached an <a>, defer recreation until first PLAINTEXT character token. This avoids
@@ -7919,14 +8022,8 @@ class PlaintextHandler(SelectAwareHandler):
     def handle_end(self, token, context):
         # If we are in PLAINTEXT mode, every end tag becomes literal text.
         if context.content_state == ContentState.PLAINTEXT:
-        # If start tag was ignored inside select we also ignore its end tag (do nothing)
             pass
-        if token.tag_name == "plaintext" and (
-            context.current_parent.tag_name == "select"
-            or context.current_parent.find_ancestor(lambda n: n.tag_name == "select")
-        ):
-            self.debug("Ignoring stray </plaintext> inside <select> subtree")
-            return True
+        # REMOVED: Tests show </plaintext> should work inside select too
         # Outside PLAINTEXT mode: if we have an actual <svg plaintext> (or math) element open, close it normally
         if token.tag_name == "plaintext":
             # Look for a foreign plaintext element on stack (namespace-aware)
