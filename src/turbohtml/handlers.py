@@ -2626,31 +2626,15 @@ class ParagraphTagHandler(TagHandler):
                 # Clear any active formatting elements inherited from outside the integration point
                 if context.active_formatting_elements:
                     context.active_formatting_elements.clear()
-                # Spec-consistent behaviour: a start tag <p> while a <p> is open must close the previous paragraph
-                # even inside integration points (tests expect sibling <p> elements, not nesting).
-                if context.current_parent.tag_name == "p":
-                    # Spec: For a new <p> when one is already open, we must process an
-                    # implied </p>. This means popping elements until we remove the
-                    # earlier <p>, also popping any formatting elements above it so they
-                    # do not leak into the new paragraph.
-                    # Move insertion point to parent of the closed paragraph
-                    # Remove paragraph element from DOM (it should remain; we do not remove it)
-                    # Active formatting elements referencing popped nodes above p remain unaffected
-                    pass
+                # Spec-consistent behaviour: create new paragraph element
                 new_node = self.parser.insert_element(
                     token, context, mode="normal", enter=True,
                 )
                 # insert_element already pushed onto open elements; nothing extra needed
                 return True
 
-        # Clear active formatting elements if in integration point (centralized check)
-        in_svg_ip = self.parser.foreign_handler.is_in_svg_integration_point(context)
-        in_mathml_ip = self.parser.foreign_handler.is_in_mathml_integration_point(context)
-        if (in_svg_ip or in_mathml_ip) and context.active_formatting_elements:
-            context.active_formatting_elements.clear()
-
-        # Auto-close paragraph when encountering block elements, but NOT in foreign integration points
-        if token.tag_name != "p" and context.current_parent.tag_name == "p" and not (in_svg_ip or in_mathml_ip):
+        # Auto-close paragraph when encountering block elements
+        if token.tag_name != "p" and context.current_parent.tag_name == "p":
             self.debug(f"Auto-closing p due to {token.tag_name}")
             # Pop stack up to and including the open paragraph (spec end tag 'p' logic)
             closing_p = context.current_parent
@@ -4073,15 +4057,8 @@ class TableTagHandler(TagHandler):
                         current_parent_for_chain = fmt_elem
                         continue
                     if fmt_elem.parent is current_parent_for_chain:
-                        if (
-                            is_innermost
-                            and has_text_content
-                            and context.needs_reconstruction
-                        ):
-                            pass
-                        else:
-                            current_parent_for_chain = fmt_elem
-                            continue
+                        current_parent_for_chain = fmt_elem
+                        continue
                     if (
                         fmt_elem.tag_name == "nobr"
                         and current_parent_for_chain.children
@@ -4654,57 +4631,19 @@ class ListTagHandler(TagHandler):
             if ancestor.parent:
                 # Move insertion to dl (or ancestor parent)
                 context.move_to_element(ancestor.parent)
-            # Collect formatting descendants by scanning open elements stack above ancestor (captures nested chains)
-            # Skip cloning formatting elements that we're currently inside (or are ancestors of current position)
-            # to avoid duplicating elements we're already in
-            formatting_descendants = []
-            formatting_to_remove = []  # Always remove from stack, even if not cloning
-            if (
-                context.open_elements
-                and ancestor in context.open_elements
-            ):
+            # Remove formatting descendants from open elements stack (implicit close)
+            # but keep them in active formatting elements so they can be reconstructed in the new dt/dd
+            if context.open_elements and ancestor in context.open_elements:
                 anc_index = context.open_elements.index(ancestor)
-                for el in context.open_elements[anc_index + 1 :]:
-                    if (
-                        ancestor.is_ancestor_of(el)
-                        and el.tag_name in FORMATTING_ELEMENTS
-                    ):
-                        formatting_to_remove.append(el)  # Always remove from stack
-                        # Skip cloning if el is original_parent or an ancestor of original_parent
-                        is_current = el is original_parent
-                        is_ancestor = el.is_ancestor_of(original_parent) if original_parent else False
-                        if not (is_current or is_ancestor):
-                            formatting_descendants.append(el)
-            # Ensure direct child formatting also included if not already (covers elements not on stack due to prior closure)
-            for ch in ancestor.children:
-                if (
-                    ch.tag_name in FORMATTING_ELEMENTS
-                    and ch not in formatting_descendants
-                    and ch not in formatting_to_remove
-                ):
-                    # Skip cloning if ch is original_parent or ancestor of original_parent
-                    is_current = ch is original_parent
-                    is_ancestor = ch.is_ancestor_of(original_parent) if original_parent else False
-                    if not (is_current or is_ancestor):
-                        formatting_descendants.append(ch)
-            # Remove formatting descendants from open elements stack (implicit close) but keep active formatting entries
-            for fmt in formatting_to_remove:
-                if context.open_elements.contains(fmt):
-                    context.open_elements.remove_element(fmt)
-            # Finally remove the old dt/dd from open elements stack
+                for el in context.open_elements[anc_index + 1:]:
+                    if ancestor.is_ancestor_of(el) and el.tag_name in FORMATTING_ELEMENTS:
+                        context.open_elements.remove_element(el)
+            # Remove the old dt/dd from open elements stack
             if context.open_elements.contains(ancestor):
                 context.open_elements.remove_element(ancestor)
-            # Defer reconstruction until after new dt/dd created so formatting clones land inside it
-        else:
-            formatting_descendants = []
 
         # Create new dt/dd using centralized insertion helper (normal mode) to create and push the dt/dd element.
         new_node = self.parser.insert_element(token, context, mode="normal", enter=True)
-        # Manually duplicate formatting chain inside the new dt/dd without mutating active formatting entries.
-        # This allows later text (after </dl>) to still reconstruct original formatting.
-        self.debug(f"formatting_descendants to clone: {[f.tag_name for f in formatting_descendants]}")
-        if formatting_descendants:
-            pass
         self.debug(f"Created new {tag_name}: {new_node}")
         return True
 
@@ -4741,10 +4680,8 @@ class ListTagHandler(TagHandler):
                 self.debug(f"Foster parented li before table: {new_node}")
                 return True
 
-        # If we're in another li, close it first
-        if context.current_parent.tag_name == "li":
-            pass
-        elif context.current_parent.tag_name == "menuitem":
+        # Look for the nearest list container (ul, ol, menu) ancestor
+        if context.current_parent.tag_name == "menuitem":
             # Stay inside menuitem so first li becomes its child (do not move out)
             self.debug("Current parent is <menuitem>; keeping context for nested <li>")
         else:
@@ -5006,8 +4943,6 @@ class RawtextTagHandler(TagHandler):
                         if ch is cur_parent:
                             table_index = i
                             break
-                    if table_index > 0:
-                        pass
 
                 table = find_current_table(context) if not skip_table_reloc else None
                 if table and not skip_table_reloc:
@@ -5743,34 +5678,25 @@ class ForeignTagHandler(TagHandler):
         ):
             return False
 
-        # MathML refinement: certain HTML_BREAK_OUT_ELEMENTS (e.g. figure) should remain MathML
-        # when *not* inside a MathML text integration point. Output should be <math figure> for
-        # fragment contexts rooted at <math>, <annotation-xml> (without HTML encoding), etc.,
-        # but plain <figure> inside text integration points like <ms>, <mi>, etc. We therefore
-        # suppress breakout for <figure> unless a text integration point ancestor exists.
-        if context.current_context == "math" and tag_name_lower == "figure":
-            has_math_ancestor = context.current_parent.find_math_namespace_ancestor() is not None
-            # Treat fragment roots 'math math' and 'math annotation-xml' as having a math ancestor for suppression purposes
-            if self.parser.fragment_context in ("math math", "math annotation-xml"):
-                has_math_ancestor = True
-            # In fragment contexts rooted at math ms/mn/mo/mi/mtext the <figure> element should remain HTML output.
-            # For root contexts 'math ms', 'math mn', etc we therefore ALLOW breakout (return True) producing HTML figure.
-            if self.parser.fragment_context and self.parser.fragment_context in (
-                "math ms",
-                "math mn",
-                "math mo",
-                "math mi",
-                "math mtext",
-            ):
-                pass  # allow breakout
-            elif has_math_ancestor:
-                return False  # keep as <math figure>
-
         # Check if we're in an integration point where HTML is allowed
         in_integration_point = False
 
         # Check for MathML integration points
         if context.current_context == "math":
+            if tag_name_lower == "figure":
+                has_math_ancestor = context.current_parent.find_math_namespace_ancestor() is not None
+                if self.parser.fragment_context in ("math math", "math annotation-xml"):
+                    has_math_ancestor = True
+                if self.parser.fragment_context in {
+                    "math ms",
+                    "math mn",
+                    "math mo",
+                    "math mi",
+                    "math mtext",
+                }:
+                    has_math_ancestor = False
+                if has_math_ancestor:
+                    return False
             # Check if we're inside annotation-xml with HTML encoding
             annotation_xml = context.current_parent.find_math_annotation_xml_ancestor()
             if annotation_xml:
@@ -7793,10 +7719,6 @@ class PlaintextHandler(TagHandler):
         return tag_name == "plaintext"
 
     def handle_end(self, token, context):
-        # If we are in PLAINTEXT mode, every end tag becomes literal text.
-        if context.content_state == ContentState.PLAINTEXT:
-            pass
-        # REMOVED: Tests show </plaintext> should work inside select too
         # Outside PLAINTEXT mode: if we have an actual <svg plaintext> (or math) element open, close it normally
         if token.tag_name == "plaintext":
             # Look for a foreign plaintext element on stack (namespace-aware)
