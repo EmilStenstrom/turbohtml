@@ -1981,21 +1981,6 @@ class SelectTagHandler(AncestorCloseHandler):
         # dynamic context attribute monkey patching.
         self._pending_table_outside = None
 
-    def _should_handle_start_impl(self, tag_name, context):
-        # If we're in a select, handle all tags to prevent formatting elements
-        # BUT only if we're not in template content (template elements should be handled by template handlers)
-        # AND not in foreign content (svg/math) where foreign handler should process children
-        # Check if current parent is actually a foreign element (not just foreign ancestor)
-        inside_select = context.current_parent.is_inside_tag("select")
-        is_foreign = context.current_parent.namespace == "svg" or context.current_parent.namespace == "math"
-        if (
-            inside_select
-            and not context.in_template_content > 0
-            and not is_foreign
-        ):
-            return True  # Intercept every tag inside <select>
-        return tag_name in {"select", "option", "optgroup", "datalist"}
-
     # Override to widen interception scope inside select
     def should_handle_start(self, tag_name, context):
         # Skip template content (TemplateAware behavior inline)
@@ -2012,15 +1997,14 @@ class SelectTagHandler(AncestorCloseHandler):
                     return True  # Will handle in handle_start
                 cur = cur.parent
 
-        if (
-            context.current_parent.is_inside_tag("select")
-            and not (context.current_parent.namespace == "svg" or context.current_parent.namespace == "math")
-        ):
+        inside_select = context.current_parent.is_inside_tag("select")
+        is_foreign = context.current_parent.namespace in ("svg", "math")
+        if inside_select and not is_foreign:
             # Do NOT intercept script/style/plaintext so RawtextTagHandler/PlaintextHandler can process them
             return tag_name not in ("script", "style", "plaintext")
 
         # Not in select, check if this is a select-related tag
-        return self._should_handle_start_impl(tag_name, context)
+        return tag_name in {"select", "option", "optgroup", "datalist"}
 
     def handle_start(
         self, token, context,
@@ -3065,10 +3049,6 @@ class TableTagHandler(TagHandler):
         # Skip template content (TemplateAware behavior)
         if context.in_template_content > 0:
             return False
-
-        return self._should_handle_start_impl(tag_name, context)
-
-    def _should_handle_start_impl(self, tag_name, context):
         # Orphan section suppression: ignore thead/tbody/tfoot inside SVG integration point with no table
         if (
             tag_name in ("thead", "tbody", "tfoot")
@@ -5142,9 +5122,6 @@ class AutoClosingTagHandler(TagHandler):
     """Handles auto-closing behavior for certain tags."""
 
     def should_handle_start(self, tag_name, context):
-        return self._should_handle_start_impl(tag_name, context)
-
-    def _should_handle_start_impl(self, tag_name, context):
         # Don't intercept list item tags in table context; let ListTagHandler handle foster parenting
         if context.document_state == DocumentState.IN_TABLE and tag_name in (
             "li",
