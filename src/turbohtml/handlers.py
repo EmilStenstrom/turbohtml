@@ -2384,6 +2384,10 @@ class SelectTagHandler(AncestorCloseHandler):
             self.debug(f"SelectTagHandler intercepting </{tag_name}> inside select")
             return True
 
+        # Handle block element end tags when inside select (need to recreate formatting)
+        if tag_name in BLOCK_ELEMENTS and context.current_parent.is_inside_tag("select"):
+            return True
+
         return False
 
     def handle_end(self, token, context):
@@ -2391,6 +2395,43 @@ class SelectTagHandler(AncestorCloseHandler):
         self.debug(
             f"Handling end tag {tag_name}, current_parent={context.current_parent}",
         )
+
+        # Handle block element end tags inside select (recreate formatting elements)
+        if tag_name in BLOCK_ELEMENTS and context.current_parent.is_inside_tag("select"):
+            self.debug(f"Handling block element </{tag_name}> inside select")
+
+            # Find the block element
+            block_element = context.current_parent.find_ancestor(tag_name)
+            if not block_element:
+                self.debug(f"No {tag_name} ancestor found, ignoring")
+                return False
+
+            # Collect formatting elements between block and insertion point (to recreate)
+            formatting_to_recreate = []
+            if context.current_parent is not block_element:
+                current = context.current_parent
+                while current and current is not block_element:
+                    if current.tag_name in FORMATTING_ELEMENTS:
+                        formatting_to_recreate.insert(0, (current.tag_name, current.attributes.copy() if current.attributes else {}))
+                    current = current.parent
+
+            # Pop stack until block element is closed
+            while not context.open_elements.is_empty():
+                popped = context.open_elements.pop()
+                if popped is block_element:
+                    break
+
+            # Move insertion point to block's parent
+            if block_element.parent:
+                context.move_to_element(block_element.parent)
+
+            # Recreate formatting elements after closing the block
+            for fmt_tag, fmt_attrs in formatting_to_recreate:
+                self.debug(f"Recreating formatting element {fmt_tag} after closing {tag_name} inside select")
+                fmt_token = HTMLToken("StartTag", tag_name=fmt_tag, attributes=fmt_attrs)
+                self.parser.insert_element(fmt_token, context, mode="normal", enter=True)
+
+            return True
 
         # Handle formatting element end tags inside select
         if tag_name in FORMATTING_ELEMENTS and context.current_parent.is_inside_tag("select"):
@@ -5127,9 +5168,6 @@ class AutoClosingTagHandler(TagHandler):
     """Handles auto-closing behavior for certain tags."""
 
     def should_handle_start(self, tag_name, context):
-        # TemplateAware behavior: allow inside template content (formatting/auto-closing still apply)
-        # No need to skip template content
-
         return self._should_handle_start_impl(tag_name, context)
 
     def _should_handle_start_impl(self, tag_name, context):
@@ -5171,14 +5209,9 @@ class AutoClosingTagHandler(TagHandler):
         has_active_formatting = bool(context.active_formatting_elements)
 
         block_tag = token.tag_name
-        # List item handling follows its own algorithm; avoid hijacking it with the block-in-formatting path.
         if (
             formatting_element or has_active_formatting
         ) and block_tag in BLOCK_ELEMENTS and block_tag != "li":
-            # Narrow pre-step: if current_parent is <a> and we're inserting a <div>, pop the <a> but
-            # retain its active formatting entry so it will reconstruct inside the div (ensures reconstruction ordering).
-            # Disabled pop-a-before-div pre-step; rely on
-            # standard reconstruction plus post-hoc handling handled elsewhere.
             # Do not perform auto-closing/reconstruction inside HTML integration points
             if self._is_in_integration_point(context):
                 self.debug(
@@ -5300,8 +5333,6 @@ class AutoClosingTagHandler(TagHandler):
 
             self.debug(f"Found matching block element: {current}")
 
-            # Formatting element duplication relies solely on standard reconstruction (no deferred detach phase).
-
             # If we're inside a boundary element, stay there
             # But check for integration points first - they override foreign element boundaries
             boundary = None
@@ -5332,18 +5363,6 @@ class AutoClosingTagHandler(TagHandler):
 
             # Pop the block element from the open elements stack if present (simple closure)
             if context.open_elements.contains(current):
-                # Before popping, check if we're inside select and need to recreate formatting elements
-                inside_select = current.find_ancestor("select")
-                formatting_to_recreate = []
-                if inside_select:
-                    # Find formatting elements between current block and the insertion point
-                    current_index = context.open_elements.index_of(current)
-                    formatting_to_recreate = [
-                        (el.tag_name, el.attributes.copy() if el.attributes else {})
-                        for el in list(context.open_elements)[current_index + 1:]
-                        if el.tag_name in FORMATTING_ELEMENTS
-                    ]
-
                 while not context.open_elements.is_empty():
                     popped = context.open_elements.pop()
                     if popped is current:
@@ -5353,13 +5372,6 @@ class AutoClosingTagHandler(TagHandler):
                 context.move_to_element_with_fallback(
                     current.parent, get_body(self.parser.root),
                 )
-
-                # Then recreate formatting elements at the new insertion point
-                if formatting_to_recreate:
-                    for fmt_tag, fmt_attrs in formatting_to_recreate:
-                        self.debug(f"Recreating formatting element {fmt_tag} after closing {token.tag_name}")
-                        fmt_token = HTMLToken("StartTag", tag_name=fmt_tag, attributes=fmt_attrs)
-                        self.parser.insert_element(fmt_token, context, mode="normal", enter=True)
                 return True
 
             # Move insertion point to its parent (or body fallback)
