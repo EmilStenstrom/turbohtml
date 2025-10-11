@@ -3149,59 +3149,25 @@ class TableTagHandler(TagHandler):
             enter=True,
             parent=table_parent if table_parent else context.current_parent,
         )
-        context.transition_to_state( DocumentState.IN_CAPTION)
+        context.transition_to_state(DocumentState.IN_CAPTION)
         return True
 
     def _handle_colgroup(self, token, context):
-        """Handle colgroup element according to spec.
+        """Handle colgroup element according to spec."""
 
-        When colgroup appears in invalid contexts (tbody/tr/td), close those elements
-        and insert colgroup at table level. Tbody will be created later if needed.
-        """
-        self.debug(
-            f"_handle_colgroup: token={token}, current_parent={context.current_parent}",
-        )
-        # Ignore outside table context
-        if context.document_state != DocumentState.IN_TABLE:
-            self.debug("Ignoring colgroup outside table context")
-            return True
-
-        table = find_current_table(context)
-        if not table:
-            return True
-
-        # Pop tbody/thead/tfoot/tr/td/th to get back to table level
-        stack = context.open_elements
-        table_idx = stack.find_last_index(lambda el: el is table)
-
-        if table_idx != -1 and len(stack) > table_idx + 1:
-            # Pop everything above table
-            while len(stack) > table_idx + 1:
-                popped = stack.pop()
-                self.debug(f"Popping {popped.tag_name} to reach table level")
-            context.move_to_element(table)
-
-        # Insert colgroup at table level and enter it (col, comment, template can be children)
-        self.debug("Creating colgroup at table level")
+        table_parent = find_current_table(context)
         self.parser.insert_element(
             token,
             context,
             mode="normal",
             enter=True,
-            parent=table,
+            parent=table_parent if table_parent else context.current_parent,
         )
 
         return True
 
     def _handle_col(self, token, context):
         """Handle col element according to spec."""
-        self.debug(
-            f"_handle_col: token={token}, current_parent={context.current_parent}",
-        )
-        # Ignore outside table context
-        if context.document_state != DocumentState.IN_TABLE:
-            self.debug("Ignoring col outside table context")
-            return True
         # Determine if we need a new colgroup
         need_new_colgroup = True
         last_colgroup = None
@@ -3248,27 +3214,10 @@ class TableTagHandler(TagHandler):
             push_override=False,
         )
         self.debug(f"Added col to colgroup: {new_col}")
-        # Maybe create tbody after colgroup
+
         td_ancestor = context.current_parent.find_ancestor("td")
         if td_ancestor:
             self.debug("Found td ancestor, staying in current context")
-            return True
-
-        tbody_ancestor = context.current_parent.find_first_ancestor_in_tags(
-            ["tbody", "tr"], find_current_table(context),
-        )
-        if tbody_ancestor:
-            self.debug("Found tbody/tr ancestor, creating new tbody")
-            # Create new empty tbody after the colgroup
-            tbody_token = self._synth_token("tbody")
-            self.parser.insert_element(
-                tbody_token,
-                context,
-                mode="normal",
-                enter=True,
-                parent=find_current_table(context),
-                push_override=True,
-            )
             return True
 
         # Stay at table level
@@ -3297,33 +3246,25 @@ class TableTagHandler(TagHandler):
             mode="normal",
             enter=True,
             parent=table_parent if table_parent else context.current_parent,
-            push_override=True,
+            push_override=False,
         )
         return True
 
     def _handle_tr(self, token, context):
         """Handle tr element."""
-        # Fragment-specific anchor relocation:
-        cp_tag = context.current_parent.tag_name
         # In tbody/thead/tfoot fragment context, insertion point is already correct
-        if cp_tag in {"tbody", "thead", "tfoot"}:
+        if context.current_parent.tag_name in {"tbody", "thead", "tfoot"}:
             self.parser.insert_element(token, context, mode="normal", enter=True)
             return True
 
         tbody = self._find_or_create_tbody(context)
-        self.parser.insert_element(
-            token, context, mode="normal", enter=True, parent=tbody,
-        )
+        self.parser.insert_element(token, context, mode="normal", enter=True, parent=tbody)
         return True
 
     def _handle_cell(self, token, context):
         """Handle td/th elements."""
         # If current parent is a section (thead/tbody/tfoot) and not inside a tr yet, synthesize a tr (spec step).
-        if context.current_parent.tag_name in (
-            "thead",
-            "tbody",
-            "tfoot",
-        ) and not context.current_parent.find_child_by_tag("tr"):
+        if context.current_parent.tag_name in ("thead", "tbody","tfoot"):
             fake_tr = self._synth_token("tr")
             self.parser.insert_element(
                 fake_tr,
@@ -3332,10 +3273,12 @@ class TableTagHandler(TagHandler):
                 enter=True,
                 parent=context.current_parent,
             )
+
         tr = self._find_or_create_tr(context)
         if not tr:
             self.debug(f"No table context for {token.tag_name}, ignoring")
             return True
+
         # Original simplified behavior: insert but do not push td/th to keep stack shape lean.
         self.parser.insert_element(
             token,
@@ -3346,31 +3289,6 @@ class TableTagHandler(TagHandler):
             push_override=False,
         )
         return True
-
-    def should_handle_end(self, tag_name, context):
-        # Ignore stray </table> when no table is open
-        if tag_name == "table" and not find_current_table(context):
-            return True
-
-        # Reposition to deepest open cell for cell re-entry (td/th end tags)
-        if tag_name in {"td", "th"}:
-            stack = context.open_elements
-            cell_index = stack.find_last_index(lambda el: el.tag_name in {"td", "th"})
-            if cell_index != -1:
-                cell = stack[cell_index]
-                if context.current_parent is not cell:
-                    context.move_to_element(cell)
-            return True
-
-        return tag_name in {
-            "table",
-            "tbody",
-            "thead",
-            "tfoot",
-            "tr",
-            "caption",
-            "colgroup",
-        }
 
     def _merge_or_insert_text(self, text, target, context):
         """Merge text with last child if it's a text node, otherwise insert new text node."""
@@ -3471,511 +3389,339 @@ class TableTagHandler(TagHandler):
     def should_handle_text(self, text, context):
         if context.content_state != ContentState.NONE:
             return False
+
         if context.document_state not in (
             DocumentState.IN_TABLE,
             DocumentState.IN_TABLE_BODY,
             DocumentState.IN_ROW,
         ):
             return False
-        if context.current_parent.tag_name in SVG_INTEGRATION_POINTS or (
-            context.current_parent.find_svg_integration_point_ancestor() is not None
-        ):
+
+        if context.current_parent.find_select_option_optgroup_ancestor() is not None:
             return False
-        if context.current_parent.tag_name in {"select", "option", "optgroup"} or (
-            context.current_parent.find_select_option_optgroup_ancestor() is not None
-        ):
-            return False
+
         return True
 
     def handle_text(self, text, context):
-        if not self.should_handle_text(text, context):
-            return False
-
+        """Handle text in table context per HTML5 spec 13.2.6.4.9 (foster parenting)."""
         self.debug(f"handling text '{text}' in {context}")
-        # If we're inside a caption, handle text directly
+
+        # Caption: insert directly
         if context.document_state == DocumentState.IN_CAPTION:
-            self.parser.insert_text(
-                text, context, parent=context.current_parent, merge=True,
-            )
+            self.parser.insert_text(text, context, parent=context.current_parent, merge=True)
             return True
 
-        # If we're inside a table cell, append text directly
+        # Table cell: insert with formatting reconstruction
         current_cell = context.current_parent.find_table_cell_no_caption_ancestor()
         if current_cell:
-            self.debug(
-                f"Inside table cell {current_cell}, appending text with formatting awareness",
-            )
-            # Before deciding target, reconstruct active formatting elements if any are stale.
-            if context.active_formatting_elements and any(
-                entry.element is not None
-                and entry.element not in context.open_elements
-                for entry in context.active_formatting_elements
-                if entry.element is not None
-            ):
-                reconstruct_active_formatting_elements(self.parser, context)
-
-            target = context.current_parent
-            self._merge_or_insert_text(text, target, context)
+            reconstruct_if_needed(self.parser, context)
+            self._merge_or_insert_text(text, context.current_parent, context)
             return True
 
-        # Special handling for colgroup context
-        if context.current_parent.tag_name == "colgroup":
-            self.debug(f"Inside colgroup, checking text content: '{text}'")
-            # Split text into whitespace and non-whitespace parts
-
-            parts = re.split(r"(\S+)", text)
-
-            for part in parts:
-                if not part:  # Skip empty strings
-                    continue
-
-                if part.isspace():
-                    # Whitespace stays in colgroup
-                    self.debug(f"Adding whitespace '{part}' to colgroup")
-                    self.parser.insert_text(
-                        part, context, parent=context.current_parent, merge=True,
-                    )
-                else:
-                    # Non-whitespace gets foster-parented - temporarily move to table context
-                    self.debug(
-                        f"Foster-parenting non-whitespace '{part}' from colgroup",
-                    )
-                    saved_parent = context.current_parent
-                    table = find_current_table(context)
-                    context.move_to_element(table)
-
-                    # Recursively call handle_text for this part with table context
-                    self.handle_text(part, context)
-
-                    # Restore colgroup context for any remaining parts
-                    context.move_to_element(saved_parent)
-            return True
-
-        # If it's whitespace-only text, decide if it should become a leading table child before tbody/tr.
-        if text.isspace():
-            table = find_current_table(context)
-            if table:
-                # Check if table has no row content yet
-                has_row_content = any(
-                    ch.tag_name in ("tbody", "thead", "tfoot", "tr")
-                    for ch in table.children
-                )
-                if not has_row_content:
-                    # Check if we should promote this whitespace to table
-                    # Promote if:
-                    # 1. current_parent is table-like (table, tbody, etc.), OR
-                    # 2. current_parent is an EMPTY foster-parented formatting element, OR
-                    # 3. current_parent is a foster parent (ancestor of table, not inside table structure)
-                    is_table_context = context.current_parent.tag_name in {"table", "tbody", "thead", "tfoot", "tr"}
-                    is_empty_foster_formatting = (
-                        context.current_parent.tag_name in FORMATTING_ELEMENTS
-                        and context.current_parent.find_ancestor("table") is None
-                        and not context.current_parent.children
-                    )
-                    # Check if current_parent is a foster parent (has table as child but is not table-related)
-                    is_foster_parent = (
-                        context.document_state == DocumentState.IN_TABLE
-                        and context.current_parent.tag_name not in ("table", "tbody", "thead", "tfoot", "tr", "td", "th", "caption", "colgroup")
-                        and table in context.current_parent.children
-                    )
-                    if is_table_context or is_empty_foster_formatting or is_foster_parent:
-                        # Also ensure we haven't already inserted leading whitespace
-                        existing_ws = any(
-                            ch.tag_name == "#text"
-                            and ch.text_content
-                            and ch.text_content.isspace()
-                            for ch in table.children
-                        )
-                        if not existing_ws:
-                            self.debug(
-                                "Promoting leading table whitespace as direct <table> child",
-                            )
-                            self.parser.insert_text(text, context, parent=table, merge=True)
-                            return True
-            # Fallback: keep whitespace where it is
-            # Whitespace in table context does NOT reconstruct formatting elements
-            # (void elements and text will handle that)
-            self.debug("Whitespace text in table, keeping in current parent")
-            self.parser.insert_text(
-                text, context, parent=context.current_parent, merge=True,
-            )
-            return True
-
-        # When not in a cell, do not stuff non-whitespace text into the last cell here.
-        # Prefer the standard foster-parenting path; AFTER_BODY special-case covers
-        # the trailing-cell scenarios from tables01.
-
-        # Check if we're already inside a foster parented element that can contain text
-        if context.current_parent.tag_name in (
-            "p",
-            "div",
-            "section",
-            "article",
-            "blockquote",
-        ):
-            # We're already inside a foster-parented block (common after paragraph fostering around tables).
-            # Before appending text, attempt to reconstruct active formatting elements so that any <a>/<b>/<i>/etc.
-            # become children of this block and the text nests inside them (preserves correct inline containment).
-            if (
-                context.active_formatting_elements
-                and context.active_formatting_elements
-            ):
-                self.debug(
-                    f"Reconstructing active formatting elements inside foster-parented <{context.current_parent.tag_name}> before text",
-                )
-                block_elem = context.current_parent
-                reconstruct_active_formatting_elements(self.parser, context)
-                # After reconstruction the current_parent points at the innermost reconstructed formatting element.
-                # Move back to the block so our descent logic below deterministically picks the rightmost formatting chain.
-                context.move_to_element(block_elem)
-            block_elem = context.current_parent
-            target = block_elem
-            # Prefer the most recent active formatting element that is currently a descendant of the block.
-            if context.active_formatting_elements:
-                for entry in reversed(context.active_formatting_elements):
-                    node = entry.element
-                    if node is None:
-                        break
-                    if not context.open_elements.contains(node):
-                        continue
-                    # Check if node lives inside the foster-parented block
-                    if node is block_elem or block_elem.is_ancestor_of(node):
-                        target = node
-                        break
-            # If target is still the block, but its last child is a formatting element that is open, descend to the
-            # deepest rightmost open formatting descendant so upcoming text nests inside the inline wrapper.
-            # If we still ended up targeting the block and an active <a> exists but wasn't reconstructed into it,
-            # perform a one-time reconstruction so the upcoming text can reuse that anchor wrapper.
-            if (
-                target is block_elem
-                and context.active_formatting_elements
-                and context.active_formatting_elements.find("a")
-                and not any(ch.tag_name == "a" for ch in block_elem.children)
-            ):
-                pre_ids = {id(ch) for ch in block_elem.children}
-                reconstruct_active_formatting_elements(self.parser, context)
-                context.move_to_element(block_elem)
-                new_a = [
-                    ch
-                    for ch in block_elem.children
-                    if ch.tag_name == "a" and id(ch) not in pre_ids
-                ]
-                if new_a:
-                    self.debug("[anchor-cont][reconstruct] late reconstruction produced <a>")
-                    target = new_a[-1]
-            self._merge_or_insert_text(text, target, context)
-            return True
-
-        # Foster parent non-whitespace text nodes
         table = find_current_table(context)
-        self.debug(
-            f"[foster-chain] current table: {table.tag_name if table else None} parent={table.parent.tag_name if table and table.parent else None}",
-        )
+
+        # Colgroup: split whitespace (stays) vs non-whitespace (foster-parented)
+        if context.current_parent.tag_name == "colgroup":
+            return self._handle_colgroup_text(text, context, table)
+
+        # Whitespace: promote to table if no row content yet, otherwise keep in place
+        if text.isspace():
+            return self._handle_whitespace_text(text, context, table)
+
+        # Foster-parented block: insert with formatting reconstruction
+        if context.current_parent.tag_name in ("p", "div", "section", "article", "blockquote"):
+            return self._handle_foster_block_text(text, context)
+
+        # Foster parent non-whitespace text
         if not table or not table.parent:
-            self.debug("No table or table parent found")
             return False
 
-        # Find the appropriate parent for foster parenting
         foster_parent = table.parent
         table_index = foster_parent.children.index(table)
 
-        # Special guard (spec-aligned) for pattern where foster-parented formatting could duplicate:
-        # If the current_parent is a formatting element (e.g. <font>) that is a direct child of a block
-        # (e.g. <center>) which itself is immediately before the table, and we are processing the first
-        # non-whitespace text after that formatting element was created, append the text inside the
-        # existing formatting element instead of constructing a foster-parented chain that would create
-        # an empty formatting element under the block and move the text outside it.
+        # Check for direct text append opportunities (avoid creating duplicate wrappers)
+        if self._try_append_to_existing_formatting(text, context, foster_parent, table_index):
+            return True
+
+        # Try merging with previous text node
+        if table_index > 0 and foster_parent.children[table_index - 1].tag_name == "#text":
+            foster_parent.children[table_index - 1].text_content += text
+            return True
+
+        # Try creating continuation wrapper for previous formatting element
+        if table_index > 0 and self._try_create_continuation_wrapper(text, context, foster_parent, table_index):
+            return True
+
+        # Build and insert foster-parented formatting chain
+        return self._insert_foster_parented_text(text, context, foster_parent, table, table_index)
+
+    def _handle_colgroup_text(self, text, context, table):
+        """Handle text in colgroup context: whitespace stays, non-whitespace foster-parents."""
+        for part in re.split(r"(\S+)", text):
+            if not part:
+                continue
+            if part.isspace():
+                self.parser.insert_text(part, context, parent=context.current_parent, merge=True)
+            else:
+                saved_parent = context.current_parent
+                context.move_to_element(table)
+                self.handle_text(part, context)
+                context.move_to_element(saved_parent)
+        return True
+
+    def _handle_whitespace_text(self, text, context, table):
+        """Handle whitespace text: promote to table if no row content, otherwise keep in place."""
+        if table:
+            has_row_content = any(ch.tag_name in ("tbody", "thead", "tfoot", "tr") for ch in table.children)
+            if not has_row_content and context.document_state == DocumentState.IN_TABLE and table in context.current_parent.children:
+                self.parser.insert_text(text, context, parent=table, merge=True)
+                return True
+        self.parser.insert_text(text, context, parent=context.current_parent, merge=True)
+        return True
+
+    def _handle_foster_block_text(self, text, context):
+        """Handle text inside foster-parented block element."""
+        if context.active_formatting_elements:
+            reconstruct_if_needed(self.parser, context)
+            context.move_to_element(context.current_parent)
+
+        block_elem = context.current_parent
+        target = self._find_active_formatting_target(context, block_elem)
+
+        # Late anchor reconstruction if needed
+        if (
+            target is block_elem
+            and context.active_formatting_elements
+            and context.active_formatting_elements.find("a")
+            and not any(ch.tag_name == "a" for ch in block_elem.children)
+        ):
+            pre_ids = {id(ch) for ch in block_elem.children}
+            reconstruct_active_formatting_elements(self.parser, context)
+            context.move_to_element(block_elem)
+            new_a = [ch for ch in block_elem.children if ch.tag_name == "a" and id(ch) not in pre_ids]
+            if new_a:
+                target = new_a[-1]
+
+        self._merge_or_insert_text(text, target, context)
+        return True
+
+    def _find_active_formatting_target(self, context, block_elem):
+        """Find most recent active formatting element inside block."""
+        if not context.active_formatting_elements:
+            return block_elem
+
+        for entry in reversed(context.active_formatting_elements):
+            node = entry.element
+            if node is None:
+                break
+            if not context.open_elements.contains(node):
+                continue
+            if node is block_elem or block_elem.is_ancestor_of(node):
+                return node
+        return block_elem
+
+    def _try_append_to_existing_formatting(self, text, context, foster_parent, table_index):
+        """Try appending text to existing formatting element before table."""
         if (
             context.current_parent.tag_name in FORMATTING_ELEMENTS
             and context.current_parent.parent
             and context.current_parent.parent.tag_name in BLOCK_ELEMENTS
         ):
             block = context.current_parent.parent
-            # Check block is immediately before table and contains the formatting element as last child (or last non-whitespace)
             if block in foster_parent.children[:table_index]:
-                # Ensure no prior non-whitespace text inside the formatting element (first text run)
                 has_text = any(
-                    ch.tag_name == "#text"
-                    and ch.text_content
-                    and ch.text_content.strip() != ""
+                    ch.tag_name == "#text" and ch.text_content.strip()
                     for ch in context.current_parent.children
                 )
                 if not has_text:
-                    self.debug(
-                        "Directly appending first text run inside existing formatting element prior to table to avoid premature duplication",
-                    )
-                    self.parser.insert_text(
-                        text, context, parent=context.current_parent, merge=True,
-                    )
+                    self.parser.insert_text(text, context, parent=context.current_parent, merge=True)
                     return True
+        return False
 
-        self.debug(f"Foster parent: {foster_parent}, table index: {table_index}")
+    def _try_create_continuation_wrapper(self, text, context, foster_parent, table_index):
+        """Try creating continuation wrapper based on previous sibling."""
+        prev_sibling = foster_parent.children[table_index - 1]
 
-        # If the immediate previous sibling before the table is suitable, decide placement:
-        # 1. If it's a text node, merge.
-        # 2. If it's a foster-parented block container (div/p/section/article/blockquote/li), append inside it.
-        if table_index > 0:
-            prev_sibling = foster_parent.children[table_index - 1]
-            if prev_sibling.tag_name == "#text":
-                self.debug(
-                    "Merging foster-parented text into previous sibling text node",
+        if prev_sibling.tag_name in FORMATTING_ELEMENTS:
+            if (
+                context.active_formatting_elements
+                and context.active_formatting_elements.find_element(prev_sibling)
+                and context.open_elements.contains(prev_sibling)
+                and context.current_parent.tag_name not in FORMATTING_ELEMENTS
+                and prev_sibling.has_text_children()
+            ):
+                new_wrapper = self._create_formatting_wrapper(
+                    prev_sibling.tag_name, prev_sibling.attributes,
+                    foster_parent, foster_parent.children[table_index], context
                 )
-                prev_sibling.text_content += text
+                self.parser.insert_text(text, context, parent=new_wrapper, merge=True)
                 return True
-            if prev_sibling.tag_name in FORMATTING_ELEMENTS:
-                block_container = None
-                cursor = context.current_parent
-                block_tags = {"div", "p", "section", "article", "blockquote", "li"}
-                while cursor is not None and cursor is not prev_sibling:
-                    if cursor.tag_name in block_tags and cursor.parent is prev_sibling:
-                        block_container = cursor
-                        break
-                    cursor = cursor.parent
-                if (
-                    block_container is None
-                    and context.active_formatting_elements
-                    and context.active_formatting_elements.find_element(prev_sibling)
-                    and context.open_elements.contains(prev_sibling)
-                    and context.current_parent.tag_name not in FORMATTING_ELEMENTS
-                ):
-                    if prev_sibling.has_text_children():
-                        new_wrapper = self._create_formatting_wrapper(
-                            prev_sibling.tag_name, prev_sibling.attributes,
-                            foster_parent, foster_parent.children[table_index], context,
-                        )
-                        self.parser.insert_text(
-                            text, context, parent=new_wrapper, merge=True,
-                        )
-                        self.debug(
-                            f"Created continuation formatting wrapper <{new_wrapper.tag_name}> before table",
-                        )
-                        return True
+        return False
 
-        # Anchor continuation handling (narrow): only segmentation or split cases are supported.
-        # We intentionally limit behavior to:
-        #   1. Segmentation clone when an active <a> exists elsewhere but wasn't reconstructed inside a fostered block.
-        #   2. Split continuation when the immediately previous active/on-stack <a> already has text - create a
-        #      sibling <a> for the new foster-parented text run. No generic cloning or broad continuation heuristic.
-        # Collect formatting context up to foster parent; reconstruct if stale AFE entries exist.
-
+    def _insert_foster_parented_text(self, text, context, foster_parent, table, table_index):
+        """Insert foster-parented text with formatting chain reconstruction."""
         formatting_elements = context.current_parent.collect_formatting_ancestors_until(foster_parent)
+
+        # Filter formatting elements if reconstruction needed
         if context.needs_reconstruction and formatting_elements:
-            filtered = []
-            for elem in formatting_elements:
-                top = elem
-                while top.parent and top.parent is not foster_parent:
-                    top = top.parent
-                if top.parent is foster_parent:
-                    idx = foster_parent.children.index(top)
-                    if idx < table_index and elem is not formatting_elements[-1]:
-                        continue
-                filtered.append(elem)
-            formatting_elements = filtered
-        self.debug(
-            "Formatting chain candidates: "
-            + str([elem.tag_name for elem in formatting_elements]),
-        )
+            formatting_elements = self._filter_formatting_elements(formatting_elements, foster_parent, table_index)
 
-        reused_wrapper = None
-        if formatting_elements:
-            formatting_elements = list(
-                formatting_elements,
-            )  # already outer->inner by contract
-
-        resume_anchor = context.anchor_resume_element
-        if resume_anchor and resume_anchor.parent is foster_parent:
-            if resume_anchor in formatting_elements:
-                formatting_elements = [
-                    elem for elem in formatting_elements if elem is not resume_anchor
-                ]
-                reused_wrapper = resume_anchor
-                context.anchor_resume_element = resume_anchor
-            elif reused_wrapper is None:
-                anchor_token = HTMLToken(
-                    "StartTag",
-                    tag_name=resume_anchor.tag_name,
-                    attributes=resume_anchor.attributes.copy(),
-                )
-                reused_wrapper = self.parser.insert_element(
-                    anchor_token,
-                    context,
-                    mode="normal",
-                    enter=False,
-                    parent=foster_parent,
-                    before=foster_parent.children[table_index],
-                    push_override=False,
-                )
-                context.active_formatting_elements.push(reused_wrapper, anchor_token)
-                context.anchor_resume_element = reused_wrapper
-
-        self.debug(f"Found formatting elements: {formatting_elements}")
+        # Handle anchor resume element
+        reused_wrapper = self._handle_anchor_resume(context, foster_parent, table_index, formatting_elements)
 
         has_formatting_context = bool(formatting_elements) or reused_wrapper is not None
 
         if has_formatting_context:
-            self.debug("Creating/merging formatting chain for foster-parented text")
-            current_parent_for_chain = foster_parent
-            prev_sibling = (
-                foster_parent.children[table_index - 1] if table_index > 0 else None
-            )
-            seen_run = set()
-
-            if formatting_elements:
-                for idx, fmt_elem in enumerate(
-                    formatting_elements,
-                ):  # outer->inner creation
-                    has_text_content = fmt_elem.contains_text_nodes()
-                    is_innermost = idx == len(formatting_elements) - 1
-                    force_sibling = fmt_elem.tag_name in seen_run or (
-                        is_innermost
-                        and has_text_content
-                        and context.needs_reconstruction
-                    )
-                    if fmt_elem is context.current_parent and not force_sibling:
-                        current_parent_for_chain = fmt_elem
-                        continue
-                    if fmt_elem.parent is current_parent_for_chain:
-                        current_parent_for_chain = fmt_elem
-                        continue
-                    if (
-                        fmt_elem.tag_name == "nobr"
-                        and current_parent_for_chain.children
-                        and current_parent_for_chain.children[-1].tag_name == "nobr"
-                        and not any(
-                            ch.tag_name == "#text"
-                            and ch.text_content
-                            and ch.text_content.strip()
-                            for ch in current_parent_for_chain.children[-1].children
-                        )
-                    ):
-                        current_parent_for_chain = current_parent_for_chain.children[-1]
-                        continue
-                    fmt_token = HTMLToken(
-                        "StartTag",
-                        tag_name=fmt_elem.tag_name,
-                        attributes=fmt_elem.attributes.copy(),
-                    )
-                    if current_parent_for_chain is foster_parent:
-                        new_fmt = self.parser.insert_element(
-                            fmt_token,
-                            context,
-                            mode="normal",
-                            enter=False,
-                            parent=foster_parent,
-                            before=foster_parent.children[table_index],
-                            push_override=False,
-                        )
-                    current_parent_for_chain = new_fmt
-                    self.debug(f"Created formatting element in chain: {new_fmt}")
-                    seen_run.add(fmt_elem.tag_name)
-
-            if reused_wrapper is not None:
-                current_parent_for_chain = reused_wrapper
-
-            text_holder = current_parent_for_chain
-            self.debug(
-                f"Foster-parent chain insertion target: <{text_holder.tag_name}>",
-            )
+            text_holder = self._build_formatting_chain(formatting_elements, reused_wrapper, context, foster_parent, table_index)
             self.parser.insert_text(text, context, parent=text_holder, merge=True)
-            self.debug(f"Inserted foster-parented text into {text_holder.tag_name}")
-            self.debug(
-                "Foster parent children post-insert: "
-                + str([child.tag_name for child in foster_parent.children]),
-            )
-
         else:
-            self.debug("No formatting context found")
-            if (
-                table_index > 0
-                and foster_parent.children[table_index - 1].tag_name == "#text"
-            ):
-                foster_parent.children[table_index - 1].text_content += text
-                self.debug(
-                    f"Merged with previous text node: {foster_parent.children[table_index - 1]}",
-                )
-            else:
-                if (
-                    foster_parent.tag_name == "nobr"
-                    and context.needs_reconstruction
-                    and any(
-                        ch.tag_name == "#text" and ch.text_content
-                        for ch in foster_parent.children[:table_index]
-                    )
-                ):
-                    sibling_token = self._synth_token("nobr")
-                    new_nobr = self.parser.insert_element(
-                        sibling_token,
-                        context,
-                        mode="normal",
-                        enter=False,
-                        parent=foster_parent,
-                        before=foster_parent.children[table_index],
-                        push_override=False,
-                    )
-                    existing_entry = context.active_formatting_elements.find_element(
-                        foster_parent,
-                    )
-                    if existing_entry is not None:
-                        existing_entry.element = new_nobr
-                        existing_entry.token = sibling_token
-                    else:
-                        context.active_formatting_elements.push(
-                            new_nobr, sibling_token,
-                        )
-                    self.parser.insert_text(
-                        text, context, parent=new_nobr, merge=True,
-                    )
-                    self.debug(
-                        "Created fallback <nobr> wrapper for foster-parented text run",
-                    )
-                    return True
-                if table_index > 0:
-                    prev = foster_parent.children[table_index - 1]
-                    if prev.tag_name in FORMATTING_ELEMENTS and not any(
-                        ch.tag_name == "#text"
-                        and ch.text_content
-                        and ch.text_content.strip()
-                        for ch in prev.children
-                    ):
-                        wrapper_token = HTMLToken(
-                            "StartTag",
-                            tag_name=prev.tag_name,
-                            attributes=prev.attributes.copy(),
-                        )
-                        new_wrapper = self.parser.insert_element(
-                            wrapper_token,
-                            context,
-                            mode="normal",
-                            enter=False,
-                            parent=foster_parent,
-                            before=foster_parent.children[table_index],
-                            push_override=False,
-                        )
-                        existing_entry = context.active_formatting_elements.find_element(prev)
-                        if existing_entry is not None:
-                            existing_entry.element = new_wrapper
-                            existing_entry.token = wrapper_token
-                        else:
-                            context.active_formatting_elements.push(
-                                new_wrapper, wrapper_token,
-                            )
-                        self.parser.insert_text(
-                            text, context, parent=new_wrapper, merge=True,
-                        )
-                        self.debug(
-                            f"Created new formatting wrapper <{prev.tag_name}> for foster-parented text run",
-                        )
-                        return True
-                self.parser.insert_text(
-                    text,
-                    context,
-                    parent=foster_parent,
-                    before=foster_parent.children[table_index],
-                    merge=True,
-                )
-                self.debug("Created new text node directly before table")
+            self._insert_without_formatting_context(text, context, foster_parent, table_index)
 
         return True
+
+    def _filter_formatting_elements(self, formatting_elements, foster_parent, table_index):
+        """Filter formatting elements to only those before table."""
+        filtered = []
+        for elem in formatting_elements:
+            top = elem
+            while top.parent and top.parent is not foster_parent:
+                top = top.parent
+            if top.parent is foster_parent:
+                idx = foster_parent.children.index(top)
+                if idx < table_index and elem is not formatting_elements[-1]:
+                    continue
+            filtered.append(elem)
+        return filtered
+
+    def _handle_anchor_resume(self, context, foster_parent, table_index, formatting_elements):
+        """Handle anchor resume element for continuation."""
+        resume_anchor = context.anchor_resume_element
+        if not resume_anchor or resume_anchor.parent is not foster_parent:
+            return None
+
+        if resume_anchor in formatting_elements:
+            formatting_elements.remove(resume_anchor)
+            context.anchor_resume_element = resume_anchor
+            return resume_anchor
+
+        anchor_token = HTMLToken(
+            "StartTag",
+            tag_name=resume_anchor.tag_name,
+            attributes=resume_anchor.attributes.copy(),
+        )
+        reused_wrapper = self.parser.insert_element(
+            anchor_token, context, mode="normal", enter=False,
+            parent=foster_parent, before=foster_parent.children[table_index], push_override=False
+        )
+        context.active_formatting_elements.push(reused_wrapper, anchor_token)
+        context.anchor_resume_element = reused_wrapper
+        return reused_wrapper
+
+    def _build_formatting_chain(self, formatting_elements, reused_wrapper, context, foster_parent, table_index):
+        """Build formatting element chain for foster-parented text."""
+        current_parent_for_chain = foster_parent
+        seen_run = set()
+
+        if formatting_elements:
+            for idx, fmt_elem in enumerate(formatting_elements):
+                has_text_content = fmt_elem.contains_text_nodes()
+                is_innermost = idx == len(formatting_elements) - 1
+                force_sibling = fmt_elem.tag_name in seen_run or (
+                    is_innermost and has_text_content and context.needs_reconstruction
+                )
+
+                if fmt_elem is context.current_parent and not force_sibling:
+                    current_parent_for_chain = fmt_elem
+                    continue
+                if fmt_elem.parent is current_parent_for_chain:
+                    current_parent_for_chain = fmt_elem
+                    continue
+
+                # Special nobr handling
+                if (
+                    fmt_elem.tag_name == "nobr"
+                    and current_parent_for_chain.children
+                    and current_parent_for_chain.children[-1].tag_name == "nobr"
+                    and not any(ch.tag_name == "#text" and ch.text_content.strip() for ch in current_parent_for_chain.children[-1].children)
+                ):
+                    current_parent_for_chain = current_parent_for_chain.children[-1]
+                    continue
+
+                fmt_token = HTMLToken("StartTag", tag_name=fmt_elem.tag_name, attributes=fmt_elem.attributes.copy())
+                if current_parent_for_chain is foster_parent:
+                    new_fmt = self.parser.insert_element(
+                        fmt_token, context, mode="normal", enter=False,
+                        parent=foster_parent, before=foster_parent.children[table_index], push_override=False
+                    )
+                    current_parent_for_chain = new_fmt
+                    seen_run.add(fmt_elem.tag_name)
+
+        return reused_wrapper if reused_wrapper is not None else current_parent_for_chain
+
+    def _insert_without_formatting_context(self, text, context, foster_parent, table_index):
+        """Insert text without formatting context (fallback cases)."""
+        # Check for previous text node merge (already done above, but check again)
+        if table_index > 0 and foster_parent.children[table_index - 1].tag_name == "#text":
+            foster_parent.children[table_index - 1].text_content += text
+            return
+
+        # Special nobr handling
+        if (
+            foster_parent.tag_name == "nobr"
+            and context.needs_reconstruction
+            and any(ch.tag_name == "#text" and ch.text_content for ch in foster_parent.children[:table_index])
+        ):
+            sibling_token = self._synth_token("nobr")
+            new_nobr = self.parser.insert_element(
+                sibling_token, context, mode="normal", enter=False,
+                parent=foster_parent, before=foster_parent.children[table_index], push_override=False
+            )
+            existing_entry = context.active_formatting_elements.find_element(foster_parent)
+            if existing_entry:
+                existing_entry.element = new_nobr
+                existing_entry.token = sibling_token
+            else:
+                context.active_formatting_elements.push(new_nobr, sibling_token)
+            self.parser.insert_text(text, context, parent=new_nobr, merge=True)
+            return
+
+        # Create wrapper based on previous formatting element
+        if table_index > 0:
+            prev = foster_parent.children[table_index - 1]
+            if prev.tag_name in FORMATTING_ELEMENTS and not any(
+                ch.tag_name == "#text" and ch.text_content.strip() for ch in prev.children
+            ):
+                wrapper_token = HTMLToken("StartTag", tag_name=prev.tag_name, attributes=prev.attributes.copy())
+                new_wrapper = self.parser.insert_element(
+                    wrapper_token, context, mode="normal", enter=False,
+                    parent=foster_parent, before=foster_parent.children[table_index], push_override=False
+                )
+                existing_entry = context.active_formatting_elements.find_element(prev)
+                if existing_entry:
+                    existing_entry.element = new_wrapper
+                    existing_entry.token = wrapper_token
+                else:
+                    context.active_formatting_elements.push(new_wrapper, wrapper_token)
+                self.parser.insert_text(text, context, parent=new_wrapper, merge=True)
+                return
+
+        # Final fallback: insert directly before table
+        self.parser.insert_text(text, context, parent=foster_parent, before=foster_parent.children[table_index], merge=True)
+
+    def should_handle_end(self, tag_name, context):
+        # Ignore stray </table> when no table is open
+        if tag_name == "table" and not find_current_table(context):
+            return True
+
+        return tag_name in {
+            "table",
+            "tbody",
+            "thead",
+            "tfoot",
+            "tr",
+            "caption",
+            "colgroup",
+        }
 
     def handle_end(self, token, context):
         tag_name = token.tag_name
