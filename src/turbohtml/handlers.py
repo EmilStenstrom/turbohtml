@@ -1818,7 +1818,7 @@ class FormattingTagHandler(TagHandler):
 
                 if chain_parent is foster_parent_node:
                     self.debug(
-                        f"Foster parenting formatting element <{tag_name}> before <{chain_before.tag_name if chain_before else 'end'}>"
+                        f"Foster parenting formatting element <{tag_name}> before <{chain_before.tag_name if chain_before else 'end'}>",
                     )
                     new_element = self._insert_formatting_element(
                         token,
@@ -3056,81 +3056,24 @@ class TableTagHandler(TagHandler):
         tag_name = token.tag_name
         self.debug(f"Handling {tag_name} in table context")
 
-        fragment_ctx = self.parser.fragment_context
         current_table = find_current_table(context)
         in_integration_point = is_in_integration_point(context)
 
-        # Integration point without table: ignore table structure tags
-        if in_integration_point and not current_table and context.current_parent.tag_name not in ("table", "caption"):
-            if tag_name in ("thead", "tbody", "tfoot", "tr", "td", "th", "caption", "col", "colgroup"):
+        if not current_table:
+            # Integration point without table: ignore table structure tags
+            if in_integration_point and tag_name != "table":
                 self.debug(f"Ignoring <{tag_name}> inside integration point with no table context")
                 return True
 
-        # Prelude tags (caption/col/colgroup/thead/tbody/tfoot) without table context: ignore
-        if tag_name in ("caption", "col", "colgroup", "thead", "tbody", "tfoot"):
-            if (not (fragment_ctx and fragment_ctx.matches("colgroup"))
-                and context.current_context not in ("math", "svg")
-                and not context.in_template_content > 0
-                and not current_table
-                and context.current_parent.tag_name not in ("table", "caption")):
-                self.debug(f"Ignoring standalone table prelude <{tag_name}> before table context")
-                return True
-
-        # Stray <tr> without proper context: ignore
-        in_section_fragment = fragment_ctx and fragment_ctx.matches(("tbody", "thead", "tfoot"))
-        if tag_name == "tr" and not in_section_fragment:
-            if (not current_table
-                and context.current_parent.tag_name not in ("table", "caption")
-                and (context.current_context not in ("math", "svg") or in_integration_point)
-                and not context.in_template_content > 0
-                and not context.current_parent.find_ancestor("select")):
-                return True
-
-        # Fragment row context adjustment: implicitly close open cells in tr fragment
-        if fragment_ctx and fragment_ctx.matches("tr") and tag_name in {"td", "th"}:
-            stack = context.open_elements
-            cell_index = stack.find_last_index(lambda el: el.tag_name in {"td", "th"})
-            if cell_index != -1:
-                while len(stack) > cell_index:
-                    popped = stack.pop()
-                    if context.current_parent is popped:
-                        parent = popped.parent or self.parser.root
-                        context.move_to_element(parent)
-
-        # SVG title special case
-        if context.current_parent.namespace == "svg" and context.current_parent.tag_name == "title":
-            return True
-
-        # Plain SVG foreign: don't handle
-        if self.parser.foreign_handler.is_plain_svg_foreign(context):
-            return False
-
-        # col/colgroup outside IN_TABLE state: ignore
-        if tag_name in ("col", "colgroup") and context.document_state != DocumentState.IN_TABLE:
-            self.debug("Ignoring col/colgroup outside table context")
-            return True
-
-        # Special case: table element has its own handler
-        if tag_name == "table":
-            return self._handle_table(token, context)
-
-        # Fragment contexts without table: insert directly and set state
-        if not current_table and fragment_ctx and fragment_ctx.matches(("tr", "td", "th", "thead", "tbody", "tfoot")):
-            if tag_name in ("tr", "td", "th", "thead", "tbody", "tfoot"):
-                if context.current_parent.tag_name not in ("tbody", "thead", "tfoot", "tr", "table"):
-                    context.move_to_element(self.parser.root)
-                
-                inserted = self.parser.insert_element(token, context, mode="normal", enter=True)
-                if tag_name == "tr":
-                    context.transition_to_state(DocumentState.IN_ROW, inserted)
-                elif tag_name in {"td", "th"}:
-                    context.transition_to_state(DocumentState.IN_CELL, inserted)
-                elif tag_name in ("thead", "tbody", "tfoot"):
-                    context.transition_to_state(DocumentState.IN_TABLE_BODY, inserted)
-                return True
+            # Prelude tags (caption/col/colgroup/thead/tbody/tfoot) without table context: ignore
+            if tag_name in ("caption", "col", "colgroup", "thead", "tbody", "tfoot"):
+                if context.current_context not in ("math", "svg"):
+                    self.debug(f"Ignoring standalone table prelude <{tag_name}> before table context")
+                    return True
 
         # Dispatch to handler by tag name
         handlers = {
+            "table": self._handle_table,
             "caption": self._handle_caption,
             "colgroup": self._handle_colgroup,
             "col": self._handle_col,
@@ -3144,6 +3087,58 @@ class TableTagHandler(TagHandler):
 
         return handlers[tag_name](token, context)
 
+    def _handle_table(self, token, context):
+        """Handle table element per HTML5 spec 13.2.6.4.7 (in body) and 13.2.6.4.9 (in table).
+
+        Spec behavior (standards mode):
+        - In INITIAL/IN_HEAD: ensure body exists
+        - In IN_TABLE (not in cell): act as in body, then reprocess (creates sibling table)
+        - Close any open <p> in button scope before inserting table
+        - Insert table element and switch to IN_TABLE mode
+
+        Quirks mode (no DOCTYPE or legacy DTD):
+        - Allow table inside <p> without auto-closing the paragraph
+        """
+        # Spec: Ensure we're in a valid state for table insertion
+        if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
+            body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
+            context.transition_to_state(DocumentState.IN_BODY, body)
+
+        # Close foster-parented formatting elements before inserting table
+        if (
+            context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY)
+            and context.current_parent.tag_name in FORMATTING_ELEMENTS
+            and context.current_parent.find_ancestor("table") is None
+            and context.current_parent.parent
+        ):
+            context.move_to_element(context.current_parent.parent)
+
+        # Spec 13.2.6.4.9: nested table in IN_TABLE (not in cell) → create sibling
+        if context.document_state == DocumentState.IN_TABLE:
+            in_cell = (
+                context.current_parent.tag_name in {"td", "th"}
+                or context.current_parent.find_table_cell_no_caption_ancestor() is not None
+            )
+            if not in_cell:
+                current_table = find_current_table(context)
+                if current_table and current_table.parent:
+                    parent = current_table.parent
+                    idx = parent.children.index(current_table)
+                    before = parent.children[idx + 1] if idx + 1 < len(parent.children) else None
+                    self.parser.insert_element(token, context, mode="normal", enter=True, parent=parent, before=before)
+                    return True
+
+        # Spec 13.2.6.4.7: Close <p> element in button scope before table (standards mode only)
+        # Quirks mode (no DOCTYPE/legacy DTD): allow table inside <p>
+        if context.current_parent.tag_name == "p" and self._should_foster_parent_table(context):
+            if context.current_parent.parent:
+                context.move_to_element(context.current_parent.parent)
+
+        # Insert table element and switch to IN_TABLE mode
+        self.parser.insert_element(token, context, mode="normal", enter=True)
+        context.transition_to_state(DocumentState.IN_TABLE)
+        return True
+
     def _handle_caption(self, token, context):
         """Handle caption element."""
         table_parent = find_current_table(context)
@@ -3156,101 +3151,6 @@ class TableTagHandler(TagHandler):
         )
         context.transition_to_state( DocumentState.IN_CAPTION)
         return True
-
-    def _handle_table(self, token, context):
-        """Handle table element."""
-        if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
-            self.debug("Implicitly closing head and switching to body")
-            body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
-            context.transition_to_state( DocumentState.IN_BODY, body)
-
-        # If we're in table context and current_parent is a foster-parented formatting element, close it
-        if (
-            context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY)
-            and context.current_parent.tag_name in FORMATTING_ELEMENTS
-            and context.current_parent.find_ancestor("table") is None
-            and context.current_parent.parent
-        ):
-            self.debug(f"Closing foster-parented {context.current_parent.tag_name} before inserting table")
-            context.move_to_element(context.current_parent.parent)
-
-        if context.document_state == DocumentState.IN_TABLE:
-            # Determine if we are effectively inside a cell even if current_parent is formatting element.
-            in_cell = (
-                context.current_parent.tag_name in {"td", "th"}
-                or context.current_parent.find_table_cell_no_caption_ancestor() is not None
-            )
-            if not in_cell:
-                current_table = find_current_table(context)
-                if current_table and current_table.parent:
-                    self.debug(
-                        "Sibling <table> in table context (not in cell); creating sibling",
-                    )
-                    parent = current_table.parent
-                    # Restore original placement semantics: insert after current table to minimize tree churn.
-                    idx = parent.children.index(current_table)
-                    before = parent.children[idx + 1] if idx + 1 < len(parent.children) else None
-                    self.parser.insert_element(
-                        token,
-                        context,
-                        mode="normal",
-                        enter=True,
-                        parent=parent,
-                        before=before,
-                    )
-                    return True
-
-        # Auto-close paragraph when table appears (HTML nesting rules apply, even in foreign integration points)
-        if context.current_parent and context.current_parent.tag_name == "p":
-            paragraph_node = context.current_parent
-            is_empty_paragraph = not paragraph_node.children
-            if is_empty_paragraph:
-                if self._should_foster_parent_table(context):
-                    self.debug("Empty <p> before <table> standards; close then sibling")
-                    parent = paragraph_node.parent
-                    if parent is None:
-                        body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
-                        context.move_to_element(body)
-                    else:
-                        context.move_to_element(parent)
-                else:
-                    self.debug(
-                        "Empty <p> before <table> in quirks mode; keep table inside <p>",
-                    )
-            elif self._should_foster_parent_table(context):
-                self.debug("Non-empty <p> with <table>; closing paragraph")
-                if context.current_parent.parent:
-                    context.move_up_one_level()
-
-        self.parser.insert_element(token, context, mode="normal", enter=True)
-
-        context.transition_to_state( DocumentState.IN_TABLE)
-        return True
-
-    def should_handle_end(self, tag_name, context):
-        # Ignore stray </table> when no table is open
-        if tag_name == "table" and not find_current_table(context):
-            return True
-
-        # Reposition to deepest open cell for cell re-entry (td/th end tags)
-        if tag_name in {"td", "th"}:
-            stack = context.open_elements
-            cell_index = stack.find_last_index(lambda el: el.tag_name in {"td", "th"})
-            if cell_index != -1:
-                cell = stack[cell_index]
-                if context.current_parent is not cell:
-                    context.move_to_element(cell)
-            return True
-
-        return tag_name in {
-            "table",
-            "tbody",
-            "thead",
-            "tfoot",
-            "tr",
-            "caption",
-            "colgroup",
-        }
 
     def _handle_colgroup(self, token, context):
         """Handle colgroup element according to spec.
@@ -3446,6 +3346,31 @@ class TableTagHandler(TagHandler):
             push_override=False,
         )
         return True
+
+    def should_handle_end(self, tag_name, context):
+        # Ignore stray </table> when no table is open
+        if tag_name == "table" and not find_current_table(context):
+            return True
+
+        # Reposition to deepest open cell for cell re-entry (td/th end tags)
+        if tag_name in {"td", "th"}:
+            stack = context.open_elements
+            cell_index = stack.find_last_index(lambda el: el.tag_name in {"td", "th"})
+            if cell_index != -1:
+                cell = stack[cell_index]
+                if context.current_parent is not cell:
+                    context.move_to_element(cell)
+            return True
+
+        return tag_name in {
+            "table",
+            "tbody",
+            "thead",
+            "tfoot",
+            "tr",
+            "caption",
+            "colgroup",
+        }
 
     def _merge_or_insert_text(self, text, target, context):
         """Merge text with last child if it's a text node, otherwise insert new text node."""
