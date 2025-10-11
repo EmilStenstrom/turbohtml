@@ -19,7 +19,7 @@ from turbohtml.constants import (
     TABLE_ROW_TAGS,
     TABLE_SECTION_TAGS,
 )
-from turbohtml.context import DocumentState
+from turbohtml.context import DocumentState, is_in_integration_point
 from turbohtml.handlers import ForeignTagHandler
 from turbohtml.node import Node
 
@@ -40,16 +40,6 @@ TABLE_ELEMENTS_CANON = frozenset({
 
 HEAD_ELEMENTS_CANON = frozenset({"head", "base", "basefont", "bgsound", "link", "meta", "title", "style"})
 
-
-def _in_integration_point(context):
-    """Check if we're in an integration point - delegates to ForeignTagHandler for consistency."""
-    cur = context.current_parent
-    while cur:
-        if ForeignTagHandler.is_integration_point(cur):
-            return True
-        cur = cur.parent
-    return False
-
 def should_foster_parent(tag_name, attrs, context, parser):
     """Mirror the existing foster parenting compound condition.
 
@@ -67,7 +57,7 @@ def should_foster_parent(tag_name, attrs, context, parser):
     if tag_name in HEAD_ELEMENTS_CANON:
         return False
     # Template or integration points short-circuit
-    if context.in_template_content > 0 or _in_integration_point(context):
+    if context.in_template_content > 0 or is_in_integration_point(context):
         return False
     # Relaxed select parser: elements inside select should not be foster-parented
     # (except table structural elements which close the select, handled elsewhere)

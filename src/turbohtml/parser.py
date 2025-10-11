@@ -2,7 +2,7 @@
 
 from turbohtml.adoption import AdoptionAgencyAlgorithm
 from turbohtml.constants import NUMERIC_ENTITY_INVALID_SENTINEL, VOID_ELEMENTS
-from turbohtml.context import ContentState, DocumentState, ParseContext
+from turbohtml.context import ContentState, DocumentState, ParseContext, is_in_integration_point
 from turbohtml.foster import foster_parent, needs_foster_parenting
 from turbohtml.fragment import parse_fragment
 from turbohtml.handlers import (
@@ -273,30 +273,8 @@ class TurboHTML:
             if context.current_parent.tag_name == "document-fragment":
                 pass  # Keep namespace=None (HTML)
             else:
-                # Check for SVG/MathML HTML integration points (foreignObject, desc, title, annotation-xml with encoding)
-                in_html_integration_point = False
-                if context.current_context in ("svg", "math"):
-                    if ForeignTagHandler.is_integration_point(context.current_parent):
-                        in_html_integration_point = True
-                    elif context.current_parent.find_svg_html_integration_point_ancestor() is not None:
-                        in_html_integration_point = True
-                    elif context.current_parent.find_math_annotation_xml_ancestor() is not None:
-                        # Double-check if it's actually an integration point (has correct encoding)
-                        ancestor = context.current_parent.find_math_annotation_xml_ancestor()
-                        if ForeignTagHandler.is_integration_point(ancestor):
-                            in_html_integration_point = True
-
-                # Check for MathML text integration points
-                in_math_text_integration_point = False
-                if context.current_context == "math":
-                    # MathML text integration points: mi, mo, mn, ms, mtext
-                    if context.current_parent.namespace == "math" and context.current_parent.tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
-                        in_math_text_integration_point = True
-                    elif context.current_parent.find_mathml_text_integration_point_ancestor() is not None:
-                        in_math_text_integration_point = True
-
                 # Only auto-namespace if NOT in an integration point
-                if not in_html_integration_point and not in_math_text_integration_point:
+                if not is_in_integration_point(context):
                     namespace = context.current_context
 
         if auto_foster and parent is None and before is None:

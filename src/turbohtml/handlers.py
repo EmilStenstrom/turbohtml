@@ -1,6 +1,7 @@
 import re
 
 from turbohtml import table_modes
+from turbohtml.context import is_in_integration_point
 from turbohtml.constants import (
     AUTO_CLOSING_TAGS,
     BLOCK_ELEMENTS,
@@ -2544,9 +2545,7 @@ class ParagraphTagHandler(TagHandler):
             return True
         if context.current_parent.tag_name == "p":
             # Don't auto-close paragraph in foreign integration points - let normal HTML nesting apply
-            in_svg_ip = self.parser.foreign_handler.is_in_svg_integration_point(context)
-            in_mathml_ip = self.parser.foreign_handler.is_in_mathml_integration_point(context)
-            if in_svg_ip or in_mathml_ip:
+            if is_in_integration_point(context):
                 return False
             return tag_name in AUTO_CLOSING_TAGS["p"]
 
@@ -2609,11 +2608,8 @@ class ParagraphTagHandler(TagHandler):
             # Continue to handle the new <p> normally below
 
         if token.tag_name == "p":
-            # Check if in SVG or MathML integration point using centralized helpers
-            in_svg_ip = self.parser.foreign_handler.is_in_svg_integration_point(context)
-            in_mathml_ip = self.parser.foreign_handler.is_in_mathml_integration_point(context)
-
-            if in_svg_ip or in_mathml_ip:
+            # Check if in SVG or MathML integration point using centralized helper
+            if is_in_integration_point(context):
                 self.debug(
                     "Inside SVG/MathML integration point: creating paragraph locally without closing or fostering",
                 )
@@ -2690,11 +2686,8 @@ class ParagraphTagHandler(TagHandler):
                 )
             else:
                 # Do not foster parent when inside SVG/MathML integration points
-                # Check if in integration point using centralized helpers
-                in_svg_ip = self.parser.foreign_handler.is_in_svg_integration_point(context)
-                in_math_ip = self.parser.foreign_handler.is_in_mathml_integration_point(context)
-
-                if in_svg_ip or in_math_ip:
+                # Check if in integration point using centralized helper
+                if is_in_integration_point(context):
                     self.debug(
                         "In integration point inside table; not foster-parenting <p>",
                     )
@@ -3059,10 +3052,7 @@ class TableTagHandler(TagHandler):
             return True
 
         # Prelude suppression (caption/col/colgroup/thead/tbody/tfoot) outside any table (also in integration points)
-        in_integration_point_for_prelude = (
-            self.parser.foreign_handler.is_in_mathml_integration_point(context) or
-            self.parser.foreign_handler.is_in_svg_integration_point(context)
-        ) if self.parser.foreign_handler else False
+        in_integration_point_for_prelude = is_in_integration_point(context)
         if (
             tag_name in ("caption", "col", "colgroup", "thead", "tbody", "tfoot")
             and not (
@@ -3077,10 +3067,7 @@ class TableTagHandler(TagHandler):
             return True
 
         # Stray <tr> recovery (also applies inside integration points where HTML rules apply)
-        in_integration_point = (
-            self.parser.foreign_handler.is_in_mathml_integration_point(context) or
-            self.parser.foreign_handler.is_in_svg_integration_point(context)
-        ) if self.parser.foreign_handler else False
+        in_integration_point = is_in_integration_point(context)
         if tag_name == "tr" and (
             not find_current_table(context)
             and context.current_parent.tag_name not in ("table", "caption")
@@ -3168,10 +3155,7 @@ class TableTagHandler(TagHandler):
         self.debug(f"Handling {tag_name} in table context")
 
         # Integration point check: ignore table structure tags inside integration points when they would be invalid
-        in_integration_point = (
-            self.parser.foreign_handler.is_in_mathml_integration_point(context) or
-            self.parser.foreign_handler.is_in_svg_integration_point(context)
-        ) if self.parser.foreign_handler else False
+        in_integration_point = is_in_integration_point(context)
         if in_integration_point and tag_name in ("thead", "tbody", "tfoot", "tr", "td", "th", "caption", "col", "colgroup"):
             if not find_current_table(context) and context.current_parent.tag_name not in ("table", "caption"):
                 self.debug(f"Ignoring <{tag_name}> inside integration point with no table context")
@@ -3200,10 +3184,7 @@ class TableTagHandler(TagHandler):
             return True
 
         # Stray <tr> recovery
-        in_integration_point_for_tr = (
-            self.parser.foreign_handler.is_in_mathml_integration_point(context) or
-            self.parser.foreign_handler.is_in_svg_integration_point(context)
-        ) if self.parser.foreign_handler else False
+        in_integration_point_for_tr = is_in_integration_point(context)
         # Don't suppress tr in tbody/thead/tfoot fragment contexts (fragment root acts as implicit section)
         in_section_fragment = self.parser.fragment_context and self.parser.fragment_context.matches(("tbody", "thead", "tfoot"))
         if tag_name == "tr" and not in_section_fragment and (
@@ -5133,7 +5114,7 @@ class AutoClosingTagHandler(TagHandler):
         if tag_name in ("dt", "dd"):
             return False
         # Don't claim tags inside integration points - let HTML handlers deal with them
-        if self._is_in_integration_point(context):
+        if is_in_integration_point(context):
             return False
         # Handle both formatting cases and auto-closing cases
         return tag_name in AUTO_CLOSING_TAGS or (
@@ -5164,7 +5145,7 @@ class AutoClosingTagHandler(TagHandler):
             formatting_element or has_active_formatting
         ) and block_tag in BLOCK_ELEMENTS and block_tag != "li":
             # Do not perform auto-closing/reconstruction inside HTML integration points
-            if self._is_in_integration_point(context):
+            if is_in_integration_point(context):
                 self.debug(
                     "In integration point; skipping auto-closing/reconstruction for block element",
                 )
@@ -5212,18 +5193,6 @@ class AutoClosingTagHandler(TagHandler):
 
         return False
 
-    def _is_in_integration_point(self, context):
-        """Check if we're inside an SVG or MathML integration point where HTML rules apply."""
-        current = context.current_parent
-        while current:
-            if ForeignTagHandler.is_integration_point(current):
-                return True
-            # MathML text integration points: mi, mo, mn, ms, mtext
-            if current.namespace == "math" and current.tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
-                return True
-            current = current.parent
-        return False
-
     def should_handle_end(self, tag_name, context):
         # Don't handle end tags inside template content that would affect document state
         if context.in_template_content > 0:
@@ -5258,7 +5227,7 @@ class AutoClosingTagHandler(TagHandler):
                 return False
 
             # Ignore end tag if there's an integration point between current position and target
-            if self._is_in_integration_point(context):
+            if is_in_integration_point(context):
                 # Check if the target block is outside the integration point
                 temp = context.current_parent
                 found_integration_point = False
@@ -5375,29 +5344,6 @@ class ForeignTagHandler(TagHandler):
         if node.namespace == "math" and node.tag_name == "annotation-xml":
             encoding = node.attributes.get("encoding", "").lower()
             return encoding in ("text/html", "application/xhtml+xml")
-        return False
-
-    def is_in_svg_integration_point(self, context):
-        """Return True if current parent or ancestor is an SVG integration point (foreignObject/desc/title)."""
-        if self.is_integration_point(context.current_parent):
-            return True
-        return context.current_parent.find_svg_html_integration_point_ancestor() is not None
-
-    def is_in_mathml_integration_point(self, context):
-        """Return True if in MathML text integration point or annotation-xml with HTML encoding."""
-        # Check text integration points (mtext/mi/mo/mn/ms) - must be MathML elements
-        if context.current_parent.namespace == "math" and context.current_parent.tag_name in MATHML_TEXT_INTEGRATION_POINTS:
-            return True
-        if context.current_parent.find_mathml_text_integration_point_ancestor():
-            return True
-
-        # Check annotation-xml with HTML encoding using centralized helper
-        if self.is_integration_point(context.current_parent):
-            return True
-        # Check for annotation-xml ancestor with HTML encoding
-        annotation_ancestor = context.current_parent.find_math_annotation_xml_ancestor()
-        if annotation_ancestor:
-            return self.is_integration_point(annotation_ancestor)
         return False
 
     def _fix_foreign_attribute_case(self, attributes, element_context):
@@ -5527,11 +5473,8 @@ class ForeignTagHandler(TagHandler):
             if fc and fc.namespace == "math" and fc.tag_name in ("ms", "mn", "mo", "mi", "mtext"):
                 pass  # Continue with breakout (figure breaks out of these)
 
-        # Check if we're in an integration point where HTML is allowed (uses centralized helpers)
-        in_integration_point = (
-            self.is_in_svg_integration_point(context) or
-            self.is_in_mathml_integration_point(context)
-        )
+        # Check if we're in an integration point where HTML is allowed
+        in_integration_point = is_in_integration_point(context)
 
         # Only break out if NOT in an integration point
         if not in_integration_point:

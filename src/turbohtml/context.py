@@ -37,6 +37,10 @@ class ParseContext:
         "_current_parent",
         "_debug",
         "_document_state",
+        "_ip_cache_node",
+        "_ip_in_svg_html",
+        "_ip_in_mathml_html",
+        "_ip_in_mathml_text",
         "active_formatting_elements",
         "anchor_resume_element",
         "current_context",
@@ -62,6 +66,10 @@ class ParseContext:
         self._document_state = DocumentState.INITIAL
         self._content_state = ContentState.NONE
         self.in_template_content = 0  # Depth counter for nested template content
+        self._ip_cache_node = None  # Integration point cache: which node is cached
+        self._ip_in_svg_html = False  # In SVG HTML integration point (foreignObject/desc/title)
+        self._ip_in_mathml_html = False  # In MathML HTML integration point (annotation-xml)
+        self._ip_in_mathml_text = False  # In MathML text integration point (mi/mo/mn/ms/mtext)
         self._debug = debug_callback
         self.doctype_seen = False
         self.frameset_ok = True
@@ -99,6 +107,8 @@ class ParseContext:
 
         if new_parent != self._current_parent:
             old_parent = self._current_parent
+            # Invalidate integration point cache when parent changes
+            self._ip_cache_node = None
 
             # Track template content depth for fast in_template_content checks
             # Exit: moving FROM a content node to a non-descendant
@@ -173,3 +183,69 @@ class ParseContext:
 
     def enter_element(self, element):
         self._set_current_parent(element)
+
+
+def _update_integration_point_cache(context):
+    """Update integration point cache for current_parent.
+
+    Walks ancestors once and sets all three integration point flags.
+    Called automatically by is_in_integration_point() when cache is stale.
+    """
+    node = context._current_parent
+
+    # Cache hit - already computed for this node
+    if context._ip_cache_node is node:
+        return
+
+    # Reset cache for new node
+    context._ip_cache_node = node
+    context._ip_in_svg_html = False
+    context._ip_in_mathml_html = False
+    context._ip_in_mathml_text = False
+
+    # Walk ancestors once, setting all flags
+    current = node
+    while current:
+        # SVG HTML integration point: foreignObject, desc, title
+        if current.namespace == "svg" and current.tag_name in {"foreignObject", "desc", "title"}:
+            context._ip_in_svg_html = True
+
+        # MathML HTML integration point: annotation-xml with HTML encoding
+        if current.namespace == "math" and current.tag_name == "annotation-xml":
+            encoding = current.attributes.get("encoding", "").lower()
+            if encoding in ("text/html", "application/xhtml+xml"):
+                context._ip_in_mathml_html = True
+
+        # MathML text integration point: mi, mo, mn, ms, mtext
+        if current.namespace == "math" and current.tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
+            context._ip_in_mathml_text = True
+
+        # Stop at SVG/MathML roots (don't walk into HTML)
+        if (current.namespace == "svg" and current.tag_name == "svg") or \
+           (current.namespace == "math" and current.tag_name == "math"):
+            break
+
+        current = current.parent
+
+
+def is_in_integration_point(context, check="any"):
+    """Check if current parse position is in an integration point.
+
+    Integration points are locations where HTML parsing rules resume inside
+    foreign (SVG/MathML) content.
+
+    Args:
+        context: ParseContext instance
+        check: Type to check - "svg", "mathml", or "any" (default)
+
+    Returns:
+        bool: True if in the specified type of integration point
+    """
+    _update_integration_point_cache(context)
+
+    if check == "svg":
+        return context._ip_in_svg_html
+    elif check == "mathml":
+        return context._ip_in_mathml_html or context._ip_in_mathml_text
+    else:  # "any"
+        return context._ip_in_svg_html or context._ip_in_mathml_html or context._ip_in_mathml_text
