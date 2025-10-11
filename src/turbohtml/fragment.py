@@ -408,21 +408,21 @@ def handle_comment(parser, context, token, fragment_context):
 def handle_start_tag(parser, context, token, fragment_context, spec):
     if spec and token.tag_name in spec.ignored_start_tags:
         return
-    # Guarantee html_node exists before delegating to handlers that may reference it.
-    # Document parsing calls ensure_html_node() before non-DOCTYPE/Comment tokens; replicate minimal
-    # requirement here to avoid attribute errors in early_start_preprocess hooks during fragment parsing.
+
     if parser.html_node is None:
         parser.ensure_html_node()
+
+    # Handle HTML fragment context special cases
     if fragment_context and fragment_context.matches("html"):
         tn = token.tag_name
         if tn == "head":
-            # Ensure head/body exist (acceptable parity with previous behavior)
-            ensure_body(parser.root, context.document_state, parser.fragment_context)  # may create both head/body
+            ensure_body(parser.root, context.document_state, parser.fragment_context)
             head = next((c for c in parser.root.children if c.tag_name == "head"), None)
             if head:
                 context.move_to_element(head)
                 context.transition_to_state(DocumentState.IN_HEAD, head)
             return
+
         if tn == "body":
             body = ensure_body(parser.root, context.document_state, parser.fragment_context)
             if body:
@@ -432,40 +432,107 @@ def handle_start_tag(parser, context, token, fragment_context, spec):
                 context.move_to_element(body)
                 context.transition_to_state(DocumentState.IN_BODY, body)
             return
+
         if tn == "frameset":
-            _ensure_head_only(parser.root)  # frameset root shouldn't synthesize body
+            _ensure_head_only(parser.root)
             frameset = Node("frameset", token.attributes)
             parser.root.append_child(frameset)
             context.move_to_element(frameset)
             context.transition_to_state(DocumentState.IN_FRAMESET, frameset)
             return
+
+        # Ensure body exists for non-frameset content
         if context.document_state not in (DocumentState.IN_FRAMESET, DocumentState.AFTER_FRAMESET):
             body = ensure_body(parser.root, context.document_state, parser.fragment_context)
             if body and context.document_state != DocumentState.IN_BODY:
                 context.move_to_element(body)
                 context.transition_to_state(DocumentState.IN_BODY, body)
-    # Fallback suppression for fragment contexts without a FragmentSpec (legacy parser behavior):
-    if spec is None:
-        tn = token.tag_name
-        # Suppress document structural wrappers (except body handled below) and table scaffolding
-        if tn in {"html", "head", "frameset"}:
-            parser.debug(f"Fragment(fallback): suppressing <{tn}> in context {fragment_context}")
+
+    # Apply suppression rules if no spec, otherwise delegate
+    if spec is not None:
+        parser.handle_start_tag(token, context)
+        return
+
+    # Fallback suppression for fragment contexts without a FragmentSpec
+    tn = token.tag_name
+    if tn in {"html", "head", "frameset"}:
+        parser.debug(f"Fragment(fallback): suppressing <{tn}> in context {fragment_context}")
+        return
+
+    if tn == "body":
+        has_body = any(ch.tag_name == "body" for ch in parser.root.children)
+        if not has_body:
+            parser.debug("Fragment(fallback): suppressing initial <body>")
             return
-        if tn == "body":
-            has_body = any(ch.tag_name == "body" for ch in parser.root.children)
-            if not has_body:
-                parser.debug("Fragment(fallback): suppressing initial <body>")
-                return
-        # Only suppress table elements in HTML mode, not in foreign content (MathML/SVG)
-        if (
-            tn in {"caption", "colgroup", "tbody", "thead", "tfoot", "tr", "td", "th"}
-            and context.current_context not in ("math", "svg")
-        ):
+
+    # Only suppress table elements in HTML mode, not in foreign content (MathML/SVG)
+    if tn in {"caption", "colgroup", "tbody", "thead", "tfoot", "tr", "td", "th"}:
+        if context.current_context not in ("math", "svg"):
             parser.debug(f"Fragment(fallback): suppressing stray table structure <{tn}>")
             return
+
     parser.handle_start_tag(token, context)
+def _handle_html_fragment_start(parser, context, token, fragment_context):
+    """Handle start tags in HTML fragment context."""
+    tn = token.tag_name
+
+    if tn == "head":
+        ensure_body(parser.root, context.document_state, parser.fragment_context)
+        head = next((c for c in parser.root.children if c.tag_name == "head"), None)
+        if head:
+            context.move_to_element(head)
+            context.transition_to_state(DocumentState.IN_HEAD, head)
+        return
+
+    if tn == "body":
+        body = ensure_body(parser.root, context.document_state, parser.fragment_context)
+        if body:
+            for k, v in token.attributes.items():
+                if k not in body.attributes:
+                    body.attributes[k] = v
+            context.move_to_element(body)
+            context.transition_to_state(DocumentState.IN_BODY, body)
+        return
+
+    if tn == "frameset":
+        _ensure_head_only(parser.root)
+        frameset = Node("frameset", token.attributes)
+        parser.root.append_child(frameset)
+        context.move_to_element(frameset)
+        context.transition_to_state(DocumentState.IN_FRAMESET, frameset)
+        return
+
+    # Ensure body exists for non-frameset content
+    if context.document_state in (DocumentState.IN_FRAMESET, DocumentState.AFTER_FRAMESET):
+        return
+
+    body = ensure_body(parser.root, context.document_state, parser.fragment_context)
+    if body and context.document_state != DocumentState.IN_BODY:
+        context.move_to_element(body)
+        context.transition_to_state(DocumentState.IN_BODY, body)
 
 
+def _handle_fallback_suppression(parser, context, token, fragment_context):
+    """Apply fallback suppression rules for fragment contexts without a FragmentSpec."""
+    tn = token.tag_name
+
+    if tn in {"html", "head", "frameset"}:
+        parser.debug(f"Fragment(fallback): suppressing <{tn}> in context {fragment_context}")
+        return
+
+    if tn == "body":
+        has_body = any(ch.tag_name == "body" for ch in parser.root.children)
+        if not has_body:
+            parser.debug("Fragment(fallback): suppressing initial <body>")
+            return
+
+    # Only suppress table elements in HTML mode, not in foreign content (MathML/SVG)
+    if tn in {"caption", "colgroup", "tbody", "thead", "tfoot", "tr", "td", "th"}:
+        if context.current_context not in ("math", "svg"):
+            parser.debug(f"Fragment(fallback): suppressing stray table structure <{tn}>")
+            return
+
+    parser.handle_start_tag(token, context)
 def handle_end_tag(parser, context, token, fragment_context):
     # In template fragment, ignore the context element's own end tag
     if fragment_context and fragment_context.matches("template") and token.tag_name == "template":
