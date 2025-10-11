@@ -20,6 +20,7 @@ from turbohtml.constants import (
     TABLE_SECTION_TAGS,
 )
 from turbohtml.context import DocumentState
+from turbohtml.handlers import ForeignTagHandler
 from turbohtml.node import Node
 
 # Elements treated specially in table mode when deciding foster parenting.
@@ -56,9 +57,6 @@ def _in_template_content(context):
 
 def _in_integration_point(context):
     """Check if we're in an integration point - delegates to ForeignTagHandler for consistency."""
-    # Import here to avoid circular dependency
-    from turbohtml.handlers import ForeignTagHandler
-
     cur = context.current_parent
     while cur:
         if ForeignTagHandler.is_integration_point(cur):

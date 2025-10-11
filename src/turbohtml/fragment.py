@@ -545,7 +545,7 @@ def parse_fragment(parser, html):  # pragma: no cover
         fragment_context
         and fragment_context.tag_name == "plaintext"
         and not fragment_context.namespace
-        and hasattr(parser.tokenizer, 'start_plaintext')
+        and hasattr(parser.tokenizer, "start_plaintext")
     ):
         parser.tokenizer.start_plaintext()
 

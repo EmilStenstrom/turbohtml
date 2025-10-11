@@ -47,7 +47,7 @@ except ImportError as err:
 
 class FragmentContext:
     """Structured fragment context for fragment parsing."""
-    __slots__ = ["tag_name", "namespace"]
+    __slots__ = ["namespace", "tag_name"]
 
     def __init__(self, tag_name, namespace=None):
         self.tag_name = tag_name
@@ -263,9 +263,6 @@ class TurboHTML:
             if context.current_parent.tag_name == "document-fragment":
                 pass  # Keep namespace=None (HTML)
             else:
-                # Import here to avoid circular dependency at module load time
-                from turbohtml.handlers import ForeignTagHandler
-
                 # Check for SVG/MathML HTML integration points (foreignObject, desc, title, annotation-xml with encoding)
                 in_html_integration_point = False
                 if context.current_context in ("svg", "math"):
