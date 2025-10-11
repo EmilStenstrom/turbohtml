@@ -3888,89 +3888,56 @@ class TableTagHandler(TagHandler):
                     continue
                 if table_node.is_ancestor_of(el):
                     context.active_formatting_elements.remove_entry(entry)
-        # Find any active formatting element that contained the table
+
+        self.debug(f"After </table> pop stack={[el.tag_name for el in context.open_elements]}")
+
+        # Determine where to move insertion point after closing table
         formatting_parent = table_node.parent
+        foreign_ancestor = table_node.find_foreign_object_ancestor() or table_node.find_math_annotation_xml_ancestor()
 
-        # Check if table is inside a foreign integration point (foreignObject/annotation-xml)
-        # by looking for foreign ancestors of the table
-        foreign_ancestor = None
-        if table_node:
-            svg_fo = table_node.find_foreign_object_ancestor()
-            math_ax = table_node.find_math_annotation_xml_ancestor()
-            foreign_ancestor = svg_fo or math_ax
-
-        self.debug(
-            f"After </table> pop stack={[el.tag_name for el in context.open_elements]}",
-        )
-        preferred_after_table_parent = None
-        if (
-            formatting_parent
-            and formatting_parent.tag_name in FORMATTING_ELEMENTS
-        ):
+        # Priority 1: Formatting element parent (with special anchor handling)
+        if formatting_parent and formatting_parent.tag_name in FORMATTING_ELEMENTS:
             target_parent = formatting_parent
-            if preferred_after_table_parent is not None:
-                target_parent = preferred_after_table_parent
-            elif (
-                context.needs_reconstruction
-                and context.active_formatting_elements
-            ):
-                entries_for_parent = []
-                for entry in context.active_formatting_elements:
-                    element = entry.element
-                    if (
-                        element is None
-                        or context.open_elements.contains(element)
-                    ):
-                        continue
-                    if element.parent is formatting_parent:
-                        entries_for_parent.append(entry)
-                if entries_for_parent:
-                    if formatting_parent.parent:
-                        target_parent = formatting_parent.parent
-                    anchor_entries = [
-                        e
-                        for e in entries_for_parent
-                        if e.element.tag_name == "a"
-                    ]
-                    if len(anchor_entries) > 1:
-                        for extra in anchor_entries[:-1]:
-                            context.active_formatting_elements.remove_entry(extra)
-            if (
-                formatting_parent.tag_name == "a"
-                and not context.open_elements.contains(formatting_parent)
-                and formatting_parent.parent
-            ):
+
+            # If needs reconstruction, check for closed formatting elements and clean up duplicate anchors
+            if context.needs_reconstruction and context.active_formatting_elements:
+                closed_children = [
+                    entry for entry in context.active_formatting_elements
+                    if entry.element and entry.element.parent is formatting_parent
+                    and not context.open_elements.contains(entry.element)
+                ]
+                if closed_children and formatting_parent.parent:
+                    target_parent = formatting_parent.parent
+                    # Clean up duplicate anchor entries (keep only the last one)
+                    anchor_entries = [e for e in closed_children if e.element.tag_name == "a"]
+                    for extra in anchor_entries[:-1]:
+                        context.active_formatting_elements.remove_entry(extra)
+
+            # Special case: closed anchor parent - move to its parent
+            if (formatting_parent.tag_name == "a" and not context.open_elements.contains(formatting_parent)
+                and formatting_parent.parent):
                 target_parent = formatting_parent.parent
+
             self.debug(f"Returning to formatting context: {target_parent}")
             context.move_to_element(target_parent)
-        # If table is inside a foreign integration point, return to that integration point
+
+        # Priority 2: Foreign integration point ancestor (if still open)
         elif foreign_ancestor and context.open_elements.contains(foreign_ancestor):
-            self.debug(
-                f"Table closed inside foreign integration point; returning to {foreign_ancestor.tag_name}",
-            )
+            self.debug(f"Table closed inside foreign integration point; returning to {foreign_ancestor.tag_name}")
             context.move_to_element(foreign_ancestor)
-        # If table lives inside foreignObject/SVG/MathML integration subtree, stay inside that subtree
-        elif formatting_parent and (
-            formatting_parent.namespace == "svg"
-            or formatting_parent.namespace == "math"
-            or (formatting_parent.namespace == "svg" and formatting_parent.tag_name == "foreignObject")
-            or (formatting_parent.namespace == "math" and formatting_parent.tag_name == "annotation-xml")
-        ):
-            self.debug(
-                f"Table closed inside foreign context; staying in {formatting_parent.tag_name}",
-            )
+
+        # Priority 3: Foreign namespace parent (SVG/MathML)
+        elif formatting_parent and formatting_parent.namespace in ("svg", "math"):
+            self.debug(f"Table closed inside foreign context; staying in {formatting_parent.tag_name}")
             context.move_to_element(formatting_parent)
-        elif (
-            table_node
-            and table_node.parent
-            and context.open_elements.contains(table_node.parent)
-        ):
-            self.debug(
-                f"Table closed inside <{table_node.parent.tag_name}>; returning to parent element",
-            )
+
+        # Priority 4: Table's parent (if still open)
+        elif table_node.parent and context.open_elements.contains(table_node.parent):
+            self.debug(f"Table closed inside <{table_node.parent.tag_name}>; returning to parent element")
             context.move_to_element(table_node.parent)
+
+        # Priority 5: Fallback to body or root
         else:
-            # Try to get body node, but fall back to root in fragment contexts
             body_node = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
             if body_node:
                 context.move_to_element(body_node)
