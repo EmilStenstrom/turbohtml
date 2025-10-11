@@ -1817,17 +1817,16 @@ class FormattingTagHandler(TagHandler):
                         chain_before = None
 
                 if chain_parent is foster_parent_node:
-                    if chain_before is not None:
-                        self.debug(
-                            f"Foster parenting formatting element <{tag_name}> before <{chain_before.tag_name}>",
-                        )
-                        new_element = self._insert_formatting_element(
-                            token,
-                            context,
-                            parent=foster_parent_node,
-                            before=chain_before,
-                            push_nobr_late=(tag_name == "nobr"),
-                        )
+                    self.debug(
+                        f"Foster parenting formatting element <{tag_name}> before <{chain_before.tag_name if chain_before else 'end'}>"
+                    )
+                    new_element = self._insert_formatting_element(
+                        token,
+                        context,
+                        parent=foster_parent_node,
+                        before=chain_before,
+                        push_nobr_late=(tag_name == "nobr"),
+                    )
                 else:
                     self.debug(
                         f"Foster parenting formatting element <{tag_name}> inside existing chain <{chain_parent.tag_name}>",
@@ -3040,10 +3039,7 @@ class TableTagHandler(TagHandler):
         if context.in_template_content > 0:
             return False
 
-        # Cache expensive lookups once at the start
         in_integration_point = is_in_integration_point(context)
-
-        # Prelude suppression (caption/col/colgroup/thead/tbody/tfoot) outside any table
         in_foreign = context.current_context in ("math", "svg")
 
         if tag_name in {"caption", "col", "colgroup", "thead", "tbody", "tfoot"}:
@@ -3056,94 +3052,74 @@ class TableTagHandler(TagHandler):
 
         return False
 
-    def handle_start(
-        self, token, context,
-    ):
+    def handle_start(self, token, context):
         tag_name = token.tag_name
         self.debug(f"Handling {tag_name} in table context")
 
-        # Cache expensive lookups once at the start
+        fragment_ctx = self.parser.fragment_context
         current_table = find_current_table(context)
         in_integration_point = is_in_integration_point(context)
-        fragment_ctx = self.parser.fragment_context
 
-        # Integration point check: ignore table structure tags inside integration points when they would be invalid
-        if in_integration_point and tag_name in ("thead", "tbody", "tfoot", "tr", "td", "th", "caption", "col", "colgroup"):
-            if not current_table and context.current_parent.tag_name not in ("table", "caption"):
+        # Integration point without table: ignore table structure tags
+        if in_integration_point and not current_table and context.current_parent.tag_name not in ("table", "caption"):
+            if tag_name in ("thead", "tbody", "tfoot", "tr", "td", "th", "caption", "col", "colgroup"):
                 self.debug(f"Ignoring <{tag_name}> inside integration point with no table context")
                 return True
 
-        # Prelude suppression (caption/col/colgroup/thead/tbody/tfoot) outside any table
-        if (
-            tag_name in ("caption", "col", "colgroup", "thead", "tbody", "tfoot")
-            and not (fragment_ctx and fragment_ctx.matches("colgroup"))
-            and context.current_context not in ("math", "svg")
-            and not context.in_template_content > 0
-            and not current_table
-            and context.current_parent.tag_name not in ("table", "caption")
-        ):
-            self.debug(f"Ignoring standalone table prelude <{tag_name}> before table context")
-            return True
+        # Prelude tags (caption/col/colgroup/thead/tbody/tfoot) without table context: ignore
+        if tag_name in ("caption", "col", "colgroup", "thead", "tbody", "tfoot"):
+            if (not (fragment_ctx and fragment_ctx.matches("colgroup"))
+                and context.current_context not in ("math", "svg")
+                and not context.in_template_content > 0
+                and not current_table
+                and context.current_parent.tag_name not in ("table", "caption")):
+                self.debug(f"Ignoring standalone table prelude <{tag_name}> before table context")
+                return True
 
-        # Stray <tr> recovery (fragment section contexts allow tr)
+        # Stray <tr> without proper context: ignore
         in_section_fragment = fragment_ctx and fragment_ctx.matches(("tbody", "thead", "tfoot"))
-        if tag_name == "tr" and not in_section_fragment and (
-            not current_table
-            and context.current_parent.tag_name not in ("table", "caption")
-            and (context.current_context not in ("math", "svg") or in_integration_point)
-            and not context.in_template_content > 0
-            and not context.current_parent.find_ancestor("select")
-        ):
-            return True
+        if tag_name == "tr" and not in_section_fragment:
+            if (not current_table
+                and context.current_parent.tag_name not in ("table", "caption")
+                and (context.current_context not in ("math", "svg") or in_integration_point)
+                and not context.in_template_content > 0
+                and not context.current_parent.find_ancestor("select")):
+                return True
 
-        # Fragment row context adjustment (spec-aligned implied cell end):
-        # In a fragment with context 'tr', each new <td>/<th> start tag implicitly closes any
-        # currently open cell. Without this, a sequence like <td>...<td> nests the second cell
-        # inside the first instead of producing sibling cells under the fragment root. This
-        # manifested in the <td><table></table><td> fragment where the second cell was lost
-        # after pruning because it had been inserted as a descendant of the first cell's table.
+        # Fragment row context adjustment: implicitly close open cells in tr fragment
         if fragment_ctx and fragment_ctx.matches("tr") and tag_name in {"td", "th"}:
             stack = context.open_elements
-            # Find deepest currently open cell element (works even if current_parent moved elsewhere)
             cell_index = stack.find_last_index(lambda el: el.tag_name in {"td", "th"})
             if cell_index != -1:
-                # Pop all elements above and including the open cell, updating insertion point
                 while len(stack) > cell_index:
                     popped = stack.pop()
                     if context.current_parent is popped:
                         parent = popped.parent or self.parser.root
                         context.move_to_element(parent)
-                # After popping, insertion point is at the fragment root (<tr> implicit) so the new
-                # cell will become a sibling.
 
+        # SVG title special case
         if context.current_parent.namespace == "svg" and context.current_parent.tag_name == "title":
             return True
 
+        # Plain SVG foreign: don't handle
         if self.parser.foreign_handler.is_plain_svg_foreign(context):
             return False
 
-        if (
-            tag_name in ("col", "colgroup")
-            and context.document_state != DocumentState.IN_TABLE
-        ):
+        # col/colgroup outside IN_TABLE state: ignore
+        if tag_name in ("col", "colgroup") and context.document_state != DocumentState.IN_TABLE:
             self.debug("Ignoring col/colgroup outside table context")
             return True
 
+        # Special case: table element has its own handler
         if tag_name == "table":
             return self._handle_table(token, context)
 
-        if not current_table:
-            # Fragment row/section/cell contexts: do not synthesize an implicit <table> wrapper
-            # when encountering table-structural start tags; the fragment root provides the
-            # insertion point and expected output flattens without a surrogate table element.
-            if (
-                fragment_ctx and fragment_ctx.matches(("tr", "td", "th", "thead", "tbody", "tfoot"))
-                and tag_name in ("tr", "td", "th", "thead", "tbody", "tfoot")
-            ):
-                # Foster out of incompatible parents (e.g., <a>) to fragment root
+        # Fragment contexts without table: insert directly and set state
+        if not current_table and fragment_ctx and fragment_ctx.matches(("tr", "td", "th", "thead", "tbody", "tfoot")):
+            if tag_name in ("tr", "td", "th", "thead", "tbody", "tfoot"):
                 if context.current_parent.tag_name not in ("tbody", "thead", "tfoot", "tr", "table"):
                     context.move_to_element(self.parser.root)
-
+                
                 inserted = self.parser.insert_element(token, context, mode="normal", enter=True)
                 if tag_name == "tr":
                     context.transition_to_state(DocumentState.IN_ROW, inserted)
@@ -3153,7 +3129,7 @@ class TableTagHandler(TagHandler):
                     context.transition_to_state(DocumentState.IN_TABLE_BODY, inserted)
                 return True
 
-        # Handle each element type
+        # Dispatch to handler by tag name
         handlers = {
             "caption": self._handle_caption,
             "colgroup": self._handle_colgroup,
