@@ -31,7 +31,6 @@ from turbohtml.utils import (
     find_current_table,
     get_body,
     get_head,
-    has_root_frameset,
     is_in_cell_or_caption,
     is_in_table_cell,
     is_in_table_context,
@@ -272,7 +271,7 @@ class DocumentStructureHandler(TagHandler):
                 if k not in parser.html_node.attributes:
                     parser.html_node.attributes[k] = v
             context.move_to_element(parser.html_node)
-            if has_root_frameset(parser.root):
+            if parser._has_frameset:
                 return True
             return True
         # <head>
@@ -387,7 +386,7 @@ class DocumentStructureHandler(TagHandler):
         # </html>, we STILL transition again to AFTER_HTML so that following comments return to document level
         # (html5lib expectation in sequences like </html> x <!--c--> </html> <!--d--> where c is in body, d is root).
         # Frameset documents never synthesize a body; keep insertion mode at AFTER_FRAMESET.
-        if has_root_frameset(self.parser.root):
+        if self.parser._has_frameset:
             self.debug(
                 "Root <frameset> present - ignoring </html> (stay AFTER_FRAMESET, no body)",
             )
@@ -416,7 +415,7 @@ class DocumentStructureHandler(TagHandler):
         parser.ensure_html_node()
         ensure_head(parser)
         # Only ensure body if NOT a frameset document
-        if not has_root_frameset(parser.root):
+        if not parser._has_frameset:
             get_body(parser.root) or ensure_body(parser.root, DocumentState.INITIAL, parser.fragment_context)
 
 
@@ -6774,7 +6773,7 @@ class FramesetTagHandler(TagHandler):
                         context.move_to_element(self.parser.html_node)
 
         # Phase 3: Guard against non-frameset content after frameset established
-        if has_root_frameset(self.parser.root) and context.document_state in (
+        if self.parser._has_frameset and context.document_state in (
             DocumentState.IN_FRAMESET, DocumentState.AFTER_FRAMESET,
         ) and tag not in ("frameset", "frame", "noframes", "html"):
             self.debug(f"Ignoring <{tag}> start tag in frameset document")
@@ -6909,6 +6908,8 @@ class FramesetTagHandler(TagHandler):
                     tag_name_override="frameset",
                     push_override=True,
                 )
+                # Update frameset cache
+                self.parser._has_frameset = True
                 # Clear foreign context when entering frameset
                 context.current_context = None
                 context.transition_to_state(DocumentState.IN_FRAMESET, frameset_node,
@@ -6994,7 +6995,7 @@ class FramesetTagHandler(TagHandler):
                 # we treat the document as frameset even when <noframes> is a sibling under <html>.
                 if (
                     parent and parent.tag_name == "frameset"
-                ) or has_root_frameset(self.parser.root):
+                ) or self.parser._has_frameset:
                     # Maintain AFTER_FRAMESET (or IN_FRAMESET if still inside frameset subtree) without creating body
                     if parent and parent.tag_name == "frameset":
                         context.move_to_element(parent)
@@ -7036,7 +7037,7 @@ class FramesetTagHandler(TagHandler):
                 # For non-root frameset documents (no root <frameset>), subsequent comments should be direct
                 # siblings under the document node (expected tree shows <!-- abc --> aligned with <noframes>,
                 # not indented as its child). Move insertion to document root to produce comment as sibling.
-                if not has_root_frameset(self.parser.root):
+                if not self.parser._has_frameset:
                     # Non-frameset document: subsequent character/comment tokens belong in <body>
                     body = (
                         get_body(self.parser.root)

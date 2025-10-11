@@ -132,6 +132,9 @@ class TurboHTML:
         self._init_dom_structure()
         self.adoption_agency = AdoptionAgencyAlgorithm(self)
 
+        # Performance cache: track frameset presence to avoid repeated DOM walks
+        self._has_frameset = False
+
         # Handler references initialized during registration
         self.text_handler = None
         self.foreign_handler = None
