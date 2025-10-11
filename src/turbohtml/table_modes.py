@@ -55,16 +55,14 @@ def _in_template_content(context):
 
 
 def _in_integration_point(context):
+    """Check if we're in an integration point - delegates to ForeignTagHandler for consistency."""
+    # Import here to avoid circular dependency
+    from turbohtml.handlers import ForeignTagHandler
+
     cur = context.current_parent
     while cur:
-        if cur.namespace == "svg" and cur.tag_name in {"foreignObject", "desc", "title"}:
+        if ForeignTagHandler.is_integration_point(cur):
             return True
-        if cur.namespace == "math" and cur.tag_name == "annotation-xml" and cur.attributes:
-            for name, value in cur.attributes.items():
-                name_lower = name.lower()
-                value_lower = (value or "").lower()
-                if name_lower == "encoding" and value_lower in ("text/html", "application/xhtml+xml"):
-                    return True
         cur = cur.parent
     return False
 

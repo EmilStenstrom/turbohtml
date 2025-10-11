@@ -203,30 +203,33 @@ class TurboHTML:
             if context.current_parent.tag_name == "document-fragment":
                 pass  # Keep namespace=None (HTML)
             else:
-                # Check for SVG integration points
-                in_svg_integration_point = False
-                if context.current_context == "svg":
-                    if context.current_parent.namespace == "svg" and context.current_parent.tag_name in {"foreignObject", "desc", "title"}:
-                        in_svg_integration_point = True
-                    elif context.current_parent.find_svg_html_integration_point_ancestor() is not None:
-                        in_svg_integration_point = True
+                # Import here to avoid circular dependency at module load time
+                from turbohtml.handlers import ForeignTagHandler
 
-                # Check for MathML integration points
-                in_math_integration_point = False
+                # Check for SVG/MathML HTML integration points (foreignObject, desc, title, annotation-xml with encoding)
+                in_html_integration_point = False
+                if context.current_context in ("svg", "math"):
+                    if ForeignTagHandler.is_integration_point(context.current_parent):
+                        in_html_integration_point = True
+                    elif context.current_parent.find_svg_html_integration_point_ancestor() is not None:
+                        in_html_integration_point = True
+                    elif context.current_parent.find_math_annotation_xml_ancestor() is not None:
+                        # Double-check if it's actually an integration point (has correct encoding)
+                        ancestor = context.current_parent.find_math_annotation_xml_ancestor()
+                        if ForeignTagHandler.is_integration_point(ancestor):
+                            in_html_integration_point = True
+
+                # Check for MathML text integration points
+                in_math_text_integration_point = False
                 if context.current_context == "math":
                     # MathML text integration points: mi, mo, mn, ms, mtext
                     if context.current_parent.namespace == "math" and context.current_parent.tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
-                        in_math_integration_point = True
+                        in_math_text_integration_point = True
                     elif context.current_parent.find_mathml_text_integration_point_ancestor() is not None:
-                        in_math_integration_point = True
-                    # annotation-xml with HTML encoding
-                    elif context.current_parent.namespace == "math" and context.current_parent.tag_name == "annotation-xml":
-                        encoding = context.current_parent.attributes.get("encoding", "").lower()
-                        if encoding in ("application/xhtml+xml", "text/html"):
-                            in_math_integration_point = True
+                        in_math_text_integration_point = True
 
                 # Only auto-namespace if NOT in an integration point
-                if not in_svg_integration_point and not in_math_integration_point:
+                if not in_html_integration_point and not in_math_text_integration_point:
                     namespace = context.current_context
 
         if auto_foster and parent is None and before is None:

@@ -2854,15 +2854,11 @@ class ParagraphTagHandler(TagHandler):
         if not has_open_p and context.document_state in in_body_like_states:
             insertion_parent = context.current_parent
             # Check if we're NOT in an integration point
-            is_svg_ip = insertion_parent.namespace == "svg" and insertion_parent.tag_name in {"foreignObject", "desc", "title"}
-            is_math_ip = insertion_parent.namespace == "math" and insertion_parent.tag_name == "annotation-xml"
-            if insertion_parent.is_foreign and not (is_svg_ip or is_math_ip):
+            if insertion_parent.is_foreign and not ForeignTagHandler.is_integration_point(insertion_parent):
                 ancestor = insertion_parent.parent
                 while ancestor and ancestor.is_foreign:
                     # Check if ancestor is an integration point
-                    is_svg_ip = ancestor.namespace == "svg" and ancestor.tag_name in {"foreignObject", "desc", "title"}
-                    is_math_ip = ancestor.namespace == "math" and ancestor.tag_name == "annotation-xml"
-                    if is_svg_ip or is_math_ip:
+                    if ForeignTagHandler.is_integration_point(ancestor):
                         break
                     ancestor = ancestor.parent
                 if ancestor is not None:
@@ -3187,14 +3183,9 @@ class TableTagHandler(TagHandler):
             # Check if current parent or ancestor is an integration point
             probe = context.current_parent
             while probe:
-                if probe.namespace == "svg" and probe.tag_name in {"foreignObject", "desc", "title"}:
+                if ForeignTagHandler.is_integration_point(probe):
                     in_integration_point_without_context = True
                     break
-                if probe.namespace == "math" and probe.tag_name == "annotation-xml":
-                    encoding = probe.attributes.get("encoding", "").lower()
-                    if encoding in ("application/xhtml+xml", "text/html"):
-                        in_integration_point_without_context = True
-                        break
                 # Stop at foreign roots
                 if (probe.namespace == "svg" and probe.tag_name == "svg") or (probe.namespace == "math" and probe.tag_name == "math"):
                     break
@@ -5151,9 +5142,7 @@ class VoidTagHandler(TagHandler):
         if context.current_parent.is_foreign:
             ancestor = context.current_parent.parent
             while ancestor and ancestor.is_foreign:
-                is_svg_ip = ancestor.namespace == "svg" and ancestor.tag_name in {"foreignObject", "desc", "title"}
-                is_math_ip = ancestor.namespace == "math" and ancestor.tag_name == "annotation-xml"
-                if is_svg_ip or is_math_ip:
+                if ForeignTagHandler.is_integration_point(ancestor):
                     break
                 ancestor = ancestor.parent
             if ancestor is not None:
@@ -5265,17 +5254,11 @@ class AutoClosingTagHandler(TagHandler):
         """Check if we're inside an SVG or MathML integration point where HTML rules apply."""
         current = context.current_parent
         while current:
-            # SVG integration points: foreignObject, desc, title
-            if current.namespace == "svg" and current.tag_name in {"foreignObject", "desc", "title"}:
+            if ForeignTagHandler.is_integration_point(current):
                 return True
             # MathML text integration points: mi, mo, mn, ms, mtext
             if current.namespace == "math" and current.tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
                 return True
-            # MathML integration points: annotation-xml with specific encoding
-            if current.namespace == "math" and current.tag_name == "annotation-xml":
-                encoding = current.attributes.get("encoding", "").lower()
-                if encoding in ("text/html", "application/xhtml+xml"):
-                    return True
             current = current.parent
         return False
 
@@ -5312,26 +5295,23 @@ class AutoClosingTagHandler(TagHandler):
                 )
                 return False
 
-            # Ignore end tag if matching ancestor lies outside an integration point boundary
-            # Check if current position is in an integration point but target is not
-            # (meaning we'd cross an integration point boundary)
+            # Ignore end tag if there's an integration point between current position and target
             if self._is_in_integration_point(context):
-                # Walk up to see if target is outside the integration point
+                # Check if the target block is outside the integration point
                 temp = context.current_parent
+                found_integration_point = False
                 while temp and temp is not current:
-                    if temp.namespace == "svg" and temp.tag_name in {"foreignObject", "desc", "title"}:
-                        self.debug(
-                            f"Ignoring </{token.tag_name}> crossing integration point boundary (ancestor outside integration point)",
-                        )
-                        return True
-                    if temp.namespace == "math" and temp.tag_name == "annotation-xml" and temp.attributes.get(
-                        "encoding", "",
-                    ).lower() in ("text/html", "application/xhtml+xml"):
-                        self.debug(
-                            f"Ignoring </{token.tag_name}> crossing integration point boundary (ancestor outside integration point)",
-                        )
-                        return True
+                    # Check if this node is an integration point using centralized helper
+                    if ForeignTagHandler.is_integration_point(temp):
+                        found_integration_point = True
+                        break
                     temp = temp.parent
+                
+                if found_integration_point:
+                    self.debug(
+                        f"Ignoring </{token.tag_name}> crossing integration point boundary (ancestor outside integration point)",
+                    )
+                    return True
 
             self.debug(f"Found matching block element: {current}")
 
@@ -5420,9 +5400,24 @@ class ForeignTagHandler(TagHandler):
             cur = cur.parent
         return seen_svg
 
+    @staticmethod
+    def is_integration_point(node):
+        """Check if a given node is an HTML integration point (SVG or MathML).
+
+        Integration points are where HTML parsing rules apply inside foreign content:
+        - SVG: foreignObject, desc, title
+        - MathML: annotation-xml with text/html or application/xhtml+xml encoding
+        """
+        if node.namespace == "svg" and node.tag_name in {"foreignObject", "desc", "title"}:
+            return True
+        if node.namespace == "math" and node.tag_name == "annotation-xml":
+            encoding = node.attributes.get("encoding", "").lower()
+            return encoding in ("text/html", "application/xhtml+xml")
+        return False
+
     def is_in_svg_integration_point(self, context):
         """Return True if current parent or ancestor is an SVG integration point (foreignObject/desc/title)."""
-        if context.current_parent.namespace == "svg" and context.current_parent.tag_name in {"foreignObject", "desc", "title"}:
+        if self.is_integration_point(context.current_parent):
             return True
         return context.current_parent.find_svg_html_integration_point_ancestor() is not None
 
@@ -5434,18 +5429,13 @@ class ForeignTagHandler(TagHandler):
         if context.current_parent.find_mathml_text_integration_point_ancestor():
             return True
 
-        # Check annotation-xml with HTML encoding
-        if (
-            context.current_parent.namespace == "math" and context.current_parent.tag_name == "annotation-xml"
-            and context.current_parent.attributes.get("encoding", "").lower()
-            in ("text/html", "application/xhtml+xml")
-        ):
+        # Check annotation-xml with HTML encoding using centralized helper
+        if self.is_integration_point(context.current_parent):
             return True
         # Check for annotation-xml ancestor with HTML encoding
         annotation_ancestor = context.current_parent.find_math_annotation_xml_ancestor()
         if annotation_ancestor:
-            encoding = annotation_ancestor.attributes.get("encoding", "").lower()
-            return encoding in ("text/html", "application/xhtml+xml")
+            return self.is_integration_point(annotation_ancestor)
         return False
 
     def _fix_foreign_attribute_case(self, attributes, element_context):
@@ -5564,45 +5554,21 @@ class ForeignTagHandler(TagHandler):
         ):
             return False
 
-        # Check if we're in an integration point where HTML is allowed
-        in_integration_point = False
+        # Special case: <figure> in MathML fragment contexts that imply integration points
+        # In fragment parsing, there's no actual element node, so we check fragment_context string
+        if tag_name_lower == "figure" and context.current_context == "math":
+            # Fragment contexts that behave like integration points for <figure>
+            if self.parser.fragment_context in ("math math", "math annotation-xml"):
+                return False  # Don't break out, treat as <math figure>
+            # MathML text integration point fragments (mi, mo, mn, ms, mtext) - not integration points for figure
+            if self.parser.fragment_context in ("math ms", "math mn", "math mo", "math mi", "math mtext"):
+                pass  # Continue with breakout (figure breaks out of these)
 
-        # Check for MathML integration points
-        if context.current_context == "math":
-            if tag_name_lower == "figure":
-                has_math_ancestor = context.current_parent.find_math_namespace_ancestor() is not None
-                if self.parser.fragment_context in ("math math", "math annotation-xml"):
-                    has_math_ancestor = True
-                if self.parser.fragment_context in {
-                    "math ms",
-                    "math mn",
-                    "math mo",
-                    "math mi",
-                    "math mtext",
-                }:
-                    has_math_ancestor = False
-                if has_math_ancestor:
-                    return False
-            # Check if we're inside annotation-xml with HTML encoding
-            annotation_xml = context.current_parent.find_math_annotation_xml_ancestor()
-            if annotation_xml:
-                encoding = annotation_xml.attributes.get("encoding", "").lower()
-                if encoding in ("application/xhtml+xml", "text/html"):
-                    in_integration_point = True
-
-            # Check if we're inside mtext/mi/mo/mn/ms which are integration points for ALL HTML elements
-            if not in_integration_point:
-                mtext_ancestor = context.current_parent.find_mathml_text_integration_point_ancestor()
-                if mtext_ancestor:
-                    # These are integration points - ALL HTML elements should remain HTML
-                    in_integration_point = True
-
-        # Check for SVG integration points
-        elif context.current_context == "svg":
-            # Check if we're inside foreignObject, desc, or title
-            integration_ancestor = context.current_parent.find_svg_html_integration_point_ancestor()
-            if integration_ancestor:
-                in_integration_point = True
+        # Check if we're in an integration point where HTML is allowed (uses centralized helpers)
+        in_integration_point = (
+            self.is_in_svg_integration_point(context) or
+            self.is_in_mathml_integration_point(context)
+        )
 
         # Only break out if NOT in an integration point
         if not in_integration_point:
