@@ -99,7 +99,7 @@ class ParseContext:
 
         if new_parent != self._current_parent:
             old_parent = self._current_parent
-            
+
             # Track template content depth for fast in_template_content checks
             # Exit: moving FROM a content node to a non-descendant
             if old_parent.tag_name == "content" and old_parent.parent and old_parent.parent.tag_name == "template":
@@ -111,7 +111,7 @@ class ParseContext:
                 else:
                     # Exiting this content node
                     self.in_template_content -= 1
-            
+
             # Enter: moving TO a content node (check if it's new)
             if new_parent.tag_name == "content" and new_parent.parent and new_parent.parent.tag_name == "template":
                 # Only increment if we're not just returning to a content we're already inside
@@ -123,7 +123,7 @@ class ParseContext:
                 else:
                     # Entering new/different content
                     self.in_template_content += 1
-            
+
             self._debug(f"Parent change: {old_parent.tag_name} -> {new_parent.tag_name}")
             self._current_parent = new_parent
 
