@@ -28,7 +28,6 @@ from turbohtml.handlers import (
     SelectTagHandler,
     TableFosterHandler,
     TableTagHandler,
-    TagHandler,
     TemplateContentFilterHandler,
     TemplateElementHandler,
     TextHandler,
