@@ -41,20 +41,6 @@ TABLE_ELEMENTS_CANON = frozenset({
 HEAD_ELEMENTS_CANON = frozenset({"head", "base", "basefont", "bgsound", "link", "meta", "title", "style"})
 
 
-def _in_template_content(context):
-    p = context.current_parent
-    if not p:
-        return False
-    if p.tag_name == "content" and p.parent and p.parent.tag_name == "template":
-        return True
-    cur = p.parent
-    while cur:
-        if cur.tag_name == "content" and cur.parent and cur.parent.tag_name == "template":
-            return True
-        cur = cur.parent
-    return False
-
-
 def _in_integration_point(context):
     """Check if we're in an integration point - delegates to ForeignTagHandler for consistency."""
     cur = context.current_parent
@@ -81,7 +67,7 @@ def should_foster_parent(tag_name, attrs, context, parser):
     if tag_name in HEAD_ELEMENTS_CANON:
         return False
     # Template or integration points short-circuit
-    if _in_template_content(context) or _in_integration_point(context):
+    if context.in_template_content > 0 or _in_integration_point(context):
         return False
     # Relaxed select parser: elements inside select should not be foster-parented
     # (except table structural elements which close the select, handled elsewhere)

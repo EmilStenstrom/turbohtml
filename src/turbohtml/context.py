@@ -45,6 +45,7 @@ class ParseContext:
         "frameset_ok",
         "ignored_fragment_context_tag",
         "in_end_tag_dispatch",
+        "in_template_content",
         "needs_reconstruction",
         "open_elements",
         "saw_body_start_tag",
@@ -60,6 +61,7 @@ class ParseContext:
 
         self._document_state = DocumentState.INITIAL
         self._content_state = ContentState.NONE
+        self.in_template_content = 0  # Depth counter for nested template content
         self._debug = debug_callback
         self.doctype_seen = False
         self.frameset_ok = True
@@ -92,11 +94,37 @@ class ParseContext:
 
     def _set_current_parent(self, new_parent):
         if new_parent is None:
-            msg = "ParseContext requires a valid current parent"
+            msg = "ParseContext requires a valid current_parent"
             raise ValueError(msg)
 
         if new_parent != self._current_parent:
-            self._debug(f"Parent change: {self._current_parent.tag_name} -> {new_parent.tag_name}")
+            old_parent = self._current_parent
+            
+            # Track template content depth for fast in_template_content checks
+            # Exit: moving FROM a content node to a non-descendant
+            if old_parent.tag_name == "content" and old_parent.parent and old_parent.parent.tag_name == "template":
+                cur = new_parent.parent
+                while cur:
+                    if cur == old_parent:
+                        break  # new_parent is descendant, staying inside
+                    cur = cur.parent
+                else:
+                    # Exiting this content node
+                    self.in_template_content -= 1
+            
+            # Enter: moving TO a content node (check if it's new)
+            if new_parent.tag_name == "content" and new_parent.parent and new_parent.parent.tag_name == "template":
+                # Only increment if we're not just returning to a content we're already inside
+                cur = old_parent.parent
+                while cur:
+                    if cur == new_parent:
+                        break  # was already inside this content
+                    cur = cur.parent
+                else:
+                    # Entering new/different content
+                    self.in_template_content += 1
+            
+            self._debug(f"Parent change: {old_parent.tag_name} -> {new_parent.tag_name}")
             self._current_parent = new_parent
 
     @property

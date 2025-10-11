@@ -316,18 +316,3 @@ def ensure_head(parser):
     else:
         html_node.insert_child_at(insert_index, head)
     return head
-
-
-def in_template_content(context):
-    """Check if the current insertion point is inside template content."""
-    p = context.current_parent
-    if not p:
-        return False
-    if p.tag_name == "content" and p.parent and p.parent.tag_name == "template":
-        return True
-    cur = p.parent
-    while cur:
-        if cur.tag_name == "content" and cur.parent and cur.parent.tag_name == "template":
-            return True
-        cur = cur.parent
-    return False
