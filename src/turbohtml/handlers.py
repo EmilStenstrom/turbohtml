@@ -5313,23 +5313,25 @@ class AutoClosingTagHandler(TagHandler):
                 return False
 
             # Ignore end tag if matching ancestor lies outside an integration point boundary
-            def _crosses_integration_point(target):
-                cur = context.current_parent
-                while cur and cur is not target:
-                    if cur.namespace == "svg" and cur.tag_name in {"foreignObject", "desc", "title"}:
+            # Check if current position is in an integration point but target is not
+            # (meaning we'd cross an integration point boundary)
+            if self._is_in_integration_point(context):
+                # Walk up to see if target is outside the integration point
+                temp = context.current_parent
+                while temp and temp is not current:
+                    if temp.namespace == "svg" and temp.tag_name in {"foreignObject", "desc", "title"}:
+                        self.debug(
+                            f"Ignoring </{token.tag_name}> crossing integration point boundary (ancestor outside integration point)",
+                        )
                         return True
-                    if cur.namespace == "math" and cur.tag_name == "annotation-xml" and cur.attributes.get(
+                    if temp.namespace == "math" and temp.tag_name == "annotation-xml" and temp.attributes.get(
                         "encoding", "",
                     ).lower() in ("text/html", "application/xhtml+xml"):
+                        self.debug(
+                            f"Ignoring </{token.tag_name}> crossing integration point boundary (ancestor outside integration point)",
+                        )
                         return True
-                    cur = cur.parent
-                return False
-
-            if _crosses_integration_point(current):
-                self.debug(
-                    f"Ignoring </{token.tag_name}> crossing integration point boundary (ancestor outside integration point)",
-                )
-                return True
+                    temp = temp.parent
 
             self.debug(f"Found matching block element: {current}")
 
