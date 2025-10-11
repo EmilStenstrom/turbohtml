@@ -3130,7 +3130,8 @@ class TableTagHandler(TagHandler):
 
         # Spec 13.2.6.4.7: Close <p> element in button scope before table (standards mode only)
         # Quirks mode (no DOCTYPE/legacy DTD): allow table inside <p>
-        if context.current_parent.tag_name == "p" and self._should_foster_parent_table(context):
+        # In standards mode (not quirks), close the paragraph before inserting table
+        if context.current_parent.tag_name == "p" and not context.quirks_mode:
             if context.current_parent.parent:
                 context.move_to_element(context.current_parent.parent)
 
@@ -3958,57 +3959,6 @@ class TableTagHandler(TagHandler):
 
     def _handle_colgroup_end(self, token, context):
         """Handle colgroup end tag."""
-        return False
-
-    def _should_foster_parent_table(self, context):
-        """Determine if table should be foster parented based on DOCTYPE.
-
-        HTML5 spec: Foster parenting should happen in standards mode.
-        Legacy/quirks mode allows tables inside paragraphs.
-        """
-        # Look for a DOCTYPE in the document root
-        if self.parser.root:
-            for child in self.parser.root.children:
-                if child.tag_name == "!doctype":
-                    doctype = child.text_content.lower() if child.text_content else ""
-                    self.debug(f"Found DOCTYPE: '{doctype}'")
-
-                    # HTML5 standard DOCTYPE triggers foster parenting
-                    if doctype == "html" or not doctype:
-                        self.debug("DOCTYPE is HTML5 standard - using foster parenting")
-                        return True
-
-                    # Legacy DOCTYPEs (HTML 3.2, HTML 4.0, etc.) use quirks mode
-                    # Check for specific legacy patterns first (before XHTML check)
-                    if any(
-                        legacy in doctype
-                        for legacy in [
-                            "html 3.2",
-                            "html 4.0",
-                            "transitional",
-                            "system",
-                            '"html"',
-                        ]
-                    ):
-                        self.debug(
-                            "DOCTYPE is legacy - using quirks mode",
-                        )
-                        return False
-
-                    # XHTML DOCTYPEs that are not transitional trigger foster parenting
-                    if "xhtml" in doctype and "strict" in doctype:
-                        self.debug("DOCTYPE is strict XHTML - using foster parenting")
-                        return True
-
-                    # Default for unknown DOCTYPEs: use standards mode
-                    self.debug("DOCTYPE is unknown - defaulting to foster parenting")
-                    return True
-            # No DOCTYPE found among root children: assume quirks mode
-            self.debug(
-                "No DOCTYPE found - defaulting to quirks mode (no foster parenting)",
-            )
-            return False
-        # No root yet (should not normally happen at this stage) - be safe and assume quirks mode
         return False
 
 
@@ -6803,13 +6753,47 @@ class DoctypeHandler(TagHandler):
 
         if not doctype.strip():
             doctype_node.text_content = ""
+            # No DOCTYPE = quirks mode
+            context.quirks_mode = True
         else:
             parsed_doctype = self._parse_doctype_declaration(doctype)
             doctype_node.text_content = parsed_doctype
+            # Determine quirks mode based on DOCTYPE
+            context.quirks_mode = self._is_quirks_mode(parsed_doctype)
 
         self.parser.root.append_child(doctype_node)
         context.doctype_seen = True
         return True
+    
+    def _is_quirks_mode(self, doctype):
+        """Determine if DOCTYPE triggers quirks mode.
+        
+        Returns True for quirks mode (legacy DOCTYPEs), False for standards mode.
+        HTML5 spec: standards mode is the default for modern DOCTYPEs.
+        """
+        doctype_lower = doctype.lower()
+        
+        # HTML5 standard DOCTYPE = standards mode (not quirks)
+        if doctype_lower == "html" or not doctype_lower:
+            return False
+        
+        # Legacy DOCTYPEs trigger quirks mode
+        legacy_patterns = [
+            "html 3.2",
+            "html 4.0",
+            "transitional",
+            "system",
+            '"html"',
+        ]
+        if any(pattern in doctype_lower for pattern in legacy_patterns):
+            return True
+        
+        # XHTML strict = standards mode (not quirks)
+        if "xhtml" in doctype_lower and "strict" in doctype_lower:
+            return False
+        
+        # Default for unknown DOCTYPEs: standards mode
+        return False
 
     def _parse_doctype_declaration(self, doctype):
         """Parse DOCTYPE declaration and normalize it according to HTML5 spec."""

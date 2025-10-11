@@ -47,6 +47,7 @@ class ParseContext:
         "doctype_seen",
         "form_element",
         "frameset_ok",
+        "quirks_mode",
         "ignored_fragment_context_tag",
         "in_end_tag_dispatch",
         "in_template_content",
@@ -72,6 +73,7 @@ class ParseContext:
         self._ip_in_mathml_text = False  # In MathML text integration point (mi/mo/mn/ms/mtext)
         self._debug = debug_callback
         self.doctype_seen = False
+        self.quirks_mode = True  # Quirks mode (no DOCTYPE = quirks), set by DoctypeHandler
         self.frameset_ok = True
 
         self.active_formatting_elements = ActiveFormattingElements()
