@@ -3727,177 +3727,202 @@ class TableTagHandler(TagHandler):
         tag_name = token.tag_name
         self.debug(f"handling end tag {tag_name}")
 
-        # Ignore stray </table> when no table is open (handled in should_handle_end)
+        # Ignore stray </table> when no table is open
         if tag_name == "table" and not find_current_table(context):
             return True
 
-        if tag_name == "caption" and context.document_state == DocumentState.IN_CAPTION:
+        # Dispatch to handler by tag name
+        handlers = {
+            "caption": self._handle_caption_end,
+            "table": self._handle_table_end,
+            "tbody": self._handle_tbody_end,
+            "thead": self._handle_tbody_end,
+            "tfoot": self._handle_tbody_end,
+            "tr": self._handle_tr_end,
+            "colgroup": self._handle_colgroup_end,
+        }
+
+        handler = handlers.get(tag_name)
+        if handler:
+            return handler(token, context)
+
+        return False
+
+    def _handle_caption_end(self, token, context):
+        """Handle caption end tag."""
+        if context.document_state == DocumentState.IN_CAPTION:
             caption = context.current_parent.find_ancestor("caption")
             if caption:
                 context.move_to_element(caption.parent)
-                context.transition_to_state( DocumentState.IN_TABLE)
-            # No dynamic anchor to clear anymore
-            return True
+                context.transition_to_state(DocumentState.IN_TABLE)
+        return True
 
-        if tag_name == "table":
-            table_node = find_current_table(context)
-            if table_node:
-                # Pop elements from the open stack down to the table (implicitly closing tbody/tfoot/thead)
-                stack = context.open_elements
-                while stack:
-                    popped = stack.pop()
-                    if popped is table_node:
-                        break
+    def _handle_table_end(self, token, context):
+        """Handle table end tag."""
+        table_node = find_current_table(context)
+        if not table_node:
+            return False
 
-                def _unwrap_stray_formatting(parent):
-                    table_allowed = {
-                        "tbody": {"tr"},
-                        "thead": {"tr"},
-                        "tfoot": {"tr"},
-                        "tr": {"td", "th"},
-                    }
-                    for child in list(parent.children):
-                        _unwrap_stray_formatting(child)
-                    allowed = table_allowed.get(parent.tag_name)
-                    if allowed is None:
-                        return
-                    for child in list(parent.children):
-                        if child.tag_name in table_allowed:
-                            continue
-                        if child.tag_name in FORMATTING_ELEMENTS:
-                            if context.open_elements.contains(child):
-                                continue
-                            entry = context.active_formatting_elements.find_element(child)
-                            if entry is not None:
-                                continue
-                            insert_at = parent.children.index(child)
-                            for grand in list(child.children):
-                                child.remove_child(grand)
-                                parent.insert_child_at(insert_at, grand)
-                                insert_at += 1
-                            parent.remove_child(child)
-                            self.debug(
-                                f"Unwrapped stray formatting <{child.tag_name}> from <{parent.tag_name}>",
-                            )
-                    for child in list(parent.children):
-                        if child.tag_name in FORMATTING_ELEMENTS and not child.children:
-                            if context.open_elements.contains(child):
-                                continue
-                            entry = context.active_formatting_elements.find_element(child)
-                            if entry is not None:
-                                context.active_formatting_elements.remove_entry(entry)
-                            parent.remove_child(child)
-                            self.debug(
-                                f"Removed empty formatting residue <{child.tag_name}> from {parent.tag_name}",
-                            )
+        # Pop elements from the open stack down to the table (implicitly closing tbody/tfoot/thead)
+        stack = context.open_elements
+        while stack:
+            popped = stack.pop()
+            if popped is table_node:
+                break
 
-                _unwrap_stray_formatting(table_node)
-                if context.active_formatting_elements:
-                    for entry in list(context.active_formatting_elements):
-                        el = entry.element
-                        if el is None:
-                            continue
-                        if table_node.is_ancestor_of(el):
-                            context.active_formatting_elements.remove_entry(entry)
-                # Find any active formatting element that contained the table
-                formatting_parent = table_node.parent
+        def _unwrap_stray_formatting(parent):
+            table_allowed = {
+                "tbody": {"tr"},
+                "thead": {"tr"},
+                "tfoot": {"tr"},
+                "tr": {"td", "th"},
+            }
+            for child in list(parent.children):
+                _unwrap_stray_formatting(child)
+            allowed = table_allowed.get(parent.tag_name)
+            if allowed is None:
+                return
+            for child in list(parent.children):
+                if child.tag_name in table_allowed:
+                    continue
+                if child.tag_name in FORMATTING_ELEMENTS:
+                    if context.open_elements.contains(child):
+                        continue
+                    entry = context.active_formatting_elements.find_element(child)
+                    if entry is not None:
+                        continue
+                    insert_at = parent.children.index(child)
+                    for grand in list(child.children):
+                        child.remove_child(grand)
+                        parent.insert_child_at(insert_at, grand)
+                        insert_at += 1
+                    parent.remove_child(child)
+                    self.debug(
+                        f"Unwrapped stray formatting <{child.tag_name}> from <{parent.tag_name}>",
+                    )
+            for child in list(parent.children):
+                if child.tag_name in FORMATTING_ELEMENTS and not child.children:
+                    if context.open_elements.contains(child):
+                        continue
+                    entry = context.active_formatting_elements.find_element(child)
+                    if entry is not None:
+                        context.active_formatting_elements.remove_entry(entry)
+                    parent.remove_child(child)
+                    self.debug(
+                        f"Removed empty formatting residue <{child.tag_name}> from {parent.tag_name}",
+                    )
 
-                # Check if table is inside a foreign integration point (foreignObject/annotation-xml)
-                # by looking for foreign ancestors of the table
-                foreign_ancestor = None
-                if table_node:
-                    svg_fo = table_node.find_foreign_object_ancestor()
-                    math_ax = table_node.find_math_annotation_xml_ancestor()
-                    foreign_ancestor = svg_fo or math_ax
+        _unwrap_stray_formatting(table_node)
+        if context.active_formatting_elements:
+            for entry in list(context.active_formatting_elements):
+                el = entry.element
+                if el is None:
+                    continue
+                if table_node.is_ancestor_of(el):
+                    context.active_formatting_elements.remove_entry(entry)
+        # Find any active formatting element that contained the table
+        formatting_parent = table_node.parent
 
-                self.debug(
-                    f"After </table> pop stack={[el.tag_name for el in context.open_elements]}",
-                )
-                preferred_after_table_parent = None
-                if (
-                    formatting_parent
-                    and formatting_parent.tag_name in FORMATTING_ELEMENTS
-                ):
-                    target_parent = formatting_parent
-                    if preferred_after_table_parent is not None:
-                        target_parent = preferred_after_table_parent
-                    elif (
-                        context.needs_reconstruction
-                        and context.active_formatting_elements
-                    ):
-                        entries_for_parent = []
-                        for entry in context.active_formatting_elements:
-                            element = entry.element
-                            if (
-                                element is None
-                                or context.open_elements.contains(element)
-                            ):
-                                continue
-                            if element.parent is formatting_parent:
-                                entries_for_parent.append(entry)
-                        if entries_for_parent:
-                            if formatting_parent.parent:
-                                target_parent = formatting_parent.parent
-                            anchor_entries = [
-                                e
-                                for e in entries_for_parent
-                                if e.element.tag_name == "a"
-                            ]
-                            if len(anchor_entries) > 1:
-                                for extra in anchor_entries[:-1]:
-                                    context.active_formatting_elements.remove_entry(extra)
+        # Check if table is inside a foreign integration point (foreignObject/annotation-xml)
+        # by looking for foreign ancestors of the table
+        foreign_ancestor = None
+        if table_node:
+            svg_fo = table_node.find_foreign_object_ancestor()
+            math_ax = table_node.find_math_annotation_xml_ancestor()
+            foreign_ancestor = svg_fo or math_ax
+
+        self.debug(
+            f"After </table> pop stack={[el.tag_name for el in context.open_elements]}",
+        )
+        preferred_after_table_parent = None
+        if (
+            formatting_parent
+            and formatting_parent.tag_name in FORMATTING_ELEMENTS
+        ):
+            target_parent = formatting_parent
+            if preferred_after_table_parent is not None:
+                target_parent = preferred_after_table_parent
+            elif (
+                context.needs_reconstruction
+                and context.active_formatting_elements
+            ):
+                entries_for_parent = []
+                for entry in context.active_formatting_elements:
+                    element = entry.element
                     if (
-                        formatting_parent.tag_name == "a"
-                        and not context.open_elements.contains(formatting_parent)
-                        and formatting_parent.parent
+                        element is None
+                        or context.open_elements.contains(element)
                     ):
+                        continue
+                    if element.parent is formatting_parent:
+                        entries_for_parent.append(entry)
+                if entries_for_parent:
+                    if formatting_parent.parent:
                         target_parent = formatting_parent.parent
-                    self.debug(f"Returning to formatting context: {target_parent}")
-                    context.move_to_element(target_parent)
-                # If table is inside a foreign integration point, return to that integration point
-                elif foreign_ancestor and context.open_elements.contains(foreign_ancestor):
-                    self.debug(
-                        f"Table closed inside foreign integration point; returning to {foreign_ancestor.tag_name}",
-                    )
-                    context.move_to_element(foreign_ancestor)
-                # If table lives inside foreignObject/SVG/MathML integration subtree, stay inside that subtree
-                elif formatting_parent and (
-                    formatting_parent.namespace == "svg"
-                    or formatting_parent.namespace == "math"
-                    or (formatting_parent.namespace == "svg" and formatting_parent.tag_name == "foreignObject")
-                    or (formatting_parent.namespace == "math" and formatting_parent.tag_name == "annotation-xml")
-                ):
-                    self.debug(
-                        f"Table closed inside foreign context; staying in {formatting_parent.tag_name}",
-                    )
-                    context.move_to_element(formatting_parent)
-                elif (
-                    table_node
-                    and table_node.parent
-                    and context.open_elements.contains(table_node.parent)
-                ):
-                    self.debug(
-                        f"Table closed inside <{table_node.parent.tag_name}>; returning to parent element",
-                    )
-                    context.move_to_element(table_node.parent)
-                else:
-                    # Try to get body node, but fall back to root in fragment contexts
-                    body_node = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
-                    if body_node:
-                        context.move_to_element(body_node)
-                    else:
-                        # In fragment contexts, fall back to the fragment root
-                        context.move_to_element(self.parser.root)
+                    anchor_entries = [
+                        e
+                        for e in entries_for_parent
+                        if e.element.tag_name == "a"
+                    ]
+                    if len(anchor_entries) > 1:
+                        for extra in anchor_entries[:-1]:
+                            context.active_formatting_elements.remove_entry(extra)
+            if (
+                formatting_parent.tag_name == "a"
+                and not context.open_elements.contains(formatting_parent)
+                and formatting_parent.parent
+            ):
+                target_parent = formatting_parent.parent
+            self.debug(f"Returning to formatting context: {target_parent}")
+            context.move_to_element(target_parent)
+        # If table is inside a foreign integration point, return to that integration point
+        elif foreign_ancestor and context.open_elements.contains(foreign_ancestor):
+            self.debug(
+                f"Table closed inside foreign integration point; returning to {foreign_ancestor.tag_name}",
+            )
+            context.move_to_element(foreign_ancestor)
+        # If table lives inside foreignObject/SVG/MathML integration subtree, stay inside that subtree
+        elif formatting_parent and (
+            formatting_parent.namespace == "svg"
+            or formatting_parent.namespace == "math"
+            or (formatting_parent.namespace == "svg" and formatting_parent.tag_name == "foreignObject")
+            or (formatting_parent.namespace == "math" and formatting_parent.tag_name == "annotation-xml")
+        ):
+            self.debug(
+                f"Table closed inside foreign context; staying in {formatting_parent.tag_name}",
+            )
+            context.move_to_element(formatting_parent)
+        elif (
+            table_node
+            and table_node.parent
+            and context.open_elements.contains(table_node.parent)
+        ):
+            self.debug(
+                f"Table closed inside <{table_node.parent.tag_name}>; returning to parent element",
+            )
+            context.move_to_element(table_node.parent)
+        else:
+            # Try to get body node, but fall back to root in fragment contexts
+            body_node = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
+            if body_node:
+                context.move_to_element(body_node)
+            else:
+                # In fragment contexts, fall back to the fragment root
+                context.move_to_element(self.parser.root)
 
-                context.transition_to_state( DocumentState.IN_BODY)
-                return True
+        context.transition_to_state(DocumentState.IN_BODY)
+        return True
 
-        elif tag_name in TABLE_ELEMENTS:
-            if tag_name in ["tbody", "thead", "tfoot"]:
-                return self._pop_until_tag(tag_name, context, DocumentState.IN_TABLE)
-            if tag_name == "tr":
-                return self._pop_until_tag("tr", context, DocumentState.IN_TABLE_BODY)
+    def _handle_tbody_end(self, token, context):
+        """Handle tbody/thead/tfoot end tag."""
+        return self._pop_until_tag(token.tag_name, context, DocumentState.IN_TABLE)
 
+    def _handle_tr_end(self, token, context):
+        """Handle tr end tag."""
+        return self._pop_until_tag("tr", context, DocumentState.IN_TABLE_BODY)
+
+    def _handle_colgroup_end(self, token, context):
+        """Handle colgroup end tag."""
         return False
 
     def _should_foster_parent_table(self, context):
