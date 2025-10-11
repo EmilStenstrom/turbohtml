@@ -28,6 +28,7 @@ from turbohtml.handlers import (
     SelectTagHandler,
     TableFosterHandler,
     TableTagHandler,
+    TagHandler,
     TemplateContentFilterHandler,
     TemplateElementHandler,
     TextHandler,
@@ -170,11 +171,21 @@ class TurboHTML:
 
         self.tag_handlers = [handler_class(self) for handler_class in handlers]
 
+        # Store direct references to handlers that need special early processing
+        self.text_handler = None
+        self.foreign_handler = None
+        self.formatting_handler = None
+        self.frameset_handler = None
+
         for handler in self.tag_handlers:
             if isinstance(handler, TextHandler):
                 self.text_handler = handler
             elif isinstance(handler, ForeignTagHandler):
                 self.foreign_handler = handler
+            elif isinstance(handler, FormattingTagHandler):
+                self.formatting_handler = handler
+            elif isinstance(handler, FramesetTagHandler):
+                self.frameset_handler = handler
 
         if self.text_handler is None:
             msg = "TextHandler not found in tag_handlers"
@@ -552,10 +563,13 @@ class TurboHTML:
         """Handle all opening HTML tags."""
         tag_name = token.tag_name
 
-        # Pre-dispatch preprocessing (guards and side effects)
-        for h in self.tag_handlers:
-            if h.preprocess_start(token, context):
-                return
+        # Inline frameset preprocessing (guards frameset_ok and consumes invalid tokens)
+        if self.frameset_handler and self.frameset_handler.preprocess_start(token, context):
+            return
+
+        # Inline formatting element reconstruction (must happen before handler dispatch)
+        if self.formatting_handler:
+            self.formatting_handler.preprocess_start(token, context)
 
         # Dispatch to first matching handler
         for handler in self.tag_handlers:
@@ -569,10 +583,9 @@ class TurboHTML:
         """Handle all closing HTML tags (spec-aligned, no auxiliary adoption flags)."""
         tag_name = token.tag_name
 
-        # Pre-dispatch preprocessing (guards and side effects)
-        for h in self.tag_handlers:
-            if h.preprocess_end(token, context):
-                return
+        # Inline frameset preprocessing (guards invalid end tags in frameset contexts)
+        if self.frameset_handler and self.frameset_handler.preprocess_end(token, context):
+            return
 
         # Dispatch to first matching handler
         for handler in self.tag_handlers:
