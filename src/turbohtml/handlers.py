@@ -3039,49 +3039,19 @@ class TableTagHandler(TagHandler):
         # Skip template content (TemplateAware behavior)
         if context.in_template_content > 0:
             return False
-            
+
         # Cache expensive lookups once at the start
         current_parent = context.current_parent
         in_integration_point = is_in_integration_point(context)
         current_table = find_current_table(context)
         fragment_ctx = self.parser.fragment_context
-        
-        # Orphan section suppression: ignore thead/tbody/tfoot inside SVG integration point with no table
-        if (
-            tag_name in ("thead", "tbody", "tfoot")
-            and current_parent.namespace == "svg" 
-            and current_parent.tag_name in ("title", "desc", "foreignObject")
-            and not current_table
-        ):
-            return True
 
         # Prelude suppression (caption/col/colgroup/thead/tbody/tfoot) outside any table
         if (
-            tag_name in ("caption", "col", "colgroup", "thead", "tbody", "tfoot")
-            and not (fragment_ctx and fragment_ctx.matches("colgroup"))
-            and (context.current_context not in ("math", "svg") or in_integration_point)
-            and not current_table
-            and current_parent.tag_name not in ("table", "caption")
+            (in_integration_point or context.current_context not in ("math", "svg"))
+            and tag_name in ("caption", "col", "colgroup", "thead", "tbody", "tfoot")
         ):
             return True
-
-        # Stray <tr> recovery
-        if (
-            tag_name == "tr" 
-            and not current_table
-            and current_parent.tag_name not in ("table", "caption")
-            and (context.current_context not in ("math", "svg") or in_integration_point)
-            and not current_parent.find_ancestor("select")
-        ):
-            return True
-
-        # Always handle col/colgroup here
-        if tag_name in ("col", "colgroup"):
-            return not (fragment_ctx and fragment_ctx.matches("colgroup"))
-
-        # Suppress most construction in fragment table-section contexts
-        if fragment_ctx and fragment_ctx.matches(("colgroup", "tbody", "thead", "tfoot")):
-            return tag_name == "tr"
 
         # Foreign content: only handle if in integration point
         if context.current_context in ("math", "svg") and not in_integration_point:
@@ -3089,8 +3059,8 @@ class TableTagHandler(TagHandler):
 
         # Handle table-related tags
         if tag_name in ("table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption"):
-            return in_integration_point or not self.parser.foreign_handler.is_plain_svg_foreign(context)
-            
+            return in_integration_point or not is_in_integration_point(context, check="svg")
+
         return False
 
     def handle_start(
@@ -3099,19 +3069,22 @@ class TableTagHandler(TagHandler):
         tag_name = token.tag_name
         self.debug(f"Handling {tag_name} in table context")
 
-        # Integration point check: ignore table structure tags inside integration points when they would be invalid
+        # Cache expensive lookups once at the start
+        current_table = find_current_table(context)
         in_integration_point = is_in_integration_point(context)
+        fragment_ctx = self.parser.fragment_context
+
+        # Integration point check: ignore table structure tags inside integration points when they would be invalid
         if in_integration_point and tag_name in ("thead", "tbody", "tfoot", "tr", "td", "th", "caption", "col", "colgroup"):
-            if not find_current_table(context) and context.current_parent.tag_name not in ("table", "caption"):
+            if not current_table and context.current_parent.tag_name not in ("table", "caption"):
                 self.debug(f"Ignoring <{tag_name}> inside integration point with no table context")
                 return True
 
         # Orphan section suppression: ignore thead/tbody/tfoot inside SVG integration point with no table
         if (
             tag_name in ("thead", "tbody", "tfoot")
-            and context.current_parent
-            and context.current_parent.namespace == "svg" and context.current_parent.tag_name in ("title", "desc", "foreignObject")
-            and not find_current_table(context)
+            and ForeignTagHandler.is_integration_point(context.current_parent)
+            and not current_table
         ):
             self.debug(f"Ignoring HTML table section <{tag_name}> inside SVG integration point with no open table")
             return True
@@ -3119,23 +3092,21 @@ class TableTagHandler(TagHandler):
         # Prelude suppression (caption/col/colgroup/thead/tbody/tfoot) outside any table
         if (
             tag_name in ("caption", "col", "colgroup", "thead", "tbody", "tfoot")
-            and not (self.parser.fragment_context and self.parser.fragment_context.matches("colgroup"))
+            and not (fragment_ctx and fragment_ctx.matches("colgroup"))
             and context.current_context not in ("math", "svg")
             and not context.in_template_content > 0
-            and not find_current_table(context)
+            and not current_table
             and context.current_parent.tag_name not in ("table", "caption")
         ):
             self.debug(f"Ignoring standalone table prelude <{tag_name}> before table context")
             return True
 
-        # Stray <tr> recovery
-        in_integration_point_for_tr = is_in_integration_point(context)
-        # Don't suppress tr in tbody/thead/tfoot fragment contexts (fragment root acts as implicit section)
-        in_section_fragment = self.parser.fragment_context and self.parser.fragment_context.matches(("tbody", "thead", "tfoot"))
+        # Stray <tr> recovery (fragment section contexts allow tr)
+        in_section_fragment = fragment_ctx and fragment_ctx.matches(("tbody", "thead", "tfoot"))
         if tag_name == "tr" and not in_section_fragment and (
-            not find_current_table(context)
+            not current_table
             and context.current_parent.tag_name not in ("table", "caption")
-            and (context.current_context not in ("math", "svg") or in_integration_point_for_tr)
+            and (context.current_context not in ("math", "svg") or in_integration_point)
             and not context.in_template_content > 0
             and not context.current_parent.find_ancestor("select")
         ):
@@ -3147,7 +3118,7 @@ class TableTagHandler(TagHandler):
         # inside the first instead of producing sibling cells under the fragment root. This
         # manifested in the <td><table></table><td> fragment where the second cell was lost
         # after pruning because it had been inserted as a descendant of the first cell's table.
-        if self.parser.fragment_context and self.parser.fragment_context.matches("tr") and tag_name in {"td", "th"}:
+        if fragment_ctx and fragment_ctx.matches("tr") and tag_name in {"td", "th"}:
             stack = context.open_elements
             # Find deepest currently open cell element (works even if current_parent moved elsewhere)
             cell_index = stack.find_last_index(lambda el: el.tag_name in {"td", "th"})
@@ -3177,13 +3148,12 @@ class TableTagHandler(TagHandler):
         if tag_name == "table":
             return self._handle_table(token, context)
 
-        current_table = find_current_table(context)
         if not current_table:
             # Fragment row/section/cell contexts: do not synthesize an implicit <table> wrapper
             # when encountering table-structural start tags; the fragment root provides the
             # insertion point and expected output flattens without a surrogate table element.
             if (
-                self.parser.fragment_context and self.parser.fragment_context.matches(("tr", "td", "th", "thead", "tbody", "tfoot"))
+                fragment_ctx and fragment_ctx.matches(("tr", "td", "th", "thead", "tbody", "tfoot"))
                 and tag_name in ("tr", "td", "th", "thead", "tbody", "tfoot")
             ):
                 # Foster out of incompatible parents (e.g., <a>) to fragment root
