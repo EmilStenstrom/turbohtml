@@ -3742,11 +3742,7 @@ class TableTagHandler(TagHandler):
             "colgroup": self._handle_colgroup_end,
         }
 
-        handler = handlers.get(tag_name)
-        if handler:
-            return handler(token, context)
-
-        return False
+        return handlers[tag_name](token, context)
 
     def _handle_caption_end(self, token, context):
         """Handle caption end tag."""
