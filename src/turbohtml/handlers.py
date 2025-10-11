@@ -5106,11 +5106,10 @@ class VoidTagHandler(TagHandler):
                 br.parent = parent
                 return True
 
-        # Otherwise just create a <br> element directly
+        # Break out of foreign content unless in an integration point
         if context.current_parent.is_foreign:
             ancestor = context.current_parent.parent
             while ancestor and ancestor.is_foreign:
-                # Check if ancestor is an integration point
                 is_svg_ip = ancestor.namespace == "svg" and ancestor.tag_name in {"foreignObject", "desc", "title"}
                 is_math_ip = ancestor.namespace == "math" and ancestor.tag_name == "annotation-xml"
                 if is_svg_ip or is_math_ip:
@@ -5119,7 +5118,6 @@ class VoidTagHandler(TagHandler):
             if ancestor is not None:
                 context.move_to_element(ancestor)
 
-        # Create <br> element directly (void element, no children)
         br_token = HTMLToken("StartTag", tag_name="br", attributes={})
         self.parser.insert_element(br_token, context, mode="void", enter=False, namespace=None)
         return True
