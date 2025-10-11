@@ -255,11 +255,8 @@ def reconstruct_if_needed(parser, context, *, force=False):
     if not afe or not afe:
         return False
     # Template content skip
-    cur = context.current_parent
-    while cur:
-        if cur.tag_name == "content" and cur.parent and cur.parent.tag_name == "template":
-            return False
-        cur = cur.parent
+    if context.in_template_content > 0:
+        return False
     # Table mode cell/caption restriction
     if context.document_state in (
         DocumentState.IN_TABLE,

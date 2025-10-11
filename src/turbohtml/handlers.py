@@ -774,30 +774,11 @@ class TemplateContentFilterHandler(TagHandler):
             if context.content_state == ContentState.PLAINTEXT:
                 return False
             if self.parser.foreign_handler and context.current_context in ("svg", "math"):
-                cur = context.current_parent
-                while cur:
-                    if (
-                        cur.tag_name == "content"
-                        and cur.parent
-                        and cur.parent.tag_name == "template"
-                    ):
-                        return True
-                    cur = cur.parent
-                return False
+                return context.in_template_content > 0
             # Only handle if we're NESTED inside template content (not at the immediate content level)
-            # If current_parent IS the content node of a template, check if that template is nested
+            # When current_parent is the template's content node, a depth > 1 indicates a nested template
             if context.current_parent.tag_name == "content":
-                immediate_template = context.current_parent.parent
-                if immediate_template and immediate_template.tag_name == "template":
-                    # Check if this template is nested inside another template's content
-                    ancestor = immediate_template.parent
-                    while ancestor:
-                        if ancestor.tag_name == "content" and ancestor.parent and ancestor.parent.tag_name == "template":
-                            # This template is nested - we should handle it
-                            return True
-                        ancestor = ancestor.parent
-                    # Not nested - TemplateElementHandler should handle it
-                    return False
+                return context.in_template_content > 1
             # If we're deeper inside (past the content node), check if we're in template content
             return context.in_template_content > 0
 
@@ -925,11 +906,8 @@ class TemplateElementHandler(TagHandler):
             if parent_is_template:
                 return False
         # Skip if inside template content
-        p = context.current_parent
-        while p and p.tag_name not in ("html", "document-fragment"):
-            if p.tag_name == "content" and p.parent and p.parent.tag_name == "template":
-                return False
-            p = p.parent
+        if context.in_template_content > 0:
+            return False
         return True
 
     def handle_start(self, token, context):
@@ -975,18 +953,9 @@ class TemplateElementHandler(TagHandler):
         # Distinguish between:
         # 1. Nested template (inside template content) - handled by TemplateContentFilterHandler
         # 2. Top-level template (even if currently inside its content) - handled here
-        if context.current_parent.tag_name == "content":
-            immediate_template = context.current_parent.parent
-            if immediate_template and immediate_template.tag_name == "template":
-                # Check if this template is nested inside another template's content
-                ancestor = immediate_template.parent
-                while ancestor:
-                    if ancestor.tag_name == "content" and ancestor.parent and ancestor.parent.tag_name == "template":
-                        # This template is nested inside another template's content
-                        return False
-                    ancestor = ancestor.parent
-                # This is a top-level template (not nested in another template's content)
-                return True
+        if context.current_parent.tag_name == "content" and context.in_template_content > 1:
+            # Nested template end tags are handled by TemplateContentFilterHandler
+            return False
         return True
 
     def handle_end(self, token, context):
