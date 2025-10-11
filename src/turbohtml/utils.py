@@ -191,6 +191,24 @@ def reconstruct_active_formatting_elements(parser, context):
                 )
             continue
         clone = Node(entry.element.tag_name, entry.element.attributes.copy())
+
+        # Check if element was foster-parented before a table
+        # If so, skip reconstruction inside that table's structure
+        element_before_table = False
+        table_sibling = None
+        if entry.element and entry.element.parent:
+            try:
+                parent = entry.element.parent
+                element_idx = parent.children.index(entry.element)
+                # Look for a table sibling after this element
+                for idx in range(element_idx + 1, len(parent.children)):
+                    if parent.children[idx].tag_name == "table":
+                        table_sibling = parent.children[idx]
+                        element_before_table = True
+                        break
+            except (ValueError, AttributeError):
+                pass
+
         if context.document_state in (
             DocumentState.IN_TABLE,
             DocumentState.IN_TABLE_BODY,
@@ -204,6 +222,27 @@ def reconstruct_active_formatting_elements(parser, context):
                     inside_table_subtree = True
                     break
                 cur_parent = cur_parent.parent
+
+            # Skip reconstruction inside table cells if element is foster-parented before that table
+            # Also skip inside table structure elements (tbody, thead, tfoot, tr) to prevent
+            # incorrectly placing formatting elements inside table structure
+            in_table_cell = False
+            in_table_structure = False
+            check = context.current_parent
+            while check and check is not table_node:
+                if check.tag_name in ('td', 'th'):
+                    in_table_cell = True
+                    break
+                if check.tag_name in ('tbody', 'thead', 'tfoot', 'tr'):
+                    in_table_structure = True
+                check = check.parent
+
+            # Skip if element is before table and we're inside table structure or cells
+            if (in_table_cell or in_table_structure) and inside_table_subtree and element_before_table and table_node is table_sibling:
+                if parser.env_debug:
+                    parser.debug(f"Skipping reconstruction of {clone.tag_name} (foster-parented before table) inside table structure")
+                continue
+
             if (
                 table_node
                 and not inside_table_subtree
@@ -237,13 +276,14 @@ def reconstruct_active_formatting_elements(parser, context):
             parser.debug(f"Reconstructed formatting element {clone.tag_name}")
 
 
-def reconstruct_if_needed(parser, context, *, force=False):
+def reconstruct_if_needed(parser, context, *, force=False, allow_foster=False):
     """Central reconstruction guard.
 
     Conditions (when not forced):
       * There exists an active formatting entry whose element is not on the open stack (ignoring markers & <nobr> per spec nuance).
       * Not inside template content boundary (template content handled separately).
       * If in a table insertion mode, only reconstruct when current insertion point is inside a cell ('td'/'th') or caption.
+        Exception: allow_foster=True permits reconstruction when foster parenting (text inserted before table).
     force=True bypasses checks (used for post-adoption pending reconstruction to match previous behavior).
     Returns True if reconstruction executed.
     """
@@ -257,14 +297,14 @@ def reconstruct_if_needed(parser, context, *, force=False):
     # Template content skip
     if context.in_template_content > 0:
         return False
-    # Table mode cell/caption restriction
+    # Table mode cell/caption restriction (unless foster parenting)
     if context.document_state in (
         DocumentState.IN_TABLE,
         DocumentState.IN_TABLE_BODY,
         DocumentState.IN_ROW,
     ):
         in_cell_or_caption = bool(context.current_parent.find_table_cell_ancestor())
-        if not in_cell_or_caption:
+        if not in_cell_or_caption and not allow_foster:
             return False
     open_stack = context.open_elements
     for entry in afe:

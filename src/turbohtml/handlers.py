@@ -3251,12 +3251,39 @@ class TableTagHandler(TagHandler):
         return True
 
     def _handle_tr(self, token, context):
-        """Handle tr element."""
+        """Handle tr element per HTML5 spec 13.2.6.4.7 and 13.2.6.4.9.
+
+        Spec for "in table" mode (13.2.6.4.7):
+        1. Clear the stack back to a table context
+        2. Insert tbody element
+        3. Switch to "in table body" mode
+        4. Reprocess tr token
+
+        Spec for "in table body" mode (13.2.6.4.9):
+        1. Clear the stack back to a table body context
+        2. Insert an HTML element for the token
+        3. Switch to "in row" mode
+        """
         # In tbody/thead/tfoot fragment context, insertion point is already correct
         if context.current_parent.tag_name in {"tbody", "thead", "tfoot"}:
             self.parser.insert_element(token, context, mode="normal", enter=True)
             return True
 
+        # In "in table" mode: clear stack back to table context before creating tbody
+        # Per spec 13.2.6.4.7: removes foster-parented formatting elements from stack
+        table_context_tags = {"html", "body", "table"}
+        while context.open_elements:
+            current_tag = context.open_elements[-1].tag_name
+            if current_tag in table_context_tags:
+                break
+            popped = context.open_elements.pop()
+            self.debug(f"Clearing stack to table context: popped <{popped.tag_name}>")
+
+        # Update current_parent to top of stack after clearing
+        if context.open_elements:
+            context.move_to_element(context.open_elements[-1])
+
+        # Create tbody and insert tr into it
         tbody = self._find_or_create_tbody(context)
         self.parser.insert_element(token, context, mode="normal", enter=True, parent=tbody)
         return True
@@ -3402,6 +3429,52 @@ class TableTagHandler(TagHandler):
 
         return True
 
+    def _reconstruct_foster_parented_elements(self, context, table, foster_parent, table_index):
+        """Reconstruct only AFE elements that are foster-parented (positioned before table).
+
+        When foster parenting text, we want to reconstruct formatting elements that were
+        foster-parented earlier (e.g., <i>, <b> before the table), but NOT elements that
+        were created inside table cells (e.g., <a> inside <td>).
+        """
+        afe = context.active_formatting_elements
+        if not afe or afe.is_empty():
+            return
+
+        for entry in list(afe):
+            if entry.element is None:
+                continue
+            # Skip if element is still on the open stack
+            if context.open_elements.contains(entry.element):
+                continue
+
+            # Check if element is positioned before the table (foster-parented)
+            # Walk up from element to foster_parent to find the top-level ancestor
+            element_before_table = False
+            top_ancestor = entry.element
+            while top_ancestor and top_ancestor.parent and top_ancestor.parent is not foster_parent:
+                top_ancestor = top_ancestor.parent
+
+            if top_ancestor and top_ancestor.parent is foster_parent:
+                try:
+                    elem_idx = foster_parent.children.index(top_ancestor)
+                    if elem_idx < table_index:
+                        element_before_table = True
+                except ValueError:
+                    pass
+
+            # Only reconstruct elements that are foster-parented before the table
+            if element_before_table:
+                # Element is in AFE and positioned before table, but not on open stack
+                # Create a new clone for reconstruction (don't reuse closed element)
+                clone = Node(entry.element.tag_name, entry.element.attributes.copy())
+                foster_parent.insert_before(clone, table)
+                
+                # Push clone onto open stack and enter it
+                context.open_elements.push(clone)
+                context.enter_element(clone)
+                
+                # Update AFE to point to the clone
+                entry.element = clone
     def handle_text(self, text, context):
         """Handle text in table context per HTML5 spec 13.2.6.4.9 (foster parenting)."""
         self.debug(f"handling text '{text}' in {context}")
@@ -3438,6 +3511,28 @@ class TableTagHandler(TagHandler):
 
         foster_parent = table.parent
         table_index = foster_parent.children.index(table)
+
+        # Reconstruct only foster-parented formatting elements (those positioned before table)
+        # This ensures text goes into reconstructed <i>, <b>, etc. but excludes elements
+        # created inside table cells that shouldn't be reconstructed when foster parenting
+        self._reconstruct_foster_parented_elements(context, table, foster_parent, table_index)
+
+        # After reconstruction, recalculate table_index as reconstruction may have inserted elements
+        table_index = foster_parent.children.index(table)
+
+        # After reconstruction, current_parent might have changed to a reconstructed element
+        # If current_parent is now a foster-parented element before the table, insert text there
+        if (context.current_parent.parent is foster_parent and
+            context.current_parent in foster_parent.children):
+            try:
+                curr_idx = foster_parent.children.index(context.current_parent)
+                if curr_idx < table_index:
+                    # Current parent is before table, insert text there
+                    self.parser.insert_text(text, context, parent=context.current_parent, merge=True)
+                    return True
+            except ValueError:
+                pass
+                pass
 
         # Check for direct text append opportunities (avoid creating duplicate wrappers)
         if self._try_append_to_existing_formatting(text, context, foster_parent, table_index):
@@ -3594,7 +3689,12 @@ class TableTagHandler(TagHandler):
         return filtered
 
     def _handle_anchor_resume(self, context, foster_parent, table_index, formatting_elements):
-        """Handle anchor resume element for continuation."""
+        """Handle anchor resume element for continuation.
+
+        Prevents duplicate AFE entries by reusing existing entry when resuming an anchor
+        across table boundaries. This maintains Noah's Ark intent and prevents
+        double-reconstruction of the same anchor element.
+        """
         resume_anchor = context.anchor_resume_element
         if not resume_anchor or resume_anchor.parent is not foster_parent:
             return None
@@ -3603,6 +3703,13 @@ class TableTagHandler(TagHandler):
             formatting_elements.remove(resume_anchor)
             context.anchor_resume_element = resume_anchor
             return resume_anchor
+
+        # Check if AFE already has an entry for this anchor tag+attributes
+        # If so, update that entry instead of creating a duplicate
+        existing_afe_entry = context.active_formatting_elements.find(
+            resume_anchor.tag_name,
+            resume_anchor.attributes
+        )
 
         anchor_token = HTMLToken(
             "StartTag",
@@ -3613,7 +3720,14 @@ class TableTagHandler(TagHandler):
             anchor_token, context, mode="normal", enter=False,
             parent=foster_parent, before=foster_parent.children[table_index], push_override=False
         )
-        context.active_formatting_elements.push(reused_wrapper, anchor_token)
+
+        # Only push new AFE entry if one doesn't already exist for this tag+attributes
+        # Otherwise update existing entry to point to new wrapper (prevents duplicates)
+        if not existing_afe_entry:
+            context.active_formatting_elements.push(reused_wrapper, anchor_token)
+        else:
+            existing_afe_entry.element = reused_wrapper
+
         context.anchor_resume_element = reused_wrapper
         return reused_wrapper
 
@@ -3766,49 +3880,7 @@ class TableTagHandler(TagHandler):
             if popped is table_node:
                 break
 
-        def _unwrap_stray_formatting(parent):
-            table_allowed = {
-                "tbody": {"tr"},
-                "thead": {"tr"},
-                "tfoot": {"tr"},
-                "tr": {"td", "th"},
-            }
-            for child in list(parent.children):
-                _unwrap_stray_formatting(child)
-            allowed = table_allowed.get(parent.tag_name)
-            if allowed is None:
-                return
-            for child in list(parent.children):
-                if child.tag_name in table_allowed:
-                    continue
-                if child.tag_name in FORMATTING_ELEMENTS:
-                    if context.open_elements.contains(child):
-                        continue
-                    entry = context.active_formatting_elements.find_element(child)
-                    if entry is not None:
-                        continue
-                    insert_at = parent.children.index(child)
-                    for grand in list(child.children):
-                        child.remove_child(grand)
-                        parent.insert_child_at(insert_at, grand)
-                        insert_at += 1
-                    parent.remove_child(child)
-                    self.debug(
-                        f"Unwrapped stray formatting <{child.tag_name}> from <{parent.tag_name}>",
-                    )
-            for child in list(parent.children):
-                if child.tag_name in FORMATTING_ELEMENTS and not child.children:
-                    if context.open_elements.contains(child):
-                        continue
-                    entry = context.active_formatting_elements.find_element(child)
-                    if entry is not None:
-                        context.active_formatting_elements.remove_entry(entry)
-                    parent.remove_child(child)
-                    self.debug(
-                        f"Removed empty formatting residue <{child.tag_name}> from {parent.tag_name}",
-                    )
-
-        _unwrap_stray_formatting(table_node)
+        # Clean up AFE entries that are inside the table (they should not leak outside)
         if context.active_formatting_elements:
             for entry in list(context.active_formatting_elements):
                 el = entry.element
