@@ -3039,110 +3039,58 @@ class TableTagHandler(TagHandler):
         # Skip template content (TemplateAware behavior)
         if context.in_template_content > 0:
             return False
+            
+        # Cache expensive lookups once at the start
+        current_parent = context.current_parent
+        in_integration_point = is_in_integration_point(context)
+        current_table = find_current_table(context)
+        fragment_ctx = self.parser.fragment_context
+        
         # Orphan section suppression: ignore thead/tbody/tfoot inside SVG integration point with no table
         if (
             tag_name in ("thead", "tbody", "tfoot")
-            and context.current_parent
-            and context.current_parent.namespace == "svg" and context.current_parent.tag_name in ("title", "desc", "foreignObject")
-            and not find_current_table(context)
+            and current_parent.namespace == "svg" 
+            and current_parent.tag_name in ("title", "desc", "foreignObject")
+            and not current_table
         ):
             return True
 
-        # Prelude suppression (caption/col/colgroup/thead/tbody/tfoot) outside any table (also in integration points)
-        in_integration_point_for_prelude = is_in_integration_point(context)
+        # Prelude suppression (caption/col/colgroup/thead/tbody/tfoot) outside any table
         if (
             tag_name in ("caption", "col", "colgroup", "thead", "tbody", "tfoot")
-            and not (
-                self.parser.fragment_context
-                and self.parser.fragment_context.matches("colgroup")
-            )
-            and (context.current_context not in ("math", "svg") or in_integration_point_for_prelude)
-            and not context.in_template_content > 0
-            and not find_current_table(context)
-            and context.current_parent.tag_name not in ("table", "caption")
+            and not (fragment_ctx and fragment_ctx.matches("colgroup"))
+            and (context.current_context not in ("math", "svg") or in_integration_point)
+            and not current_table
+            and current_parent.tag_name not in ("table", "caption")
         ):
             return True
 
-        # Stray <tr> recovery (also applies inside integration points where HTML rules apply)
-        in_integration_point = is_in_integration_point(context)
-        if tag_name == "tr" and (
-            not find_current_table(context)
-            and context.current_parent.tag_name not in ("table", "caption")
+        # Stray <tr> recovery
+        if (
+            tag_name == "tr" 
+            and not current_table
+            and current_parent.tag_name not in ("table", "caption")
             and (context.current_context not in ("math", "svg") or in_integration_point)
-            and not context.in_template_content > 0
-            and not context.current_parent.find_ancestor("select")
+            and not current_parent.find_ancestor("select")
         ):
             return True
 
         # Always handle col/colgroup here
         if tag_name in ("col", "colgroup"):
-            return not (
-                self.parser.fragment_context and self.parser.fragment_context.matches("colgroup")
-            )
+            return not (fragment_ctx and fragment_ctx.matches("colgroup"))
 
-        # Suppress most construction in fragment table-section contexts, but still handle <tr>
-        # so that rows inside section fragments are placed under the existing section/table
-        # rather than becoming fragment-root siblings (needed for anchor-before-table case, test 46).
-        if self.parser.fragment_context and self.parser.fragment_context.matches(("colgroup", "tbody", "thead", "tfoot")):
+        # Suppress most construction in fragment table-section contexts
+        if fragment_ctx and fragment_ctx.matches(("colgroup", "tbody", "thead", "tfoot")):
             return tag_name == "tr"
 
-        if context.current_context in ("math", "svg"):
-            in_integration_point = False
-            if context.current_context == "svg":
-                # Check if current parent itself is an SVG integration point
-                if context.current_parent.namespace == "svg" and context.current_parent.tag_name in {"foreignObject", "desc", "title"}:
-                    in_integration_point = True
-                # Also check ancestors
-                elif context.current_parent.find_svg_html_integration_point_ancestor() is not None:
-                    in_integration_point = True
-            elif context.current_context == "math":
-                annotation_ancestor = context.current_parent.find_math_annotation_xml_ancestor()
-                if annotation_ancestor:
-                    encoding = annotation_ancestor.attributes.get(
-                        "encoding", "",
-                    ).lower()
-                    if encoding in ("application/xhtml+xml", "text/html"):
-                        in_integration_point = True
+        # Foreign content: only handle if in integration point
+        if context.current_context in ("math", "svg") and not in_integration_point:
+            return False
 
-            if not in_integration_point:
-                return False
-            # Consume orphan section tags inside SVG integration point (no table open)
-            if (
-                context.current_context == "svg"
-                and tag_name in ("thead", "tbody", "tfoot")
-                and not find_current_table(context)
-            ):
-                return True
-
-        # Also check if we're in an integration point even without foreign context
-        # (context may have been cleared when entering integration point)
-        in_integration_point_without_context = False
-        if context.current_context is None:
-            # Check if current parent or ancestor is an integration point
-            probe = context.current_parent
-            while probe:
-                if ForeignTagHandler.is_integration_point(probe):
-                    in_integration_point_without_context = True
-                    break
-                # Stop at foreign roots
-                if (probe.namespace == "svg" and probe.tag_name == "svg") or (probe.namespace == "math" and probe.tag_name == "math"):
-                    break
-                probe = probe.parent
-
-        if tag_name in (
-            "table",
-            "thead",
-            "tbody",
-            "tfoot",
-            "tr",
-            "td",
-            "th",
-            "caption",
-        ):
-            # Handle in integration points or when not in foreign context
-            if in_integration_point_without_context:
-                return True
-            return not self.parser.foreign_handler.is_plain_svg_foreign(context)
+        # Handle table-related tags
+        if tag_name in ("table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption"):
+            return in_integration_point or not self.parser.foreign_handler.is_plain_svg_foreign(context)
+            
         return False
 
     def handle_start(
