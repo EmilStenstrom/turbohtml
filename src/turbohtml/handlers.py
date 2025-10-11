@@ -4872,14 +4872,7 @@ class RawtextTagHandler(TagHandler):
         if tag_name not in RAWTEXT_ELEMENTS:
             return False
 
-        # Special case: disallow textarea inside select
-        if tag_name == "textarea" and (
-            context.current_parent.tag_name == "select"
-            or context.current_parent.find_ancestor("select") is not None
-        ):
-            return False
-
-        # SelectAware behavior: skip if inside select (except script/style which are allowed)
+        # Skip if inside select (except script/style which are allowed)
         if tag_name not in ("script", "style") and context.current_parent.is_inside_tag("select"):
             return False
 
@@ -4900,115 +4893,6 @@ class RawtextTagHandler(TagHandler):
             return True
 
         self.debug(f"handling {tag_name}")
-
-        # Spec: In select insertion mode, <textarea> start tag is a parse error and ignored.
-        # Do not switch tokenizer state; leave as normal data so subsequent <option> is tokenized correctly.
-        if (
-            tag_name == "textarea"
-            and (
-                context.current_parent.tag_name == "select"
-                or context.current_parent.find_ancestor("select") is not None
-            )
-        ):
-            self.debug("Ignoring <textarea> inside <select> (no rawtext state)")
-            return True
-
-        # Table row alignment: if a <style> or <script> appears immediately after a <tr> start tag
-        # we must ensure it becomes a child of the row (tbody/tr) rather than a direct child of <table>.
-        # If current element is <table> but the most recently opened non-table element is a pending <tr>
-        # (TableTagHandler may have created tbody/tr without entering), relocate insertion point.
-        if tag_name in ("style", "script") and context.document_state in (
-            DocumentState.IN_TABLE,
-            DocumentState.IN_TABLE_BODY,
-            DocumentState.IN_ROW,
-        ):
-            # If current parent is <select>, do not perform table-based relocation; script/style allowed inside select.
-            if context.current_parent.tag_name == "select":
-                self.debug(
-                    "Inside <select>: skipping table relocation for rawtext element",
-                )
-            else:
-                # Preceding open <select> sibling before <table> case:
-                # If a <select> was foster-parented immediately before the <table> and remains open, subsequent rawtext
-                # tokens still belong inside that <select>. If current_parent is the table and its immediate previous
-                # sibling is an open <select>, move insertion into the select and bypass table relocation.
-                skip_table_reloc = False
-
-                table = find_current_table(context) if not skip_table_reloc else None
-                if table and not skip_table_reloc:
-                    in_template_content = False
-                    curp = context.current_parent
-                    while curp:
-                        if (
-                            curp.tag_name == "content"
-                            and curp.parent
-                            and curp.parent.tag_name == "template"
-                        ):
-                            in_template_content = True
-                            break
-                        curp = curp.parent
-                    # Detect whether table already has row/cell/caption descendants
-                    has_row_desc = False
-                    for ch in table.children:
-                        if ch.tag_name in (
-                            "tbody",
-                            "thead",
-                            "tfoot",
-                            "tr",
-                            "caption",
-                            "td",
-                            "th",
-                        ):
-                            has_row_desc = True
-                            break
-                    # If we are directly under table with NO row descendants yet, allow direct script/style child
-                    if context.current_parent is table and not has_row_desc:
-                        self.debug(
-                            f"Leaving <{tag_name}> as direct child of <table> (no row descendants yet)",
-                        )
-                    elif (
-                        in_template_content
-                        and context.current_parent is table
-                        and not has_row_desc
-                    ):
-                        self.debug(
-                            f"Template content: suppressing tbody/tr synthesis for <{tag_name}>",
-                        )
-                    else:
-                        # Determine candidate (do not force row creation when parent is a section like tbody—leave script there)
-                        candidate = None
-                        for el in reversed(context.open_elements):
-                            if el is table:
-                                break
-                            if el.tag_name in {"td", "th"}:
-                                candidate = el
-                                break
-                            if el.tag_name == "tr" and not candidate:
-                                candidate = el
-                            if el.tag_name == "caption" and not candidate:
-                                candidate = el
-                            if (
-                                el.tag_name in {"tbody", "thead", "tfoot"}
-                                and not candidate
-                            ):
-                                # Only descend into section if we already have a tr or cell; otherwise permit direct child
-                                candidate = el
-                        # Prefer current_parent if it is a td/th even if not on open elements stack (our implementation may not push cells)
-                        if context.current_parent.tag_name in {"td", "th"}:
-                            candidate = context.current_parent
-                        # If candidate is a section wrapper (tbody/thead/tfoot) keep script/style as direct child of that section
-                        if candidate and candidate is not context.current_parent:
-                            context.move_to_element(candidate)
-
-                # Determine if we already have an open cell/row/caption we should descend into
-                # Priority: td/th > tr > caption
-
-        # Inside caption: ensure we do not accidentally re-route style/script to head (keep within caption subtree)
-        if (
-            tag_name in ("style", "script")
-            and context.current_parent.tag_name == "caption"
-        ):
-            self.debug("Ensuring rawtext stays inside <caption>")
 
         # Per spec, certain rawtext elements (e.g. xmp) act like block elements that
         # implicitly close an open <p>. (Similar handling already exists for plaintext.)
