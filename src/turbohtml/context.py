@@ -38,9 +38,9 @@ class ParseContext:
         "_debug",
         "_document_state",
         "_ip_cache_node",
-        "_ip_in_svg_html",
         "_ip_in_mathml_html",
         "_ip_in_mathml_text",
+        "_ip_in_svg_html",
         "active_formatting_elements",
         "anchor_resume_element",
         "current_context",
@@ -245,7 +245,7 @@ def is_in_integration_point(context, check="any"):
 
     if check == "svg":
         return context._ip_in_svg_html
-    elif check == "mathml":
+    if check == "mathml":
         return context._ip_in_mathml_html or context._ip_in_mathml_text
-    else:  # "any"
-        return context._ip_in_svg_html or context._ip_in_mathml_html or context._ip_in_mathml_text
+    # "any"
+    return context._ip_in_svg_html or context._ip_in_mathml_html or context._ip_in_mathml_text

@@ -1,7 +1,6 @@
 import re
 
 from turbohtml import table_modes
-from turbohtml.context import is_in_integration_point
 from turbohtml.constants import (
     AUTO_CLOSING_TAGS,
     BLOCK_ELEMENTS,
@@ -13,7 +12,6 @@ from turbohtml.constants import (
     HTML_ELEMENTS,
     MATHML_CASE_SENSITIVE_ATTRIBUTES,
     MATHML_ELEMENTS,
-    MATHML_TEXT_INTEGRATION_POINTS,
     RAWTEXT_ELEMENTS,
     SPECIAL_CATEGORY_ELEMENTS,
     SVG_CASE_SENSITIVE_ATTRIBUTES,
@@ -22,7 +20,7 @@ from turbohtml.constants import (
     TABLE_ELEMENTS,
     VOID_ELEMENTS,
 )
-from turbohtml.context import ContentState, DocumentState
+from turbohtml.context import ContentState, DocumentState, is_in_integration_point
 from turbohtml.foster import foster_parent, needs_foster_parenting
 from turbohtml.node import Node
 from turbohtml.utils import (

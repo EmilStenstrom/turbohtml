@@ -20,7 +20,6 @@ from turbohtml.constants import (
     TABLE_SECTION_TAGS,
 )
 from turbohtml.context import DocumentState, is_in_integration_point
-from turbohtml.handlers import ForeignTagHandler
 from turbohtml.node import Node
 
 # Elements treated specially in table mode when deciding foster parenting.
