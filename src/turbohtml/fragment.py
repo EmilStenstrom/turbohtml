@@ -25,7 +25,6 @@ class FragmentSpec:
     __slots__ = (
         "ignored_start_tags",
         "name",
-        "post_pass_hooks",
         "pre_token_hooks",
         "suppression_predicates",
         "treat_all_as_text",
@@ -36,46 +35,19 @@ class FragmentSpec:
         name,
         ignored_start_tags=None,
         pre_token_hooks=None,
-        post_pass_hooks=None,
         suppression_predicates=None,
         treat_all_as_text=False,
     ):
         self.name = name
         self.ignored_start_tags = set(ignored_start_tags) if ignored_start_tags else set()
         self.pre_token_hooks = list(pre_token_hooks) if pre_token_hooks else []
-        self.post_pass_hooks = list(post_pass_hooks) if post_pass_hooks else []
         self.suppression_predicates = (
             list(suppression_predicates) if suppression_predicates else []
         )
         self.treat_all_as_text = treat_all_as_text
 
 
-def _html_finalize_post_pass(parser, context):
-    """Ensure <head>/<body> synthesis for html fragments (spec fragment parsing).
 
-    Moved from inline tail of parse_fragment into a post-pass hook for symmetry
-    with other fragment adjustments.
-    """
-    if not (parser.fragment_context and parser.fragment_context.matches("html")):
-        return
-    has_head = any(ch.tag_name == "head" for ch in parser.root.children)
-    has_frameset = any(ch.tag_name == "frameset" for ch in parser.root.children)
-    has_body = any(ch.tag_name == "body" for ch in parser.root.children)
-    if not has_head:
-        head = Node("head")
-        parser.root.children.insert(0, head)
-        head.parent = parser.root
-    if not has_frameset and not has_body:
-        body = Node("body")
-        # Insert body before any trailing comments (e.g., after </html>)
-        # Find last non-comment child position
-        insert_pos = len(parser.root.children)
-        for i in range(len(parser.root.children) - 1, -1, -1):
-            if parser.root.children[i].tag_name != "#comment":
-                insert_pos = i + 1
-                break
-        parser.root.children.insert(insert_pos, body)
-        body.parent = parser.root
 
 
 #############################
@@ -248,7 +220,6 @@ FRAGMENT_SPECS = {
     "html": FragmentSpec(
         name="html",
         suppression_predicates=[_supp_doctype, _supp_fragment_legacy_context],
-        post_pass_hooks=[_html_finalize_post_pass],
     ),
     "select": FragmentSpec(
         name="select",
@@ -416,21 +387,21 @@ def _ensure_head_only(root):  # frameset path only (no body synthesis)
         head = Node("head")
         root.children.insert(0, head)
         head.parent = root
+    # Remove body if it was created earlier (before frameset appeared)
+    body = next((c for c in root.children if c.tag_name == "body"), None)
+    if body:
+        root.children.remove(body)
+        body.parent = None
     return head
 
 
 def handle_comment(parser, context, token, fragment_context):
     if fragment_context and fragment_context.matches("html"):
         # If already at fragment root after </html>, stay there (comment becomes sibling of head/body)
+        # Comment after </html> goes directly to fragment root as sibling
         if context.current_parent.tag_name == "document-fragment":
             parser.handle_fragment_comment(token.data, context)
             return
-        # Otherwise ensure body exists and move to it for comment insertion
-        frameset_root = any(ch.tag_name == "frameset" for ch in parser.root.children)
-        if not frameset_root:
-            body = ensure_body(parser.root, context.document_state, parser.fragment_context)
-            if body:
-                context.move_to_element(body)
     parser.handle_fragment_comment(token.data, context)
 
 
@@ -593,7 +564,6 @@ def parse_fragment(parser, html):  # pragma: no cover
     suppression_preds = (
         spec.suppression_predicates if spec and spec.suppression_predicates else ()
     )
-    post_hooks = spec.post_pass_hooks if spec and spec.post_pass_hooks else ()
 
     for token in parser.tokenizer:
         parser.debug(f"_parse_fragment: {token}, context: {context}", indent=0)
@@ -621,11 +591,6 @@ def parse_fragment(parser, html):  # pragma: no cover
         if token.type == "Character":
             handle_character(parser, context, token, fragment_context)
             continue
-    if post_hooks:
-        for hook in post_hooks:
-            hook(parser, context)
-
-    # Synthetic stack pruning no-op (bootstrap disabled).
 
 
 def create_fragment_context(parser, html):
@@ -665,6 +630,17 @@ def create_fragment_context(parser, html):
     else:
         target_state = DocumentState.IN_BODY
     context.transition_to_state(target_state, parser.root)
+
+    # HTML fragment: ensure minimal structure exists
+    # Create both <head> and <body> upfront. If a <frameset> appears later,
+    # the handle_start_tag logic will remove the body before adding frameset.
+    if fc and fc.tag_name == "html" and not fc.namespace:
+        if not any(ch.tag_name == "head" for ch in parser.root.children):
+            head = Node("head")
+            parser.root.append_child(head)
+        if not any(ch.tag_name == "body" for ch in parser.root.children):
+            body = Node("body")
+            parser.root.append_child(body)
 
     # Plaintext fragment: set PLAINTEXT content state (tokenizer will be notified later in parse_fragment)
     if fc and fc.tag_name == "plaintext" and not fc.namespace:

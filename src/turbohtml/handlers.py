@@ -3601,14 +3601,8 @@ class TableTagHandler(TagHandler):
         """Handle tr element."""
         # Fragment-specific anchor relocation:
         cp_tag = context.current_parent.tag_name
-        # In tbody/thead/tfoot fragment context, document-fragment acts as implicit section
-        in_section_or_fragment_context = (
-            cp_tag in {"tbody", "thead", "tfoot"}
-            or (
-                and self.parser.fragment_context and self.parser.fragment_context.matches(("tbody", "thead", "tfoot"))
-            )
-        )
-        if in_section_or_fragment_context:
+        # In tbody/thead/tfoot fragment context, insertion point is already correct
+        if cp_tag in {"tbody", "thead", "tfoot"}:
             self.parser.insert_element(token, context, mode="normal", enter=True)
             return True
 
@@ -5663,7 +5657,7 @@ class ForeignTagHandler(TagHandler):
             if context.current_parent:
                 if self.parser.fragment_context:
                     # In fragment parsing, go to the fragment root
-                    context.move_to_element(target)
+                    context.move_to_element(self.parser.root)
                 else:
                     # In document parsing, ensure body exists and move there
                     body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)

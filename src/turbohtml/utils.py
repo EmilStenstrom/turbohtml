@@ -95,7 +95,12 @@ def ensure_body(root, document_state, fragment_context=None):
 
             if not body:
                 body = Node("body")
-                root.append_child(body)
+                # Insert body right after head to maintain proper document order
+                # even if comments or other nodes were added to root earlier
+                if head.next_sibling:
+                    root.insert_before(body, head.next_sibling)
+                else:
+                    root.append_child(body)
 
             return body
         return None
