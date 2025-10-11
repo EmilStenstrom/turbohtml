@@ -1210,8 +1210,8 @@ class TextHandler(TagHandler):
         # Fragment colgroup suppression
         frag = self.parser.fragment_context
         if (
-            frag == "colgroup"
-            and context.current_parent.tag_name == "document-fragment"
+            frag
+            and frag.matches("colgroup")
         ) and not text.isspace() and not any(
             ch.tag_name != "#text" for ch in context.current_parent.children
         ):
@@ -1669,7 +1669,8 @@ class FormattingTagHandler(TagHandler):
             # been inserted yet, relocate insertion target to the cell and position before the table.
             if (
                 tag_name == "a"
-                and self.parser.fragment_context in ("tr", "td", "th", "tbody", "thead", "tfoot")
+                and self.parser.fragment_context
+                and self.parser.fragment_context.matches(("tr", "td", "th", "tbody", "thead", "tfoot"))
             ):
                 table = find_current_table(context)
                 if table and table.parent and table.parent.tag_name in {"td", "th"}:
@@ -3116,7 +3117,10 @@ class TableTagHandler(TagHandler):
         ) if self.parser.foreign_handler else False
         if (
             tag_name in ("caption", "col", "colgroup", "thead", "tbody", "tfoot")
-            and self.parser.fragment_context != "colgroup"
+            and not (
+                self.parser.fragment_context
+                and self.parser.fragment_context.matches("colgroup")
+            )
             and (context.current_context not in ("math", "svg") or in_integration_point_for_prelude)
             and not in_template_content(context)
             and not find_current_table(context)
@@ -3140,12 +3144,14 @@ class TableTagHandler(TagHandler):
 
         # Always handle col/colgroup here
         if tag_name in ("col", "colgroup"):
-            return self.parser.fragment_context != "colgroup"
+            return not (
+                self.parser.fragment_context and self.parser.fragment_context.matches("colgroup")
+            )
 
         # Suppress most construction in fragment table-section contexts, but still handle <tr>
         # so that rows inside section fragments are placed under the existing section/table
         # rather than becoming fragment-root siblings (needed for anchor-before-table case, test 46).
-        if self.parser.fragment_context in ("colgroup", "tbody", "thead", "tfoot"):
+        if self.parser.fragment_context and self.parser.fragment_context.matches(("colgroup", "tbody", "thead", "tfoot")):
             return tag_name == "tr"
 
         if context.current_context in ("math", "svg"):
@@ -3236,7 +3242,7 @@ class TableTagHandler(TagHandler):
         # Prelude suppression (caption/col/colgroup/thead/tbody/tfoot) outside any table
         if (
             tag_name in ("caption", "col", "colgroup", "thead", "tbody", "tfoot")
-            and self.parser.fragment_context != "colgroup"
+            and not (self.parser.fragment_context and self.parser.fragment_context.matches("colgroup"))
             and context.current_context not in ("math", "svg")
             and not in_template_content(context)
             and not find_current_table(context)
@@ -3250,7 +3256,9 @@ class TableTagHandler(TagHandler):
             self.parser.foreign_handler.is_in_mathml_integration_point(context) or
             self.parser.foreign_handler.is_in_svg_integration_point(context)
         ) if self.parser.foreign_handler else False
-        if tag_name == "tr" and (
+        # Don't suppress tr in tbody/thead/tfoot fragment contexts (fragment root acts as implicit section)
+        in_section_fragment = self.parser.fragment_context and self.parser.fragment_context.matches(("tbody", "thead", "tfoot"))
+        if tag_name == "tr" and not in_section_fragment and (
             not find_current_table(context)
             and context.current_parent.tag_name not in ("table", "caption")
             and (context.current_context not in ("math", "svg") or in_integration_point_for_tr)
@@ -3265,10 +3273,7 @@ class TableTagHandler(TagHandler):
         # inside the first instead of producing sibling cells under the fragment root. This
         # manifested in the <td><table></table><td> fragment where the second cell was lost
         # after pruning because it had been inserted as a descendant of the first cell's table.
-        if (
-            self.parser.fragment_context == "tr"
-            and tag_name in {"td", "th"}
-        ):
+        if self.parser.fragment_context and self.parser.fragment_context.matches("tr") and tag_name in {"td", "th"}:
             stack = context.open_elements
             # Find deepest currently open cell element (works even if current_parent moved elsewhere)
             cell_index = stack.find_last_index(lambda el: el.tag_name in {"td", "th"})
@@ -3303,15 +3308,14 @@ class TableTagHandler(TagHandler):
             # Fragment row/section/cell contexts: do not synthesize an implicit <table> wrapper
             # when encountering table-structural start tags; the fragment root provides the
             # insertion point and expected output flattens without a surrogate table element.
-            frag_ctx = self.parser.fragment_context
-            if frag_ctx in ("tr", "td", "th", "thead", "tbody", "tfoot") and tag_name in (
-                "tr",
-                "td",
-                "th",
-                "thead",
-                "tbody",
-                "tfoot",
+            if (
+                self.parser.fragment_context and self.parser.fragment_context.matches(("tr", "td", "th", "thead", "tbody", "tfoot"))
+                and tag_name in ("tr", "td", "th", "thead", "tbody", "tfoot")
             ):
+                # Foster out of incompatible parents (e.g., <a>) to fragment root
+                if context.current_parent.tag_name not in ("tbody", "thead", "tfoot", "tr", "table"):
+                    context.move_to_element(self.parser.root)
+
                 inserted = self.parser.insert_element(token, context, mode="normal", enter=True)
                 if tag_name == "tr":
                     context.transition_to_state(DocumentState.IN_ROW, inserted)
@@ -3596,7 +3600,15 @@ class TableTagHandler(TagHandler):
     def _handle_tr(self, token, context):
         """Handle tr element."""
         # Fragment-specific anchor relocation:
-        if context.current_parent.tag_name in {"tbody", "thead", "tfoot"}:
+        cp_tag = context.current_parent.tag_name
+        # In tbody/thead/tfoot fragment context, document-fragment acts as implicit section
+        in_section_or_fragment_context = (
+            cp_tag in {"tbody", "thead", "tfoot"}
+            or (
+                and self.parser.fragment_context and self.parser.fragment_context.matches(("tbody", "thead", "tfoot"))
+            )
+        )
+        if in_section_or_fragment_context:
             self.parser.insert_element(token, context, mode="normal", enter=True)
             return True
 
@@ -3676,6 +3688,12 @@ class TableTagHandler(TagHandler):
         1. It's an ancestor of current_parent (still open on stack), OR
         2. It's a direct table child that comes AFTER any colgroups (not closed by colgroup)
         """
+        # Fragment context tbody/thead/tfoot: fragment root acts as implicit section
+        if (
+            self.parser.fragment_context and self.parser.fragment_context.matches(("tbody", "thead", "tfoot"))
+        ):
+            return context.current_parent
+
         tbody_ancestor = context.current_parent.find_ancestor("tbody")
         if tbody_ancestor:
             return tbody_ancestor
@@ -3703,6 +3721,11 @@ class TableTagHandler(TagHandler):
 
     def _find_or_create_tr(self, context):
         """Find existing tr or create new one in tbody."""
+        # Fragment context "tr": insert directly at fragment root (acts as implicit <tr>)
+        if (
+            self.parser.fragment_context and self.parser.fragment_context.matches("tr")
+        ):
+            return context.current_parent
         tr_ancestor = context.current_parent.find_ancestor("tr")
         if tr_ancestor:
             return tr_ancestor
@@ -5306,7 +5329,7 @@ class AutoClosingTagHandler(TagHandler):
                         found_integration_point = True
                         break
                     temp = temp.parent
-                
+
                 if found_integration_point:
                     self.debug(
                         f"Ignoring </{token.tag_name}> crossing integration point boundary (ancestor outside integration point)",
@@ -5555,13 +5578,14 @@ class ForeignTagHandler(TagHandler):
             return False
 
         # Special case: <figure> in MathML fragment contexts that imply integration points
-        # In fragment parsing, there's no actual element node, so we check fragment_context string
+        # In fragment parsing, there's no actual element node, so we check fragment_context
         if tag_name_lower == "figure" and context.current_context == "math":
+            fc = self.parser.fragment_context
             # Fragment contexts that behave like integration points for <figure>
-            if self.parser.fragment_context in ("math math", "math annotation-xml"):
+            if fc and fc.namespace == "math" and fc.tag_name in ("math", "annotation-xml"):
                 return False  # Don't break out, treat as <math figure>
             # MathML text integration point fragments (mi, mo, mn, ms, mtext) - not integration points for figure
-            if self.parser.fragment_context in ("math ms", "math mn", "math mo", "math mi", "math mtext"):
+            if fc and fc.namespace == "math" and fc.tag_name in ("ms", "mn", "mo", "mi", "mtext"):
                 pass  # Continue with breakout (figure breaks out of these)
 
         # Check if we're in an integration point where HTML is allowed (uses centralized helpers)
@@ -5639,9 +5663,7 @@ class ForeignTagHandler(TagHandler):
             if context.current_parent:
                 if self.parser.fragment_context:
                     # In fragment parsing, go to the fragment root
-                    target = context.current_parent.find_ancestor("document-fragment")
-                    if target:
-                        context.move_to_element(target)
+                    context.move_to_element(target)
                 else:
                     # In document parsing, ensure body exists and move there
                     body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
@@ -5660,9 +5682,8 @@ class ForeignTagHandler(TagHandler):
         """
         # Always intercept MathML leaf in fragment context to clear self-closing flag
         frag_ctx = self.parser.fragment_context
-        if frag_ctx and " " in frag_ctx:
-            root, leaf = frag_ctx.split(" ", 1)
-            if root == "math" and leaf in self._MATHML_LEAFS and tag_name == leaf:
+        if frag_ctx and frag_ctx.namespace:
+            if frag_ctx.namespace == "math" and frag_ctx.tag_name in self._MATHML_LEAFS and tag_name == frag_ctx.tag_name:
                 return True  # Will handle self-closing normalization in handle_start
 
         # Foreign context sanity: if context says we're in svg/math but the current insertion
@@ -5685,12 +5706,8 @@ class ForeignTagHandler(TagHandler):
                 cur = cur.parent
             if not inside:
                 frag_ctx = self.parser.fragment_context
-                if frag_ctx and frag_ctx.startswith(context.current_context):
-                    frag_root = (
-                        self.parser.root
-                        if self.parser.root.tag_name == "document-fragment"
-                        else None
-                    )
+                if frag_ctx and frag_ctx.namespace == context.current_context:
+                    frag_root = self.parser.root
                     if frag_root:
                         has_foreign_child = any(
                             (context.current_context == "svg" and ch.namespace == "svg") or
@@ -5706,11 +5723,8 @@ class ForeignTagHandler(TagHandler):
         # (removed the old restriction that prevented foreign content in select)
 
         # 1b. SVG integration point fragment contexts: delegate HTML elements before generic SVG handling.
-        if self.parser.fragment_context in (
-            "svg foreignObject",
-            "svg desc",
-            "svg title",
-        ):
+        fc = self.parser.fragment_context
+        if fc and fc.namespace == "svg" and fc.tag_name in ("foreignObject", "desc", "title"):
             tnl = tag_name.lower()
             table_related = {
                 "table",
@@ -5768,11 +5782,8 @@ class ForeignTagHandler(TagHandler):
             return True  # keep handling inside generic SVG subtree
 
         # 2b. Fragment contexts that ARE an SVG integration point (no actual element node exists yet)
-        if self.parser.fragment_context in (
-            "svg foreignObject",
-            "svg desc",
-            "svg title",
-        ):
+        fc = self.parser.fragment_context
+        if fc and fc.namespace == "svg" and fc.tag_name in ("foreignObject", "desc", "title"):
             return False
 
         # 3. Already inside MathML foreign content
@@ -5803,22 +5814,20 @@ class ForeignTagHandler(TagHandler):
         if tag_name in MATHML_ELEMENTS:
             # If this is a MathML leaf fragment context (math mi/mo/mn/ms/mtext), we want the leaf element itself
             # to be treated as HTML (unprefixed) so skip foreign handling.
-            if context.current_context is None and self.parser.fragment_context == f"math {tag_name}" and tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
+            fc = self.parser.fragment_context
+            if context.current_context is None and fc and fc.namespace == "math" and fc.tag_name == tag_name and tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
                 return False
             # Handle MathML elements when context is active
             if context.current_context is not None:
                 return True
-            # In MathML fragment contexts (e.g., "math ms"), handle MathML elements even after context cleared by HTML breakout
-            return bool(self.parser.fragment_context and self.parser.fragment_context.startswith("math "))
+            # In MathML fragment contexts, handle MathML elements even after context cleared by HTML breakout
+            return bool(fc and fc.namespace == "math")
 
-        # Fragment SVG fallback: if parsing an SVG fragment (fragment_context like 'svg svg') and
+        # Fragment SVG fallback: if parsing an SVG fragment and
         # we lost foreign context due to a prior HTML breakout, treat subsequent unknown (non-HTML)
         # tags as SVG so output remains <svg foo> rather than <foo>.
-        if (
-            self.parser.fragment_context
-            and self.parser.fragment_context.startswith("svg")
-            and context.current_context is None
-        ):
+        fc = self.parser.fragment_context
+        if fc and fc.namespace == "svg" and context.current_context is None:
             return True
 
         return False
@@ -5831,11 +5840,10 @@ class ForeignTagHandler(TagHandler):
 
         # Normalize self-closing MathML leaf in fragment context
         frag_ctx = self.parser.fragment_context
-        if frag_ctx and " " in frag_ctx:
-            root, leaf = frag_ctx.split(" ", 1)
-            if root == "math" and leaf in self._MATHML_LEAFS and tag_name == leaf:
+        if frag_ctx and frag_ctx.namespace:
+            if frag_ctx.namespace == "math" and frag_ctx.tag_name in self._MATHML_LEAFS and tag_name == frag_ctx.tag_name:
                 if token.is_self_closing:
-                    self.debug(f"Clearing self-closing for MathML leaf fragment root <{leaf}/> to enable text nesting")
+                    self.debug(f"Clearing self-closing for MathML leaf fragment root <{frag_ctx.tag_name}/> to enable text nesting")
                     token.is_self_closing = False
                 # Delegate to other handlers (don't create as foreign element)
                 return False
@@ -5873,11 +5881,8 @@ class ForeignTagHandler(TagHandler):
             )
             return True
 
-        if (
-            context.current_context is None
-            and self.parser.fragment_context
-            and self.parser.fragment_context.startswith("svg")
-        ):
+        fc = self.parser.fragment_context
+        if context.current_context is None and fc and fc.namespace == "svg":
             tnl = tag_name_lower
             open_html_ancestor = False
             cur = context.current_parent
@@ -6392,10 +6397,11 @@ class ForeignTagHandler(TagHandler):
                 body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
                 if body:
                     context.move_to_element(body)
-                if self.parser.fragment_context and prev_foreign in ("svg", "math"):
-                    if prev_foreign == "svg" and self.parser.fragment_context.startswith("svg"):
+                fc = self.parser.fragment_context
+                if fc and fc.namespace in ("svg", "math") and prev_foreign in ("svg", "math"):
+                    if prev_foreign == "svg" and fc.namespace == "svg":
                         context.current_context = "svg"
-                    elif prev_foreign == "math" and self.parser.fragment_context.startswith("math"):
+                    elif prev_foreign == "math" and fc.namespace == "math":
                         context.current_context = "math"
                 return False
 
@@ -7040,7 +7046,7 @@ class FramesetTagHandler(TagHandler):
         if tag_name == "frame":
             if (
                 context.current_parent.tag_name == "frameset"
-                or self.parser.fragment_context == "frameset"
+                or (self.parser.fragment_context and self.parser.fragment_context.matches("frameset"))
             ):
                 self.debug("Creating frame in frameset/fragment context")
                 self.parser.insert_element(

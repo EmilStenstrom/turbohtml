@@ -124,7 +124,7 @@ def fragment_table_insert(tag_name, token, context, parser):
 
     Returns True if handled (caller should return early).
     """
-    if parser.fragment_context != "table":
+    if not (parser.fragment_context and parser.fragment_context.matches("table")):
         return False
     if tag_name not in (
         "caption",
@@ -224,7 +224,7 @@ def fragment_table_section_insert(tag_name, token, context, parser):
 
     Replicates the inline logic from parser._handle_start_tag. Returns True if handled.
     """
-    if parser.fragment_context not in ("tbody", "thead", "tfoot"):
+    if not (parser.fragment_context and parser.fragment_context.matches(("tbody", "thead", "tfoot"))):
         return False
     if tag_name not in ("tr", "td", "th"):
         return False

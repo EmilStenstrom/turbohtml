@@ -58,10 +58,13 @@ def get_body(root):
 
 
 def has_root_frameset(root):
-    """Return True if <html> (when present) has a direct <frameset> child."""
+    """Return True if <html> (when present) has a direct <frameset> child, or in fragment mode if frameset is direct child of root."""
     if not root:
         return False
-    # Find html node first
+    # Fragment mode: check for frameset as direct child of document-fragment root
+    if root.tag_name == "document-fragment":
+        return any(ch.tag_name == "frameset" for ch in root.children)
+    # Document mode: find html node first
     html_node = None
     for child in root.children:
         if child.tag_name == "html":
@@ -76,7 +79,7 @@ def has_root_frameset(root):
 def ensure_body(root, document_state, fragment_context=None):
     """Return existing <body> or create one (unless frameset/fragment constraints block it)."""
     if fragment_context:
-        if fragment_context == "html":
+        if fragment_context.tag_name == "html" and not fragment_context.namespace:
             head = None
             body = None
 

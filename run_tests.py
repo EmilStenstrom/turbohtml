@@ -8,6 +8,7 @@ from io import StringIO
 from pathlib import Path
 
 from turbohtml import TurboHTML
+from turbohtml.parser import FragmentContext
 
 # Minimal Unix-friendly fix: if stdout is a pipe and the reader (e.g. `head`) closes early,
 # writes would raise BrokenPipeError at interpreter shutdown. Reset SIGPIPE so the process
@@ -157,7 +158,14 @@ class TestRunner:
             elif mode == "document":
                 document.append(line)
             elif mode == "document-fragment":
-                fragment_context = line.strip()
+                fragment_str = line.strip()
+                # Parse "namespace tagname" format (e.g., "svg path", "math annotation-xml")
+                # or plain tagname for HTML elements (e.g., "td", "table")
+                if " " in fragment_str:
+                    namespace, tag_name = fragment_str.split(" ", 1)
+                    fragment_context = FragmentContext(tag_name, namespace)
+                else:
+                    fragment_context = FragmentContext(fragment_str)
 
         if data or document:
             return TestCase(

@@ -45,6 +45,59 @@ except ImportError as err:
     ) from err
 
 
+class FragmentContext:
+    """Structured fragment context for fragment parsing."""
+    __slots__ = ["tag_name", "namespace"]
+
+    def __init__(self, tag_name, namespace=None):
+        self.tag_name = tag_name
+        self.namespace = namespace  # None for HTML, "svg" or "math" for foreign
+
+    def __repr__(self):
+        if self.namespace:
+            return f"FragmentContext({self.namespace}:{self.tag_name})"
+        return f"FragmentContext({self.tag_name})"
+
+    def __bool__(self):
+        return True
+
+    def __eq__(self, other):
+        # Prevent accidental string comparisons (old code pattern)
+        if isinstance(other, str):
+            msg = (
+                f"FragmentContext comparison with string '{other}' - "
+                f"use fragment_context.tag_name == '{other}' instead"
+            )
+            raise TypeError(msg)
+        if isinstance(other, FragmentContext):
+            return self.tag_name == other.tag_name and self.namespace == other.namespace
+        return False
+
+    def __hash__(self):
+        return hash((self.tag_name, self.namespace))
+
+    def matches(self, tag_names):
+        """Check if this is an HTML fragment context matching the given tag name(s).
+
+        Args:
+            tag_names: A single tag name string or iterable of tag name strings
+
+        Returns:
+            True if this is a non-namespaced (HTML) fragment with tag_name matching
+            one of the given tag names, False otherwise (including for None context
+            or foreign/namespaced fragments)
+
+        Examples:
+            fragment_context.matches("tr")
+            fragment_context.matches(("tr", "td", "th"))
+        """
+        if self.namespace:
+            return False
+        if isinstance(tag_names, str):
+            return self.tag_name == tag_names
+        return self.tag_name in tag_names
+
+
 class TurboHTML:
     """Main parser interface.
     Instantiation with an HTML string immediately parses into an in-memory tree
@@ -62,12 +115,19 @@ class TurboHTML:
         """Args:
         html: The HTML string to parse
         debug: Whether to enable debug prints
-        fragment_context: Context element for fragment parsing (e.g., 'td', 'tr').
+        fragment_context: Context element for fragment parsing. Can be:
+            - A string tag name (e.g., 'td', 'tr') for HTML elements
+            - A FragmentContext object (from test runner)
         handlers: Optional list of handler classes to use. If None, uses default set.
 
         """
         self.env_debug = debug
-        self.fragment_context = fragment_context
+
+        # Convert string fragment_context to FragmentContext object for internal use
+        if fragment_context and isinstance(fragment_context, str):
+            self.fragment_context = FragmentContext(fragment_context)
+        else:
+            self.fragment_context = fragment_context
 
         self._init_dom_structure()
         self.adoption_agency = AdoptionAgencyAlgorithm(self)
@@ -403,7 +463,9 @@ class TurboHTML:
         comment_node = Node("#comment", text_content=text)
         # html fragment AFTER_HTML - attach at fragment root (siblings with head/body) per expected tree
         if (
-            self.fragment_context == "html"
+            self.fragment_context
+            and self.fragment_context.tag_name == "html"
+            and not self.fragment_context.namespace
             and context.document_state == DocumentState.AFTER_HTML
         ):
             self.root.append_child(comment_node)
@@ -454,7 +516,12 @@ class TurboHTML:
 
             elif token.type == "EndTag":
                 # In template fragment context, ignore the context's own end tag
-                if self.fragment_context == "template" and token.tag_name == "template":
+                if (
+                    self.fragment_context
+                    and self.fragment_context.tag_name == "template"
+                    and not self.fragment_context.namespace
+                    and token.tag_name == "template"
+                ):
                     continue
                 self.handle_end_tag(token, context)
 

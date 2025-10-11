@@ -56,7 +56,7 @@ def _html_finalize_post_pass(parser, context):
     Moved from inline tail of parse_fragment into a post-pass hook for symmetry
     with other fragment adjustments.
     """
-    if parser.fragment_context != "html":
+    if not (parser.fragment_context and parser.fragment_context.matches("html")):
         return
     has_head = any(ch.tag_name == "head" for ch in parser.root.children)
     has_frameset = any(ch.tag_name == "frameset" for ch in parser.root.children)
@@ -67,7 +67,15 @@ def _html_finalize_post_pass(parser, context):
         head.parent = parser.root
     if not has_frameset and not has_body:
         body = Node("body")
-        parser.root.append_child(body)
+        # Insert body before any trailing comments (e.g., after </html>)
+        # Find last non-comment child position
+        insert_pos = len(parser.root.children)
+        for i in range(len(parser.root.children) - 1, -1, -1):
+            if parser.root.children[i].tag_name != "#comment":
+                insert_pos = i + 1
+                break
+        parser.root.children.insert(insert_pos, body)
+        body.parent = parser.root
 
 
 #############################
@@ -84,7 +92,7 @@ def _supp_colgroup_whitespace(parser, context, token, fragment_context):
     # Spec fragment parsing for <colgroup>: character tokens in the colgroup context are generally ignored
     # until proper child elements (<col>) appear. We suppress them unconditionally here to avoid creating
     # stray text nodes that would later be pruned by tree-construction rules.
-    if fragment_context != "colgroup":
+    if not (fragment_context and fragment_context.matches("colgroup")):
         return False
     if token.type != "Character":
         return False
@@ -113,9 +121,9 @@ def _supp_duplicate_section_wrapper(parser, context, token, fragment_context):
     """
     if token.type != "StartTag":
         return False
-    if fragment_context not in {"tbody", "thead", "tfoot", "tr", "td", "th"}:
+    if not (fragment_context and fragment_context.matches({"tbody", "thead", "tfoot", "tr", "td", "th"})):
         return False
-    if token.tag_name != fragment_context:
+    if not (fragment_context and fragment_context.tag_name == token.tag_name and not fragment_context.namespace):
         return False
     # Only suppress when still at the synthetic fragment root (no element parent yet)
     return bool(context.current_parent and context.current_parent.tag_name == "document-fragment")
@@ -133,7 +141,7 @@ def _supp_duplicate_cell_or_initial_row(parser, context, token, fragment_context
     if token.type != "StartTag":
         return False
     tn = token.tag_name
-    if fragment_context not in {"td", "th"}:
+    if not (fragment_context and fragment_context.matches({"td", "th"})):
         return False
     # Determine if at fragment root
     cp = context.current_parent
@@ -162,7 +170,7 @@ def _supp_fragment_nonhtml_structure(parser, context, token, fragment_context):
     if token.type != "StartTag":
         return False
     tn = token.tag_name
-    if fragment_context in {"html", "table", "tbody", "thead", "tfoot", "tr", "td", "th"}:
+    if fragment_context and fragment_context.matches({"html", "table", "tbody", "thead", "tfoot", "tr", "td", "th"}):
         return False
     if tn in {"html", "head", "frameset"}:
         return True
@@ -183,10 +191,10 @@ def _supp_fragment_legacy_context(parser, context, token, fragment_context):
         return False
     tn = token.tag_name
     # Table fragment: ignore nested <table>
-    if fragment_context == "table" and tn == "table":
+    if fragment_context and fragment_context.matches("table") and tn == "table":
         return True
     # Additional frameset restrictions (html fragment only)
-    if fragment_context == "html" and context.document_state in (DocumentState.IN_FRAMESET, DocumentState.AFTER_FRAMESET):
+    if fragment_context and fragment_context.matches("html") and context.document_state in (DocumentState.IN_FRAMESET, DocumentState.AFTER_FRAMESET):
         return tn not in {"frameset", "frame", "noframes"}
     return False
 
@@ -213,7 +221,7 @@ def _fragment_colgroup_col_handler(parser, context, token, fragment_context):
 
     Returns True if token was handled and should be suppressed.
     """
-    if fragment_context != "colgroup":
+    if not (fragment_context and fragment_context.matches("colgroup")):
         return False
     if token.type != "StartTag":
         return False
@@ -412,7 +420,12 @@ def _ensure_head_only(root):  # frameset path only (no body synthesis)
 
 
 def handle_comment(parser, context, token, fragment_context):
-    if fragment_context == "html":
+    if fragment_context and fragment_context.matches("html"):
+        # If already at fragment root after </html>, stay there (comment becomes sibling of head/body)
+        if context.current_parent.tag_name == "document-fragment":
+            parser.handle_fragment_comment(token.data, context)
+            return
+        # Otherwise ensure body exists and move to it for comment insertion
         frameset_root = any(ch.tag_name == "frameset" for ch in parser.root.children)
         if not frameset_root:
             body = ensure_body(parser.root, context.document_state, parser.fragment_context)
@@ -429,7 +442,7 @@ def handle_start_tag(parser, context, token, fragment_context, spec):
     # requirement here to avoid attribute errors in early_start_preprocess hooks during fragment parsing.
     if parser.html_node is None:
         parser.ensure_html_node()
-    if fragment_context == "html":
+    if fragment_context and fragment_context.matches("html"):
         tn = token.tag_name
         if tn == "head":
             # Ensure head/body exist (acceptable parity with previous behavior)
@@ -472,14 +485,24 @@ def handle_start_tag(parser, context, token, fragment_context, spec):
             if not has_body:
                 parser.debug("Fragment(fallback): suppressing initial <body>")
                 return
-        if tn in {"caption", "colgroup", "tbody", "thead", "tfoot", "tr", "td", "th"}:
+        # Only suppress table elements in HTML mode, not in foreign content (MathML/SVG)
+        if (
+            tn in {"caption", "colgroup", "tbody", "thead", "tfoot", "tr", "td", "th"}
+            and context.current_context not in ("math", "svg")
+        ):
             parser.debug(f"Fragment(fallback): suppressing stray table structure <{tn}>")
             return
     parser.handle_start_tag(token, context)
 
 
 def handle_end_tag(parser, context, token, fragment_context):
-    if fragment_context == "template" and token.tag_name == "template":
+    # In template fragment, ignore the context element's own end tag
+    if fragment_context and fragment_context.matches("template") and token.tag_name == "template":
+        return
+    # In any fragment context, ignore end tags that match the fragment context element
+    # (can't close the implicit context element)
+    if fragment_context and fragment_context.matches(token.tag_name):
+        parser.debug(f"Fragment: ignoring </{ token.tag_name}> matching context")
         return
     parser.handle_end_tag(token, context)
 
@@ -500,7 +523,7 @@ def handle_character(parser, context, token, fragment_context):
         return
     if not data:
         return
-    if fragment_context == "html":
+    if fragment_context and fragment_context.matches("html"):
         frameset_root = any(ch.tag_name == "frameset" for ch in parser.root.children)
         if not frameset_root:
             body = ensure_body(parser.root, context.document_state, parser.fragment_context)
@@ -521,7 +544,9 @@ def parse_fragment(parser, html):  # pragma: no cover
     parser.debug(f"Parsing fragment in context: {fragment_context}")
     # Use externalized helper (parser retains wrapper for compatibility)
     context = create_fragment_context(parser, html)
-    spec = FRAGMENT_SPECS.get(fragment_context)
+    # Get FragmentSpec - fragment_context is now a structured object, use tag_name for HTML fragments
+    spec_key = fragment_context.tag_name if (fragment_context and not fragment_context.namespace) else None
+    spec = FRAGMENT_SPECS.get(spec_key) if spec_key else None
 
     # For RAWTEXT contexts (textarea, style, title, etc.), treat entire content as plain text
     if spec and spec.treat_all_as_text:
@@ -544,11 +569,20 @@ def parse_fragment(parser, html):  # pragma: no cover
     else:
         parser.tokenizer = HTMLTokenizer(html)
 
+    # Plaintext fragment: notify tokenizer to enter PLAINTEXT mode
+    if (
+        fragment_context
+        and fragment_context.tag_name == "plaintext"
+        and not fragment_context.namespace
+        and hasattr(parser.tokenizer, 'start_plaintext')
+    ):
+        parser.tokenizer.start_plaintext()
+
     # Some handlers assume parser.html_node exists (mirrors document parsing path). For non-html
     # fragments we still synthesize it lazily ONLY if required; create a minimal <html> so that
     # attribute propagation logic in early_start_preprocess doesn't hit None. This does not affect
     # fragment output because html_node is not attached to parser.root children for non-html contexts.
-    if fragment_context != "html" and parser.html_node is None:
+    if not (fragment_context and fragment_context.matches("html")) and parser.html_node is None:
         html_node = Node("html")
         parser.html_node = html_node
     # NOTE: Implied section or row alignment now handled via pre-token hooks and normal insertion
@@ -604,7 +638,7 @@ def create_fragment_context(parser, html):
     fc = parser.fragment_context
     context = ParseContext(parser.root, debug_callback=parser.debug)
 
-    if fc == "template":
+    if fc and fc.tag_name == "template" and not fc.namespace:
         # Special template: synthesize template/content container then treat as IN_BODY inside content.
         context.transition_to_state(DocumentState.IN_BODY, parser.root)
         template_node = Node("template")
@@ -624,38 +658,41 @@ def create_fragment_context(parser, html):
         "tfoot": DocumentState.IN_TABLE_BODY,
         "html": DocumentState.INITIAL,
     }
-    if fc in state_map:
-        target_state = state_map[fc]
-    elif fc in RAWTEXT_ELEMENTS:
+    if fc and fc.tag_name in state_map and not fc.namespace:
+        target_state = state_map[fc.tag_name]
+    elif fc and fc.tag_name in RAWTEXT_ELEMENTS and not fc.namespace:
         target_state = DocumentState.IN_BODY
     else:
         target_state = DocumentState.IN_BODY
     context.transition_to_state(target_state, parser.root)
 
+    # Plaintext fragment: set PLAINTEXT content state (tokenizer will be notified later in parse_fragment)
+    if fc and fc.tag_name == "plaintext" and not fc.namespace:
+        context.content_state = ContentState.PLAINTEXT
+
     # Table fragment: adjust to IN_TABLE for section handling
-    if fc == "table":
+    if fc and fc.tag_name == "table" and not fc.namespace:
         context.transition_to_state(DocumentState.IN_TABLE, parser.root)
 
     # Foreign context detection (math/svg + namespaced)
     # BUT: Don't set foreign context for integration points where HTML rules apply
-    if fc:
+    if fc and fc.namespace:
         # Check if fragment context is an integration point
-        is_svg_integration_point = fc in ("svg foreignObject", "svg desc", "svg title")
+        is_svg_integration_point = (
+            fc.namespace == "svg" and fc.tag_name in ("foreignObject", "desc", "title")
+        )
         # Note: annotation-xml is only an integration point with encoding="text/html" or
         # "application/xhtml+xml". In fragment parsing without attributes, it's NOT an integration point.
         is_math_integration_point = False
 
         # MathML text integration points (mi, mo, mn, ms, mtext) use HTML parsing
-        is_math_text_integration_point = fc in ("math mi", "math mo", "math mn", "math ms", "math mtext")
+        is_math_text_integration_point = (
+            fc.namespace == "math" and fc.tag_name in ("mi", "mo", "mn", "ms", "mtext")
+        )
 
         if not is_svg_integration_point and not is_math_integration_point and not is_math_text_integration_point:
-            if fc in ("math", "svg"):
-                context.current_context = fc
-                parser.debug(f"Set foreign context to {fc}")
-            elif " " in fc:  # namespaced
-                namespace_elem = fc.split(" ")[0]
-                if namespace_elem in ("math", "svg"):
-                    context.current_context = namespace_elem
-                    parser.debug(f"Set foreign context to {namespace_elem}")
+            if fc.namespace in ("math", "svg"):
+                context.current_context = fc.namespace
+                parser.debug(f"Set foreign context to {fc.namespace}")
 
     return context
