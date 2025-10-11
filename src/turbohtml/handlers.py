@@ -3041,25 +3041,18 @@ class TableTagHandler(TagHandler):
             return False
 
         # Cache expensive lookups once at the start
-        current_parent = context.current_parent
         in_integration_point = is_in_integration_point(context)
-        current_table = find_current_table(context)
-        fragment_ctx = self.parser.fragment_context
 
         # Prelude suppression (caption/col/colgroup/thead/tbody/tfoot) outside any table
-        if (
-            (in_integration_point or context.current_context not in ("math", "svg"))
-            and tag_name in ("caption", "col", "colgroup", "thead", "tbody", "tfoot")
-        ):
-            return True
+        in_foreign = context.current_context in ("math", "svg")
 
-        # Foreign content: only handle if in integration point
-        if context.current_context in ("math", "svg") and not in_integration_point:
-            return False
+        if tag_name in {"caption", "col", "colgroup", "thead", "tbody", "tfoot"}:
+            return not in_foreign or in_integration_point
 
-        # Handle table-related tags
-        if tag_name in ("table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption"):
-            return in_integration_point or not is_in_integration_point(context, check="svg")
+        if tag_name in {"table", "tr", "td", "th"}:
+            if in_foreign and not in_integration_point:
+                return False
+            return in_integration_point or not self.parser.foreign_handler.is_plain_svg_foreign(context)
 
         return False
 
@@ -3079,15 +3072,6 @@ class TableTagHandler(TagHandler):
             if not current_table and context.current_parent.tag_name not in ("table", "caption"):
                 self.debug(f"Ignoring <{tag_name}> inside integration point with no table context")
                 return True
-
-        # Orphan section suppression: ignore thead/tbody/tfoot inside SVG integration point with no table
-        if (
-            tag_name in ("thead", "tbody", "tfoot")
-            and ForeignTagHandler.is_integration_point(context.current_parent)
-            and not current_table
-        ):
-            self.debug(f"Ignoring HTML table section <{tag_name}> inside SVG integration point with no open table")
-            return True
 
         # Prelude suppression (caption/col/colgroup/thead/tbody/tfoot) outside any table
         if (
