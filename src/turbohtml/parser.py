@@ -208,7 +208,7 @@ class TurboHTML:
 
     def _build_dispatch_tables(self):
         """Pre-filter handlers and build fast-path dispatch tables.
-        
+
         This eliminates calling should_handle_* on handlers that use the base class
         implementation, and provides direct tag→handler lookups where possible.
         """
@@ -217,7 +217,7 @@ class TurboHTML:
             HEAD_ELEMENTS, FORMATTING_ELEMENTS, HEADING_ELEMENTS,
             VOID_ELEMENTS, RAWTEXT_ELEMENTS, TABLE_ELEMENTS
         )
-        
+
         base_should_handle_start = TagHandler.should_handle_start
         base_should_handle_end = TagHandler.should_handle_end
         base_should_handle_text = TagHandler.should_handle_text
@@ -235,12 +235,12 @@ class TurboHTML:
             h for h in self.tag_handlers
             if h.should_handle_text.__func__ is not base_should_handle_text
         ]
-        
+
         # Build fast-path dispatch: tag_name → [handlers] for tags with known handlers
         # This allows skipping should_handle_* for common tags
         self._tag_to_handlers_start = {}
         self._tag_to_handlers_end = {}
-        
+
         # Register handlers by tag name (handlers can register for multiple tags)
         # For now, just document the pattern - we'll populate this incrementally
         # TODO: HeadTagHandler → HEAD_ELEMENTS

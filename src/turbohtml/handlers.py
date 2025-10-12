@@ -3583,11 +3583,11 @@ class TableTagHandler(TagHandler):
                 # Create a new clone for reconstruction (don't reuse closed element)
                 clone = Node(entry.element.tag_name, entry.element.attributes.copy())
                 foster_parent.insert_before(clone, table)
-                
+
                 # Push clone onto open stack and enter it
                 context.open_elements.push(clone)
                 context.enter_element(clone)
-                
+
                 # Update AFE to point to the clone
                 entry.element = clone
     def handle_text(self, text, context):
@@ -7008,19 +7008,19 @@ class DoctypeHandler(TagHandler):
         self.parser.root.append_child(doctype_node)
         context.doctype_seen = True
         return True
-    
+
     def _is_quirks_mode(self, doctype):
         """Determine if DOCTYPE triggers quirks mode.
-        
+
         Returns True for quirks mode (legacy DOCTYPEs), False for standards mode.
         HTML5 spec: standards mode is the default for modern DOCTYPEs.
         """
         doctype_lower = doctype.lower()
-        
+
         # HTML5 standard DOCTYPE = standards mode (not quirks)
         if doctype_lower == "html" or not doctype_lower:
             return False
-        
+
         # Legacy DOCTYPEs trigger quirks mode
         legacy_patterns = [
             "html 3.2",
@@ -7031,11 +7031,11 @@ class DoctypeHandler(TagHandler):
         ]
         if any(pattern in doctype_lower for pattern in legacy_patterns):
             return True
-        
+
         # XHTML strict = standards mode (not quirks)
         if "xhtml" in doctype_lower and "strict" in doctype_lower:
             return False
-        
+
         # Default for unknown DOCTYPEs: standards mode
         return False
 
