@@ -193,6 +193,9 @@ class TurboHTML:
             msg = "TextHandler not found in tag_handlers"
             raise RuntimeError(msg)
 
+        # Build optimized dispatch tables
+        self._build_dispatch_tables()
+
         # Sequential token counter for deduplication guards (replaces tokenizer position)
         self._token_counter = 0
 
@@ -202,6 +205,48 @@ class TurboHTML:
         # Post-parse processing
         for handler in self.tag_handlers:
             handler.postprocess(self)
+
+    def _build_dispatch_tables(self):
+        """Pre-filter handlers and build fast-path dispatch tables.
+        
+        This eliminates calling should_handle_* on handlers that use the base class
+        implementation, and provides direct tag→handler lookups where possible.
+        """
+        from .handlers import TagHandler
+        from .constants import (
+            HEAD_ELEMENTS, FORMATTING_ELEMENTS, HEADING_ELEMENTS,
+            VOID_ELEMENTS, RAWTEXT_ELEMENTS, TABLE_ELEMENTS
+        )
+        
+        base_should_handle_start = TagHandler.should_handle_start
+        base_should_handle_end = TagHandler.should_handle_end
+        base_should_handle_text = TagHandler.should_handle_text
+
+        # Only include handlers that actually override the base class methods
+        self._active_start_handlers = [
+            h for h in self.tag_handlers
+            if h.should_handle_start.__func__ is not base_should_handle_start
+        ]
+        self._active_end_handlers = [
+            h for h in self.tag_handlers
+            if h.should_handle_end.__func__ is not base_should_handle_end
+        ]
+        self._active_text_handlers = [
+            h for h in self.tag_handlers
+            if h.should_handle_text.__func__ is not base_should_handle_text
+        ]
+        
+        # Build fast-path dispatch: tag_name → [handlers] for tags with known handlers
+        # This allows skipping should_handle_* for common tags
+        self._tag_to_handlers_start = {}
+        self._tag_to_handlers_end = {}
+        
+        # Register handlers by tag name (handlers can register for multiple tags)
+        # For now, just document the pattern - we'll populate this incrementally
+        # TODO: HeadTagHandler → HEAD_ELEMENTS
+        # TODO: FormattingTagHandler → FORMATTING_ELEMENTS
+        # TODO: HeadingTagHandler → HEADING_ELEMENTS
+        # TODO: etc.
 
     def debug(self, *args, indent=4, **kwargs):
         # Early return before any string formatting - args aren't evaluated if debug is off
@@ -518,7 +563,8 @@ class TurboHTML:
             elif token.type == "Character":
                 data = token.data
                 if data:
-                    for handler in self.tag_handlers:
+                    # Use pre-filtered list of text handlers
+                    for handler in self._active_text_handlers:
                         if handler.should_handle_text(data, context):
                             if self._debug:
                                 self.debug(
@@ -554,8 +600,8 @@ class TurboHTML:
         if self.formatting_handler:
             self.formatting_handler.preprocess_start(token, context)
 
-        # Dispatch to first matching handler
-        for handler in self.tag_handlers:
+        # Dispatch to first matching handler (use pre-filtered list)
+        for handler in self._active_start_handlers:
             if handler.should_handle_start(tag_name, context) and handler.handle_start(token, context):
                 return
 
@@ -570,7 +616,7 @@ class TurboHTML:
         if self.frameset_handler and self.frameset_handler.preprocess_end(token, context):
             return
 
-        # Dispatch to first matching handler
-        for handler in self.tag_handlers:
+        # Dispatch to first matching handler (use pre-filtered list)
+        for handler in self._active_end_handlers:
             if handler.should_handle_end(tag_name, context) and handler.handle_end(token, context):
                 return
