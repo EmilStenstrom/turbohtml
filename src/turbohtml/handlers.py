@@ -1480,6 +1480,9 @@ class TextHandler(TagHandler):
 
 class FormattingTagHandler(TagHandler):
     """Handles formatting elements like <b>, <i>, etc. and their reconstruction."""
+    
+    HANDLED_TAGS = FORMATTING_ELEMENTS
+    HANDLED_END_TAGS = FORMATTING_ELEMENTS
 
     # Tags treated as block boundaries for deferred reconstruction logic
     _BLOCKISH = (
@@ -4210,6 +4213,7 @@ class ListTagHandler(TagHandler):
 
     # Fast-path: tags this handler processes
     HANDLED_TAGS = frozenset(["li", "dt", "dd"])
+    HANDLED_END_TAGS = frozenset(["ul", "ol", "li", "dl", "dt", "dd"])
 
     def should_handle_start(self, tag_name, context):
         # Early exit if not a list tag
@@ -4476,6 +4480,9 @@ class ListTagHandler(TagHandler):
 class HeadingTagHandler(SimpleElementHandler):
     """Handles h1-h6 heading elements."""
 
+    HANDLED_TAGS = HEADING_ELEMENTS
+    HANDLED_END_TAGS = HEADING_ELEMENTS
+
     def __init__(self, parser):
         super().__init__(parser, HEADING_ELEMENTS)
 
@@ -4550,6 +4557,9 @@ class HeadingTagHandler(SimpleElementHandler):
 
 class RawtextTagHandler(TagHandler):
     """Handles rawtext elements like script, style, title, etc."""
+    
+    HANDLED_TAGS = RAWTEXT_ELEMENTS
+    HANDLED_END_TAGS = RAWTEXT_ELEMENTS
 
     def should_handle_start(self, tag_name, context):
         # Fast path: check tag first
@@ -4693,6 +4703,9 @@ class RawtextTagHandler(TagHandler):
 
 class VoidTagHandler(TagHandler):
     """Handles void elements that can't have children."""
+    
+    HANDLED_TAGS = VOID_ELEMENTS
+    HANDLED_END_TAGS = frozenset(['br'])  # Only <br> has end tag handling
 
     def should_handle_start(self, tag_name, context):
         # Fast path: check tag first
@@ -7513,6 +7526,9 @@ class TableFosterHandler(TagHandler):
 
 class RubyTagHandler(TagHandler):
     """Handles ruby annotation elements & auto-closing."""
+    
+    HANDLED_TAGS = frozenset(["ruby", "rb", "rt", "rp", "rtc"])
+    HANDLED_END_TAGS = frozenset(["ruby", "rb", "rt", "rp", "rtc"])
 
     def should_handle_start(self, tag_name, context):
         return tag_name in ("ruby", "rb", "rt", "rp", "rtc")
