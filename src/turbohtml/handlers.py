@@ -4083,13 +4083,6 @@ class ListTagHandler(TagHandler):
     HANDLED_START_TAGS = frozenset(["li", "dt", "dd"])
     HANDLED_END_TAGS = frozenset(["ul", "ol", "li", "dl", "dt", "dd"])
 
-    def should_handle_start(self, tag_name, context):
-        # Early exit if not a list tag
-        if tag_name not in self.HANDLED_START_TAGS:
-            return False
-
-        return True
-
     def handle_start(
         self, token, context,
     ):
@@ -4428,21 +4421,6 @@ class RawtextTagHandler(TagHandler):
     HANDLED_START_TAGS = RAWTEXT_ELEMENTS
     HANDLED_END_TAGS = RAWTEXT_ELEMENTS
 
-    def should_handle_start(self, tag_name, context):
-        # Fast path: check tag first
-        if tag_name not in RAWTEXT_ELEMENTS:
-            return False
-
-        # Skip if inside select (except script/style which are allowed)
-        if tag_name not in ("script", "style") and context.in_select:
-            return False
-
-        # Suppress any start tags while in RAWTEXT content state
-        if context.content_state == ContentState.RAWTEXT:
-            return True  # Will suppress in handle_start
-
-        return True
-
     def handle_start(
         self, token, context,
     ):
@@ -4573,17 +4551,6 @@ class VoidTagHandler(TagHandler):
 
     HANDLED_START_TAGS = VOID_ELEMENTS
     HANDLED_END_TAGS = frozenset(["br"])  # Only <br> has end tag handling
-
-    def should_handle_start(self, tag_name, context):
-        # Fast path: check tag first
-        if tag_name not in VOID_ELEMENTS:
-            return False
-
-        # SelectAware behavior: skip if inside select
-        if context.in_select:
-            return False
-
-        return True
 
     def handle_start(
         self, token, context,
