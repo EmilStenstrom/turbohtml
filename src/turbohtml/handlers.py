@@ -2586,6 +2586,15 @@ class ParagraphTagHandler(TagHandler):
     HANDLED_START_TAGS = None  # Too complex - checks AUTO_CLOSING_TAGS["p"] + scope
     HANDLED_END_TAGS = frozenset(["p"])
 
+    def _has_p_in_scope(self, context):
+        """Check if <p> element is in button scope.
+        
+        Optimized: when not inside a button, button scope equals regular scope.
+        """
+        if not context.in_button:
+            return context.open_elements.has_element_in_scope("p")
+        return context.open_elements.has_element_in_button_scope("p")
+
     def should_handle_start(self, tag_name, context):
         if context.in_template_content > 0:
             return False
@@ -2597,7 +2606,7 @@ class ParagraphTagHandler(TagHandler):
         if tag_name in AUTO_CLOSING_TAGS["p"]:
             if is_in_integration_point(context):
                 return False
-            return context.open_elements.has_element_in_button_scope("p")
+            return self._has_p_in_scope(context)
 
         return False
 
@@ -2613,7 +2622,7 @@ class ParagraphTagHandler(TagHandler):
         if (
             token.tag_name != "p"
             and token.tag_name in AUTO_CLOSING_TAGS["p"]
-            and context.open_elements.has_element_in_button_scope("p")
+            and self._has_p_in_scope(context)
             and context.current_parent.tag_name != "p"
         ):
             # Pop elements until the innermost open <p> is removed
@@ -2644,7 +2653,7 @@ class ParagraphTagHandler(TagHandler):
         # paragraph insertion rule.
         if (
             token.tag_name == "p"
-            and context.open_elements.has_element_in_button_scope("p")
+            and self._has_p_in_scope(context)
             and context.current_parent.tag_name == "p"
         ):
             closing_p = context.current_parent
@@ -2750,7 +2759,7 @@ class ParagraphTagHandler(TagHandler):
                 else:
                     if self.parser._debug:
                         self.debug("Foster parenting paragraph out of table")
-                    if context.open_elements.has_element_in_button_scope("p"):
+                    if self._has_p_in_scope(context):
                         fake_end = HTMLToken("EndTag", tag_name="p")
                         self.handle_end(fake_end, context)
                     # Use centralized foster parenting with sibling nesting logic

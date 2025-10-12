@@ -110,6 +110,8 @@ class ParseContext:
         "quirks_mode",
         "saw_body_start_tag",
         "saw_html_end_tag",
+        "_button_cache_node",
+        "_button_cached_value",
     )
 
     def __init__(self, initial_parent, debug_callback=None):
@@ -128,6 +130,8 @@ class ParseContext:
         self._ip_in_mathml_text = False  # In MathML text integration point (mi/mo/mn/ms/mtext)
         self._select_cache_node = None  # Select cache: which node is cached
         self._select_cached_value = False  # Cached result of is_inside_tag("select")
+        self._button_cache_node = None  # Button cache: which node is cached
+        self._button_cached_value = False  # Cached result of is_inside_tag("button")
         self._debug = debug_callback
         self.doctype_seen = False
         self.quirks_mode = True  # Quirks mode (no DOCTYPE = quirks), set by DoctypeHandler
@@ -170,6 +174,8 @@ class ParseContext:
             self._ip_cache_node = None
             # Invalidate select cache when parent changes
             self._select_cache_node = None
+            # Invalidate button cache when parent changes
+            self._button_cache_node = None
 
             # Track template content depth for fast in_template_content checks
             # Exit: moving FROM a content node to a non-descendant
@@ -211,6 +217,20 @@ class ParseContext:
             self._select_cache_node = self._current_parent
             self._select_cached_value = self._current_parent.is_inside_tag("select")
         return self._select_cached_value
+
+    @property
+    def in_button(self):
+        """Fast cached check for is_inside_tag("button").
+
+        Optimizes button scope checks by caching ancestry walk.
+        Cache is automatically invalidated when current_parent changes.
+        Used by paragraph handler to determine button scope boundaries.
+        """
+        if self._button_cache_node is not self._current_parent:
+            # Cache miss - recalculate
+            self._button_cache_node = self._current_parent
+            self._button_cached_value = self._current_parent.is_inside_tag("button")
+        return self._button_cached_value
 
     @property
     def document_state(self):
