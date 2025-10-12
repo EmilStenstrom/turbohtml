@@ -4199,7 +4199,6 @@ class FormTagHandler(TagHandler):
                 "Ignoring </form>; form element not current node (premature end)",
             )
             token.ignored_end_tag = True
-            token.ignored_end_tag = True
             return True
         # Pop elements until the form element has been popped (spec step)
         while stack:
