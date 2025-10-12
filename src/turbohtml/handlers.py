@@ -510,6 +510,7 @@ class TemplateContentFilterHandler(TagHandler):
             node = node.parent
         return None
 
+    # This will be the last to get refactored.
     def should_handle_start(self, tag_name, context):
         """Filter content inside templates (auto-enter content, handle nested templates).
 
