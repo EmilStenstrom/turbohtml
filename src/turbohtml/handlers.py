@@ -2017,14 +2017,15 @@ class SelectTagHandler(TagHandler):
         if context.in_template_content > 0:
             return False
 
-        inside_select = context.in_select
         is_foreign = context.current_parent.namespace in ("svg", "math")
-        if inside_select and not is_foreign:
-            # Do NOT intercept script/style/plaintext so RawtextTagHandler/PlaintextHandler can process them
-            return tag_name not in ("script", "style", "plaintext")
+        if context.in_select and not is_foreign:
+            return True
 
         # Not in select, check if this is a select-related tag
-        return tag_name in {"select", "option", "optgroup", "datalist"}
+        if tag_name in {"select", "option", "optgroup", "datalist"}:
+            return True
+
+        return False
 
     def handle_start(
         self, token, context,
