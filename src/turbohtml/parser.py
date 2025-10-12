@@ -160,22 +160,24 @@ class TurboHTML:
     def _build_dispatch_tables(self):
         """Pre-filter handlers and build fast-path dispatch tables.
 
-        This eliminates calling should_handle_* on handlers that use the base class
-        implementation, and provides direct tag→handler lookups where possible.
+        Directly uses HANDLED_START_TAGS/HANDLED_END_TAGS attributes for dispatch,
+        falling back to should_handle_* methods only for handlers with complex logic.
         """
         base_should_handle_start = TagHandler.should_handle_start
         base_should_handle_end = TagHandler.should_handle_end
         base_should_handle_text = TagHandler.should_handle_text
 
-        # Only include handlers that actually override the base class methods
+        # Include all handlers with HANDLED_START_TAGS or custom should_handle_start
         self._active_start_handlers = [
             h for h in self.tag_handlers
-            if h.should_handle_start.__func__ is not base_should_handle_start
+            if h.__class__.HANDLED_START_TAGS is not None
+            or h.should_handle_start.__func__ is not base_should_handle_start
         ]
         # Exclude GenericEndTagHandler from normal dispatch (handled separately as fallback)
         self._active_end_handlers = [
             h for h in self.tag_handlers
-            if h.should_handle_end.__func__ is not base_should_handle_end
+            if (h.__class__.HANDLED_END_TAGS is not None
+                or h.should_handle_end.__func__ is not base_should_handle_end)
             and not isinstance(h, GenericEndTagHandler)
         ]
         self._active_text_handlers = [
@@ -183,14 +185,13 @@ class TurboHTML:
             if h.should_handle_text.__func__ is not base_should_handle_text
         ]
 
-        # Pre-compute handler metadata to avoid hasattr checks in hot path
-        # Store tuples of (handler, HANDLED_START_TAGS or None) to eliminate runtime hasattr
+        # Pre-compute handler metadata: (handler, HANDLED_TAGS, has_custom_should_handle)
         self._start_handler_metadata = [
-            (h, getattr(h, "HANDLED_START_TAGS", None))
+            (h, h.__class__.HANDLED_START_TAGS, h.should_handle_start.__func__ is not base_should_handle_start)
             for h in self._active_start_handlers
         ]
         self._end_handler_metadata = [
-            (h, getattr(h, "HANDLED_END_TAGS", None))
+            (h, h.__class__.HANDLED_END_TAGS, h.should_handle_end.__func__ is not base_should_handle_end)
             for h in self._active_end_handlers
         ]
 
@@ -547,14 +548,18 @@ class TurboHTML:
             self.formatting_handler.preprocess_start(token, context)
 
         # Dispatch with fast-path optimization using pre-computed handler metadata
-        # This eliminates hasattr calls by checking pre-stored HANDLED_START_TAGS
-        for handler, handled_tags in self._start_handler_metadata:
-            # Fast-path: skip if handler declares HANDLED_START_TAGS and tag not in set
-            if handled_tags is not None and tag_name not in handled_tags:
-                continue
-            # Handler either has no HANDLED_START_TAGS (fallback) or tag is in HANDLED_START_TAGS
-            if handler.should_handle_start(tag_name, context) and handler.handle_start(token, context):
-                return
+        for handler, handled_tags, has_custom_should_handle in self._start_handler_metadata:
+            # Fast-path: check HANDLED_START_TAGS directly if no custom should_handle_start
+            if not has_custom_should_handle:
+                if handled_tags is None or tag_name not in handled_tags:
+                    continue
+                # Tag is in HANDLED_START_TAGS, dispatch directly to handle_start
+                if handler.handle_start(token, context):
+                    return
+            else:
+                # Handler has custom should_handle_start logic - use it
+                if handler.should_handle_start(tag_name, context) and handler.handle_start(token, context):
+                    return
 
         # Fallback: if no handler claimed this start tag, insert it with default behavior.
         self.insert_element(token, context, mode="normal", enter=not token.is_self_closing)
@@ -568,13 +573,18 @@ class TurboHTML:
             return
 
         # Dispatch with fast-path optimization using pre-computed handler metadata
-        for handler, handled_end_tags in self._end_handler_metadata:
-            # Fast-path: skip if handler declares HANDLED_END_TAGS and tag not in set
-            if handled_end_tags is not None and tag_name not in handled_end_tags:
-                continue
-            # Handler either has no HANDLED_END_TAGS (fallback) or tag is in HANDLED_END_TAGS
-            if handler.should_handle_end(tag_name, context) and handler.handle_end(token, context):
-                return
+        for handler, handled_end_tags, has_custom_should_handle in self._end_handler_metadata:
+            # Fast-path: check HANDLED_END_TAGS directly if no custom should_handle_end
+            if not has_custom_should_handle:
+                if handled_end_tags is None or tag_name not in handled_end_tags:
+                    continue
+                # Tag is in HANDLED_END_TAGS, dispatch directly to handle_end
+                if handler.handle_end(token, context):
+                    return
+            else:
+                # Handler has custom should_handle_end logic - use it
+                if handler.should_handle_end(tag_name, context) and handler.handle_end(token, context):
+                    return
 
         # Fallback: GenericEndTagHandler as last resort (spec "any other end tag")
         # No need for should_handle_end check since it always returns True

@@ -37,6 +37,17 @@ from turbohtml.utils import (
 )
 
 
+# Sentinel value for handlers that can handle all tags (used in HANDLED_START_TAGS/HANDLED_END_TAGS)
+class _AllTagsSentinel:
+    """Sentinel indicating handler can process all tags (fallback/complex dispatch)."""
+    def __repr__(self):
+        return "ALL_TAGS"
+    def __contains__(self, item):
+        return True  # Always return True for membership tests
+
+ALL_TAGS = _AllTagsSentinel()
+
+
 class HTMLToken:
     """Simple token class for creating synthetic tokens matching Rust tokenizer interface."""
     __slots__ = (
@@ -117,12 +128,22 @@ class TagHandler:
 
     # Dispatch predicates and handlers (main tag processing)
     def should_handle_start(self, tag_name, context):
+        """Deprecated: use HANDLED_START_TAGS class attribute instead.
+        
+        Subclasses override for complex context-dependent logic only.
+        Simple tag-based dispatch now uses HANDLED_START_TAGS directly.
+        """
         return False
 
     def handle_start(self, token, context):
         return False
 
     def should_handle_end(self, tag_name, context):
+        """Deprecated: use HANDLED_END_TAGS class attribute instead.
+        
+        Subclasses override for complex context-dependent logic only.
+        Simple tag-based dispatch now uses HANDLED_END_TAGS directly.
+        """
         return False
 
     def handle_end(self, token, context):
@@ -142,6 +163,9 @@ class TagHandler:
 
 class UnifiedCommentHandler(TagHandler):
     """Unified comment placement handler for all document states."""
+
+    HANDLED_START_TAGS = None  # Doesn't handle start tags
+    HANDLED_END_TAGS = None  # Doesn't handle end tags
 
     def should_handle_comment(self, comment, context):
         # Skip CDATA sections in foreign content (SVG/MathML) - let ForeignTagHandler handle them
@@ -242,6 +266,9 @@ class DocumentStructureHandler(TagHandler):
     - Post-parse finalization: ensure html/head/body exist, merge adjacent text nodes
     """
 
+    HANDLED_START_TAGS = ALL_TAGS  # Intercepts all start tags for re-entry logic
+    HANDLED_END_TAGS = frozenset(["html", "body"])
+
     def should_handle_start(self, tag_name, context):
         # Always intercept to handle re-entry logic and structure tags
         return True
@@ -326,9 +353,6 @@ class DocumentStructureHandler(TagHandler):
             if head:
                 context.transition_to_state(DocumentState.IN_HEAD, head)
         return False
-
-    def should_handle_end(self, tag_name, context):
-        return tag_name in {"html", "body"}
 
     def handle_end(self, token, context):
         tag_name = token.tag_name
@@ -453,6 +477,9 @@ class TemplateContentFilterHandler(TagHandler):
     - Ignoring document structure tags (html, head, body) inside templates
     - Handling nested templates inside template content
     """
+
+    HANDLED_START_TAGS = ALL_TAGS  # Complex context-dependent filtering inside template content
+    HANDLED_END_TAGS = ALL_TAGS  # Handles end tags for table elements and templates inside template content
 
     # Ignore only top-level/document-structure things inside template content
     IGNORED_START = ("html", "head", "body", "frameset", "frame")
@@ -1041,6 +1068,9 @@ class GenericEndTagHandler(TagHandler):
     ignore the token (parse error per spec).
     """
 
+    HANDLED_START_TAGS = None  # Doesn't handle start tags
+    HANDLED_END_TAGS = ALL_TAGS  # Fallback handler for all unclaimed end tags
+
     def should_handle_end(self, tag_name, context):
         return True
 
@@ -1078,6 +1108,9 @@ class GenericEndTagHandler(TagHandler):
 
 class TextHandler(TagHandler):
     """Default handler for text nodes."""
+
+    HANDLED_START_TAGS = None  # Doesn't handle start tags
+    HANDLED_END_TAGS = FORMATTING_ELEMENTS
 
     def should_handle_text(self, text, context):
         return True
@@ -1907,9 +1940,6 @@ class FormattingTagHandler(TagHandler):
                 context.move_to_element(new_element)
         return True
 
-    def should_handle_end(self, tag_name, context):
-        return tag_name in FORMATTING_ELEMENTS
-
     def handle_end(self, token, context):
         tag_name = token.tag_name
         if self.parser._debug:
@@ -1977,6 +2007,9 @@ class FormattingTagHandler(TagHandler):
 
 class SelectTagHandler(TagHandler):
     """Handles select elements and their children (option, optgroup) and datalist."""
+
+    HANDLED_START_TAGS = ALL_TAGS  # Complex context-dependent handling inside/outside select
+    HANDLED_END_TAGS = ALL_TAGS  # Handles select, option, optgroup, datalist, and formatting elements
 
     def __init__(self, parser=None):
         super().__init__(parser)
@@ -2851,9 +2884,6 @@ class ParagraphTagHandler(TagHandler):
             self.debug(f"Created new paragraph node: {new_node} under {new_node.parent}")
         return True
 
-    def should_handle_end(self, tag_name, context):
-        return tag_name == "p"
-
     def handle_end(self, token, context):
         if self.parser._debug:
             self.debug(f"handling <EndTag: p>, context={context}")
@@ -3119,6 +3149,9 @@ class ParagraphTagHandler(TagHandler):
 
 class TableTagHandler(TagHandler):
     """Handles table-related elements."""
+
+    HANDLED_START_TAGS = ALL_TAGS  # Complex table element handling with context dependencies
+    HANDLED_END_TAGS = ALL_TAGS  # Handles all table-related end tags
 
     def should_handle_start(self, tag_name, context):
         # Skip template content (TemplateAware behavior)
@@ -4072,9 +4105,6 @@ class FormTagHandler(TagHandler):
     HANDLED_START_TAGS = frozenset(["form", "input", "button", "textarea", "select", "label"])
     HANDLED_END_TAGS = frozenset(["form", "button", "select", "label"])
 
-    def should_handle_start(self, tag_name, context):
-        return tag_name in ("form", "input", "button", "textarea", "select", "label")
-
     def handle_start(
         self, token, context,
     ):
@@ -4112,9 +4142,6 @@ class FormTagHandler(TagHandler):
 
         # No persistent pointer; dynamic detection is used instead
         return True
-
-    def should_handle_end(self, tag_name, context):
-        return tag_name == "form"
 
     def handle_end(self, token, context):
         # Premature </form> suppression: ignore when no open form.
@@ -4370,9 +4397,6 @@ class ListTagHandler(TagHandler):
     ):
         """Handle ul/ol/dl elements."""
 
-    def should_handle_end(self, tag_name, context):
-        return tag_name in ("ul", "ol", "li", "dl", "dt", "dd")
-
     def handle_end(self, token, context):
         if self.parser._debug:
             self.debug(f"handling end tag {token.tag_name}")
@@ -4465,9 +4489,6 @@ class HeadingTagHandler(TagHandler):
     HANDLED_START_TAGS = HEADING_ELEMENTS
     HANDLED_END_TAGS = HEADING_ELEMENTS
 
-    def should_handle_start(self, tag_name, context):
-        return tag_name in HEADING_ELEMENTS
-
     def handle_start(
         self, token, context,
     ):
@@ -4489,9 +4510,6 @@ class HeadingTagHandler(TagHandler):
             treat_as_void=False,
         )
         return True
-
-    def should_handle_end(self, tag_name, context):
-        return tag_name in HEADING_ELEMENTS
 
     def handle_end(self, token, context):
         tag_name = token.tag_name
@@ -4789,9 +4807,6 @@ class VoidTagHandler(TagHandler):
 
         return True
 
-    def should_handle_end(self, tag_name, context):
-        return tag_name == "br"
-
     def handle_end(self, token, context):
         # Mirror spec quirk: </br> behaves like <br> start tag.
         in_table_mode = context.document_state in (
@@ -4837,6 +4852,9 @@ class BlockFormattingReconstructionHandler(TagHandler):
     Auto-closing logic has been distributed to specific handlers via
     auto_close_current_parent_if_needed() helper method.
     """
+
+    HANDLED_START_TAGS = ALL_TAGS  # Context-dependent BLOCK_ELEMENTS handling
+    HANDLED_END_TAGS = None  # Doesn't handle end tags
 
     def should_handle_start(self, tag_name, context):
         # All AUTO_CLOSING_TAGS keys (p, li, dt, dd, tr, td, th, rt, rp, button, h1-h6, menuitem)
@@ -5044,6 +5062,9 @@ class ForeignTagHandler(TagHandler):
     Centralizes all foreign content (SVG/MathML) detection and integration point logic.
     Other handlers delegate to these helpers to maintain single source of truth.
     """
+
+    HANDLED_START_TAGS = ALL_TAGS  # Context-dependent SVG/MathML handling
+    HANDLED_END_TAGS = ALL_TAGS  # Handles foreign content end tags
 
     _MATHML_LEAFS = ("mi", "mo", "mn", "ms", "mtext")
 
@@ -6364,9 +6385,6 @@ class HeadTagHandler(TagHandler):
             self.debug("handling template start tag")
         return True
 
-    def should_handle_end(self, tag_name, context):
-        return tag_name in {"head", "template"}
-
     def handle_end(self, token, context):
         if self.parser._debug:
             self.debug(f"handling end tag {token.tag_name}")
@@ -6466,6 +6484,9 @@ class FramesetTagHandler(TagHandler):
     Combines preprocessing guards with actual element handling to avoid duplication.
     Manages frameset_ok flag for all tags, handles frameset/frame/noframes elements.
     """
+
+    HANDLED_START_TAGS = ALL_TAGS  # Preprocessing for all tags (frameset_ok management)
+    HANDLED_END_TAGS = frozenset(["frameset", "noframes"])
 
     _FRAMES_HTML_EMPTY_CONTAINERS = (
         "div",
@@ -6747,9 +6768,6 @@ class FramesetTagHandler(TagHandler):
 
         return False
 
-    def should_handle_end(self, tag_name, context):
-        return tag_name in ("frameset", "noframes")
-
     def handle_end(self, token, context):
         tag_name = token.tag_name
         if self.parser._debug:
@@ -6845,9 +6863,6 @@ class ImageTagHandler(TagHandler):
     HANDLED_START_TAGS = frozenset(["img", "image"])
     HANDLED_END_TAGS = frozenset(["img", "image"])
 
-    def should_handle_start(self, tag_name, context):
-        return tag_name in ("img", "image")
-
     def handle_start(self, token, context):
         # If we're in head, implicitly close it and switch to body
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
@@ -6862,9 +6877,6 @@ class ImageTagHandler(TagHandler):
             tag_name_override="img",
         )
         return True
-
-    def should_handle_end(self, tag_name, context):
-        return tag_name in ("img", "image")
 
     def handle_end(self, token, context):
         # Images are void elements, no need to handle end tag
@@ -6881,9 +6893,6 @@ class MarqueeTagHandler(TagHandler):
 
     HANDLED_START_TAGS = frozenset(["marquee"])
     HANDLED_END_TAGS = frozenset(["marquee"])
-
-    def should_handle_start(self, tag_name, context):
-        return tag_name == "marquee"
 
     def handle_start(self, token, context):
         # Close an open paragraph first (spec: block boundary elements close <p>)
@@ -6918,9 +6927,6 @@ class MarqueeTagHandler(TagHandler):
         # Defer implicit paragraph creation: a <p> will be synthesized by normal paragraph rules
         # upon first phrasing/text insertion if required. This avoids creating nested <p><p>.
         return True
-
-    def should_handle_end(self, tag_name, context):
-        return tag_name == "marquee"
 
     def handle_end(self, token, context):
         tag_name = token.tag_name
@@ -6974,6 +6980,9 @@ class MarqueeTagHandler(TagHandler):
 
 class DoctypeHandler(TagHandler):
     """Handles DOCTYPE declarations."""
+
+    HANDLED_START_TAGS = None  # Doesn't handle start tags
+    HANDLED_END_TAGS = None  # Doesn't handle end tags
 
     def should_handle_doctype(self, doctype, context):
         return True
@@ -7081,6 +7090,9 @@ class DoctypeHandler(TagHandler):
 
 class PlaintextHandler(TagHandler):
     """Handles plaintext element which switches to plaintext mode."""
+
+    HANDLED_START_TAGS = ALL_TAGS  # In PLAINTEXT mode, intercepts all tags as literal text
+    HANDLED_END_TAGS = None  # Doesn't handle end tags
 
     def should_handle_start(self, tag_name, context):
         # While in PLAINTEXT mode we treat all subsequent tags as literal text
@@ -7348,9 +7360,6 @@ class ButtonTagHandler(TagHandler):
     HANDLED_START_TAGS = frozenset(["button"])
     HANDLED_END_TAGS = frozenset(["button"])
 
-    def should_handle_start(self, tag_name, context):
-        return tag_name == "button"
-
     def handle_start(self, token, context):
         if self.parser._debug:
             self.debug(f"handling {token}, context={context}")
@@ -7384,9 +7393,6 @@ class ButtonTagHandler(TagHandler):
         )
         return True
 
-    def should_handle_end(self, tag_name, context):
-        return tag_name == "button"
-
     def handle_end(self, token, context):
         button = context.current_parent.find_ancestor("button")
         if button:
@@ -7405,9 +7411,6 @@ class MenuitemTagHandler(TagHandler):
 
     HANDLED_START_TAGS = frozenset(["menuitem"])
     HANDLED_END_TAGS = frozenset(["menuitem"])
-
-    def should_handle_start(self, tag_name, context):
-        return tag_name == "menuitem"
 
     def handle_start(self, token, context):
         tag_name = token.tag_name
@@ -7439,9 +7442,6 @@ class MenuitemTagHandler(TagHandler):
         if parent_before.tag_name == "li":
             context.move_to_element(parent_before)
         return True
-
-    def should_handle_end(self, tag_name, context):
-        return tag_name == "menuitem"
 
     def handle_end(self, token, context):
         if self.parser._debug:
@@ -7485,6 +7485,9 @@ class MenuitemTagHandler(TagHandler):
 
 class TableFosterHandler(TagHandler):
     """Foster parents unclaimed elements in table context per HTML5 algorithm."""
+
+    HANDLED_START_TAGS = ALL_TAGS  # Context-dependent foster parenting in table contexts
+    HANDLED_END_TAGS = None  # Doesn't handle end tags
 
     def should_handle_start(self, tag_name, context):
         # Check if we're in table context where foster parenting might apply
@@ -7530,9 +7533,6 @@ class RubyTagHandler(TagHandler):
 
     HANDLED_START_TAGS = frozenset(["ruby", "rb", "rt", "rp", "rtc"])
     HANDLED_END_TAGS = frozenset(["ruby", "rb", "rt", "rp", "rtc"])
-
-    def should_handle_start(self, tag_name, context):
-        return tag_name in ("ruby", "rb", "rt", "rp", "rtc")
 
     def handle_start(self, token, context):
         tag_name = token.tag_name
@@ -7589,9 +7589,6 @@ class RubyTagHandler(TagHandler):
             )
             parent = context.current_parent.parent
             context.move_to_element_with_fallback(parent, context.current_parent)
-
-    def should_handle_end(self, tag_name, context):
-        return tag_name in ("ruby", "rb", "rt", "rp", "rtc")
 
     def handle_end(self, token, context):
         tag_name = token.tag_name
