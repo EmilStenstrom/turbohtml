@@ -178,6 +178,7 @@ class TurboHTML:
         self.foreign_handler = None
         self.formatting_handler = None
         self.frameset_handler = None
+        self.generic_end_handler = None
 
         for handler in self.tag_handlers:
             if isinstance(handler, TextHandler):
@@ -188,6 +189,8 @@ class TurboHTML:
                 self.formatting_handler = handler
             elif isinstance(handler, FramesetTagHandler):
                 self.frameset_handler = handler
+            elif isinstance(handler, GenericEndTagHandler):
+                self.generic_end_handler = handler
 
         if self.text_handler is None:
             msg = "TextHandler not found in tag_handlers"
@@ -227,9 +230,11 @@ class TurboHTML:
             h for h in self.tag_handlers
             if h.should_handle_start.__func__ is not base_should_handle_start
         ]
+        # Exclude GenericEndTagHandler from normal dispatch (handled separately as fallback)
         self._active_end_handlers = [
             h for h in self.tag_handlers
             if h.should_handle_end.__func__ is not base_should_handle_end
+            and not isinstance(h, GenericEndTagHandler)
         ]
         self._active_text_handlers = [
             h for h in self.tag_handlers
@@ -628,3 +633,8 @@ class TurboHTML:
             # Handler either has no HANDLED_END_TAGS (fallback) or tag is in HANDLED_END_TAGS
             if handler.should_handle_end(tag_name, context) and handler.handle_end(token, context):
                 return
+
+        # Fallback: GenericEndTagHandler as last resort (spec "any other end tag")
+        # No need for should_handle_end check since it always returns True
+        if self.generic_end_handler:
+            self.generic_end_handler.handle_end(token, context)
