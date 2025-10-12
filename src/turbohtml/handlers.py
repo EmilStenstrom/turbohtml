@@ -81,6 +81,24 @@ class TagHandler:
             class_name = self.__class__.__name__
             self.parser.debug(f"{class_name}: {message}", indent=indent)
 
+    def auto_close_current_parent_if_needed(self, token, context):
+        """Auto-close current parent if the incoming tag should close it.
+
+        Returns True if parent was closed, False otherwise.
+        This implements the AUTO_CLOSING_TAGS logic: when tag X arrives,
+        check if current parent is in AUTO_CLOSING_TAGS and X is in its closing list.
+        """
+        current_tag = context.current_parent.tag_name
+        if current_tag in AUTO_CLOSING_TAGS:
+            closing_list = AUTO_CLOSING_TAGS[current_tag]
+            if token.tag_name in closing_list:
+                if self.parser._debug:
+                    self.debug(f"Auto-closing {current_tag} due to new tag {token.tag_name}")
+                if context.current_parent.parent:
+                    context.move_to_element(context.current_parent.parent)
+                return True
+        return False
+
     # Pre-dispatch hooks (token guards and preprocessing, called before handler dispatch)
     def preprocess_start(self, token, context):
         """Pre-process start tags before dispatch (guards, side effects). Return True to consume token."""
@@ -1066,6 +1084,9 @@ class SimpleElementHandler(TagHandler):
         self.handled_tags = handled_tags
 
     def handle_start(self, token, context):
+        # Auto-close current parent if needed (e.g., block elements auto-close <p>)
+        self.auto_close_current_parent_if_needed(token, context)
+        
         treat_as_void = self._is_void_element(token.tag_name)
         mode = "void" if treat_as_void else "normal"
         self.parser.insert_element(
@@ -4230,12 +4251,6 @@ class ListTagHandler(TagHandler):
         if tag_name not in self.HANDLED_TAGS:
             return False
 
-        # If we're inside a p tag, defer to AutoClosingTagHandler first
-        if context.current_parent.tag_name == "p":
-            if self.parser._debug:
-                self.debug(f"Deferring {tag_name} inside p to AutoClosingTagHandler")
-            return False
-
         return True
 
     def handle_start(
@@ -4246,6 +4261,11 @@ class ListTagHandler(TagHandler):
         if self.parser._debug:
             self.debug(f"Current parent before: {context.current_parent}")
         tag_name = token.tag_name
+
+        # Auto-close <p> parent if needed (e.g., <p><li> auto-closes <p>)
+        # But skip auto-closing for dt/dd since they have specialized logic below
+        if tag_name not in ("dt", "dd"):
+            self.auto_close_current_parent_if_needed(token, context)
 
         # If we're in head, implicitly close it and switch to body
         if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
@@ -4502,6 +4522,9 @@ class HeadingTagHandler(SimpleElementHandler):
     def handle_start(
         self, token, context,
     ):
+        # Auto-close current parent if needed (e.g., <p><h1> auto-closes <p>)
+        self.auto_close_current_parent_if_needed(token, context)
+
         # If current element itself is a heading, close it (spec: implies end tag for previous heading)
         if context.current_parent.tag_name in HEADING_ELEMENTS:
             context.move_to_ancestor_parent(context.current_parent)
@@ -4847,25 +4870,33 @@ class VoidTagHandler(TagHandler):
         return True
 
 
-class AutoClosingTagHandler(TagHandler):
-    """Handles auto-closing behavior for certain tags."""
+class BlockFormattingReconstructionHandler(TagHandler):
+    """Handles formatting element reconstruction for BLOCK_ELEMENTS.
+
+    When a BLOCK_ELEMENT arrives while inside a formatting element (like <b> or <i>),
+    this handler reconstructs the formatting elements so they continue in the block.
+
+    Auto-closing logic has been distributed to specific handlers via
+    auto_close_current_parent_if_needed() helper method.
+    """
 
     def should_handle_start(self, tag_name, context):
-        # Don't intercept list item tags in table context; let ListTagHandler handle foster parenting
-        if context.document_state == DocumentState.IN_TABLE and tag_name in (
-            "li",
-            "dt",
-            "dd",
-        ):
+        # All AUTO_CLOSING_TAGS keys (p, li, dt, dd, tr, td, th, rt, rp, button, h1-h6, menuitem)
+        # are now handled by their specific handlers with auto_close_current_parent_if_needed()
+        #
+        # AutoClosingTagHandler now only handles: BLOCK_ELEMENTS with formatting ancestors
+        # (for formatting element reconstruction)
+
+        # Let ListTagHandler handle dt/dd with its specialized formatting duplication logic
+        if tag_name in ("dt", "dd", "li"):
             return False
-        # Let ListTagHandler exclusively manage dt/dd so it can perform formatting duplication logic
-        if tag_name in ("dt", "dd"):
-            return False
+
         # Don't claim tags inside integration points - let HTML handlers deal with them
         if is_in_integration_point(context):
             return False
-        # Handle both formatting cases and auto-closing cases
-        return tag_name in AUTO_CLOSING_TAGS or (
+
+        # Only handle BLOCK_ELEMENTS that have a formatting element ancestor
+        return (
             tag_name in BLOCK_ELEMENTS
             and context.current_parent.find_formatting_element_ancestor() is not None
         )
@@ -4873,21 +4904,14 @@ class AutoClosingTagHandler(TagHandler):
     def handle_start(
         self, token, context,
     ):
-        if self.parser._debug:
-            self.debug(f"Checking auto-closing rules for {token.tag_name}")
-        current = context.current_parent
+        # This handler now ONLY handles formatting reconstruction for BLOCK_ELEMENTS
+        # with formatting ancestors. Auto-closing logic has been moved to specific handlers.
 
         if self.parser._debug:
-            self.debug(f"Current parent: {current}")
-        if self.parser._debug:
-            self.debug(f"Current parent's parent: {current.parent}")
-        if self.parser._debug:
-            self.debug(
-            f"Current parent's children: {[c.tag_name for c in current.children]}",
-        )
+            self.debug(f"Handling formatting reconstruction for block element {token.tag_name}")
 
         # Check if we're inside a formatting element AND this is a block element
-        formatting_element = current.find_formatting_element_ancestor()
+        formatting_element = context.current_parent.find_formatting_element_ancestor()
 
         # Also check if there are active formatting elements that need reconstruction
         has_active_formatting = bool(context.active_formatting_elements)
@@ -4936,19 +4960,6 @@ class AutoClosingTagHandler(TagHandler):
             if self.parser._debug:
                 self.debug(f"Created new block {new_block.tag_name}")
             return True
-
-        # Then check if current tag should be closed by new tag
-        current_tag = current.tag_name
-        if current_tag in AUTO_CLOSING_TAGS:
-            closing_list = AUTO_CLOSING_TAGS[current_tag]
-            if token.tag_name in closing_list:
-                if self.parser._debug:
-                    self.debug(
-                    f"Auto-closing {current_tag} due to new tag {token.tag_name}",
-                )
-                if current.parent:
-                    context.move_to_element(current.parent)
-                return False
 
         return False
 
@@ -7386,6 +7397,9 @@ class ButtonTagHandler(TagHandler):
         if self.parser._debug:
             self.debug(f"handling {token}, context={context}")
 
+        # Auto-close current parent if needed (e.g., <p><button> auto-closes <p>)
+        self.auto_close_current_parent_if_needed(token, context)
+
         # If there's an open button element in scope, the start tag for a new button
         # implies an end tag for the current button (HTML5 parsing algorithm).
         if context.open_elements.has_element_in_scope("button"):
@@ -7441,6 +7455,10 @@ class MenuitemTagHandler(TagHandler):
         tag_name = token.tag_name
         if tag_name != "menuitem":
             return False
+
+        # Auto-close current parent if needed
+        self.auto_close_current_parent_if_needed(token, context)
+
         # Relaxed select parser: allow menuitem inside select
         reconstruct_active_formatting_elements(self.parser, context)
 
@@ -7570,7 +7588,10 @@ class RubyTagHandler(TagHandler):
             body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
             context.transition_to_state( DocumentState.IN_BODY, body)
 
-        # Auto-closing
+        # Auto-close current parent if needed (e.g., <p><ruby> auto-closes <p>)
+        self.auto_close_current_parent_if_needed(token, context)
+
+        # Auto-closing for ruby annotation elements
         if tag_name in ("rb", "rt", "rp") or tag_name == "rtc":
             self._auto_close_ruby_elements(tag_name, context)
 

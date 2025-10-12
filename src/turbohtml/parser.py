@@ -6,7 +6,7 @@ from turbohtml.context import ContentState, DocumentState, ParseContext, is_in_i
 from turbohtml.foster import foster_parent, needs_foster_parenting
 from turbohtml.fragment import parse_fragment
 from turbohtml.handlers import (
-    AutoClosingTagHandler,
+    BlockFormattingReconstructionHandler,
     ButtonTagHandler,
     DoctypeHandler,
     DocumentStructureHandler,
@@ -153,7 +153,7 @@ class TurboHTML:
                 UnifiedCommentHandler,
                 ForeignTagHandler,
                 ParagraphTagHandler,
-                AutoClosingTagHandler,
+                BlockFormattingReconstructionHandler,  # Renamed from AutoClosingTagHandler
                 MenuitemTagHandler,
                 ListTagHandler,
                 HeadTagHandler,
