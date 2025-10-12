@@ -236,17 +236,39 @@ class TurboHTML:
             if h.should_handle_text.__func__ is not base_should_handle_text
         ]
 
-        # Build fast-path dispatch: tag_name → [handlers] for tags with known handlers
-        # This allows skipping should_handle_* for common tags
+        # Build fast-path dispatch: tag_name → [handlers] for tags with HANDLED_TAGS
+        # Handlers with HANDLED_TAGS get priority in dispatch (checked first)
+        # This allows O(1) tag lookup instead of O(n) handler iteration for common tags
         self._tag_to_handlers_start = {}
         self._tag_to_handlers_end = {}
-
-        # Register handlers by tag name (handlers can register for multiple tags)
-        # For now, just document the pattern - we'll populate this incrementally
-        # TODO: HeadTagHandler → HEAD_ELEMENTS
-        # TODO: FormattingTagHandler → FORMATTING_ELEMENTS
-        # TODO: HeadingTagHandler → HEADING_ELEMENTS
-        # TODO: etc.
+        
+        # Separate handlers into fast-path (has HANDLED_TAGS) and fallback (complex logic)
+        self._fastpath_start_handlers = []
+        self._fallback_start_handlers = []
+        self._fastpath_end_handlers = []
+        self._fallback_end_handlers = []
+        
+        for handler in self._active_start_handlers:
+            if hasattr(handler, 'HANDLED_TAGS') and handler.HANDLED_TAGS is not None:
+                self._fastpath_start_handlers.append(handler)
+                # Register this handler for each tag it handles
+                for tag in handler.HANDLED_TAGS:
+                    if tag not in self._tag_to_handlers_start:
+                        self._tag_to_handlers_start[tag] = []
+                    self._tag_to_handlers_start[tag].append(handler)
+            else:
+                self._fallback_start_handlers.append(handler)
+        
+        for handler in self._active_end_handlers:
+            if hasattr(handler, 'HANDLED_END_TAGS') and handler.HANDLED_END_TAGS is not None:
+                self._fastpath_end_handlers.append(handler)
+                # Register this handler for each tag it handles
+                for tag in handler.HANDLED_END_TAGS:
+                    if tag not in self._tag_to_handlers_end:
+                        self._tag_to_handlers_end[tag] = []
+                    self._tag_to_handlers_end[tag].append(handler)
+            else:
+                self._fallback_end_handlers.append(handler)
 
     def debug(self, *args, indent=4, **kwargs):
         # Early return before any string formatting - args aren't evaluated if debug is off
@@ -600,8 +622,14 @@ class TurboHTML:
         if self.formatting_handler:
             self.formatting_handler.preprocess_start(token, context)
 
-        # Dispatch to first matching handler (use pre-filtered list)
+        # Dispatch with fast-path optimization: skip handlers that don't handle this tag
+        # Handler order is preserved - we just skip irrelevant handlers faster
         for handler in self._active_start_handlers:
+            # Fast-path: if handler has HANDLED_TAGS, check if it handles this tag
+            if hasattr(handler, 'HANDLED_TAGS') and handler.HANDLED_TAGS is not None:
+                if tag_name not in handler.HANDLED_TAGS:
+                    continue  # Skip this handler - doesn't handle this tag
+            # Handler either has no HANDLED_TAGS (fallback) or tag is in HANDLED_TAGS
             if handler.should_handle_start(tag_name, context) and handler.handle_start(token, context):
                 return
 
@@ -616,7 +644,12 @@ class TurboHTML:
         if self.frameset_handler and self.frameset_handler.preprocess_end(token, context):
             return
 
-        # Dispatch to first matching handler (use pre-filtered list)
+        # Dispatch with fast-path optimization: skip handlers that don't handle this tag
         for handler in self._active_end_handlers:
+            # Fast-path: if handler has HANDLED_END_TAGS, check if it handles this tag
+            if hasattr(handler, 'HANDLED_END_TAGS') and handler.HANDLED_END_TAGS is not None:
+                if tag_name not in handler.HANDLED_END_TAGS:
+                    continue  # Skip this handler - doesn't handle this tag
+            # Handler either has no HANDLED_END_TAGS (fallback) or tag is in HANDLED_END_TAGS
             if handler.should_handle_end(tag_name, context) and handler.handle_end(token, context):
                 return
