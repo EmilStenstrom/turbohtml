@@ -2645,9 +2645,7 @@ class ParagraphTagHandler(TagHandler):
 
         # Handle tags that implicitly close <p> when <p> is in button scope
         if tag_name in AUTO_CLOSING_TAGS["p"]:
-            if is_in_integration_point(context):
-                return False
-            return self._find_p_in_scope(context) is not None
+            return True
 
         return False
 
@@ -3024,15 +3022,12 @@ class TableTagHandler(TagHandler):
 
         in_integration_point = is_in_integration_point(context)
         in_foreign = context.current_context in ("math", "svg")
+        if in_foreign and not in_integration_point:
+            return False
 
-        if tag_name in {"caption", "col", "colgroup", "thead", "tbody", "tfoot"}:
-            return not in_foreign or in_integration_point
-
-        if tag_name in {"table", "tr", "td", "th"}:
-            if in_foreign and not in_integration_point:
-                return False
-            return in_integration_point or not self.parser.foreign_handler.is_plain_svg_foreign(context)
-
+        if tag_name in {"table", "tr", "td", "th", "caption", "col", "colgroup", "thead", "tbody", "tfoot"}:
+            return True
+        
         return False
 
     def handle_start(self, token, context):
