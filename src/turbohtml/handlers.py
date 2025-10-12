@@ -916,7 +916,7 @@ class TemplateElementHandler(TagHandler):
     - Closing template elements and managing open elements stack
     """
 
-    HANDLED_TAGS = frozenset(["template"])
+    HANDLED_START_TAGS = frozenset(["template"])
     HANDLED_END_TAGS = frozenset(["template"])
 
     def should_handle_start(self, tag_name, context):
@@ -1445,7 +1445,7 @@ class TextHandler(TagHandler):
 class FormattingTagHandler(TagHandler):
     """Handles formatting elements like <b>, <i>, etc. and their reconstruction."""
 
-    HANDLED_TAGS = FORMATTING_ELEMENTS
+    HANDLED_START_TAGS = FORMATTING_ELEMENTS
     HANDLED_END_TAGS = FORMATTING_ELEMENTS
 
     # Tags treated as block boundaries for deferred reconstruction logic
@@ -2586,7 +2586,7 @@ class ParagraphTagHandler(TagHandler):
     """Handles paragraph elements."""
 
     # Context-dependent: handles "p" plus tags that implicitly close <p> when <p> is in scope
-    HANDLED_TAGS = None  # Too complex - checks AUTO_CLOSING_TAGS["p"] + scope
+    HANDLED_START_TAGS = None  # Too complex - checks AUTO_CLOSING_TAGS["p"] + scope
     HANDLED_END_TAGS = frozenset(["p"])
 
     def should_handle_start(self, tag_name, context):
@@ -4069,7 +4069,7 @@ class TableTagHandler(TagHandler):
 class FormTagHandler(TagHandler):
     """Handles form-related elements (form, input, button, etc.)."""
 
-    HANDLED_TAGS = frozenset(["form", "input", "button", "textarea", "select", "label"])
+    HANDLED_START_TAGS = frozenset(["form", "input", "button", "textarea", "select", "label"])
     HANDLED_END_TAGS = frozenset(["form", "button", "select", "label"])
 
     def should_handle_start(self, tag_name, context):
@@ -4195,12 +4195,12 @@ class ListTagHandler(TagHandler):
     """Handles list-related elements (ul, ol, li, dl, dt, dd)."""
 
     # Fast-path: tags this handler processes
-    HANDLED_TAGS = frozenset(["li", "dt", "dd"])
+    HANDLED_START_TAGS = frozenset(["li", "dt", "dd"])
     HANDLED_END_TAGS = frozenset(["ul", "ol", "li", "dl", "dt", "dd"])
 
     def should_handle_start(self, tag_name, context):
         # Early exit if not a list tag
-        if tag_name not in self.HANDLED_TAGS:
+        if tag_name not in self.HANDLED_START_TAGS:
             return False
 
         return True
@@ -4462,7 +4462,7 @@ class ListTagHandler(TagHandler):
 class HeadingTagHandler(TagHandler):
     """Handles h1-h6 heading elements."""
 
-    HANDLED_TAGS = HEADING_ELEMENTS
+    HANDLED_START_TAGS = HEADING_ELEMENTS
     HANDLED_END_TAGS = HEADING_ELEMENTS
 
     def should_handle_start(self, tag_name, context):
@@ -4549,7 +4549,7 @@ class HeadingTagHandler(TagHandler):
 class RawtextTagHandler(TagHandler):
     """Handles rawtext elements like script, style, title, etc."""
 
-    HANDLED_TAGS = RAWTEXT_ELEMENTS
+    HANDLED_START_TAGS = RAWTEXT_ELEMENTS
     HANDLED_END_TAGS = RAWTEXT_ELEMENTS
 
     def should_handle_start(self, tag_name, context):
@@ -4695,7 +4695,7 @@ class RawtextTagHandler(TagHandler):
 class VoidTagHandler(TagHandler):
     """Handles void elements that can't have children."""
 
-    HANDLED_TAGS = VOID_ELEMENTS
+    HANDLED_START_TAGS = VOID_ELEMENTS
     HANDLED_END_TAGS = frozenset(["br"])  # Only <br> has end tag handling
 
     def should_handle_start(self, tag_name, context):
@@ -6164,7 +6164,7 @@ class ForeignTagHandler(TagHandler):
 class HeadTagHandler(TagHandler):
     """Handles head element and its contents."""
 
-    HANDLED_TAGS = HEAD_ELEMENTS
+    HANDLED_START_TAGS = HEAD_ELEMENTS
     HANDLED_END_TAGS = frozenset(["head", "noscript"])
 
     def should_handle_start(self, tag_name, context):
@@ -6842,7 +6842,7 @@ class FramesetTagHandler(TagHandler):
 class ImageTagHandler(TagHandler):
     """Special handling for img tags."""
 
-    HANDLED_TAGS = frozenset(["img", "image"])
+    HANDLED_START_TAGS = frozenset(["img", "image"])
     HANDLED_END_TAGS = frozenset(["img", "image"])
 
     def should_handle_start(self, tag_name, context):
@@ -6879,7 +6879,7 @@ class MarqueeTagHandler(TagHandler):
     - On end: properly closes intervening formatting elements
     """
 
-    HANDLED_TAGS = frozenset(["marquee"])
+    HANDLED_START_TAGS = frozenset(["marquee"])
     HANDLED_END_TAGS = frozenset(["marquee"])
 
     def should_handle_start(self, tag_name, context):
@@ -7345,7 +7345,7 @@ class PlaintextHandler(TagHandler):
 class ButtonTagHandler(TagHandler):
     """Handles button elements with special formatting element rules."""
 
-    HANDLED_TAGS = frozenset(["button"])
+    HANDLED_START_TAGS = frozenset(["button"])
     HANDLED_END_TAGS = frozenset(["button"])
 
     def should_handle_start(self, tag_name, context):
@@ -7403,7 +7403,7 @@ class ButtonTagHandler(TagHandler):
 class MenuitemTagHandler(TagHandler):
     """Handles menuitem elements with special behaviors."""
 
-    HANDLED_TAGS = frozenset(["menuitem"])
+    HANDLED_START_TAGS = frozenset(["menuitem"])
     HANDLED_END_TAGS = frozenset(["menuitem"])
 
     def should_handle_start(self, tag_name, context):
@@ -7528,7 +7528,7 @@ class TableFosterHandler(TagHandler):
 class RubyTagHandler(TagHandler):
     """Handles ruby annotation elements & auto-closing."""
 
-    HANDLED_TAGS = frozenset(["ruby", "rb", "rt", "rp", "rtc"])
+    HANDLED_START_TAGS = frozenset(["ruby", "rb", "rt", "rp", "rtc"])
     HANDLED_END_TAGS = frozenset(["ruby", "rb", "rt", "rp", "rtc"])
 
     def should_handle_start(self, tag_name, context):

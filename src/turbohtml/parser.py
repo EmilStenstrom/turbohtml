@@ -184,9 +184,9 @@ class TurboHTML:
         ]
 
         # Pre-compute handler metadata to avoid hasattr checks in hot path
-        # Store tuples of (handler, HANDLED_TAGS or None) to eliminate runtime hasattr
+        # Store tuples of (handler, HANDLED_START_TAGS or None) to eliminate runtime hasattr
         self._start_handler_metadata = [
-            (h, getattr(h, "HANDLED_TAGS", None))
+            (h, getattr(h, "HANDLED_START_TAGS", None))
             for h in self._active_start_handlers
         ]
         self._end_handler_metadata = [
@@ -547,12 +547,12 @@ class TurboHTML:
             self.formatting_handler.preprocess_start(token, context)
 
         # Dispatch with fast-path optimization using pre-computed handler metadata
-        # This eliminates hasattr calls by checking pre-stored HANDLED_TAGS
+        # This eliminates hasattr calls by checking pre-stored HANDLED_START_TAGS
         for handler, handled_tags in self._start_handler_metadata:
-            # Fast-path: skip if handler declares HANDLED_TAGS and tag not in set
+            # Fast-path: skip if handler declares HANDLED_START_TAGS and tag not in set
             if handled_tags is not None and tag_name not in handled_tags:
                 continue
-            # Handler either has no HANDLED_TAGS (fallback) or tag is in HANDLED_TAGS
+            # Handler either has no HANDLED_START_TAGS (fallback) or tag is in HANDLED_START_TAGS
             if handler.should_handle_start(tag_name, context) and handler.handle_start(token, context):
                 return
 
