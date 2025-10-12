@@ -73,7 +73,13 @@ class TurboHTML:
 
         # Convert string fragment_context to FragmentContext object for internal use
         if fragment_context and isinstance(fragment_context, str):
-            self.fragment_context = FragmentContext(fragment_context)
+            # Parse "namespace:tagname" format (e.g., "svg:path", "math:annotation-xml")
+            # or plain tagname for HTML elements (e.g., "td", "table")
+            if ":" in fragment_context:
+                namespace, tag_name = fragment_context.split(":", 1)
+                self.fragment_context = FragmentContext(tag_name, namespace)
+            else:
+                self.fragment_context = FragmentContext(fragment_context)
         else:
             self.fragment_context = fragment_context
 
