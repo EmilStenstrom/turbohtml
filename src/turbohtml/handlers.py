@@ -2594,6 +2594,25 @@ class ParagraphTagHandler(TagHandler):
         if not context.in_button:
             return context.open_elements.has_element_in_scope("p")
         return context.open_elements.has_element_in_button_scope("p")
+    
+    def _find_p_in_scope(self, context):
+        """Find the innermost <p> element in button scope, or None.
+        
+        Performs button-scope-aware search - respects scope boundaries.
+        """
+        scope_boundaries = {
+            "applet", "caption", "html", "table", "td", "th",
+            "marquee", "object", "template"
+        }
+        if context.in_button:
+            scope_boundaries.add("button")
+        
+        for el in reversed(context.open_elements):
+            if el.tag_name == "p":
+                return el
+            if el.tag_name in scope_boundaries:
+                return None
+        return None
 
     def should_handle_start(self, tag_name, context):
         if context.in_template_content > 0:
@@ -2622,13 +2641,6 @@ class ParagraphTagHandler(TagHandler):
         else:
             body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
             context.move_to_element(body)
-
-    def _find_p_in_scope(self, context):
-        """Find the innermost <p> element in button scope, or None."""
-        for el in reversed(context.open_elements):
-            if el.tag_name == "p":
-                return el
-        return None
 
     def _needs_table_foster_parenting(self, context):
         """Check if we're in a table context needing foster parenting."""
