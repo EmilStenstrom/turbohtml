@@ -897,6 +897,9 @@ class TemplateElementHandler(TagHandler):
     - Determining proper insertion location (head vs body)
     - Closing template elements and managing open elements stack
     """
+    
+    HANDLED_TAGS = frozenset(["template"])
+    HANDLED_END_TAGS = frozenset(["template"])
 
     def should_handle_start(self, tag_name, context):
         """Handle top-level <template> tags."""
@@ -2607,6 +2610,10 @@ class SelectTagHandler(AncestorCloseHandler):
 
 class ParagraphTagHandler(TagHandler):
     """Handles paragraph elements."""
+    
+    # Context-dependent: handles "p" plus tags that implicitly close <p> when <p> is in scope
+    HANDLED_TAGS = None  # Too complex - checks AUTO_CLOSING_TAGS["p"] + scope
+    HANDLED_END_TAGS = frozenset(["p"])
 
     def should_handle_start(self, tag_name, context):
         if context.in_template_content > 0:
@@ -4088,6 +4095,9 @@ class TableTagHandler(TagHandler):
 
 class FormTagHandler(TagHandler):
     """Handles form-related elements (form, input, button, etc.)."""
+    
+    HANDLED_TAGS = frozenset(["form", "input", "button", "textarea", "select", "label"])
+    HANDLED_END_TAGS = frozenset(["form", "button", "select", "label"])
 
     def should_handle_start(self, tag_name, context):
         return tag_name in ("form", "input", "button", "textarea", "select", "label")
@@ -6184,6 +6194,9 @@ class ForeignTagHandler(TagHandler):
 
 class HeadTagHandler(TagHandler):
     """Handles head element and its contents."""
+    
+    HANDLED_TAGS = HEAD_ELEMENTS
+    HANDLED_END_TAGS = frozenset(["head", "noscript"])
 
     def should_handle_start(self, tag_name, context):
         # Do not let head element handler interfere inside template content
@@ -6859,6 +6872,9 @@ class FramesetTagHandler(TagHandler):
 
 class ImageTagHandler(TagHandler):
     """Special handling for img tags."""
+    
+    HANDLED_TAGS = frozenset(["img", "image"])
+    HANDLED_END_TAGS = frozenset(["img", "image"])
 
     def should_handle_start(self, tag_name, context):
         return tag_name in ("img", "image")
@@ -6893,6 +6909,9 @@ class MarqueeTagHandler(TagHandler):
     - On start: inserts inside deepest formatting ancestor
     - On end: properly closes intervening formatting elements
     """
+    
+    HANDLED_TAGS = frozenset(["marquee"])
+    HANDLED_END_TAGS = frozenset(["marquee"])
 
     def should_handle_start(self, tag_name, context):
         return tag_name == "marquee"
@@ -7356,6 +7375,9 @@ class PlaintextHandler(TagHandler):
 
 class ButtonTagHandler(TagHandler):
     """Handles button elements with special formatting element rules."""
+    
+    HANDLED_TAGS = frozenset(["button"])
+    HANDLED_END_TAGS = frozenset(["button"])
 
     def should_handle_start(self, tag_name, context):
         return tag_name == "button"
@@ -7408,6 +7430,9 @@ class ButtonTagHandler(TagHandler):
 
 class MenuitemTagHandler(TagHandler):
     """Handles menuitem elements with special behaviors."""
+    
+    HANDLED_TAGS = frozenset(["menuitem"])
+    HANDLED_END_TAGS = frozenset(["menuitem"])
 
     def should_handle_start(self, tag_name, context):
         return tag_name == "menuitem"
