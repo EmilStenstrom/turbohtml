@@ -205,32 +205,6 @@ class OpenElementsStack:
                 return False
         return False
 
-    def has_element_in_button_scope(self, tag_name):
-        """Return True if an element with tag_name is in button scope (HTML spec).
-
-        Button scope is the same as the normal *scope* definition but with the additional
-        boundary element 'button'. Used primarily to decide whether an open <p> should be
-        implicitly closed before inserting a new block / paragraph start tag.
-        """
-        scope_boundaries = {
-            "applet",
-            "caption",
-            "html",
-            "table",
-            "td",
-            "th",
-            "marquee",
-            "object",
-            "template",
-            "button",
-        }
-        for element in reversed(self._stack):
-            if element.tag_name == tag_name:
-                return True
-            if element.tag_name in scope_boundaries:
-                return False
-        return False
-
     def find_last_index(self, predicate):
         """Find the index of the last (deepest) element matching predicate, or -1 if not found."""
         for i in range(len(self._stack) - 1, -1, -1):

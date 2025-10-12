@@ -2586,15 +2586,6 @@ class ParagraphTagHandler(TagHandler):
     HANDLED_START_TAGS = None  # Too complex - checks AUTO_CLOSING_TAGS["p"] + scope
     HANDLED_END_TAGS = frozenset(["p"])
 
-    def _has_p_in_scope(self, context):
-        """Check if <p> element is in button scope.
-        
-        Optimized: when not inside a button, button scope equals regular scope.
-        """
-        if not context.in_button:
-            return context.open_elements.has_element_in_scope("p")
-        return context.open_elements.has_element_in_button_scope("p")
-    
     def _find_p_in_scope(self, context):
         """Find the innermost <p> element in button scope, or None.
         
@@ -2644,7 +2635,6 @@ class ParagraphTagHandler(TagHandler):
         
         return False
 
-
     def should_handle_start(self, tag_name, context):
         if context.in_template_content > 0:
             return False
@@ -2656,7 +2646,7 @@ class ParagraphTagHandler(TagHandler):
         if tag_name in AUTO_CLOSING_TAGS["p"]:
             if is_in_integration_point(context):
                 return False
-            return self._has_p_in_scope(context)
+            return self._find_p_in_scope(context) is not None
 
         return False
 
@@ -2665,7 +2655,7 @@ class ParagraphTagHandler(TagHandler):
         
         # Case 1: Block element auto-closes ancestor <p> (but not current parent)
         if (tag_name != "p" and tag_name in AUTO_CLOSING_TAGS["p"] and
-            self._has_p_in_scope(context) and context.current_parent.tag_name != "p"):
+            context.current_parent.tag_name != "p"):
             p_element = self._find_p_in_scope(context)
             if p_element:
                 self._close_paragraph(p_element, context)
@@ -2679,7 +2669,7 @@ class ParagraphTagHandler(TagHandler):
         # === From here on, tag_name == "p" ===
         
         # Case 3: Duplicate <p> when current parent is <p> - close it first
-        if context.current_parent.tag_name == "p" and self._has_p_in_scope(context):
+        if context.current_parent.tag_name == "p":
             self._close_paragraph(context.current_parent, context)
             # Fall through to create new <p>
         
@@ -2702,7 +2692,8 @@ class ParagraphTagHandler(TagHandler):
                 pass  # Fall through to default
             else:
                 # Foster parent outside table
-                if self._has_p_in_scope(context):
+                p_element = self._find_p_in_scope(context)
+                if p_element:
                     fake_end = HTMLToken("EndTag", tag_name="p")
                     self.handle_end(fake_end, context)
                 target_parent, target_before = foster_parent(
