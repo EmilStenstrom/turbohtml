@@ -456,19 +456,22 @@ def handle_start_tag(parser, context, token, fragment_context, spec):
     # Fallback suppression for fragment contexts without a FragmentSpec
     tn = token.tag_name
     if tn in {"html", "head", "frameset"}:
-        parser.debug(f"Fragment(fallback): suppressing <{tn}> in context {fragment_context}")
+        if parser._debug:
+            parser.debug(f"Fragment(fallback): suppressing <{tn}> in context {fragment_context}")
         return
 
     if tn == "body":
         has_body = any(ch.tag_name == "body" for ch in parser.root.children)
         if not has_body:
-            parser.debug("Fragment(fallback): suppressing initial <body>")
+            if parser._debug:
+                parser.debug("Fragment(fallback): suppressing initial <body>")
             return
 
     # Only suppress table elements in HTML mode, not in foreign content (MathML/SVG)
     if tn in {"caption", "colgroup", "tbody", "thead", "tfoot", "tr", "td", "th"}:
         if context.current_context not in ("math", "svg"):
-            parser.debug(f"Fragment(fallback): suppressing stray table structure <{tn}>")
+            if parser._debug:
+                parser.debug(f"Fragment(fallback): suppressing stray table structure <{tn}>")
             return
 
     parser.handle_start_tag(token, context)
@@ -517,19 +520,22 @@ def _handle_fallback_suppression(parser, context, token, fragment_context):
     tn = token.tag_name
 
     if tn in {"html", "head", "frameset"}:
-        parser.debug(f"Fragment(fallback): suppressing <{tn}> in context {fragment_context}")
+        if parser._debug:
+            parser.debug(f"Fragment(fallback): suppressing <{tn}> in context {fragment_context}")
         return
 
     if tn == "body":
         has_body = any(ch.tag_name == "body" for ch in parser.root.children)
         if not has_body:
-            parser.debug("Fragment(fallback): suppressing initial <body>")
+            if parser._debug:
+                parser.debug("Fragment(fallback): suppressing initial <body>")
             return
 
     # Only suppress table elements in HTML mode, not in foreign content (MathML/SVG)
     if tn in {"caption", "colgroup", "tbody", "thead", "tfoot", "tr", "td", "th"}:
         if context.current_context not in ("math", "svg"):
-            parser.debug(f"Fragment(fallback): suppressing stray table structure <{tn}>")
+            if parser._debug:
+                parser.debug(f"Fragment(fallback): suppressing stray table structure <{tn}>")
             return
 
     parser.handle_start_tag(token, context)
@@ -540,7 +546,8 @@ def handle_end_tag(parser, context, token, fragment_context):
     # In any fragment context, ignore end tags that match the fragment context element
     # (can't close the implicit context element)
     if fragment_context and fragment_context.matches(token.tag_name):
-        parser.debug(f"Fragment: ignoring </{ token.tag_name}> matching context")
+        if parser._debug:
+            parser.debug(f"Fragment: ignoring </{ token.tag_name}> matching context")
         return
     parser.handle_end_tag(token, context)
 
@@ -570,7 +577,8 @@ def handle_character(parser, context, token, fragment_context):
                 context.transition_to_state(DocumentState.IN_BODY, body)
     for handler in parser.tag_handlers:
         if handler.should_handle_text(data, context):
-            parser.debug(
+            if parser._debug:
+                parser.debug(
                 f"{handler.__class__.__name__}: handling {token}, context={context}",
             )
             if handler.handle_text(data, context):
@@ -579,7 +587,8 @@ def handle_character(parser, context, token, fragment_context):
 
 def parse_fragment(parser, html):  # pragma: no cover
     fragment_context = parser.fragment_context
-    parser.debug(f"Parsing fragment in context: {fragment_context}")
+    if parser._debug:
+        parser.debug(f"Parsing fragment in context: {fragment_context}")
     # Use externalized helper (parser retains wrapper for compatibility)
     context = create_fragment_context(parser, html)
     # Get FragmentSpec - fragment_context is now a structured object, use tag_name for HTML fragments
@@ -633,7 +642,8 @@ def parse_fragment(parser, html):  # pragma: no cover
     )
 
     for token in parser.tokenizer:
-        parser.debug(f"_parse_fragment: {token}, context: {context}", indent=0)
+        if parser._debug:
+            parser.debug(f"_parse_fragment: {token}, context: {context}", indent=0)
         if pre_hooks:
             for hook in pre_hooks:
                 hook(parser, context, token)
@@ -734,6 +744,7 @@ def create_fragment_context(parser, html):
         if not is_svg_integration_point and not is_math_text_integration_point:
             if fc.namespace in ("math", "svg"):
                 context.current_context = fc.namespace
-                parser.debug(f"Set foreign context to {fc.namespace}")
+                if parser._debug:
+                    parser.debug(f"Set foreign context to {fc.namespace}")
 
     return context

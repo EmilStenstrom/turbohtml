@@ -302,7 +302,8 @@ class AdoptionAgencyAlgorithm:
 
             furthest_block = self._find_furthest_block(formatting_element, context)
             if furthest_block is None:
-                self.parser.debug(
+                if self.parser._debug:
+                    self.parser.debug(
                     f"[adoption] simple-case for </{tag_name}> stack={[el.tag_name for el in context.open_elements]}",
                 )
                 self._run_simple_case(formatting_entry, formatting_element, context)

@@ -185,7 +185,7 @@ def reconstruct_active_formatting_elements(parser, context):
         ):
             entry.element = context.current_parent
             context.open_elements.push(context.current_parent)
-            if parser.env_debug:
+            if parser._debug:
                 parser.debug(
                     f"Reconstructed (reused) formatting element {context.current_parent.tag_name} (empty reuse)",
                 )
@@ -239,7 +239,7 @@ def reconstruct_active_formatting_elements(parser, context):
 
             # Skip if element is before table and we're inside table structure or cells
             if (in_table_cell or in_table_structure) and inside_table_subtree and element_before_table and table_node is table_sibling:
-                if parser.env_debug:
+                if parser._debug:
                     parser.debug(f"Skipping reconstruction of {clone.tag_name} (foster-parented before table) inside table structure")
                 continue
 
@@ -272,7 +272,7 @@ def reconstruct_active_formatting_elements(parser, context):
         context.open_elements.push(clone)
         entry.element = clone
         context.move_to_element(clone)
-        if parser.env_debug:
+        if parser._debug:
             parser.debug(f"Reconstructed formatting element {clone.tag_name}")
 
 

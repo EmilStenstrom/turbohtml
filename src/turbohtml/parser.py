@@ -121,7 +121,7 @@ class TurboHTML:
         handlers: Optional list of handler classes to use. If None, uses default set.
 
         """
-        self.env_debug = debug
+        self._debug = debug
 
         # Convert string fragment_context to FragmentContext object for internal use
         if fragment_context and isinstance(fragment_context, str):
@@ -205,7 +205,7 @@ class TurboHTML:
 
     def debug(self, *args, indent=4, **kwargs):
         # Early return before any string formatting - args aren't evaluated if debug is off
-        if not self.env_debug:
+        if not self._debug:
             return
         print(f"{' ' * indent}{args[0]}", *args[1:], **kwargs)
 
@@ -428,14 +428,14 @@ class TurboHTML:
             and target_parent.children[-1].tag_name == "#text"
         ):
             last = target_parent.children[-1]
-            if self.env_debug:
+            if self._debug:
                 self.debug(f"[insert_text] merging into existing text node len_before={len(last.text_content)} add_len={len(text)}")
             last.text_content += text
             return last
 
         new_node = Node("#text", text_content=text)
         target_parent.append_child(new_node)
-        if self.env_debug:
+        if self._debug:
             self.debug(f"[insert_text] new text node len={len(text)} parent={target_parent.tag_name}")
         return new_node
 
@@ -466,20 +466,22 @@ class TurboHTML:
         context = ParseContext(self.html_node, debug_callback=self.debug)
 
         # Use Rust tokenizer
-        self.tokenizer = RustTokenizer(html, debug=self.env_debug)
+        self.tokenizer = RustTokenizer(html, debug=self._debug)
         tokens = self.tokenizer
 
         for token in tokens:
             # Increment token counter for deduplication tracking
             self._token_counter += 1
 
-            self.debug(f"_parse: {token}, context: {context}", indent=0)
+            if self._debug:
+                self.debug(f"_parse: {token}, context: {context}", indent=0)
 
             if token.type == "DOCTYPE":
                 # Handle DOCTYPE through the DoctypeHandler first
                 for handler in self.tag_handlers:
                     if handler.should_handle_doctype(token.data, context):
-                        self.debug(f"{handler.__class__.__name__}: handling DOCTYPE")
+                        if self._debug:
+                            self.debug(f"{handler.__class__.__name__}: handling DOCTYPE")
                         if handler.handle_doctype(token.data, context):
                             break
                 continue
@@ -518,7 +520,8 @@ class TurboHTML:
                 if data:
                     for handler in self.tag_handlers:
                         if handler.should_handle_text(data, context):
-                            self.debug(
+                            if self._debug:
+                                self.debug(
                                 f"{handler.__class__.__name__}: handling {token}, context={context}",
                             )
                             if handler.handle_text(data, context):
