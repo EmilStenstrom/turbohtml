@@ -47,12 +47,12 @@ class ParseContext:
         "doctype_seen",
         "form_element",
         "frameset_ok",
-        "quirks_mode",
         "ignored_fragment_context_tag",
         "in_end_tag_dispatch",
         "in_template_content",
         "needs_reconstruction",
         "open_elements",
+        "quirks_mode",
         "saw_body_start_tag",
         "saw_html_end_tag",
     )

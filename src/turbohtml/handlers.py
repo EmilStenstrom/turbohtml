@@ -915,7 +915,7 @@ class TemplateElementHandler(TagHandler):
     - Determining proper insertion location (head vs body)
     - Closing template elements and managing open elements stack
     """
-    
+
     HANDLED_TAGS = frozenset(["template"])
     HANDLED_END_TAGS = frozenset(["template"])
 
@@ -1471,7 +1471,7 @@ class TextHandler(TagHandler):
 
 class FormattingTagHandler(TagHandler):
     """Handles formatting elements like <b>, <i>, etc. and their reconstruction."""
-    
+
     HANDLED_TAGS = FORMATTING_ELEMENTS
     HANDLED_END_TAGS = FORMATTING_ELEMENTS
 
@@ -2598,7 +2598,7 @@ class SelectTagHandler(AncestorCloseHandler):
 
 class ParagraphTagHandler(TagHandler):
     """Handles paragraph elements."""
-    
+
     # Context-dependent: handles "p" plus tags that implicitly close <p> when <p> is in scope
     HANDLED_TAGS = None  # Too complex - checks AUTO_CLOSING_TAGS["p"] + scope
     HANDLED_END_TAGS = frozenset(["p"])
@@ -3646,7 +3646,6 @@ class TableTagHandler(TagHandler):
                     return True
             except ValueError:
                 pass
-                pass
 
         # Check for direct text append opportunities (avoid creating duplicate wrappers)
         if self._try_append_to_existing_formatting(text, context, foster_parent, table_index):
@@ -3761,7 +3760,7 @@ class TableTagHandler(TagHandler):
             ):
                 new_wrapper = self._create_formatting_wrapper(
                     prev_sibling.tag_name, prev_sibling.attributes,
-                    foster_parent, foster_parent.children[table_index], context
+                    foster_parent, foster_parent.children[table_index], context,
                 )
                 self.parser.insert_text(text, context, parent=new_wrapper, merge=True)
                 return True
@@ -3822,7 +3821,7 @@ class TableTagHandler(TagHandler):
         # If so, update that entry instead of creating a duplicate
         existing_afe_entry = context.active_formatting_elements.find(
             resume_anchor.tag_name,
-            resume_anchor.attributes
+            resume_anchor.attributes,
         )
 
         anchor_token = HTMLToken(
@@ -3832,7 +3831,7 @@ class TableTagHandler(TagHandler):
         )
         reused_wrapper = self.parser.insert_element(
             anchor_token, context, mode="normal", enter=False,
-            parent=foster_parent, before=foster_parent.children[table_index], push_override=False
+            parent=foster_parent, before=foster_parent.children[table_index], push_override=False,
         )
 
         # Only push new AFE entry if one doesn't already exist for this tag+attributes
@@ -3879,7 +3878,7 @@ class TableTagHandler(TagHandler):
                 if current_parent_for_chain is foster_parent:
                     new_fmt = self.parser.insert_element(
                         fmt_token, context, mode="normal", enter=False,
-                        parent=foster_parent, before=foster_parent.children[table_index], push_override=False
+                        parent=foster_parent, before=foster_parent.children[table_index], push_override=False,
                     )
                     current_parent_for_chain = new_fmt
                     seen_run.add(fmt_elem.tag_name)
@@ -3902,7 +3901,7 @@ class TableTagHandler(TagHandler):
             sibling_token = self._synth_token("nobr")
             new_nobr = self.parser.insert_element(
                 sibling_token, context, mode="normal", enter=False,
-                parent=foster_parent, before=foster_parent.children[table_index], push_override=False
+                parent=foster_parent, before=foster_parent.children[table_index], push_override=False,
             )
             existing_entry = context.active_formatting_elements.find_element(foster_parent)
             if existing_entry:
@@ -3922,7 +3921,7 @@ class TableTagHandler(TagHandler):
                 wrapper_token = HTMLToken("StartTag", tag_name=prev.tag_name, attributes=prev.attributes.copy())
                 new_wrapper = self.parser.insert_element(
                     wrapper_token, context, mode="normal", enter=False,
-                    parent=foster_parent, before=foster_parent.children[table_index], push_override=False
+                    parent=foster_parent, before=foster_parent.children[table_index], push_override=False,
                 )
                 existing_entry = context.active_formatting_elements.find_element(prev)
                 if existing_entry:
@@ -4083,7 +4082,7 @@ class TableTagHandler(TagHandler):
 
 class FormTagHandler(TagHandler):
     """Handles form-related elements (form, input, button, etc.)."""
-    
+
     HANDLED_TAGS = frozenset(["form", "input", "button", "textarea", "select", "label"])
     HANDLED_END_TAGS = frozenset(["form", "button", "select", "label"])
 
@@ -4494,7 +4493,7 @@ class HeadingTagHandler(TagHandler):
             context.move_to_ancestor_parent(context.current_parent)
         # Do NOT climb further up to an ancestor heading; nested headings inside containers (e.g. div)
         # should remain nested (tests expect <h1><div><h3>... not breaking out of <h1>).
-        
+
         # Insert the heading element (inlined from SimpleElementHandler)
         self.parser.insert_element(
             token,
@@ -4563,7 +4562,7 @@ class HeadingTagHandler(TagHandler):
 
 class RawtextTagHandler(TagHandler):
     """Handles rawtext elements like script, style, title, etc."""
-    
+
     HANDLED_TAGS = RAWTEXT_ELEMENTS
     HANDLED_END_TAGS = RAWTEXT_ELEMENTS
 
@@ -4709,9 +4708,9 @@ class RawtextTagHandler(TagHandler):
 
 class VoidTagHandler(TagHandler):
     """Handles void elements that can't have children."""
-    
+
     HANDLED_TAGS = VOID_ELEMENTS
-    HANDLED_END_TAGS = frozenset(['br'])  # Only <br> has end tag handling
+    HANDLED_END_TAGS = frozenset(["br"])  # Only <br> has end tag handling
 
     def should_handle_start(self, tag_name, context):
         # Fast path: check tag first
@@ -6178,7 +6177,7 @@ class ForeignTagHandler(TagHandler):
 
 class HeadTagHandler(TagHandler):
     """Handles head element and its contents."""
-    
+
     HANDLED_TAGS = HEAD_ELEMENTS
     HANDLED_END_TAGS = frozenset(["head", "noscript"])
 
@@ -6856,7 +6855,7 @@ class FramesetTagHandler(TagHandler):
 
 class ImageTagHandler(TagHandler):
     """Special handling for img tags."""
-    
+
     HANDLED_TAGS = frozenset(["img", "image"])
     HANDLED_END_TAGS = frozenset(["img", "image"])
 
@@ -6893,7 +6892,7 @@ class MarqueeTagHandler(TagHandler):
     - On start: inserts inside deepest formatting ancestor
     - On end: properly closes intervening formatting elements
     """
-    
+
     HANDLED_TAGS = frozenset(["marquee"])
     HANDLED_END_TAGS = frozenset(["marquee"])
 
@@ -7359,7 +7358,7 @@ class PlaintextHandler(TagHandler):
 
 class ButtonTagHandler(TagHandler):
     """Handles button elements with special formatting element rules."""
-    
+
     HANDLED_TAGS = frozenset(["button"])
     HANDLED_END_TAGS = frozenset(["button"])
 
@@ -7417,7 +7416,7 @@ class ButtonTagHandler(TagHandler):
 
 class MenuitemTagHandler(TagHandler):
     """Handles menuitem elements with special behaviors."""
-    
+
     HANDLED_TAGS = frozenset(["menuitem"])
     HANDLED_END_TAGS = frozenset(["menuitem"])
 
@@ -7542,7 +7541,7 @@ class TableFosterHandler(TagHandler):
 
 class RubyTagHandler(TagHandler):
     """Handles ruby annotation elements & auto-closing."""
-    
+
     HANDLED_TAGS = frozenset(["ruby", "rb", "rt", "rp", "rtc"])
     HANDLED_END_TAGS = frozenset(["ruby", "rb", "rt", "rp", "rtc"])
 

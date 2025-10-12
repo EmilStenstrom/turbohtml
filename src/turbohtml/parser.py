@@ -28,6 +28,7 @@ from turbohtml.handlers import (
     SelectTagHandler,
     TableFosterHandler,
     TableTagHandler,
+    TagHandler,
     TemplateContentFilterHandler,
     TemplateElementHandler,
     TextHandler,
@@ -215,12 +216,6 @@ class TurboHTML:
         This eliminates calling should_handle_* on handlers that use the base class
         implementation, and provides direct tag→handler lookups where possible.
         """
-        from .handlers import TagHandler
-        from .constants import (
-            HEAD_ELEMENTS, FORMATTING_ELEMENTS, HEADING_ELEMENTS,
-            VOID_ELEMENTS, RAWTEXT_ELEMENTS, TABLE_ELEMENTS
-        )
-
         base_should_handle_start = TagHandler.should_handle_start
         base_should_handle_end = TagHandler.should_handle_end
         base_should_handle_text = TagHandler.should_handle_text
@@ -244,11 +239,11 @@ class TurboHTML:
         # Pre-compute handler metadata to avoid hasattr checks in hot path
         # Store tuples of (handler, HANDLED_TAGS or None) to eliminate runtime hasattr
         self._start_handler_metadata = [
-            (h, getattr(h, 'HANDLED_TAGS', None))
+            (h, getattr(h, "HANDLED_TAGS", None))
             for h in self._active_start_handlers
         ]
         self._end_handler_metadata = [
-            (h, getattr(h, 'HANDLED_END_TAGS', None))
+            (h, getattr(h, "HANDLED_END_TAGS", None))
             for h in self._active_end_handlers
         ]
 

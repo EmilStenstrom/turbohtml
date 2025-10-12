@@ -2,8 +2,9 @@
 """Profile TurboHTML to find performance bottlenecks."""
 
 import cProfile
-import pstats
 import io
+import pstats
+
 from turbohtml import TurboHTML
 
 # Sample HTML
@@ -36,6 +37,6 @@ pr.disable()
 
 # Print stats
 s = io.StringIO()
-ps = pstats.Stats(pr, stream=s).sort_stats('cumulative')
+ps = pstats.Stats(pr, stream=s).sort_stats("cumulative")
 ps.print_stats(50)  # Top 50 functions
 print(s.getvalue())

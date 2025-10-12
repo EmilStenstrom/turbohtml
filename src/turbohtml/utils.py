@@ -230,10 +230,10 @@ def reconstruct_active_formatting_elements(parser, context):
             in_table_structure = False
             check = context.current_parent
             while check and check is not table_node:
-                if check.tag_name in ('td', 'th'):
+                if check.tag_name in ("td", "th"):
                     in_table_cell = True
                     break
-                if check.tag_name in ('tbody', 'thead', 'tfoot', 'tr'):
+                if check.tag_name in ("tbody", "thead", "tfoot", "tr"):
                     in_table_structure = True
                 check = check.parent
 
