@@ -2610,243 +2610,137 @@ class ParagraphTagHandler(TagHandler):
 
         return False
 
-    def handle_start(
-        self, token, context,
-    ):
-        if self.parser._debug:
-            self.debug(f"handling {token}, context={context}")
-        if self.parser._debug:
-            self.debug(f"Current parent: {context.current_parent}")
+    def _close_paragraph(self, p_element, context):
+        """Close a paragraph element by popping it from stack and moving insertion point."""
+        while not context.open_elements.is_empty():
+            popped = context.open_elements.pop()
+            if popped == p_element:
+                break
+        
+        if p_element.parent:
+            context.move_to_element(p_element.parent)
+        else:
+            body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
+            context.move_to_element(body)
 
-        # Implicit paragraph end when a start tag that closes <p> appears while inside formatting descendants.
-        if (
-            token.tag_name != "p"
-            and token.tag_name in AUTO_CLOSING_TAGS["p"]
-            and self._has_p_in_scope(context)
-            and context.current_parent.tag_name != "p"
-        ):
-            # Pop elements until the innermost open <p> is removed
-            target_p = None
-            for el in reversed(context.open_elements):
-                if el.tag_name == "p":
-                    target_p = el
-                    break
-            if target_p:
-                while not context.open_elements.is_empty():
-                    popped = context.open_elements.pop()
-                    if popped is target_p:
-                        break
-                # Move insertion point to parent of closed <p>
-                if target_p.parent:
-                    context.move_to_element(target_p.parent)
-                else:
-                    body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
-                    context.move_to_element(body)
-            # Continue with normal handling of the triggering start tag (return False so other handler runs)
+    def _find_p_in_scope(self, context):
+        """Find the innermost <p> element in button scope, or None."""
+        for el in reversed(context.open_elements):
+            if el.tag_name == "p":
+                return el
+        return None
+
+    def _needs_table_foster_parenting(self, context):
+        """Check if we're in a table context needing foster parenting."""
+        if context.in_template_content > 0 or context.in_select:
             return False
-
-        # Spec: A start tag <p> when a <p> element is currently open in *button scope*
-        # implies an end tag </p>. Implement minimal button-scope check (added to
-        # OpenElementsStack) so we do not rely on broader heuristics. Only trigger when
-        # the incoming token is <p> and there is a <p> in button scope (may or may not
-        # be the current_parent). This mirrors the tree-construction algorithm's
-        # paragraph insertion rule.
-        if (
-            token.tag_name == "p"
-            and self._has_p_in_scope(context)
-            and context.current_parent.tag_name == "p"
-        ):
-            closing_p = context.current_parent
-            while not context.open_elements.is_empty():
-                popped = context.open_elements.pop()
-                if popped == closing_p:
-                    break
-            if closing_p.parent:
-                context.move_to_element(closing_p.parent)
-            else:
-                body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
-                context.move_to_element(body)
-            # Continue to handle the new <p> normally below
-
-        if token.tag_name == "p":
-            # Check if in SVG or MathML integration point using centralized helper
-            if is_in_integration_point(context):
-                if self.parser._debug:
-                    self.debug(
-                    "Inside SVG/MathML integration point: creating paragraph locally without closing or fostering",
-                )
-                # Clear any active formatting elements inherited from outside the integration point
-                if context.active_formatting_elements:
-                    context.active_formatting_elements.clear()
-                # Spec-consistent behaviour: create new paragraph element
-                new_node = self.parser.insert_element(
-                    token, context, mode="normal", enter=True,
-                )
-                # insert_element already pushed onto open elements; nothing extra needed
-                return True
-
-        # Auto-close paragraph when encountering block elements
-        if token.tag_name != "p" and context.current_parent.tag_name == "p":
-            if self.parser._debug:
-                self.debug(f"Auto-closing p due to {token.tag_name}")
-            # Pop stack up to and including the open paragraph (spec end tag 'p' logic)
-            closing_p = context.current_parent
-            while not context.open_elements.is_empty():
-                popped = context.open_elements.pop()
-                if popped == closing_p:
-                    break
-            if closing_p.parent:
-                context.move_to_element(closing_p.parent)
-            else:
-                body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
-                context.move_to_element(body)
-            return False  # Let the original handler handle the new tag
-
-        if token.tag_name == "p" and context.current_parent.tag_name in (
-            "applet",
-            "object",
-            "marquee",
-        ):
-            new_node = self.parser.insert_element(
-                token, context, mode="normal", enter=True,
-            )
+        
+        # In table insertion modes
+        if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
             return True
+        
+        # In body but with table ancestor and not in cell
+        if context.document_state == DocumentState.IN_BODY:
+            has_table = find_current_table(context) or any(el.tag_name == "table" for el in context.open_elements)
+            not_in_cell = context.current_parent.tag_name not in ("td", "th")
+            return has_table and not_in_cell
+        
+        return False
 
-        if (
-            token.tag_name == "p"
-            and not context.in_template_content > 0
-            and not context.in_select
-            and (
-                context.document_state
-                in (
-                    DocumentState.IN_TABLE,
-                    DocumentState.IN_TABLE_BODY,
-                    DocumentState.IN_ROW,
-                )
-                or (
-                    context.document_state == DocumentState.IN_BODY
-                    and (
-                        find_current_table(context) is not None
-                        or any(
-                            el.tag_name == "table"
-                            for el in context.open_elements
-                        )
-                    )
-                    and context.current_parent.tag_name not in ("td", "th")
-                )
-            )
-        ):
-            if context.current_parent.tag_name in (
-                "td",
-                "th",
-            ) or context.current_parent.find_table_cell_no_caption_ancestor() is not None:
-                if self.parser._debug:
-                    self.debug(
-                    "Inside table cell; skipping foster-parenting <p> (will insert inside cell)",
-                )
+    def handle_start(self, token, context):
+        tag_name = token.tag_name
+        
+        # Case 1: Block element auto-closes ancestor <p> (but not current parent)
+        if (tag_name != "p" and tag_name in AUTO_CLOSING_TAGS["p"] and
+            self._has_p_in_scope(context) and context.current_parent.tag_name != "p"):
+            p_element = self._find_p_in_scope(context)
+            if p_element:
+                self._close_paragraph(p_element, context)
+            return False  # Reprocess with other handler
+        
+        # Case 2: Non-<p> tag with current parent being <p> - auto-close
+        if tag_name != "p" and context.current_parent.tag_name == "p":
+            self._close_paragraph(context.current_parent, context)
+            return False  # Reprocess with other handler
+        
+        # === From here on, tag_name == "p" ===
+        
+        # Case 3: Duplicate <p> when current parent is <p> - close it first
+        if context.current_parent.tag_name == "p" and self._has_p_in_scope(context):
+            self._close_paragraph(context.current_parent, context)
+            # Fall through to create new <p>
+        
+        # Case 4: <p> in integration point - create locally
+        if is_in_integration_point(context):
+            if context.active_formatting_elements:
+                context.active_formatting_elements.clear()
+            return self.parser.insert_element(token, context, mode="normal", enter=True) and True
+        
+        # Case 5: <p> inside scope boundary elements - create inside
+        if context.current_parent.tag_name in ("applet", "object", "marquee"):
+            return self.parser.insert_element(token, context, mode="normal", enter=True) and True
+        
+        # Case 6: <p> in table context - foster parent
+        if self._needs_table_foster_parenting(context):
+            # Inside cell - create normally
+            if context.current_parent.tag_name in ("td", "th") or context.current_parent.find_table_cell_no_caption_ancestor():
+                pass  # Fall through to default
+            elif is_in_integration_point(context):
+                pass  # Fall through to default
             else:
-                # Do not foster parent when inside SVG/MathML integration points
-                # Check if in integration point using centralized helper
-                if is_in_integration_point(context):
-                    if self.parser._debug:
-                        self.debug(
-                        "In integration point inside table; not foster-parenting <p>",
-                    )
-                else:
-                    if self.parser._debug:
-                        self.debug("Foster parenting paragraph out of table")
-                    if self._has_p_in_scope(context):
-                        fake_end = HTMLToken("EndTag", tag_name="p")
-                        self.handle_end(fake_end, context)
-                    # Use centralized foster parenting with sibling nesting logic
-                    target_parent, target_before = foster_parent(
-                        context.current_parent, context.open_elements, self.parser.root,
-                        context.current_parent, token.tag_name,
-                    )
-                    self.parser.insert_element(token, context, parent=target_parent, before=target_before)
+                # Foster parent outside table
+                if self._has_p_in_scope(context):
+                    fake_end = HTMLToken("EndTag", tag_name="p")
+                    self.handle_end(fake_end, context)
+                target_parent, target_before = foster_parent(
+                    context.current_parent, context.open_elements, self.parser.root,
+                    context.current_parent, tag_name
+                )
+                self.parser.insert_element(token, context, parent=target_parent, before=target_before)
                 return True
-
+        
+        # Case 7: Has ancestor <p> (not current parent)
         p_ancestor = context.current_parent.find_ancestor("p")
         if p_ancestor:
-            boundary_between = context.current_parent.find_svg_integration_point_ancestor()
-            if boundary_between and boundary_between != p_ancestor:
-                if self.parser._debug:
-                    self.debug(
-                    "Found outer <p> beyond integration point boundary; keeping it open",
-                )
-                p_ancestor = None  # Suppress closing logic
+            # Check for integration point boundary
+            boundary = context.current_parent.find_svg_integration_point_ancestor()
+            if boundary and boundary != p_ancestor:
+                p_ancestor = None  # Suppress - keep outer <p> open
+        
         if p_ancestor:
-            button_ancestor = context.current_parent.find_ancestor("button")
-            if button_ancestor:
-                if self.parser._debug:
-                    self.debug(
-                    f"Inside button {button_ancestor}, creating p inside button instead of closing outer p",
-                )
-                # Create new p node inside the button
-                new_node = self.parser.insert_element(
-                    token, context, mode="normal", enter=True,
-                )
-                return True
-            if self.parser._debug:
-                self.debug(f"Found <p> ancestor: {p_ancestor}, closing it")
+            # Inside button - create new <p> without closing ancestor
+            if context.current_parent.find_ancestor("button"):
+                return self.parser.insert_element(token, context, mode="normal", enter=True) and True
+            
+            # Close ancestor <p> and detach its formatting descendants
             formatting_descendants = [
-                elem for elem in list(context.open_elements)
-                if (
-                    elem.tag_name in FORMATTING_ELEMENTS
-                    and elem.find_ancestor("p") is p_ancestor
-                )
+                el for el in list(context.open_elements)
+                if el.tag_name in FORMATTING_ELEMENTS and el.find_ancestor("p") == p_ancestor
             ]
+            
             if p_ancestor.parent:
                 context.move_to_element(p_ancestor.parent)
+            
             if formatting_descendants:
-                new_stack = []
-                to_remove = set(formatting_descendants)
-                for el in context.open_elements:
-                    if el in to_remove:
-                        if self.parser._debug:
-                            self.debug(
-                            f"P-start: popping formatting descendant <{el.tag_name}> with previous paragraph",
-                        )
-                        continue
-                    new_stack.append(el)
-                context.open_elements.replace_stack(new_stack)
-
-        # Check if we're inside a container element
-        container_ancestor = context.current_parent.find_sectioning_element_ancestor()
-        if container_ancestor and container_ancestor == context.current_parent:
-            if self.parser._debug:
-                self.debug(
-                f"Inside container element {container_ancestor.tag_name}, keeping p nested",
-            )
-            new_node = self.parser.insert_element(
-                token, context, mode="normal", enter=True,
-            )
-            return True
-
-        # Create new p node under current parent (keeping formatting context)
+                context.open_elements.replace_stack([
+                    el for el in context.open_elements if el not in formatting_descendants
+                ])
+        
+        # Case 8: Container element - create inside
+        if context.current_parent.find_sectioning_element_ancestor() == context.current_parent:
+            return self.parser.insert_element(token, context, mode="normal", enter=True) and True
+        
+        # Default: Create new <p> element
         new_node = self.parser.insert_element(token, context, mode="normal", enter=True)
-
-        # Conditional reconstruction: If starting a new <p> after closing a previous one AND formatting
-        # descendants were popped (none still open), restore formatting context so nested font / inline chains persist.
-        # Avoid unconditional reconstruction by checking that none of the
-        # previously popped formatting descendants remain open
-        if token.tag_name == "p" and p_ancestor and formatting_descendants:
-            # Skip reconstruction for a single simple inline formatting element to avoid creating a duplicate wrapper.
-            if not (len(formatting_descendants) == 1 and formatting_descendants[0].tag_name in {"b","i","em","strong","u"}):
-                any_still_open = any(
-                    el in context.open_elements for el in formatting_descendants
-                )
-                has_fmt_child = any(
-                    c.tag_name in FORMATTING_ELEMENTS for c in new_node.children
-                )
-                if (not any_still_open) and (not has_fmt_child):
-                    reconstruct_active_formatting_elements(self.parser, context)
-
-        # Note: Active formatting elements will be reconstructed as needed
-        # when content is encountered that requires them (per HTML5 spec)
-
-        if self.parser._debug:
-            self.debug(f"Created new paragraph node: {new_node} under {new_node.parent}")
+        
+        # Reconstruct formatting if we closed ancestor <p> with formatting descendants
+        if p_ancestor and formatting_descendants:
+            # Skip for single simple inline to avoid duplication
+            if not (len(formatting_descendants) == 1 and formatting_descendants[0].tag_name in {"b", "i", "em", "strong", "u"}):
+                if not any(el in context.open_elements for el in formatting_descendants):
+                    if not any(c.tag_name in FORMATTING_ELEMENTS for c in new_node.children):
+                        reconstruct_active_formatting_elements(self.parser, context)
+        
         return True
 
     def handle_end(self, token, context):
