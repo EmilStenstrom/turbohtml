@@ -1076,39 +1076,6 @@ class GenericEndTagHandler(TagHandler):
         return True
 
 
-class SimpleElementHandler(TagHandler):
-    """Base handler for simple elements that create nodes and may nest."""
-
-    def __init__(self, parser, handled_tags):
-        super().__init__(parser)
-        self.handled_tags = handled_tags
-
-    def handle_start(self, token, context):
-        # Auto-close current parent if needed (e.g., block elements auto-close <p>)
-        self.auto_close_current_parent_if_needed(token, context)
-        
-        treat_as_void = self._is_void_element(token.tag_name)
-        mode = "void" if treat_as_void else "normal"
-        self.parser.insert_element(
-            token,
-            context,
-            mode=mode,
-            enter=not treat_as_void,
-            treat_as_void=treat_as_void,
-        )
-        return True
-
-    def handle_end(self, token, context):
-        ancestor = context.current_parent.find_ancestor(token.tag_name)
-        if ancestor:
-            context.move_to_ancestor_parent(ancestor)
-        return True
-
-    def _is_void_element(self, tag_name):
-        """Override in subclasses to specify void elements."""
-        return False
-
-
 class AncestorCloseHandler(TagHandler):
     """Mixin for handlers that close by finding ancestor and moving to its parent."""
 
@@ -4507,14 +4474,11 @@ class ListTagHandler(TagHandler):
         return False
 
 
-class HeadingTagHandler(SimpleElementHandler):
+class HeadingTagHandler(TagHandler):
     """Handles h1-h6 heading elements."""
 
     HANDLED_TAGS = HEADING_ELEMENTS
     HANDLED_END_TAGS = HEADING_ELEMENTS
-
-    def __init__(self, parser):
-        super().__init__(parser, HEADING_ELEMENTS)
 
     def should_handle_start(self, tag_name, context):
         return tag_name in HEADING_ELEMENTS
@@ -4530,7 +4494,16 @@ class HeadingTagHandler(SimpleElementHandler):
             context.move_to_ancestor_parent(context.current_parent)
         # Do NOT climb further up to an ancestor heading; nested headings inside containers (e.g. div)
         # should remain nested (tests expect <h1><div><h3>... not breaking out of <h1>).
-        return super().handle_start(token, context)
+        
+        # Insert the heading element (inlined from SimpleElementHandler)
+        self.parser.insert_element(
+            token,
+            context,
+            mode="normal",
+            enter=True,
+            treat_as_void=False,
+        )
+        return True
 
     def should_handle_end(self, tag_name, context):
         return tag_name in HEADING_ELEMENTS
