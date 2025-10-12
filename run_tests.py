@@ -8,7 +8,7 @@ from io import StringIO
 from pathlib import Path
 
 from turbohtml import TurboHTML
-from turbohtml.parser import FragmentContext
+from turbohtml.context import FragmentContext
 
 # Minimal Unix-friendly fix: if stdout is a pipe and the reader (e.g. `head`) closes early,
 # writes would raise BrokenPipeError at interpreter shutdown. Reset SIGPIPE so the process

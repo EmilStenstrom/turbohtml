@@ -2,7 +2,7 @@
 
 from turbohtml.adoption import AdoptionAgencyAlgorithm
 from turbohtml.constants import NUMERIC_ENTITY_INVALID_SENTINEL, VOID_ELEMENTS
-from turbohtml.context import ContentState, DocumentState, ParseContext, is_in_integration_point
+from turbohtml.context import ContentState, DocumentState, FragmentContext, ParseContext, is_in_integration_point
 from turbohtml.foster import foster_parent, needs_foster_parenting
 from turbohtml.fragment import parse_fragment
 from turbohtml.handlers import (
@@ -44,59 +44,6 @@ except ImportError as err:
         "Rust tokenizer not available. Please install with: "
         "cd rust_tokenizer && maturin develop --release",
     ) from err
-
-
-class FragmentContext:
-    """Structured fragment context for fragment parsing."""
-    __slots__ = ["namespace", "tag_name"]
-
-    def __init__(self, tag_name, namespace=None):
-        self.tag_name = tag_name
-        self.namespace = namespace  # None for HTML, "svg" or "math" for foreign
-
-    def __repr__(self):
-        if self.namespace:
-            return f"FragmentContext({self.namespace}:{self.tag_name})"
-        return f"FragmentContext({self.tag_name})"
-
-    def __bool__(self):
-        return True
-
-    def __eq__(self, other):
-        # Prevent accidental string comparisons (old code pattern)
-        if isinstance(other, str):
-            msg = (
-                f"FragmentContext comparison with string '{other}' - "
-                f"use fragment_context.tag_name == '{other}' instead"
-            )
-            raise TypeError(msg)
-        if isinstance(other, FragmentContext):
-            return self.tag_name == other.tag_name and self.namespace == other.namespace
-        return False
-
-    def __hash__(self):
-        return hash((self.tag_name, self.namespace))
-
-    def matches(self, tag_names):
-        """Check if this is an HTML fragment context matching the given tag name(s).
-
-        Args:
-            tag_names: A single tag name string or iterable of tag name strings
-
-        Returns:
-            True if this is a non-namespaced (HTML) fragment with tag_name matching
-            one of the given tag names, False otherwise (including for None context
-            or foreign/namespaced fragments)
-
-        Examples:
-            fragment_context.matches("tr")
-            fragment_context.matches(("tr", "td", "th"))
-        """
-        if self.namespace:
-            return False
-        if isinstance(tag_names, str):
-            return self.tag_name == tag_names
-        return self.tag_name in tag_names
 
 
 class TurboHTML:
