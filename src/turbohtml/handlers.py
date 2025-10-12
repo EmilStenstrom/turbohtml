@@ -269,10 +269,6 @@ class DocumentStructureHandler(TagHandler):
     HANDLED_START_TAGS = ALL_TAGS  # Intercepts all start tags for re-entry logic
     HANDLED_END_TAGS = frozenset(["html", "body"])
 
-    def should_handle_start(self, tag_name, context):
-        # Always intercept to handle re-entry logic and structure tags
-        return True
-
     def handle_start(self, token, context):
         tag = token.tag_name
         parser = self.parser
