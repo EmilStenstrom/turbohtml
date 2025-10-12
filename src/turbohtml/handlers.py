@@ -4957,9 +4957,7 @@ class ForeignTagHandler(TagHandler):
 
         return fixed_attrs
 
-    def _handle_foreign_foster_parenting(
-        self, token, context,
-    ):
+    def _handle_foreign_foster_parenting(self, token, context):
         """Handle foster parenting for foreign elements (SVG/MathML) in table context."""
         tag_name = token.tag_name
         tag_name_lower = tag_name.lower()
@@ -5031,9 +5029,7 @@ class ForeignTagHandler(TagHandler):
                     return True
         return False
 
-    def _handle_html_breakout(
-        self, token, context,
-    ):
+    def _handle_html_breakout(self, token, context):
         """Handle HTML elements breaking out of foreign content."""
         tag_name_lower = token.tag_name.lower()
 
