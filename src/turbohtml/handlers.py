@@ -1567,7 +1567,7 @@ class FormattingTagHandler(TagHandler):
 
         # Only now check expensive context conditions
         # Skip if inside select (SelectAware behavior)
-        if context.current_parent.is_inside_tag("select"):
+        if context.in_select:
             return False
 
         # Allow formatting handlers inside template content (TemplateAware behavior)
@@ -2049,7 +2049,7 @@ class SelectTagHandler(TagHandler):
                     return True  # Will handle in handle_start
                 cur = cur.parent
 
-        inside_select = context.current_parent.is_inside_tag("select")
+        inside_select = context.in_select
         is_foreign = context.current_parent.namespace in ("svg", "math")
         if inside_select and not is_foreign:
             # Do NOT intercept script/style/plaintext so RawtextTagHandler/PlaintextHandler can process them
@@ -2120,7 +2120,7 @@ class SelectTagHandler(TagHandler):
                         return True
 
             # If we're already in a select, close it and ignore the nested select
-            if context.current_parent.is_inside_tag("select"):
+            if context.in_select:
                 if self.parser._debug:
                     self.debug(
                     "Found nested select, popping outer <select> from open elements (spec reprocess rule)",
@@ -2169,7 +2169,7 @@ class SelectTagHandler(TagHandler):
 
         # Relaxed select parser: datalist is now allowed inside select as a normal child
         if tag_name == "datalist":
-            if context.current_parent.is_inside_tag("select"):
+            if context.in_select:
                 # Create datalist as normal child of select (or current element inside select)
                 self.parser.insert_element(token, context, mode="normal")
                 return True
@@ -2179,7 +2179,7 @@ class SelectTagHandler(TagHandler):
 
         # Relaxed select parser: input and textarea still close select (but keygen is now allowed inside)
         if (
-            context.current_parent.is_inside_tag("select")
+            context.in_select
             and tag_name in ("input", "textarea")
         ):
             if self.parser._debug:
@@ -2203,7 +2203,7 @@ class SelectTagHandler(TagHandler):
             return False  # Reprocess token as normal start tag now outside select
 
         # Handle <hr> inside <select>: insert as void element inside select (not ignored)
-        if context.current_parent.is_inside_tag("select") and tag_name == "hr":
+        if context.in_select and tag_name == "hr":
             if self.parser._debug:
                 self.debug("Emitting <hr> inside select (void element)")
             # If currently inside option/optgroup, close them implicitly by moving insertion point to ancestor select
@@ -2218,7 +2218,7 @@ class SelectTagHandler(TagHandler):
             )
             return True
 
-        if context.current_parent.is_inside_tag("select") and tag_name in TABLE_ELEMENTS:
+        if context.in_select and tag_name in TABLE_ELEMENTS:
             select_ancestor = context.current_parent.find_ancestor("select")
             # If in ANY table insertion mode and encountering table structural tags inside select, pop select first
             if (
@@ -2409,13 +2409,13 @@ class SelectTagHandler(TagHandler):
             return True
 
         # Handle formatting element end tags when inside select
-        if tag_name in FORMATTING_ELEMENTS and context.current_parent.is_inside_tag("select"):
+        if tag_name in FORMATTING_ELEMENTS and context.in_select:
             if self.parser._debug:
                 self.debug(f"SelectTagHandler intercepting </{tag_name}> inside select")
             return True
 
         # Handle block element end tags when inside select (need to recreate formatting)
-        if tag_name in BLOCK_ELEMENTS and context.current_parent.is_inside_tag("select"):
+        if tag_name in BLOCK_ELEMENTS and context.in_select:
             return True
 
         return False
@@ -2428,7 +2428,7 @@ class SelectTagHandler(TagHandler):
         )
 
         # Handle block element end tags inside select (recreate formatting elements)
-        if tag_name in BLOCK_ELEMENTS and context.current_parent.is_inside_tag("select"):
+        if tag_name in BLOCK_ELEMENTS and context.in_select:
             if self.parser._debug:
                 self.debug(f"Handling block element </{tag_name}> inside select")
 
@@ -2468,7 +2468,7 @@ class SelectTagHandler(TagHandler):
             return True
 
         # Handle formatting element end tags inside select
-        if tag_name in FORMATTING_ELEMENTS and context.current_parent.is_inside_tag("select"):
+        if tag_name in FORMATTING_ELEMENTS and context.in_select:
             if self.parser._debug:
                 self.debug(f"Handling formatting element </{tag_name}> inside select")
 
@@ -2750,7 +2750,7 @@ class ParagraphTagHandler(TagHandler):
         if (
             token.tag_name == "p"
             and not context.in_template_content > 0
-            and not context.current_parent.is_inside_tag("select")
+            and not context.in_select
             and (
                 context.document_state
                 in (
@@ -4575,7 +4575,7 @@ class RawtextTagHandler(TagHandler):
             return False
 
         # Skip if inside select (except script/style which are allowed)
-        if tag_name not in ("script", "style") and context.current_parent.is_inside_tag("select"):
+        if tag_name not in ("script", "style") and context.in_select:
             return False
 
         # Suppress any start tags while in RAWTEXT content state
@@ -4721,7 +4721,7 @@ class VoidTagHandler(TagHandler):
             return False
 
         # SelectAware behavior: skip if inside select
-        if context.current_parent.is_inside_tag("select"):
+        if context.in_select:
             return False
 
         return True
@@ -5150,7 +5150,7 @@ class ForeignTagHandler(TagHandler):
             )
         ):
             # If we are in a cell, caption, or select, handle normally (don't foster)
-            if not is_in_cell_or_caption(context) and not context.current_parent.is_inside_tag("select"):
+            if not is_in_cell_or_caption(context) and not context.in_select:
                 table = find_current_table(context)
                 if table and table.parent:
                     if self.parser._debug:
@@ -5263,7 +5263,7 @@ class ForeignTagHandler(TagHandler):
             in_caption_or_cell = context.current_parent.find_table_cell_ancestor() is not None
 
             # Check if we're inside select - HTML breakout should stay in select, not foster parent
-            in_select = context.current_parent.is_inside_tag("select")
+            in_select = context.in_select
 
             # Check if we need to foster parent before exiting foreign context
             if table and table.parent and not in_caption_or_cell and not in_select:
@@ -7237,7 +7237,7 @@ class PlaintextHandler(TagHandler):
         if (
             context.document_state == DocumentState.IN_TABLE
             and context.current_parent.tag_name not in ("td", "th", "caption")
-            and not context.current_parent.is_inside_tag("select")  # Don't foster if inside select
+            and not context.in_select  # Don't foster if inside select
         ):
             table = find_current_table(context)
             if table and table.parent:
@@ -7265,7 +7265,7 @@ class PlaintextHandler(TagHandler):
             context.open_elements.push(pt_node)
         else:
             # Check if we're inside select - if so, disable auto-fostering
-            inside_select = context.current_parent.is_inside_tag("select")
+            inside_select = context.in_select
             self.parser.insert_element(
                 token,
                 context,

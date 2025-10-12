@@ -60,7 +60,7 @@ def should_foster_parent(tag_name, attrs, context, parser):
         return False
     # Relaxed select parser: elements inside select should not be foster-parented
     # (except table structural elements which close the select, handled elsewhere)
-    if context.current_parent.is_inside_tag("select"):
+    if context.in_select:
         return False
     # Inside an existing cell forbids fostering
     if context.current_parent.tag_name in TABLE_CELL_TAGS:

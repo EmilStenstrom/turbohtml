@@ -94,6 +94,8 @@ class ParseContext:
         "_ip_in_mathml_html",
         "_ip_in_mathml_text",
         "_ip_in_svg_html",
+        "_select_cache_node",
+        "_select_cached_value",
         "active_formatting_elements",
         "anchor_resume_element",
         "current_context",
@@ -124,6 +126,8 @@ class ParseContext:
         self._ip_in_svg_html = False  # In SVG HTML integration point (foreignObject/desc/title)
         self._ip_in_mathml_html = False  # In MathML HTML integration point (annotation-xml)
         self._ip_in_mathml_text = False  # In MathML text integration point (mi/mo/mn/ms/mtext)
+        self._select_cache_node = None  # Select cache: which node is cached
+        self._select_cached_value = False  # Cached result of is_inside_tag("select")
         self._debug = debug_callback
         self.doctype_seen = False
         self.quirks_mode = True  # Quirks mode (no DOCTYPE = quirks), set by DoctypeHandler
@@ -164,6 +168,8 @@ class ParseContext:
             old_parent = self._current_parent
             # Invalidate integration point cache when parent changes
             self._ip_cache_node = None
+            # Invalidate select cache when parent changes
+            self._select_cache_node = None
 
             # Track template content depth for fast in_template_content checks
             # Exit: moving FROM a content node to a non-descendant
@@ -191,6 +197,20 @@ class ParseContext:
 
             self._debug(f"Parent change: {old_parent.tag_name} -> {new_parent.tag_name}")
             self._current_parent = new_parent
+
+    @property
+    def in_select(self):
+        """Fast cached check for is_inside_tag("select").
+
+        Optimizes the very common pattern of checking if we're inside a select element.
+        Cache is automatically invalidated when current_parent changes.
+        ~4x faster than direct ancestry walk for repeated checks at same position.
+        """
+        if self._select_cache_node is not self._current_parent:
+            # Cache miss - recalculate
+            self._select_cache_node = self._current_parent
+            self._select_cached_value = self._current_parent.is_inside_tag("select")
+        return self._select_cached_value
 
     @property
     def document_state(self):
