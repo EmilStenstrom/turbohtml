@@ -2712,10 +2712,6 @@ class ParagraphTagHandler(TagHandler):
             )
             return True
 
-        if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
-            body = ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
-            context.transition_to_state( DocumentState.IN_BODY, body)
-
         if (
             token.tag_name == "p"
             and not context.in_template_content > 0
