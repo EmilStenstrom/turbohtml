@@ -2589,19 +2589,15 @@ class ParagraphTagHandler(TagHandler):
     def should_handle_start(self, tag_name, context):
         if context.in_template_content > 0:
             return False
+
         if tag_name == "p":
             return True
-        # Also handle start tags that implicitly close an open <p> even when insertion point is
-        # inside a descendant inline formatting element (current_parent not the <p> itself).
-        if tag_name in AUTO_CLOSING_TAGS[
-            "p"
-        ] and context.open_elements.has_element_in_button_scope("p"):
-            return True
-        if context.current_parent.tag_name == "p":
-            # Don't auto-close paragraph in foreign integration points - let normal HTML nesting apply
+
+        # Handle tags that implicitly close <p> when <p> is in button scope
+        if tag_name in AUTO_CLOSING_TAGS["p"]:
             if is_in_integration_point(context):
                 return False
-            return tag_name in AUTO_CLOSING_TAGS["p"]
+            return context.open_elements.has_element_in_button_scope("p")
 
         return False
 
