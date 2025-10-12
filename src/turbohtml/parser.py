@@ -539,6 +539,20 @@ class TurboHTML:
         """Handle all opening HTML tags."""
         tag_name = token.tag_name
 
+        # Malformed tag check: tags containing "<" are treated as normal elements per spec
+        if "<" in tag_name:
+            if self._debug:
+                self.debug(f"Malformed tag detected: {tag_name}, inserting as normal element")
+            # Ensure body exists for malformed tags (they're treated as content, not structure)
+            from turbohtml.utils import ensure_body
+            if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD, DocumentState.AFTER_HEAD):
+                body = ensure_body(self.root, context.document_state, self.fragment_context)
+                if body:
+                    context.move_to_element(body)
+                    context.transition_to_state(DocumentState.IN_BODY, body)
+            self.insert_element(token, context, mode="normal")
+            return
+
         # Inline frameset preprocessing (guards frameset_ok and consumes invalid tokens)
         if self.frameset_handler and self.frameset_handler.preprocess_start(token, context):
             return

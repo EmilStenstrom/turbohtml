@@ -2034,17 +2034,6 @@ class SelectTagHandler(TagHandler):
         if context.in_template_content > 0:
             return False
 
-        # Always intercept to check for malformed tags
-        if "<" in tag_name:
-            # Malformed tag - check if inside select subtree
-            cur = context.current_parent
-            while cur:
-                if cur.tag_name in {"select", "option", "optgroup"}:
-                    if self.parser._debug:
-                        self.debug(f"Intercepting malformed tag {tag_name}")
-                    return True  # Will handle in handle_start
-                cur = cur.parent
-
         inside_select = context.in_select
         is_foreign = context.current_parent.namespace in ("svg", "math")
         if inside_select and not is_foreign:
@@ -2063,11 +2052,6 @@ class SelectTagHandler(TagHandler):
             self.debug(
             f"Handling {tag_name} in select context, current_parent={context.current_parent}",
         )
-
-        # Handle malformed tag names containing "<" - insert as normal element
-        if "<" in tag_name and context.current_parent.is_inside_tag(("select", "option", "optgroup")):
-            self.parser.insert_element(token, context, mode="normal")
-            return True
 
         # If we're inside template content, block select semantics entirely. The content filter
         # will represent option/optgroup/select as plain elements without promotion or relocation.
