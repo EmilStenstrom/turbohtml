@@ -563,15 +563,18 @@ class TurboHTML:
 
         # Dispatch with fast-path optimization using pre-computed handler metadata
         for handler, handled_tags, has_custom_should_handle in self._start_handler_metadata:
-            # Fast-path: check HANDLED_START_TAGS directly if no custom should_handle_start
+            # Pre-filter by HANDLED_START_TAGS before calling any handler logic
+            # Exception: if HANDLED_START_TAGS is None but handler has custom should_handle_start,
+            # the custom method gets to decide (legacy behavior for handlers without declared tag sets)
+            if handled_tags is not None and tag_name not in handled_tags:
+                continue
+
             if not has_custom_should_handle:
-                if handled_tags is None or tag_name not in handled_tags:
-                    continue
                 # Tag is in HANDLED_START_TAGS, dispatch directly to handle_start
                 if handler.handle_start(token, context):
                     return
             else:
-                # Handler has custom should_handle_start logic - use it
+                # Handler has custom should_handle_start logic - call it for matching tags (or all if None)
                 if handler.should_handle_start(tag_name, context) and handler.handle_start(token, context):
                     return
 
@@ -588,15 +591,18 @@ class TurboHTML:
 
         # Dispatch with fast-path optimization using pre-computed handler metadata
         for handler, handled_end_tags, has_custom_should_handle in self._end_handler_metadata:
-            # Fast-path: check HANDLED_END_TAGS directly if no custom should_handle_end
+            # Pre-filter by HANDLED_END_TAGS before calling any handler logic
+            # Exception: if HANDLED_END_TAGS is None but handler has custom should_handle_end,
+            # the custom method gets to decide (legacy behavior for handlers without declared tag sets)
+            if handled_end_tags is not None and tag_name not in handled_end_tags:
+                continue
+
             if not has_custom_should_handle:
-                if handled_end_tags is None or tag_name not in handled_end_tags:
-                    continue
                 # Tag is in HANDLED_END_TAGS, dispatch directly to handle_end
                 if handler.handle_end(token, context):
                     return
             else:
-                # Handler has custom should_handle_end logic - use it
+                # Handler has custom should_handle_end logic - call it for matching tags (or all if None)
                 if handler.should_handle_end(tag_name, context) and handler.handle_end(token, context):
                     return
 

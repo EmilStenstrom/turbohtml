@@ -944,20 +944,10 @@ class TemplateElementHandler(TagHandler):
 
     def should_handle_start(self, tag_name, context):
         """Handle top-level <template> tags."""
-        if tag_name != "template":
-            return False
-        # Only handle top-level templates (not nested in template content)
-        # Nested templates are handled by TemplateContentFilterHandler
-        if context.current_parent.tag_name == "content":
-            parent_is_template = (
-                context.current_parent.parent
-                and context.current_parent.parent.tag_name == "template"
-            )
-            if parent_is_template:
-                return False
-        # Skip if inside template content
+
         if context.in_template_content > 0:
             return False
+
         return True
 
     def handle_start(self, token, context):
@@ -995,9 +985,10 @@ class TemplateElementHandler(TagHandler):
         return True
 
     def should_handle_end(self, tag_name, context):
-        """Handle </template> tags for top-level templates."""
-        if tag_name != "template":
-            return False
+        """Handle </template> tags for top-level templates.
+        
+        Note: dispatcher pre-filters by HANDLED_END_TAGS, so tag_name is always "template" here.
+        """
         if context.content_state == ContentState.PLAINTEXT:
             return False
         # Distinguish between:
@@ -1557,17 +1548,9 @@ class FormattingTagHandler(TagHandler):
         return node
 
     def should_handle_start(self, tag_name, context):
-        # Fast path: check tag first (cheap frozenset lookup)
-        if tag_name not in FORMATTING_ELEMENTS:
-            return False
-
-        # Only now check expensive context conditions
-        # Skip if inside select (SelectAware behavior)
         if context.in_select:
             return False
 
-        # Allow formatting handlers inside template content (TemplateAware behavior)
-        # Other handlers skip template content, but formatting/auto-closing still apply
         return True
 
     def handle_start(
