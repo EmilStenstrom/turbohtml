@@ -1076,33 +1076,6 @@ class GenericEndTagHandler(TagHandler):
         return True
 
 
-class AncestorCloseHandler(TagHandler):
-    """Mixin for handlers that close by finding ancestor and moving to its parent."""
-
-    def handle_end_by_ancestor(
-        self,
-        token,
-        context,
-        tag_name=None,
-        stop_at_boundary=False,
-    ):
-        """Standard pattern: find ancestor by tag name and move to its parent."""
-        search_tag = tag_name or token.tag_name
-        ancestor = context.current_parent.find_ancestor(
-            search_tag, stop_at_boundary=stop_at_boundary,
-        )
-        if ancestor:
-            context.move_to_element_with_fallback(
-                ancestor.parent, context.current_parent,
-            )
-            if self.parser._debug:
-                self.debug(f"Found {search_tag} ancestor, moved to parent")
-            return True
-        if self.parser._debug:
-            self.debug(f"No {search_tag} ancestor found")
-        return False
-
-
 class TextHandler(TagHandler):
     """Default handler for text nodes."""
 
@@ -2002,7 +1975,7 @@ class FormattingTagHandler(TagHandler):
         return True
 
 
-class SelectTagHandler(AncestorCloseHandler):
+class SelectTagHandler(TagHandler):
     """Handles select elements and their children (option, optgroup) and datalist."""
 
     def __init__(self, parser=None):
@@ -2012,6 +1985,19 @@ class SelectTagHandler(AncestorCloseHandler):
         # formatting elements can be positioned before it if required. Replaces prior
         # dynamic context attribute monkey patching.
         self._pending_table_outside = None
+
+    def handle_end_by_ancestor(self, token, context, tag_name=None, stop_at_boundary=False):
+        """Standard pattern: find ancestor by tag name and move to its parent."""
+        search_tag = tag_name or token.tag_name
+        ancestor = context.current_parent.find_ancestor(search_tag, stop_at_boundary=stop_at_boundary)
+        if ancestor:
+            context.move_to_element_with_fallback(ancestor.parent, context.current_parent)
+            if self.parser._debug:
+                self.debug(f"Found {search_tag} ancestor, moved to parent")
+            return True
+        if self.parser._debug:
+            self.debug(f"No {search_tag} ancestor found")
+        return False
 
     # Override to widen interception scope inside select
     def should_handle_start(self, tag_name, context):
