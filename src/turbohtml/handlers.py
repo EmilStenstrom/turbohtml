@@ -2614,21 +2614,6 @@ class ParagraphTagHandler(TagHandler):
                 return None
         return None
 
-    def should_handle_start(self, tag_name, context):
-        if context.in_template_content > 0:
-            return False
-
-        if tag_name == "p":
-            return True
-
-        # Handle tags that implicitly close <p> when <p> is in button scope
-        if tag_name in AUTO_CLOSING_TAGS["p"]:
-            if is_in_integration_point(context):
-                return False
-            return self._has_p_in_scope(context)
-
-        return False
-
     def _close_paragraph(self, p_element, context):
         """Close a paragraph element by popping it from stack and moving insertion point."""
         while not context.open_elements.is_empty():
@@ -2657,6 +2642,22 @@ class ParagraphTagHandler(TagHandler):
             not_in_cell = context.current_parent.tag_name not in ("td", "th")
             return has_table and not_in_cell
         
+        return False
+
+
+    def should_handle_start(self, tag_name, context):
+        if context.in_template_content > 0:
+            return False
+
+        if tag_name == "p":
+            return True
+
+        # Handle tags that implicitly close <p> when <p> is in button scope
+        if tag_name in AUTO_CLOSING_TAGS["p"]:
+            if is_in_integration_point(context):
+                return False
+            return self._has_p_in_scope(context)
+
         return False
 
     def handle_start(self, token, context):
