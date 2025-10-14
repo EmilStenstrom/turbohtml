@@ -5161,7 +5161,12 @@ class ForeignTagHandler(TagHandler):
         if context.current_context not in ("svg", "math"):
             return
         
-        # Check if still inside matching foreign namespace
+        # Fast path: if current parent matches context, we're definitely inside
+        if ((context.current_context == "svg" and context.current_parent.namespace == "svg") or
+            (context.current_context == "math" and context.current_parent.namespace == "math")):
+            return
+        
+        # Check if still inside matching foreign namespace by walking ancestors
         inside = any(
             (context.current_context == "svg" and node.namespace == "svg") or
             (context.current_context == "math" and node.namespace == "math")
@@ -5206,9 +5211,6 @@ class ForeignTagHandler(TagHandler):
         tag_lower = tag_name.lower()
         fc = self.parser.fragment_context
         
-        # Clear stale context before checking
-        self._clear_stale_foreign_context(context)
-        
         # Handle if in active foreign context
         if context.current_context in ("svg", "math"):
             return True
@@ -5238,6 +5240,9 @@ class ForeignTagHandler(TagHandler):
         tag_name = token.tag_name
         tag_name_lower = tag_name.lower()
         fc = self.parser.fragment_context
+
+        # Clear stale foreign context early (fast path: O(1) for non-foreign, O(1) when parent matches)
+        self._clear_stale_foreign_context(context)
 
         # MathML leaf fragments: normalize self-closing and delegate
         if fc and fc.namespace == "math" and fc.tag_name in self._MATHML_LEAFS:
