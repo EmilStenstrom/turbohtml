@@ -107,7 +107,7 @@ class TurboHTML:
                 UnifiedCommentHandler,
                 ForeignTagHandler,
                 ParagraphTagHandler,
-                BlockFormattingReconstructionHandler,  # Renamed from AutoClosingTagHandler
+                BlockFormattingReconstructionHandler,
                 MenuitemTagHandler,
                 ListTagHandler,
                 HeadTagHandler,

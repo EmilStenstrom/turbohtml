@@ -5993,21 +5993,6 @@ class HeadTagHandler(TagHandler):
             return False
         if tag_name == "template":
             return False
-        # Suppress head-level interception for style/script when inside table descendants (caption/row/cell)
-        if tag_name in ("style", "script"):
-            anc = context.current_parent
-            while anc and anc.tag_name not in ("document", "html"):
-                if anc.tag_name in (
-                    "caption",
-                    "tr",
-                    "td",
-                    "th",
-                    "tbody",
-                    "thead",
-                    "tfoot",
-                ):
-                    return False
-                anc = anc.parent
         # Late meta/title after body/html: still handle here so we can explicitly place them into body (spec parse error recovery)
         if tag_name in ("meta", "title") and context.document_state in (DocumentState.AFTER_BODY, DocumentState.AFTER_HTML):
             return True
@@ -6037,6 +6022,14 @@ class HeadTagHandler(TagHandler):
                     self.debug(
                     f"Current parent's children: {[c.tag_name for c in context.current_parent.children]}",
                 )
+
+        # Suppress head-level handling for style/script inside table cells/captions (delegate to other handlers)
+        if tag_name in ("style", "script"):
+            anc = context.current_parent
+            while anc and anc.tag_name not in ("document", "html"):
+                if anc.tag_name in ("caption", "tr", "td", "th", "tbody", "thead", "tfoot"):
+                    return False
+                anc = anc.parent
 
         # Special handling for template elements
         if tag_name == "template":
