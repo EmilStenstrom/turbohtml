@@ -5200,81 +5200,34 @@ class ForeignTagHandler(TagHandler):
     def should_handle_start(self, tag_name, context):
         """Decide if foreign handler should process start tag.
 
-        Returns True to create foreign (svg/math) element.
-        Returns False to delegate to HTML handlers.
+        Simple filtering based on tag name and foreign context state.
+        Complex decisions deferred to handle_start for clarity.
         """
         tag_lower = tag_name.lower()
         fc = self.parser.fragment_context
         
-        # Case 1: MathML leaf fragment - normalize self-closing flag
-        if (fc and fc.namespace == "math" and fc.tag_name in self._MATHML_LEAFS and 
-            tag_name == fc.tag_name):
-            return True
-        
-        # Case 2: Clear stale context if moved outside foreign content
+        # Clear stale context before checking
         self._clear_stale_foreign_context(context)
         
-        # Case 3: SVG integration point fragment context
-        if fc and fc.namespace == "svg" and fc.tag_name in ("foreignObject", "desc", "title"):
-            if tag_lower in ("svg", "math"):
-                return True  # New foreign root
-            if self._is_table_related(tag_lower):
-                return True  # Table tags stay foreign in integration points
-            if tag_lower in HTML_ELEMENTS:
-                return False  # Delegate HTML elements
-            return False  # Unknown tags treated as HTML in integration points
+        # Handle if in active foreign context
+        if context.current_context in ("svg", "math"):
+            return True
         
-        # Case 4: Inside SVG context
-        if context.current_context == "svg":
-            # SVG integration points use HTML parsing rules
-            if self._is_in_svg_integration_point(context):
-                if tag_lower in ("svg", "math"):
-                    return True  # Nested foreign roots
-                if self._is_table_related(tag_lower):
-                    return True  # Tables stay foreign
-                # foreignObject: math root creates MathML context; leaves delegate to HTML
-                if context.current_parent.tag_name == "foreignObject":
-                    if tag_lower == "math":
-                        return True
-                    if tag_lower in self._MATHML_LEAFS:
-                        return False
-                return False  # Delegate HTML/unknown
-            return True  # Generic SVG content - handle as foreign
-        
-        # Case 5: Inside MathML context
-        if context.current_context == "math":
-            # Nested svg in text integration point - create leaf without context switch
-            if tag_lower == "svg" and self._is_in_mathml_text_integration_point(context):
-                return True
-            
-            # Text integration points delegate HTML
-            if self._is_in_mathml_text_integration_point(context):
-                if tag_lower in HTML_ELEMENTS:
-                    return False
-            
-            # annotation-xml with HTML encoding delegates HTML
-            if self._is_in_mathml_annotation_html_integration_point(context):
-                if tag_lower in HTML_ELEMENTS:
-                    return False
-            
-            return True  # Generic MathML content
-        
-        # Case 6: New foreign roots (outside context)
+        # Handle foreign roots
         if tag_lower in ("svg", "math"):
             return True
         
-        # Case 7: MathML elements outside context
+        # Handle MathML elements with fragment or active context
         if tag_lower in MATHML_ELEMENTS:
-            # MathML leaf fragments treated as HTML
-            if (fc and fc.namespace == "math" and fc.tag_name == tag_lower and 
-                tag_lower in self._MATHML_LEAFS):
-                return False
-            # Active context or fragment context
             if context.current_context or (fc and fc.namespace == "math"):
                 return True
         
-        # Case 8: SVG fragment fallback (context cleared by breakout)
-        if fc and fc.namespace == "svg" and not context.current_context:
+        # Handle SVG fragment fallback
+        if fc and fc.namespace == "svg":
+            return True
+        
+        # Handle MathML fragment root (for self-closing normalization)
+        if fc and fc.namespace == "math" and fc.tag_name in self._MATHML_LEAFS and tag_name == fc.tag_name:
             return True
         
         return False
@@ -5284,24 +5237,59 @@ class ForeignTagHandler(TagHandler):
     ):
         tag_name = token.tag_name
         tag_name_lower = tag_name.lower()
+        fc = self.parser.fragment_context
 
-        # Normalize self-closing MathML leaf in fragment context
-        frag_ctx = self.parser.fragment_context
-        if frag_ctx and frag_ctx.namespace:
-            if frag_ctx.namespace == "math" and frag_ctx.tag_name in self._MATHML_LEAFS and tag_name == frag_ctx.tag_name:
+        # MathML leaf fragments: normalize self-closing and delegate
+        if fc and fc.namespace == "math" and fc.tag_name in self._MATHML_LEAFS:
+            if tag_name_lower == fc.tag_name:
+                # Normalize self-closing flag
                 if token.is_self_closing:
                     if self.parser._debug:
-                        self.debug(f"Clearing self-closing for MathML leaf fragment root <{frag_ctx.tag_name}/> to enable text nesting")
+                        self.debug(f"Clearing self-closing for MathML leaf fragment root <{fc.tag_name}/> to enable text nesting")
                     token.is_self_closing = False
-                # Delegate to other handlers (don't create as foreign element)
+                return False  # Delegate to HTML handlers
+            # Other MathML elements in leaf fragment context treated as HTML
+            if tag_name_lower in self._MATHML_LEAFS and tag_name_lower != fc.tag_name:
                 return False
 
+        # Handle foster parenting and HTML breakout BEFORE integration point filtering
+        # Breakout must happen before we check integration points
         if self._handle_foreign_foster_parenting(token, context):
             return True
 
         breakout_result = self._handle_html_breakout(token, context)
         if breakout_result is not False:
             return breakout_result
+
+        # Integration points: delegate HTML elements to HTML handlers
+        # In integration points, HTML parsing rules apply for HTML elements (plus unknown elements)
+        # but MathML/SVG elements stay in foreign context
+        if self._is_in_svg_integration_point(context) or \
+           self._is_in_mathml_text_integration_point(context) or \
+           self._is_in_mathml_annotation_html_integration_point(context):
+            # Delegate HTML elements (but keep svg/math roots and MathML/table elements foreign)
+            if tag_name_lower in HTML_ELEMENTS:
+                if tag_name_lower not in ("svg", "math") and not self._is_table_related(tag_name_lower):
+                    return False  # Delegate to HTML handlers
+            # Check if it's a known SVG or MathML element - if so, keep in foreign context
+            elif tag_name_lower not in MATHML_ELEMENTS and \
+                 tag_name_lower not in ("svg",) and \
+                 tag_name_lower not in SVG_CASE_SENSITIVE_ELEMENTS:
+                # Unknown elements (not HTML, not MathML, not SVG) delegate to HTML
+                if not self._is_table_related(tag_name_lower):
+                    return False  # Delegate unknown elements to HTML
+        
+        # SVG integration point fragments: same delegation rules
+        if fc and fc.namespace == "svg" and fc.tag_name in ("foreignObject", "desc", "title"):
+            # Delegate HTML elements and unknown elements, keep foreign elements
+            if tag_name_lower in HTML_ELEMENTS:
+                if tag_name_lower not in ("svg", "math") and not self._is_table_related(tag_name_lower):
+                    return False  # Delegate to HTML handlers
+            elif tag_name_lower not in MATHML_ELEMENTS and \
+                 tag_name_lower not in ("svg",) and \
+                 tag_name_lower not in SVG_CASE_SENSITIVE_ELEMENTS:
+                if not self._is_table_related(tag_name_lower):
+                    return False  # Delegate unknown elements
 
         # Structural rule: standalone MathML elements (excluding the root <math>) that appear when
         # no math context is active are emitted as prefixed nodes (math tagname) without switching
