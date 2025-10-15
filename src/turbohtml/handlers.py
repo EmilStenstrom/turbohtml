@@ -6019,134 +6019,75 @@ class HeadTagHandler(TagHandler):
 
     def handle_start(self, token, context):
         tag_name = token.tag_name
-
-        # Suppress head-level handling for style/script inside table cells/captions (delegate to other handlers)
+        
+        # style/script: suppress if inside table cells/captions
         if tag_name in ("style", "script"):
             anc = context.current_parent
             while anc and anc.tag_name not in ("document", "html"):
                 if anc.tag_name in ("caption", "tr", "td", "th", "tbody", "thead", "tfoot"):
                     return False
                 anc = anc.parent
-
-        # If we're in any table-related context, place style/script (and other head elements) inside the
-        # current table or its section rather than fostering before the table. Expected trees
-        # show <style>/<script> as descendants of <table>/<tbody> when they appear after the <table>
-        # start tag but before any rows.
-        if context.document_state in (
-            DocumentState.IN_TABLE,
-            DocumentState.IN_TABLE_BODY,
-            DocumentState.IN_ROW,
-        ):
-            table = get_current_table(context)
-            if table:
-                # Only style/script should be treated as early rawtext inside table. Title/textarea should be fostered.
-                if tag_name in ("style", "script"):
-                    # Special case: if current_parent is a foster-parented <select> immediately before the table,
-                    # keep the rawtext element INSIDE that <select>. This mirrors normal insertion
-                    # point behavior: select is still open and current_parent points at it.
+            
+            # In table context: insert inside table structure (before sections)
+            if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
+                table = get_current_table(context)
+                if table:
                     parent_tag = context.current_parent.tag_name
-                    if parent_tag == "select" or parent_tag in ("tbody", "thead", "tfoot"):
-                        container = context.current_parent
-                    else:
-                        container = table
+                    container = context.current_parent if parent_tag in ("select", "tbody", "thead", "tfoot") else table
                     before = None
-                    # When inserting inside select we never reorder relative to table sections.
                     if container is not context.current_parent or container is table:
                         for ch in container.children:
                             if ch.tag_name in ("thead", "tbody", "tfoot", "tr"):
                                 before = ch
                                 break
-                    self.parser.insert_element(
-                        token,
-                        context,
-                        mode="normal",
-                        enter=tag_name not in VOID_ELEMENTS,
-                        parent=container,
-                        before=before,
-                        tag_name_override=tag_name,
-                        push_override=False,
-                    )
-                    if tag_name not in VOID_ELEMENTS and tag_name in RAWTEXT_ELEMENTS:
-                        context.content_state = ContentState.RAWTEXT
-                        if self.parser._debug:
-                            self.debug(f"Switched to RAWTEXT state for {tag_name}")
+                    self._insert_head_element(token, context, tag_name, parent=container, before=before)
                     return True
-                # Other head elements (meta, title, link, base, etc.) are foster parented before the table at body level
+        
+        # Non-style/script in table context: foster parent before table
+        if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
+            table = get_current_table(context)
+            if table:
                 if self.parser._debug:
-                    self.debug(
-                        f"Head element {tag_name} in table context (non-rawtext), foster parenting before table",
-                    )
+                    self.debug(f"Head element {tag_name} in table context, foster parenting before table")
                 parent_for_foster = table.parent or context.current_parent
                 before = table if table in parent_for_foster.children else None
-                self.parser.insert_element(
-                    token,
-                    context,
-                    mode="normal",
-                    enter=tag_name not in VOID_ELEMENTS,
-                    parent=parent_for_foster,
-                    before=before,
-                    tag_name_override=tag_name,
-                    push_override=False,
-                )
-                if tag_name not in VOID_ELEMENTS and tag_name in RAWTEXT_ELEMENTS:
-                    context.content_state = ContentState.RAWTEXT
+                self._insert_head_element(token, context, tag_name, parent=parent_for_foster, before=before)
                 return True
-
-        # If we're in body after seeing real content
+        
+        # IN_BODY: insert at current position (misplaced head elements stay in body)
         if context.document_state == DocumentState.IN_BODY:
             if self.parser._debug:
                 self.debug("In body state with real content")
-            # Head elements appearing after body content should stay in body
-            self.parser.insert_element(
-                token,
-                context,
-                mode="normal",
-                enter=tag_name not in VOID_ELEMENTS,
-                tag_name_override=tag_name,
-                push_override=False,
-            )
-            if self.parser._debug:
-                self.debug(f"Added {tag_name} to {context.current_parent.tag_name}")
-            if tag_name not in VOID_ELEMENTS and tag_name in RAWTEXT_ELEMENTS:
-                context.content_state = ContentState.RAWTEXT
-                if self.parser._debug:
-                    self.debug(f"Switched to RAWTEXT state for {tag_name}")
+            self._insert_head_element(token, context, tag_name)
             return True
-
-        # Handle head elements in head normally
-        # Late metadata appearing after body/html closure should not re-enter head (meta/title demotion)
-        if tag_name in ("meta", "title") and context.document_state in (
-            DocumentState.AFTER_BODY,
-            DocumentState.AFTER_HTML,
-        ):
-            pass
-        if self.parser._debug:
-            self.debug("Handling element in head context")
-        # If we're not in head (and not after head), switch to head
-        if context.document_state not in (
-            DocumentState.IN_HEAD,
-            DocumentState.AFTER_HEAD,
-        ):
+        
+        # Normal head handling: ensure head exists and insert there
+        if context.document_state not in (DocumentState.IN_HEAD, DocumentState.AFTER_HEAD):
             head = ensure_head(self.parser)
             context.transition_to_state(DocumentState.IN_HEAD, head)
             if self.parser._debug:
                 self.debug("Switched to head state")
         elif context.document_state == DocumentState.AFTER_HEAD:
-            # Head elements after </head> should go back to head (foster parenting)
             if self.parser._debug:
-                self.debug(
-                    "Head element appearing after </head>, foster parenting to head",
-                )
+                self.debug("Head element appearing after </head>, foster parenting to head")
             head = ensure_head(self.parser)
             if head:
                 context.move_to_element(head)
-
-        # Create and append the new element
+        
+        if self.parser._debug:
+            self.debug("Handling element in head context")
+        self._insert_head_element(token, context, tag_name)
+        return True
+    
+    def _insert_head_element(self, token, context, tag_name, parent=None, before=None):
+        """Insert head element and activate RAWTEXT mode if needed."""
         self.parser.insert_element(
             token,
             context,
             mode="normal",
             enter=tag_name not in VOID_ELEMENTS,
+            parent=parent,
+            before=before,
             tag_name_override=tag_name,
             push_override=False,
         )
@@ -6156,13 +6097,6 @@ class HeadTagHandler(TagHandler):
             context.content_state = ContentState.RAWTEXT
             if self.parser._debug:
                 self.debug(f"Switched to RAWTEXT state for {tag_name}")
-        else:
-            if self.parser._debug:
-                self.debug(
-                    f"No current parent for {tag_name} in fragment context, skipping",
-                )
-
-        return True
 
     def handle_end(self, token, context):
         if self.parser._debug:
