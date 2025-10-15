@@ -346,14 +346,10 @@ class TurboHTML:
 
         # Guard: transient mode only allowed inside template content subtrees (content under a template)
         if mode == "transient":
-            cur = context.current_parent
-            in_template_content = False
-            while cur:
-                if cur.tag_name == "content" and cur.parent and cur.parent.tag_name == "template":
-                    in_template_content = True
-                    break
-                cur = cur.parent
-            if not in_template_content and tag_name != "content":
+            # Use context.in_template_content counter instead of walking parent chain
+            # The counter is more reliable as it tracks template content depth regardless of
+            # where the current insertion point is in the DOM (e.g., during foster parenting)
+            if context.in_template_content == 0 and tag_name != "content":
                 msg = f"insert_element: transient mode outside template content (tag={tag_name}) not permitted; current_parent={context.current_parent.tag_name}"
                 raise ValueError(
                     msg,
