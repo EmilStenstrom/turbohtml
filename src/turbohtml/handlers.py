@@ -4946,11 +4946,10 @@ class ForeignTagHandler(TagHandler):
     def _handle_foreign_foster_parenting(self, token, context):
         """Handle foster parenting for foreign elements (SVG/MathML) in table context."""
         tag_name = token.tag_name
-        tag_name_lower = tag_name.lower()
 
         # Foster parent if in table context (but not in a cell or caption or select)
         if (
-            tag_name_lower in ("svg", "math")
+            tag_name in ("svg", "math")
             and context.current_context not in ("svg", "math")
             and context.document_state
             in (
@@ -4969,7 +4968,7 @@ class ForeignTagHandler(TagHandler):
                     )
 
                     # Create the new node via unified insertion (no push onto open elements stack)
-                    if tag_name_lower == "math":
+                    if tag_name == "math":
                         context.current_context = "math"  # set context before insertion for downstream handlers
                         fixed_attrs = self._fix_foreign_attribute_case(
                             token.attributes, "math",
@@ -5017,17 +5016,17 @@ class ForeignTagHandler(TagHandler):
 
     def _handle_html_breakout(self, token, context):
         """Handle HTML elements breaking out of foreign content."""
-        tag_name_lower = token.tag_name.lower()
+        tag_name = token.tag_name
 
         if not (
             context.current_context in ("svg", "math")
-            and tag_name_lower in HTML_BREAK_OUT_ELEMENTS
+            and tag_name in HTML_BREAK_OUT_ELEMENTS
         ):
             return False
 
         # Special case: <figure> in MathML fragment contexts that imply integration points
         # In fragment parsing, there's no actual element node, so we check fragment_context
-        if tag_name_lower == "figure" and context.current_context == "math":
+        if tag_name == "figure" and context.current_context == "math":
             fc = self.parser.fragment_context
             # Fragment contexts that behave like integration points for <figure>
             if fc and fc.namespace == "math" and fc.tag_name in ("math", "annotation-xml"):
@@ -5043,7 +5042,7 @@ class ForeignTagHandler(TagHandler):
         if not in_integration_point:
             # Special case: font element only breaks out if it has attributes
             # Special case: font elements with HTML-specific attributes should break out
-            if tag_name_lower == "font":
+            if tag_name == "font":
                 # Check if font has HTML-specific attributes that should cause breakout
                 html_font_attrs = {"color", "face", "size"}
                 has_html_attrs = any(
@@ -5058,7 +5057,7 @@ class ForeignTagHandler(TagHandler):
 
             # HTML elements break out of foreign content and are processed as regular HTML
             if self.parser._debug:
-                self.debug(f"HTML element {tag_name_lower} breaks out of foreign content")
+                self.debug(f"HTML element {tag_name} breaks out of foreign content")
             # Exit foreign context. For robust recovery (e.g., table cell appearing inside <svg>),
             # we immediately clear foreign context so following siblings (like <circle>) are HTML.
             context.current_context = None
@@ -5078,7 +5077,7 @@ class ForeignTagHandler(TagHandler):
                 # Foster parent the HTML element before the table
                 if self.parser._debug:
                     self.debug(
-                    f"Foster parenting HTML element <{tag_name_lower}> before table",
+                    f"Foster parenting HTML element <{tag_name}> before table",
                 )
 
                 # Create the HTML element (not pushed; just entered) via unified insertion
@@ -5089,7 +5088,7 @@ class ForeignTagHandler(TagHandler):
                     enter=True,
                     parent=table.parent,
                     before=table,
-                    tag_name_override=tag_name_lower,
+                    tag_name_override=tag_name,
                     push_override=False,
                 )
 
@@ -5103,7 +5102,7 @@ class ForeignTagHandler(TagHandler):
                 if target:
                     if self.parser._debug:
                         self.debug(
-                        f"HTML element {tag_name_lower} breaking out inside {target.tag_name}",
+                        f"HTML element {tag_name} breaking out inside {target.tag_name}",
                     )
                     context.move_to_element(target)
                     return False  # Let other handlers process this element
@@ -5129,9 +5128,9 @@ class ForeignTagHandler(TagHandler):
         """Check if current parent is inside a MathML text integration point."""
         return is_in_integration_point(context, check="mathml")
     
-    def _is_table_related(self, tag_name_lower):
+    def _is_table_related(self, tag_name):
         """Check if tag is table-related."""
-        return tag_name_lower in {"table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption", "col", "colgroup"}
+        return tag_name in {"table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption", "col", "colgroup"}
     
     def _clear_stale_foreign_context(self, context):
         """Clear foreign context if insertion point moved outside foreign ancestor."""
@@ -5185,7 +5184,6 @@ class ForeignTagHandler(TagHandler):
         Simple filtering based on tag name and foreign context state.
         Complex decisions deferred to handle_start for clarity.
         """
-        tag_lower = tag_name.lower()
         fc = self.parser.fragment_context
         
         # Handle if in active foreign context
@@ -5193,11 +5191,11 @@ class ForeignTagHandler(TagHandler):
             return True
         
         # Handle foreign roots
-        if tag_lower in ("svg", "math"):
+        if tag_name in ("svg", "math"):
             return True
         
         # Handle MathML elements with fragment or active context
-        if tag_lower in MATHML_ELEMENTS:
+        if tag_name in MATHML_ELEMENTS:
             if context.current_context or (fc and fc.namespace == "math"):
                 return True
         
@@ -5215,7 +5213,6 @@ class ForeignTagHandler(TagHandler):
         self, token, context,
     ):
         tag_name = token.tag_name
-        tag_name_lower = tag_name.lower()
         fc = self.parser.fragment_context
 
         # Clear stale foreign context early (fast path: O(1) for non-foreign, O(1) when parent matches)
@@ -5223,7 +5220,7 @@ class ForeignTagHandler(TagHandler):
 
         # MathML leaf fragments: normalize self-closing and delegate
         if fc and fc.namespace == "math" and fc.tag_name in self._MATHML_LEAFS:
-            if tag_name_lower == fc.tag_name:
+            if tag_name == fc.tag_name:
                 # Normalize self-closing flag
                 if token.is_self_closing:
                     if self.parser._debug:
@@ -5231,7 +5228,7 @@ class ForeignTagHandler(TagHandler):
                     token.is_self_closing = False
                 return False  # Delegate to HTML handlers
             # Other MathML elements in leaf fragment context treated as HTML
-            if tag_name_lower in self._MATHML_LEAFS and tag_name_lower != fc.tag_name:
+            if tag_name in self._MATHML_LEAFS and tag_name != fc.tag_name:
                 return False
 
         # Handle foster parenting and HTML breakout BEFORE integration point filtering
@@ -5248,27 +5245,27 @@ class ForeignTagHandler(TagHandler):
         # but MathML/SVG elements stay in foreign context
         if is_in_integration_point(context):
             # Delegate HTML elements (but keep svg/math roots and MathML/table elements foreign)
-            if tag_name_lower in HTML_ELEMENTS:
-                if tag_name_lower not in ("svg", "math") and not self._is_table_related(tag_name_lower):
+            if tag_name in HTML_ELEMENTS:
+                if tag_name not in ("svg", "math") and not self._is_table_related(tag_name):
                     return False  # Delegate to HTML handlers
             # Check if it's a known SVG or MathML element - if so, keep in foreign context
-            elif tag_name_lower not in MATHML_ELEMENTS and \
-                 tag_name_lower not in ("svg",) and \
-                 tag_name_lower not in SVG_CASE_SENSITIVE_ELEMENTS:
+            elif tag_name not in MATHML_ELEMENTS and \
+                 tag_name not in ("svg",) and \
+                 tag_name not in SVG_CASE_SENSITIVE_ELEMENTS:
                 # Unknown elements (not HTML, not MathML, not SVG) delegate to HTML
-                if not self._is_table_related(tag_name_lower):
+                if not self._is_table_related(tag_name):
                     return False  # Delegate unknown elements to HTML
         
         # SVG integration point fragments: same delegation rules
         if fc and fc.namespace == "svg" and fc.tag_name in ("foreignObject", "desc", "title"):
             # Delegate HTML elements and unknown elements, keep foreign elements
-            if tag_name_lower in HTML_ELEMENTS:
-                if tag_name_lower not in ("svg", "math") and not self._is_table_related(tag_name_lower):
+            if tag_name in HTML_ELEMENTS:
+                if tag_name not in ("svg", "math") and not self._is_table_related(tag_name):
                     return False  # Delegate to HTML handlers
-            elif tag_name_lower not in MATHML_ELEMENTS and \
-                 tag_name_lower not in ("svg",) and \
-                 tag_name_lower not in SVG_CASE_SENSITIVE_ELEMENTS:
-                if not self._is_table_related(tag_name_lower):
+            elif tag_name not in MATHML_ELEMENTS and \
+                 tag_name not in ("svg",) and \
+                 tag_name not in SVG_CASE_SENSITIVE_ELEMENTS:
+                if not self._is_table_related(tag_name):
                     return False  # Delegate unknown elements
 
         # Structural rule: standalone MathML elements (excluding the root <math>) that appear when
@@ -5279,15 +5276,15 @@ class ForeignTagHandler(TagHandler):
 
         if (
             context.current_context is None
-            and tag_name_lower in MATHML_ELEMENTS
-            and tag_name_lower != "math"
+            and tag_name in MATHML_ELEMENTS
+            and tag_name != "math"
         ):
             self.parser.insert_element(
                 token,
                 context,
                 mode="normal",
                 enter=not token.is_self_closing,
-                tag_name_override=tag_name_lower,
+                tag_name_override=tag_name,
 
                 namespace="math",
                 attributes_override=self._fix_foreign_attribute_case(
@@ -5299,7 +5296,6 @@ class ForeignTagHandler(TagHandler):
 
         fc = self.parser.fragment_context
         if context.current_context is None and fc and fc.namespace == "svg":
-            tnl = tag_name_lower
             open_html_ancestor = False
             cur = context.current_parent
             while cur and cur.tag_name != "document-fragment":
@@ -5310,9 +5306,9 @@ class ForeignTagHandler(TagHandler):
                     break
                 cur = cur.parent
             if (
-                tnl not in HTML_ELEMENTS
-                and tnl not in ("svg", "math")
-                and tnl not in MATHML_ELEMENTS
+                tag_name not in HTML_ELEMENTS
+                and tag_name not in ("svg", "math")
+                and tag_name not in MATHML_ELEMENTS
                 and not open_html_ancestor
             ):
                 self.parser.insert_element(
@@ -5320,7 +5316,7 @@ class ForeignTagHandler(TagHandler):
                     context,
                     mode="normal",
                     enter=not token.is_self_closing,
-                    tag_name_override=tnl,
+                    tag_name_override=tag_name,
 
                     namespace="svg",
                     attributes_override=self._fix_foreign_attribute_case(
@@ -5338,7 +5334,7 @@ class ForeignTagHandler(TagHandler):
             parent_ip = get_integration_point_node(context, check="mathml")
             # Nested <foreignObject> immediately following a leaf <svg svg> under a MathML text integration point:
             # move into that svg leaf (activating svg context) so that foreignObject becomes its child.
-            if tag_name_lower == "foreignobject" and parent_ip is not None:
+            if tag_name == "foreignobject" and parent_ip is not None:
                 last_child = (
                     context.current_parent.children[-1]
                     if context.current_parent.children
@@ -5362,7 +5358,7 @@ class ForeignTagHandler(TagHandler):
                         push_override=not token.is_self_closing,
                     )
                     return True
-            if tag_name_lower == "svg" and parent_ip is not None:
+            if tag_name == "svg" and parent_ip is not None:
                 fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
                 self.parser.insert_element(
                     token,
@@ -5379,7 +5375,7 @@ class ForeignTagHandler(TagHandler):
                 return True
 
             # Handle MathML elements
-            if tag_name_lower == "annotation-xml":
+            if tag_name == "annotation-xml":
                 self.parser.insert_element(
                     token,
                     context,
@@ -5398,7 +5394,7 @@ class ForeignTagHandler(TagHandler):
             # Handle HTML elements inside annotation-xml
             if context.current_parent.namespace == "math" and context.current_parent.tag_name == "annotation-xml":
                 # Handle SVG inside annotation-xml (switch to SVG context)
-                if tag_name_lower == "svg":
+                if tag_name == "svg":
                     fixed_attrs = self._fix_foreign_attribute_case(
                         token.attributes, "svg",
                     )
@@ -5419,7 +5415,7 @@ class ForeignTagHandler(TagHandler):
             # Check if we're in a MathML integration point - if so, delegate HTML elements to HTML handlers
             if is_in_integration_point(context, check="mathml"):
                 # HTML elements in integration points should be HTML, not MathML
-                if tag_name_lower in HTML_ELEMENTS:
+                if tag_name in HTML_ELEMENTS:
                     return False  # delegate to HTML handlers
 
             self.parser.insert_element(
@@ -5439,7 +5435,7 @@ class ForeignTagHandler(TagHandler):
 
         if context.current_context == "svg":
             # Auto-close certain SVG elements when encountering table elements BEFORE checking integration points
-            if tag_name_lower in {"tr", "td", "th"} and context.current_parent.namespace == "svg":
+            if tag_name in {"tr", "td", "th"} and context.current_parent.namespace == "svg":
                 auto_close_elements = ["title", "desc"]
                 if context.current_parent.tag_name in auto_close_elements:
                     context.move_up_one_level()
@@ -5453,7 +5449,7 @@ class ForeignTagHandler(TagHandler):
             if is_in_integration_point(context, check="svg"):
                 # foreignObject: treat <math> as math root; leaf math tokens without preceding root act as HTML
                 if context.current_parent.namespace == "svg" and context.current_parent.tag_name == "foreignObject":
-                    if tag_name_lower == "math":
+                    if tag_name == "math":
                         self.parser.insert_element(
                             token,
                             context,
@@ -5470,11 +5466,11 @@ class ForeignTagHandler(TagHandler):
                         if not token.is_self_closing:
                             context.current_context = "math"
                         return True
-                    if tag_name_lower in {"mi", "mo", "mn", "ms", "mtext"}:
+                    if tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
                         return False
                 # Allow descendant <math> under a foreignObject subtree (current parent is deeper HTML element) to start math context
                 if (
-                    tag_name_lower == "math"
+                    tag_name == "math"
                     and get_foreign_object_ancestor(context) is not None
                 ):
                     self.parser.insert_element(
@@ -5497,13 +5493,13 @@ class ForeignTagHandler(TagHandler):
                 # math root appearing here should still start a MathML subtree (tests expect <math math> not <svg math>),
                 # while keeping existing behavior for MathML leaf tokens (HTML delegation until root).
                 if (
-                    tag_name_lower == "math"
+                    tag_name == "math"
                     and get_foreign_object_ancestor(context) is not None
                     and get_math_ancestor(context) is None
                 ):
                     return True
                 # Delegate HTML (and table-related) elements to HTML handlers inside integration points
-                if tag_name_lower in HTML_ELEMENTS or tag_name_lower in (
+                if tag_name in HTML_ELEMENTS or tag_name in (
                     "table",
                     "tr",
                     "td",
@@ -5516,7 +5512,7 @@ class ForeignTagHandler(TagHandler):
                     return False
                 # Nested <svg> inside an integration point should NOT change context or consume subsequent HTML content;
                 # create the foreign element but do not enter it (so following HTML siblings appear outside it).
-                if tag_name_lower == "svg":
+                if tag_name == "svg":
                     fixed_attrs = self._fix_foreign_attribute_case(
                         token.attributes, "svg",
                     )
@@ -5534,10 +5530,10 @@ class ForeignTagHandler(TagHandler):
                     )
                     return True
             # In foreign contexts, RAWTEXT elements behave as normal elements
-            if tag_name_lower in RAWTEXT_ELEMENTS:
+            if tag_name in RAWTEXT_ELEMENTS:
                 if self.parser._debug:
                     self.debug(
-                    f"Treating {tag_name_lower} as normal element in foreign context",
+                    f"Treating {tag_name} as normal element in foreign context",
                 )
                 fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
                 self.parser.insert_element(
@@ -5556,7 +5552,7 @@ class ForeignTagHandler(TagHandler):
                 return True
 
                 # Handle case-sensitive SVG elements
-            if tag_name_lower == "foreignobject":
+            if tag_name == "foreignobject":
                 # Create integration point element with svg prefix for proper detection
                 self.parser.insert_element(
                     token,
@@ -5572,8 +5568,8 @@ class ForeignTagHandler(TagHandler):
                     push_override=not token.is_self_closing,
                 )
                 return True
-            if tag_name_lower in SVG_CASE_SENSITIVE_ELEMENTS:
-                correct_case = SVG_CASE_SENSITIVE_ELEMENTS[tag_name_lower]
+            if tag_name in SVG_CASE_SENSITIVE_ELEMENTS:
+                correct_case = SVG_CASE_SENSITIVE_ELEMENTS[tag_name]
                 fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
                 self.parser.insert_element(
                     token,
@@ -5590,13 +5586,13 @@ class ForeignTagHandler(TagHandler):
                 # Enter HTML parsing rules inside SVG integration points
                 # Do not change global foreign context for integration points; delegation is handled elsewhere
                 return True  # Handle HTML elements inside foreignObject, desc, or title (integration points)
-            if tag_name_lower in HTML_ELEMENTS:
+            if tag_name in HTML_ELEMENTS:
                 # Check if current parent is integration point
                 if context.current_parent.namespace == "svg" and context.current_parent.tag_name in {"foreignObject", "desc", "title"}:
                     # We're in an integration point - let normal HTML handlers handle this
                     if self.parser._debug:
                         self.debug(
-                        f"HTML element {tag_name_lower} in SVG integration point, delegating to HTML handlers",
+                        f"HTML element {tag_name} in SVG integration point, delegating to HTML handlers",
                     )
                     return False  # Let other handlers (TableTagHandler, ParagraphTagHandler, etc.) handle it
 
@@ -5605,7 +5601,7 @@ class ForeignTagHandler(TagHandler):
                 context,
                 mode="normal",
                 enter=not token.is_self_closing,
-                tag_name_override=tag_name_lower,
+                tag_name_override=tag_name,
 
                 namespace="svg",
                 attributes_override=self._fix_foreign_attribute_case(
@@ -5617,7 +5613,7 @@ class ForeignTagHandler(TagHandler):
             return True
 
         # Enter new context for svg/math tags
-        if tag_name_lower == "math":
+        if tag_name == "math":
             self.parser.insert_element(
                 token,
                 context,
@@ -5635,7 +5631,7 @@ class ForeignTagHandler(TagHandler):
                 context.current_context = "math"
             return True
 
-        if tag_name_lower == "svg":
+        if tag_name == "svg":
             fixed_attrs = self._fix_foreign_attribute_case(token.attributes, "svg")
             self.parser.insert_element(
                 token,
@@ -5666,14 +5662,12 @@ class ForeignTagHandler(TagHandler):
         # While explicitly in SVG context
         if context.current_context == "svg":
             if is_in_integration_point(context, check="svg"):
-                tl = tag_name.lower()
-                if tl in HTML_ELEMENTS or tl in TABLE_ELEMENTS or tl == "table":
+                if tag_name in HTML_ELEMENTS or tag_name in TABLE_ELEMENTS or tag_name == "table":
                     return False  # delegate to HTML handlers
         # While explicitly in MathML context
         elif context.current_context == "math":
             in_text_ip = is_in_integration_point(context, check="mathml")
-            tag_name_lower = tag_name.lower()
-            if in_text_ip and tag_name_lower in HTML_ELEMENTS:
+            if in_text_ip and tag_name in HTML_ELEMENTS:
                 return False
         # If we are still inside a foreign context
         if context.current_context in ("svg", "math"):
@@ -5682,7 +5676,7 @@ class ForeignTagHandler(TagHandler):
         return get_svg_ancestor(context) is not None or get_math_ancestor(context) is not None
 
     def handle_end(self, token, context):
-        tag_name = token.tag_name.lower()
+        tag_name = token.tag_name
         # Find matching element (case-insensitive)
         # tag_name is now the local name (namespace is separate), so no split needed
         matching_element = context.current_parent.find_ancestor_case_insensitive(tag_name)
@@ -5747,13 +5741,12 @@ class ForeignTagHandler(TagHandler):
             # Integration point guard - use cached check
             in_integration_point = is_in_integration_point(context)
             
-            tl = tag_name
             # Treat common HTML end tags including p and br specially
-            if tl in HTML_ELEMENTS or tl in ("p", "br"):
+            if tag_name in HTML_ELEMENTS or tag_name in ("p", "br"):
                 if in_integration_point:
                     # Swallow stray unmatched HTML end tags inside integration points to keep insertion point
                     # inside the foreignObject/desc/title subtree (spec: ignore unmatched end tags).
-                    opened = context.current_parent.find_ancestor(tl)
+                    opened = context.current_parent.find_ancestor(tag_name)
                     if not opened:
                         # Record target for subsequent text so it remains inside integration point
                         # Swallow stray end tag inside integration point (no routing sentinel maintained)
