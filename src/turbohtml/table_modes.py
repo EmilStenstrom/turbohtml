@@ -65,7 +65,7 @@ def should_foster_parent(tag_name, attrs, context, parser):
     # Inside an existing cell forbids fostering
     if context.current_parent.tag_name in TABLE_CELL_TAGS:
         return False
-    if context.current_parent.find_table_cell_ancestor() is not None:
+    if context.current_parent.find_first_ancestor_in_tags({"td", "th", "caption"}) is not None:
         return False
     return True
 

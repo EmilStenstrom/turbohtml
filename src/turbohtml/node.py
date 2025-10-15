@@ -298,16 +298,6 @@ class Node:
             current = current.parent
         return None
 
-    def find_table_cell_ancestor(self):
-        """Find nearest td, th, or caption ancestor. Optimized common pattern."""
-        current = self
-        while current:
-            tag = current.tag_name
-            if tag == "td" or tag == "th" or tag == "caption":
-                return current
-            current = current.parent
-        return None
-
     def find_boundary_ancestor(self, exclude_tags=None):
         """Find nearest boundary element, optionally excluding some tags."""
         current = self
@@ -333,122 +323,9 @@ class Node:
             current = current.parent
         return False
 
-    def find_table_cell_no_caption_ancestor(self):
-        """Find nearest td or th ancestor (excluding caption). Optimized common pattern."""
-        current = self
-        while current:
-            tag = current.tag_name
-            if tag == "td" or tag == "th":
-                return current
-            current = current.parent
-        return None
-
-    def find_select_or_datalist_ancestor(self):
-        """Find nearest select or datalist ancestor. Optimized common pattern."""
-        current = self
-        while current:
-            tag = current.tag_name
-            if tag == "select" or tag == "datalist":
-                return current
-            current = current.parent
-        return None
-
     def find_formatting_element_ancestor(self):
         """Find nearest formatting element ancestor."""
-        current = self
-        while current:
-            if current.tag_name in FORMATTING_ELEMENTS:
-                return current
-            current = current.parent
-        return None
-
-    def find_list_ancestor(self):
-        """Find nearest ul, ol, or menu ancestor. Optimized common pattern."""
-        current = self
-        while current:
-            tag = current.tag_name
-            if tag == "ul" or tag == "ol" or tag == "menu":
-                return current
-            current = current.parent
-        return None
-
-    def find_sectioning_element_ancestor(self):
-        """Find nearest sectioning element (div, article, section, aside, nav) ancestor."""
-        current = self
-        while current:
-            tag = current.tag_name
-            if tag == "div" or tag == "article" or tag == "section" or tag == "aside" or tag == "nav":
-                return current
-            current = current.parent
-        return None
-
-    def find_foreign_plaintext_ancestor(self):
-        """Find nearest plaintext element in foreign namespace (svg/math). Optimized rare pattern."""
-        current = self
-        while current:
-            if current.tag_name == "plaintext":
-                ns = current.namespace
-                if ns == "svg" or ns == "math":
-                    return current
-            current = current.parent
-        return None
-
-    def find_math_annotation_xml_ancestor(self):
-        """Find nearest MathML annotation-xml ancestor. Optimized common pattern."""
-        current = self
-        while current:
-            if current.namespace == "math" and current.tag_name == "annotation-xml":
-                return current
-            current = current.parent
-        return None
-
-    def find_dt_or_dd_ancestor(self):
-        """Find nearest dt or dd ancestor. Optimized common pattern."""
-        current = self
-        while current:
-            tag = current.tag_name
-            if tag == "dt" or tag == "dd":
-                return current
-            current = current.parent
-        return None
-
-    def find_foreign_object_ancestor(self):
-        """Find nearest SVG foreignObject ancestor. Optimized common pattern."""
-        current = self
-        while current:
-            if current.namespace == "svg" and current.tag_name == "foreignObject":
-                return current
-            current = current.parent
-        return None
-
-    def find_select_option_optgroup_ancestor(self):
-        """Find nearest select, option, or optgroup ancestor. Optimized common pattern."""
-        current = self
-        while current:
-            tag = current.tag_name
-            if tag == "select" or tag == "option" or tag == "optgroup":
-                return current
-            current = current.parent
-        return None
-
-    def find_table_cell_or_select_ancestor(self):
-        """Find nearest td, th, caption, or select ancestor. Optimized for foreign content."""
-        current = self
-        while current:
-            tag = current.tag_name
-            if tag == "td" or tag == "th" or tag == "caption" or tag == "select":
-                return current
-            current = current.parent
-        return None
-
-    def find_matching_formatting_ancestor(self, target_tag):
-        """Find nearest formatting element ancestor matching target_tag. Optimized adoption agency."""
-        current = self
-        while current:
-            if current.tag_name in {"a", "b", "big", "code", "em", "font", "i", "nobr", "s", "small", "strike", "strong", "tt", "u"} and current.tag_name == target_tag:
-                return current
-            current = current.parent
-        return None
+        return self.find_first_ancestor_in_tags(FORMATTING_ELEMENTS)
 
     def remove_child(self, child):
         """Remove a child node, updating all sibling links.
@@ -493,24 +370,46 @@ class Node:
             current = current.parent
         return None
 
-    def find_first_ancestor_in_tags(self, tag_names, stop_at=None):
+    def find_first_ancestor_in_tags(self, tag_names, stop_at=None, namespace=None):
         """Find the first ancestor whose tag matches any in the given list.
 
         Args:
-            tag_names: Single tag name or list of tag names to match
+            tag_names: Single tag name, list/set of tag names, or list of (namespace, tag) tuples
             stop_at: Optional node to stop searching at (exclusive)
+            namespace: Optional namespace to match (only used with plain tag names)
 
         Returns:
             The first matching ancestor Node or None if not found
 
+        Examples:
+            node.find_first_ancestor_in_tags(["td", "th"])
+            node.find_first_ancestor_in_tags({"td", "th"})
+            node.find_first_ancestor_in_tags("div")
+            node.find_first_ancestor_in_tags([("svg", "foreignObject"), ("math", "annotation-xml")])
+            node.find_first_ancestor_in_tags(["foreignObject"], namespace="svg")
+
         """
         if isinstance(tag_names, str):
-            tag_names = [tag_names]
+            tag_names = {tag_names}
+        elif isinstance(tag_names, list):
+            # Check if we're using (namespace, tag) tuple format
+            if tag_names and isinstance(tag_names[0], tuple):
+                current = self
+                while current and current != stop_at:
+                    for ns, tag in tag_names:
+                        if current.tag_name == tag and (ns is None or current.namespace == ns):
+                            return current
+                    current = current.parent
+                return None
+            # Convert list to set for O(1) lookups
+            tag_names = set(tag_names)
 
+        # Plain tag name set with optional namespace (fast O(1) lookup)
         current = self
         while current and current != stop_at:
             if current.tag_name in tag_names:
-                return current
+                if namespace is None or current.namespace == namespace:
+                    return current
             current = current.parent
         return None
 

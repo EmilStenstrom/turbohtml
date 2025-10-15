@@ -282,7 +282,7 @@ class TurboHTML:
             if needs_foster_parenting(context.current_parent):
                 # Check if we're inside a cell or caption (foster parenting doesn't apply there)
                 in_cell_or_caption = bool(
-                    context.current_parent.find_table_cell_ancestor(),
+                    context.current_parent.find_first_ancestor_in_tags({"td", "th", "caption"}),
                 )
                 # Don't foster table-related elements or elements specifically allowed in tables (form)
                 tableish = ("table","tbody","thead","tfoot","tr","td","th","caption","colgroup","col","form")

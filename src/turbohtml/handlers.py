@@ -1494,7 +1494,7 @@ class FormattingTagHandler(TagHandler):
         if tag_name in HEAD_ELEMENTS and tag_name not in {"style", "script", "title"}:
             return False
         in_table_modes = context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW)
-        in_cell_or_caption = context.current_parent.find_table_cell_ancestor() is not None
+        in_cell_or_caption = context.current_parent.find_first_ancestor_in_tags({"td", "th", "caption"}) is not None
         if in_table_modes and not in_cell_or_caption:
             return False
         # For non-blockish tags reconstruct immediately; blockish handled post element creation in parser
@@ -2274,7 +2274,7 @@ class SelectTagHandler(TagHandler):
 
         if tag_name in ("optgroup", "option"):
             # Check if we're in a select or datalist
-            parent = context.current_parent.find_select_or_datalist_ancestor()
+            parent = context.current_parent.find_first_ancestor_in_tags({"select", "datalist"})
             if self.parser._debug:
                 self.debug(f"Checking for select/datalist ancestor: found={bool(parent)}")
 
@@ -2336,7 +2336,7 @@ class SelectTagHandler(TagHandler):
                             context.move_to_element(parent_body)
                 # Ensure insertion at select/datalist level (flatten misnested optgroup nesting)
                 if context.current_parent.tag_name == "optgroup":
-                    container = context.current_parent.find_select_or_datalist_ancestor()
+                    container = context.current_parent.find_first_ancestor_in_tags({"select", "datalist"})
                     if container:
                         context.move_to_element(container)
                 new_optgroup = self.parser.insert_element(
@@ -2685,7 +2685,7 @@ class ParagraphTagHandler(TagHandler):
         # Case 6: <p> in table context - foster parent
         if self._needs_table_foster_parenting(context):
             # Inside cell - create normally
-            if context.current_parent.tag_name in ("td", "th") or context.current_parent.find_table_cell_no_caption_ancestor():
+            if context.current_parent.tag_name in ("td", "th") or context.current_parent.find_first_ancestor_in_tags({"td", "th"}):
                 pass  # Fall through to default
             elif is_in_integration_point(context):
                 pass  # Fall through to default
@@ -2730,7 +2730,7 @@ class ParagraphTagHandler(TagHandler):
                 ])
         
         # Case 8: Container element - create inside
-        if context.current_parent.find_sectioning_element_ancestor() == context.current_parent:
+        if context.current_parent.find_first_ancestor_in_tags({"div", "article", "section", "aside", "nav"}) == context.current_parent:
             return self.parser.insert_element(token, context, mode="normal", enter=True) and True
         
         # Default: Create new <p> element
@@ -3099,7 +3099,7 @@ class TableTagHandler(TagHandler):
         if context.document_state == DocumentState.IN_TABLE:
             in_cell = (
                 context.current_parent.tag_name in {"td", "th"}
-                or context.current_parent.find_table_cell_no_caption_ancestor() is not None
+                or context.current_parent.find_first_ancestor_in_tags({"td", "th"}) is not None
             )
             if not in_cell:
                 current_table = find_current_table(context)
@@ -3416,7 +3416,7 @@ class TableTagHandler(TagHandler):
         ):
             return False
 
-        if context.current_parent.find_select_option_optgroup_ancestor() is not None:
+        if context.current_parent.find_first_ancestor_in_tags({"select", "option", "optgroup"}) is not None:
             return False
 
         return True
@@ -3478,7 +3478,7 @@ class TableTagHandler(TagHandler):
             return True
 
         # Table cell: insert with formatting reconstruction
-        current_cell = context.current_parent.find_table_cell_no_caption_ancestor()
+        current_cell = context.current_parent.find_first_ancestor_in_tags({"td", "th"})
         if current_cell:
             reconstruct_if_needed(self.parser, context)
             self._merge_or_insert_text(text, context.current_parent, context)
@@ -3887,7 +3887,7 @@ class TableTagHandler(TagHandler):
 
         # Determine where to move insertion point after closing table
         formatting_parent = table_node.parent
-        foreign_ancestor = table_node.find_foreign_object_ancestor() or table_node.find_math_annotation_xml_ancestor()
+        foreign_ancestor = table_node.find_first_ancestor_in_tags([("svg", "foreignObject")]) or table_node.find_first_ancestor_in_tags([("math", "annotation-xml")])
 
         # Priority 1: Formatting element parent (with special anchor handling)
         if formatting_parent and formatting_parent.tag_name in FORMATTING_ELEMENTS:
@@ -4220,7 +4220,7 @@ class ListTagHandler(TagHandler):
                 self.debug("Current parent is <menuitem>; keeping context for nested <li>")
         else:
             # Look for the nearest list container (ul, ol, menu) ancestor
-            list_ancestor = context.current_parent.find_list_ancestor()
+            list_ancestor = context.current_parent.find_first_ancestor_in_tags({"ul", "ol", "menu"})
             if list_ancestor:
                 if (
                     context.current_parent.tag_name == "div"
@@ -4276,7 +4276,7 @@ class ListTagHandler(TagHandler):
             self.debug(f"Handling end tag for {tag_name}")
 
         # Find the nearest dt/dd ancestor
-        dt_dd_ancestor = context.current_parent.find_dt_or_dd_ancestor()
+        dt_dd_ancestor = context.current_parent.find_first_ancestor_in_tags({"dt", "dd"})
         if dt_dd_ancestor:
             if self.parser._debug:
                 self.debug(f"Found matching {dt_dd_ancestor.tag_name}")
@@ -4568,7 +4568,7 @@ class VoidTagHandler(TagHandler):
             tag_name == "input"
             and context.document_state == DocumentState.IN_TABLE
             and context.current_parent.tag_name not in ("td", "th")
-            and not context.current_parent.find_table_cell_no_caption_ancestor()
+            and not context.current_parent.find_first_ancestor_in_tags({"td", "th"})
         ):
             raw_type = token.attributes.get("type", "")
             is_clean_hidden = (
@@ -5069,7 +5069,7 @@ class ForeignTagHandler(TagHandler):
                 table = find_current_table(context)
 
             # Check if we're inside a caption/cell before deciding to foster parent
-            in_caption_or_cell = context.current_parent.find_table_cell_ancestor() is not None
+            in_caption_or_cell = context.current_parent.find_first_ancestor_in_tags({"td", "th", "caption"}) is not None
 
             # Check if we're inside select - HTML breakout should stay in select, not foster parent
             in_select = context.in_select
@@ -5100,7 +5100,7 @@ class ForeignTagHandler(TagHandler):
 
             # If we're in caption/cell (or select), move to that container instead of foster parenting
             if in_caption_or_cell or in_select:
-                target = context.current_parent.find_table_cell_or_select_ancestor()
+                target = context.current_parent.find_first_ancestor_in_tags({"td", "th", "caption", "select"})
                 if target:
                     if self.parser._debug:
                         self.debug(
@@ -6687,7 +6687,8 @@ class MarqueeTagHandler(TagHandler):
                 self.debug(f"moved to boundary parent: {context.current_parent}")
 
             # Look for outer formatting element of same type
-            outer_fmt = target.parent.find_matching_formatting_ancestor(formatting_elements[0].tag_name)
+            target_tag = formatting_elements[0].tag_name
+            outer_fmt = target.parent.find_first_ancestor_in_tags({target_tag}) if target_tag in FORMATTING_ELEMENTS else None
 
             if outer_fmt:
                 if self.parser._debug:
@@ -7051,7 +7052,7 @@ class PlaintextHandler(TagHandler):
             if context.current_parent.tag_name == "plaintext" and context.current_parent.namespace in ("svg", "math"):
                 target = context.current_parent
             else:
-                target = context.current_parent.find_foreign_plaintext_ancestor()
+                target = context.current_parent.find_first_ancestor_in_tags([("svg", "plaintext"), ("math", "plaintext")])
             if target:
                 # Pop stack until target
                 while not context.open_elements.is_empty():
