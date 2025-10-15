@@ -5030,7 +5030,7 @@ class ForeignTagHandler(TagHandler):
 
                     # Create the new node via unified insertion (no push onto open elements stack)
                     if tag_name == "math":
-                        context.current_context = "math"  # set context before insertion for downstream handlers
+                        context.has_foreign_content = True; context.current_context = "math"  # set context before insertion for downstream handlers
                         fixed_attrs = self._fix_foreign_attribute_case(
                             token.attributes,
                             "math",
@@ -5049,7 +5049,7 @@ class ForeignTagHandler(TagHandler):
                             push_override=False,
                         )
                     else:  # svg
-                        context.current_context = "svg"
+                        context.has_foreign_content = True; context.current_context = "svg"
                         fixed_attrs = self._fix_foreign_attribute_case(
                             token.attributes,
                             "svg",
@@ -5395,7 +5395,7 @@ class ForeignTagHandler(TagHandler):
                 last_child = context.current_parent.children[-1] if context.current_parent.children else None
                 if last_child and last_child.namespace == "svg" and last_child.tag_name == "svg":
                     context.move_to_element(last_child)
-                    context.current_context = "svg"
+                    context.has_foreign_content = True; context.current_context = "svg"
                     # Create integration point element with svg prefix (mirrors svg context logic)
                     self.parser.insert_element(
                         token,
@@ -5461,7 +5461,7 @@ class ForeignTagHandler(TagHandler):
                         attributes_override=fixed_attrs,
                         push_override=False,
                     )
-                    context.current_context = "svg"
+                    context.has_foreign_content = True; context.current_context = "svg"
                     return True
 
             # Check if we're in a MathML integration point - if so, delegate HTML elements to HTML handlers
@@ -5516,7 +5516,7 @@ class ForeignTagHandler(TagHandler):
                             push_override=False,
                         )
                         if not token.is_self_closing:
-                            context.current_context = "math"
+                            context.has_foreign_content = True; context.current_context = "math"
                         return True
                     if tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
                         return False
@@ -5536,7 +5536,7 @@ class ForeignTagHandler(TagHandler):
                         push_override=False,
                     )
                     if not token.is_self_closing:
-                        context.current_context = "math"
+                        context.has_foreign_content = True; context.current_context = "math"
                     return True
                 # Descendant of a foreignObject/desc/title (current parent not the integration point itself):
                 # math root appearing here should still start a MathML subtree (tests expect <math math> not <svg math>),
@@ -5679,7 +5679,7 @@ class ForeignTagHandler(TagHandler):
                 push_override=False,
             )
             if not token.is_self_closing:
-                context.current_context = "math"
+                context.has_foreign_content = True; context.current_context = "math"
             return True
 
         if tag_name == "svg":
@@ -5696,7 +5696,7 @@ class ForeignTagHandler(TagHandler):
                 push_override=False,
             )
             if not token.is_self_closing:
-                context.current_context = "svg"
+                context.has_foreign_content = True; context.current_context = "svg"
             return True
         # No additional foreign handling
 
@@ -5773,9 +5773,9 @@ class ForeignTagHandler(TagHandler):
             ancestor = get_foreign_namespace_ancestor(context)
             if ancestor:
                 if ancestor.namespace == "svg":
-                    context.current_context = "svg"
+                    context.has_foreign_content = True; context.current_context = "svg"
                 elif ancestor.namespace == "math":
-                    context.current_context = "math"
+                    context.has_foreign_content = True; context.current_context = "math"
             return True
 
         # If we didn't find a matching foreign element, but we're inside a foreign context
@@ -5829,9 +5829,9 @@ class ForeignTagHandler(TagHandler):
                 fc = self.parser.fragment_context
                 if fc and fc.namespace in ("svg", "math") and prev_foreign in ("svg", "math"):
                     if prev_foreign == "svg" and fc.namespace == "svg":
-                        context.current_context = "svg"
+                        context.has_foreign_content = True; context.current_context = "svg"
                     elif prev_foreign == "math" and fc.namespace == "math":
-                        context.current_context = "math"
+                        context.has_foreign_content = True; context.current_context = "math"
                 return False
 
         return True  # Ignore if nothing matched and not a breakout case

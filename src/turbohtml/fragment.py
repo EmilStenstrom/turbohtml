@@ -740,6 +740,7 @@ def create_fragment_context(parser, html):
 
         if not is_svg_integration_point and not is_math_text_integration_point:
             if fc.namespace in ("math", "svg"):
+                context.has_foreign_content = True
                 context.current_context = fc.namespace
                 if parser._debug:
                     parser.debug(f"Set foreign context to {fc.namespace}")
