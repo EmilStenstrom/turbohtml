@@ -2130,12 +2130,10 @@ class SelectTagHandler(TagHandler):
                     ]
 
                 # Pop stack until outer select removed
-                while not context.open_elements.is_empty():
-                    popped = context.open_elements.pop()
-                    if popped.tag_name == "select":
-                        if popped.parent:
-                            context.move_to_element(popped.parent)
-                        break
+                if select_element:
+                    context.open_elements.pop_until(select_element)
+                    if select_element.parent:
+                        context.move_to_element(select_element.parent)
 
                 # Recreate formatting elements outside select
                 for fmt_tag, fmt_attrs in formatting_to_recreate:
@@ -2248,23 +2246,8 @@ class SelectTagHandler(TagHandler):
                 if table_on_stack:
                     if self.parser._debug:
                         self.debug("Closing <select> before nested <table> (table on stack)")
-                    # Find select on the stack and pop it and everything after it
-                    # Stack: ['div', 'table', 'foreignObject', 'select']
-                    # After popping select and foreignObject: ['div', 'table']
-                    select_index = context.open_elements.index_of(select_ancestor)
-                    if select_index != -1:
-                        # Pop all elements from select_index onwards (select and everything pushed after it)
-                        # Count how many elements to pop by checking if current element is at or after select_index
-                        elements_to_pop = []
-                        current = context.open_elements.current()
-                        while current:
-                            current_index = context.open_elements.index_of(current)
-                            if current_index >= select_index:
-                                elements_to_pop.append(current)
-                                context.open_elements.pop()
-                                current = context.open_elements.current()
-                            else:
-                                break
+                    # Pop select and everything after it from the stack
+                    context.open_elements.pop_until(select_ancestor)
 
                     # Now also pop any foreign content elements (svg/foreignObject/math elements)
                     # that are on top of the stack
@@ -3382,26 +3365,6 @@ class TableTagHandler(TagHandler):
         context.active_formatting_elements.push(new_wrapper, wrapper_token)
         return new_wrapper
 
-    def _pop_until_tag(self, tag_name, context, new_state):
-        """Pop elements from stack until finding tag_name, then transition to new_state."""
-        section = context.current_parent.find_ancestor(tag_name)
-        if not section:
-            return False
-        stack = context.open_elements
-        while stack:
-            popped = stack.pop()
-            if popped is section:
-                break
-        next_parent = (
-            stack[-1]
-            if stack
-            else ensure_body(self.parser.root, context.document_state, self.parser.fragment_context)
-            or self.parser.root
-        )
-        context.move_to_element(next_parent)
-        context.transition_to_state(new_state)
-        return True
-
     def _find_or_create_tbody(self, context):
         """Find existing tbody or create new one.
 
@@ -3958,10 +3921,7 @@ class TableTagHandler(TagHandler):
 
         # Pop elements from the open stack down to the table (implicitly closing tbody/tfoot/thead)
         stack = context.open_elements
-        while stack:
-            popped = stack.pop()
-            if popped is table_node:
-                break
+        stack.pop_until(table_node)
 
         # Clean up AFE entries that are inside the table (they should not leak outside)
         if context.active_formatting_elements:
@@ -4045,11 +4005,25 @@ class TableTagHandler(TagHandler):
 
     def _handle_tbody_end(self, token, context):
         """Handle tbody/thead/tfoot end tag."""
-        return self._pop_until_tag(token.tag_name, context, DocumentState.IN_TABLE)
+        section = context.current_parent.find_ancestor(token.tag_name)
+        if not section:
+            return False
+        context.open_elements.pop_until(section)
+        next_parent = context.open_elements[-1] if context.open_elements else self.parser.root
+        context.move_to_element(next_parent)
+        context.transition_to_state(DocumentState.IN_TABLE)
+        return True
 
     def _handle_tr_end(self, token, context):
         """Handle tr end tag."""
-        return self._pop_until_tag("tr", context, DocumentState.IN_TABLE_BODY)
+        tr_element = context.current_parent.find_ancestor("tr")
+        if not tr_element:
+            return False
+        context.open_elements.pop_until(tr_element)
+        next_parent = context.open_elements[-1] if context.open_elements else self.parser.root
+        context.move_to_element(next_parent)
+        context.transition_to_state(DocumentState.IN_TABLE_BODY)
+        return True
 
     def _handle_colgroup_end(self, token, context):
         """Handle colgroup end tag."""
@@ -4158,10 +4132,7 @@ class FormTagHandler(TagHandler):
             token.ignored_end_tag = True
             return True
         # Pop elements until the form element has been popped (spec step)
-        while stack:
-            popped = stack.pop()
-            if popped is form_el:
-                break
+        stack.pop_until(form_el)
         if context.form_element is form_el:
             context.form_element = None
         # Insertion point: move to parent of form if current_parent was inside form

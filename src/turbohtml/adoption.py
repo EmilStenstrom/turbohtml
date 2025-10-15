@@ -179,6 +179,17 @@ class OpenElementsStack:
             return True
         return False
 
+    def pop_until(self, element):
+        """Pop all elements from stack up to and including the specified element.
+        
+        Returns True if element was found and popped, False otherwise.
+        """
+        idx = self.index_of(element)
+        if idx == -1:
+            return False
+        self._stack = self._stack[:idx]
+        return True
+
     # --- structural mutation ---
     def replace_element(self, old, new):
         idx = self.index_of(old)
@@ -330,10 +341,7 @@ class AdoptionAgencyAlgorithm:
 
         # Pop elements until the formatting element has been removed (step 7c)
         if formatting_element in stack:
-            while stack:
-                removed = stack.pop()
-                if removed is formatting_element:
-                    break
+            stack.pop_until(formatting_element)
 
         # Anchor specific clean-up: remove stray open anchors no longer in AFE
         if formatting_element.tag_name == "a":
