@@ -74,6 +74,76 @@ def iter_html_from_batch(
     return results
 
 
+def iter_html_from_downloaded(
+    downloaded_dir: pathlib.Path,
+    dict_bytes: bytes,
+    limit: int | None = None,
+) -> list[tuple[str, str]]:
+    """
+    Load HTML files from downloaded directory (*.html.zst files).
+
+    Returns list of (filename, html_content) tuples.
+    """
+    if not downloaded_dir.exists():
+        print(f"ERROR: Downloaded directory not found at {downloaded_dir}")
+        sys.exit(1)
+
+    results = []
+    html_dctx = zstd.ZstdDecompressor(
+        dict_data=zstd.ZstdCompressionDict(dict_bytes),
+    )
+
+    # Get all .html.zst files
+    html_files = sorted(downloaded_dir.glob("*.html.zst"))
+    
+    if limit:
+        html_files = html_files[:limit]
+
+    for file_path in html_files:
+        try:
+            compressed = file_path.read_bytes()
+            html_content = html_dctx.decompress(compressed).decode("utf-8", errors="replace")
+            results.append((file_path.name, html_content))
+        except Exception as e:
+            print(f"Warning: Failed to decompress {file_path.name}: {e}")
+            continue
+
+    return results
+
+
+def iter_html_from_all_batches(
+    batches_dir: pathlib.Path,
+    dict_bytes: bytes,
+    limit: int | None = None,
+) -> list[tuple[str, str]]:
+    """
+    Load HTML files from all batch files in a directory.
+
+    Returns list of (filename, html_content) tuples.
+    """
+    if not batches_dir.exists():
+        print(f"ERROR: Batches directory not found at {batches_dir}")
+        sys.exit(1)
+
+    batch_files = sorted(batches_dir.glob("web100k-batch-*.tar.zst"))
+    
+    if not batch_files:
+        print(f"ERROR: No batch files found in {batches_dir}")
+        sys.exit(1)
+
+    all_results = []
+    for batch_file in batch_files:
+        print(f"  Loading {batch_file.name}...")
+        batch_results = iter_html_from_batch(batch_file, dict_bytes, limit=None)
+        all_results.extend(batch_results)
+        
+        if limit and len(all_results) >= limit:
+            all_results = all_results[:limit]
+            break
+
+    return all_results
+
+
 def benchmark_turbohtml(html_files: list, iterations: int = 1) -> dict:
     """Benchmark TurboHTML parser with Rust tokenizer."""
     try:
@@ -410,8 +480,23 @@ def main():
     parser.add_argument(
         "--batch",
         type=pathlib.Path,
-        default=pathlib.Path("/home/emilstenstrom/Projects/web100k/batches/web100k-batch-001.tar.zst"),
-        help="Path to batch file (default: batch-001)",
+        help="Path to single batch file",
+    )
+    parser.add_argument(
+        "--batches-dir",
+        type=pathlib.Path,
+        default=pathlib.Path("/home/emilstenstrom/Projects/web100k/batches"),
+        help="Path to directory containing all batch files (default: web100k/batches)",
+    )
+    parser.add_argument(
+        "--downloaded",
+        type=pathlib.Path,
+        help="Path to downloaded directory with .html.zst files",
+    )
+    parser.add_argument(
+        "--all-batches",
+        action="store_true",
+        help="Process all batch files in batches-dir",
     )
     parser.add_argument(
         "--dict",
@@ -429,7 +514,7 @@ def main():
         "--iterations",
         type=int,
         default=5,
-        help="Number of iterations to run for averaging (default: 3)",
+        help="Number of iterations to run for averaging (default: 5)",
     )
     parser.add_argument(
         "--parsers",
@@ -446,9 +531,22 @@ def main():
     dict_bytes = load_dict(args.dict)
 
     # Load HTML files into memory
-    print(f"Loading HTML files from {args.batch}...")
     limit = args.limit if args.limit > 0 else None
-    html_files = iter_html_from_batch(args.batch, dict_bytes, limit)
+    
+    if args.downloaded:
+        print(f"Loading HTML files from {args.downloaded}...")
+        html_files = iter_html_from_downloaded(args.downloaded, dict_bytes, limit)
+    elif args.all_batches:
+        print(f"Loading HTML files from all batches in {args.batches_dir}...")
+        html_files = iter_html_from_all_batches(args.batches_dir, dict_bytes, limit)
+    elif args.batch:
+        print(f"Loading HTML files from {args.batch}...")
+        html_files = iter_html_from_batch(args.batch, dict_bytes, limit)
+    else:
+        # Default: use first batch
+        default_batch = args.batches_dir / "web100k-batch-001.tar.zst"
+        print(f"Loading HTML files from {default_batch}...")
+        html_files = iter_html_from_batch(default_batch, dict_bytes, limit)
 
     if not html_files:
         print("ERROR: No HTML files loaded")
