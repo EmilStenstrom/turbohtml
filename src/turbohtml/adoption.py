@@ -75,8 +75,7 @@ class ActiveFormattingElements:
 
     def _apply_noahs_ark(self, new_entry):
         matching = [
-            entry for entry in self._stack
-            if entry.matches(new_entry.element.tag_name, new_entry.element.attributes)
+            entry for entry in self._stack if entry.matches(new_entry.element.tag_name, new_entry.element.attributes)
         ]
         if len(matching) >= 3:
             earliest = matching[0]
@@ -143,18 +142,23 @@ class OpenElementsStack:
     # --- basic stack ops ---
     def push(self, element):
         self._stack.append(element)
+
     def pop(self):
         return self._stack.pop() if self._stack else None
+
     def current(self):
         return self._stack[-1] if self._stack else None
+
     def is_empty(self):
         return not self._stack
+
     def __len__(self):
         return len(self._stack)
 
     # --- membership / search ---
     def contains(self, element):
         return element in self._stack
+
     def index_of(self, element):
         for i, el in enumerate(self._stack):
             if el is element:
@@ -278,8 +282,8 @@ class AdoptionAgencyAlgorithm:
             if furthest_block is None:
                 if self.parser._debug:
                     self.parser.debug(
-                    f"[adoption] simple-case for </{tag_name}> stack={[el.tag_name for el in context.open_elements]}",
-                )
+                        f"[adoption] simple-case for </{tag_name}> stack={[el.tag_name for el in context.open_elements]}",
+                    )
                 self._run_simple_case(formatting_entry, formatting_element, context)
                 return True
 
@@ -315,9 +319,7 @@ class AdoptionAgencyAlgorithm:
     def _run_simple_case(self, formatting_entry, formatting_element, context):
         stack = context.open_elements
 
-        any(
-            child.tag_name == "table" for child in formatting_element.children
-        )
+        any(child.tag_name == "table" for child in formatting_element.children)
 
         # Remove the formatting element entry from the active list (spec step 7a)
         context.active_formatting_elements.remove_entry(formatting_entry)
@@ -336,9 +338,7 @@ class AdoptionAgencyAlgorithm:
         # Anchor specific clean-up: remove stray open anchors no longer in AFE
         if formatting_element.tag_name == "a":
             active_anchor_elements = {
-                entry.element
-                for entry in context.active_formatting_elements
-                if entry.element is not None
+                entry.element for entry in context.active_formatting_elements if entry.element is not None
             }
             if context.open_elements:
                 cleaned_stack = []
@@ -468,11 +468,7 @@ class AdoptionAgencyAlgorithm:
             if context.open_elements.contains(node):
                 idx_current = context.open_elements.index_of(node)
                 above_index = idx_current - 1
-                node_above = (
-                    context.open_elements[above_index]
-                    if above_index >= 0
-                    else None
-                )
+                node_above = context.open_elements[above_index] if above_index >= 0 else None
             else:
                 node_above = removed_above.get(id(node))
 
@@ -485,11 +481,7 @@ class AdoptionAgencyAlgorithm:
             if not candidate_entry:
                 if context.open_elements.contains(candidate):
                     idx_candidate = context.open_elements.index_of(candidate)
-                    above_candidate = (
-                        context.open_elements[idx_candidate - 1]
-                        if idx_candidate - 1 >= 0
-                        else None
-                    )
+                    above_candidate = context.open_elements[idx_candidate - 1] if idx_candidate - 1 >= 0 else None
                     removed_above[id(candidate)] = above_candidate
                     context.open_elements.remove_element(candidate)
                 node = candidate
@@ -501,11 +493,7 @@ class AdoptionAgencyAlgorithm:
                     context.active_formatting_elements.remove_entry(candidate_entry)
                 if context.open_elements.contains(candidate):
                     idx_candidate = context.open_elements.index_of(candidate)
-                    above_candidate = (
-                        context.open_elements[idx_candidate - 1]
-                        if idx_candidate - 1 >= 0
-                        else None
-                    )
+                    above_candidate = context.open_elements[idx_candidate - 1] if idx_candidate - 1 >= 0 else None
                     removed_above[id(candidate)] = above_candidate
                     context.open_elements.remove_element(candidate)
                 node = candidate
@@ -528,10 +516,7 @@ class AdoptionAgencyAlgorithm:
             last_node = clone
             node = clone
 
-        if (
-            common_ancestor.tag_name == "template"
-            and common_ancestor.children
-        ):
+        if common_ancestor.tag_name == "template" and common_ancestor.children:
             content_child = None
             for child in common_ancestor.children:
                 if child.tag_name == "content":
@@ -539,6 +524,7 @@ class AdoptionAgencyAlgorithm:
                     break
 
             if content_child is not None:
+
                 def _under(candidate_node, ancestor_node):
                     cur = candidate_node
                     while cur is not None:
@@ -558,11 +544,7 @@ class AdoptionAgencyAlgorithm:
             context,
         )
 
-        occurrences = [
-            idx
-            for idx, element in enumerate(context.open_elements)
-            if element is last_node
-        ]
+        occurrences = [idx for idx, element in enumerate(context.open_elements) if element is last_node]
         if len(occurrences) > 1:
             for idx in reversed(occurrences[1:]):
                 context.open_elements.pop(idx)
@@ -610,11 +592,7 @@ class AdoptionAgencyAlgorithm:
             if content_child is not None:
                 target = content_child
 
-        if (
-            last_node.parent is target
-            and target.children
-            and target.children[-1] is last_node
-        ):
+        if last_node.parent is target and target.children and target.children[-1] is last_node:
             return
 
         if (
@@ -648,11 +626,7 @@ class AdoptionAgencyAlgorithm:
                 return
 
         allowed_children = table_child_allow.get(target.tag_name)
-        if (
-            allowed_children
-            and last_node.tag_name in allowed_children
-            and last_node.tag_name not in {"td", "th"}
-        ):
+        if allowed_children and last_node.tag_name in allowed_children and last_node.tag_name not in {"td", "th"}:
             if last_node.parent is target:
                 target.remove_child(last_node)
             target.append_child(last_node)
@@ -660,8 +634,11 @@ class AdoptionAgencyAlgorithm:
 
         if needs_foster_parenting(target):
             parent, before = foster_parent(
-                target, context.open_elements, self.parser.root,
-                target, last_node.tag_name,
+                target,
+                context.open_elements,
+                self.parser.root,
+                target,
+                last_node.tag_name,
             )
             if parent is None:
                 parent = target

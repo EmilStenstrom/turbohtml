@@ -5,6 +5,7 @@ from turbohtml.adoption import ActiveFormattingElements, OpenElementsStack
 
 class FragmentContext:
     """Structured fragment context for fragment parsing."""
+
     __slots__ = ["namespace", "tag_name"]
 
     def __init__(self, tag_name, namespace=None):
@@ -462,7 +463,7 @@ def get_foreign_namespace_ancestor(context):
         Node or None: The foreign ancestor (SVG or MathML), or None if not in foreign content
     """
     _update_integration_point_cache(context)
-    
+
     # If we only have one, return it
     if context._svg_ancestor and not context._math_ancestor:
         return context._svg_ancestor
@@ -470,7 +471,7 @@ def get_foreign_namespace_ancestor(context):
         return context._math_ancestor
     if not context._svg_ancestor and not context._math_ancestor:
         return None
-    
+
     # Both exist - find which is nearest by walking from current_parent
     current = context._current_parent
     while current:
@@ -479,38 +480,38 @@ def get_foreign_namespace_ancestor(context):
         if current is context._math_ancestor:
             return context._math_ancestor
         current = current.parent
-    
+
     # Fallback (shouldn't reach here if cache is correct)
     return context._svg_ancestor
 
 
 def get_current_table(context):
     """Find the current table element from the open elements stack when in table context.
-    
+
     Cached for O(1) performance. Walks ancestors once on cache miss and stores result.
     Cache invalidated automatically when current_parent changes.
-    
+
     Args:
         context: ParseContext instance
-    
+
     Returns:
         Node or None: The current table element, or None if not in table context
     """
     # Cache hit - already computed for this node
     if context._table_cache_node is context._current_parent:
         return context._table_cached_value
-    
+
     # Reset cache for new node
     context._table_cache_node = context._current_parent
     context._table_cached_value = None
-    
+
     # Always search open elements stack first (even in IN_BODY) so foster-parenting decisions
     # can detect an open table that the insertion mode no longer reflects (foreign breakout, etc.).
     for element in reversed(context.open_elements):
         if element.tag_name == "table":
             context._table_cached_value = element
             return element
-    
+
     # Fallback: traverse ancestors from current parent (rare recovery)
     current = context._current_parent
     while current:
@@ -518,5 +519,5 @@ def get_current_table(context):
             context._table_cached_value = current
             return current
         current = current.parent
-    
+
     return None

@@ -71,8 +71,7 @@ def has_root_frameset(root):
             html_node = child
             break
     return bool(
-        html_node
-        and any(ch.tag_name == "frameset" for ch in html_node.children),
+        html_node and any(ch.tag_name == "frameset" for ch in html_node.children),
     )
 
 
@@ -150,9 +149,12 @@ def reconstruct_active_formatting_elements(parser, context):
         if context.open_elements.contains(entry.element):
             continue
         # Suppress redundant sibling <nobr> reconstruction at block/body level
-        if (
-            entry.element.tag_name == "nobr"
-            and context.current_parent.tag_name in ("body", "div", "section", "article", "p")
+        if entry.element.tag_name == "nobr" and context.current_parent.tag_name in (
+            "body",
+            "div",
+            "section",
+            "article",
+            "p",
         ):
             children = context.current_parent.children
             if children and children[-1].tag_name == "nobr":
@@ -221,9 +223,16 @@ def reconstruct_active_formatting_elements(parser, context):
                 check = check.parent
 
             # Skip if element is before table and we're inside table structure or cells
-            if (in_table_cell or in_table_structure) and inside_table_subtree and element_before_table and table_node is table_sibling:
+            if (
+                (in_table_cell or in_table_structure)
+                and inside_table_subtree
+                and element_before_table
+                and table_node is table_sibling
+            ):
                 if parser._debug:
-                    parser.debug(f"Skipping reconstruction of {clone.tag_name} (foster-parented before table) inside table structure")
+                    parser.debug(
+                        f"Skipping reconstruction of {clone.tag_name} (foster-parented before table) inside table structure"
+                    )
                 continue
 
             if (

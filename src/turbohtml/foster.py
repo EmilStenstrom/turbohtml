@@ -11,6 +11,7 @@ element (table, tbody, tfoot, thead, tr) and the element to insert is not
 allowed there, the node should be foster parented: inserted before the table
 element in its parent, or appended to the foster parent if no parent exists.
 """
+
 from __future__ import annotations
 
 TABLE_CONTEXT = {"table", "tbody", "tfoot", "thead", "tr"}
@@ -73,7 +74,12 @@ def foster_parent(target_parent, open_elements, root, current_parent, tag_name):
                 prev_sibling = parent.children[table_index - 1]
                 # Only nest in specific container tags, not all block elements
                 if prev_sibling is current_parent and prev_sibling.tag_name in (
-                    "div", "p", "section", "article", "blockquote", "center",
+                    "div",
+                    "p",
+                    "section",
+                    "article",
+                    "blockquote",
+                    "center",
                 ):
                     return prev_sibling, None
 

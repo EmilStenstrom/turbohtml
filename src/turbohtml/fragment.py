@@ -41,13 +41,8 @@ class FragmentSpec:
         self.name = name
         self.ignored_start_tags = set(ignored_start_tags) if ignored_start_tags else set()
         self.pre_token_hooks = list(pre_token_hooks) if pre_token_hooks else []
-        self.suppression_predicates = (
-            list(suppression_predicates) if suppression_predicates else []
-        )
+        self.suppression_predicates = list(suppression_predicates) if suppression_predicates else []
         self.treat_all_as_text = treat_all_as_text
-
-
-
 
 
 #############################
@@ -100,6 +95,7 @@ def _supp_duplicate_section_wrapper(parser, context, token, fragment_context):
     # Only suppress when still at the synthetic fragment root (no element parent yet)
     return bool(context.current_parent and context.current_parent.tag_name == "document-fragment")
 
+
 def _supp_duplicate_cell_or_initial_row(parser, context, token, fragment_context):
     """Suppress first context-matching cell tag (td/th) or initial stray <tr> in td/th fragment.
 
@@ -129,6 +125,7 @@ def _supp_duplicate_cell_or_initial_row(parser, context, token, fragment_context
         return True
     return False
 
+
 def _supp_fragment_nonhtml_structure(parser, context, token, fragment_context):
     """Suppress document/table structural start tags in non-structural fragment contexts.
 
@@ -151,6 +148,7 @@ def _supp_fragment_nonhtml_structure(parser, context, token, fragment_context):
         return bool(not has_body)
     return tn in {"caption", "colgroup", "tbody", "thead", "tfoot", "tr", "td", "th"}
 
+
 def _supp_fragment_legacy_context(parser, context, token, fragment_context):
     """Aggregate remaining legacy suppression logic.
 
@@ -166,7 +164,11 @@ def _supp_fragment_legacy_context(parser, context, token, fragment_context):
     if fragment_context and fragment_context.matches("table") and tn == "table":
         return True
     # Additional frameset restrictions (html fragment only)
-    if fragment_context and fragment_context.matches("html") and context.document_state in (DocumentState.IN_FRAMESET, DocumentState.AFTER_FRAMESET):
+    if (
+        fragment_context
+        and fragment_context.matches("html")
+        and context.document_state in (DocumentState.IN_FRAMESET, DocumentState.AFTER_FRAMESET)
+    ):
         return tn not in {"frameset", "frame", "noframes"}
     return False
 
@@ -381,6 +383,7 @@ for ctx_name in ("html", "table", "tbody", "thead", "tfoot", "td", "th", "tr"):
 # Minimal helper (frameset-only head insertion); other cases delegate to parser
 ########################################
 
+
 def _ensure_head_only(root):  # frameset path only (no body synthesis)
     head = next((c for c in root.children if c.tag_name == "head"), None)
     if not head:
@@ -475,6 +478,8 @@ def handle_start_tag(parser, context, token, fragment_context, spec):
             return
 
     parser.handle_start_tag(token, context)
+
+
 def _handle_html_fragment_start(parser, context, token, fragment_context):
     """Handle start tags in HTML fragment context."""
     tn = token.tag_name
@@ -539,6 +544,8 @@ def _handle_fallback_suppression(parser, context, token, fragment_context):
             return
 
     parser.handle_start_tag(token, context)
+
+
 def handle_end_tag(parser, context, token, fragment_context):
     # In template fragment, ignore the context element's own end tag
     if fragment_context and fragment_context.matches("template") and token.tag_name == "template":
@@ -547,18 +554,14 @@ def handle_end_tag(parser, context, token, fragment_context):
     # (can't close the implicit context element)
     if fragment_context and fragment_context.matches(token.tag_name):
         if parser._debug:
-            parser.debug(f"Fragment: ignoring </{ token.tag_name}> matching context")
+            parser.debug(f"Fragment: ignoring </{token.tag_name}> matching context")
         return
     parser.handle_end_tag(token, context)
 
 
 def handle_character(parser, context, token, fragment_context):
     data = token.data
-    if (
-        context.current_parent.tag_name == "listing"
-        and not context.current_parent.children
-        and data.startswith("\n")
-    ):
+    if context.current_parent.tag_name == "listing" and not context.current_parent.children and data.startswith("\n"):
         data = data[1:]
     if context.content_state == ContentState.PLAINTEXT:
         if not data:
@@ -579,8 +582,8 @@ def handle_character(parser, context, token, fragment_context):
         if handler.should_handle_text(data, context):
             if parser._debug:
                 parser.debug(
-                f"{handler.__class__.__name__}: handling {token}, context={context}",
-            )
+                    f"{handler.__class__.__name__}: handling {token}, context={context}",
+                )
             if handler.handle_text(data, context):
                 break
 
@@ -637,9 +640,7 @@ def parse_fragment(parser, html):  # pragma: no cover
 
     # Cache spec attributes locally (minor attribute lookup reduction in hot loop)
     pre_hooks = spec.pre_token_hooks if spec and spec.pre_token_hooks else ()
-    suppression_preds = (
-        spec.suppression_predicates if spec and spec.suppression_predicates else ()
-    )
+    suppression_preds = spec.suppression_predicates if spec and spec.suppression_predicates else ()
 
     for token in parser.tokenizer:
         if parser._debug:
@@ -732,14 +733,10 @@ def create_fragment_context(parser, html):
     if fc and fc.namespace:
         # Check if fragment context is an integration point
         # Note: Can't use ForeignTagHandler.is_integration_point since fc is FragmentContext (no attributes)
-        is_svg_integration_point = (
-            fc.namespace == "svg" and fc.tag_name in {"foreignObject", "desc", "title"}
-        )
+        is_svg_integration_point = fc.namespace == "svg" and fc.tag_name in {"foreignObject", "desc", "title"}
         # Note: annotation-xml is only an integration point with encoding="text/html" or
         # "application/xhtml+xml". In fragment parsing without attributes, it's NOT an integration point.
-        is_math_text_integration_point = (
-            fc.namespace == "math" and fc.tag_name in {"mi", "mo", "mn", "ms", "mtext"}
-        )
+        is_math_text_integration_point = fc.namespace == "math" and fc.tag_name in {"mi", "mo", "mn", "ms", "mtext"}
 
         if not is_svg_integration_point and not is_math_text_integration_point:
             if fc.namespace in ("math", "svg"):

@@ -41,8 +41,7 @@ try:
     from rust_tokenizer import RustTokenizer
 except ImportError as err:
     raise ImportError(
-        "Rust tokenizer not available. Please install with: "
-        "cd rust_tokenizer && maturin develop --release",
+        "Rust tokenizer not available. Please install with: cd rust_tokenizer && maturin develop --release",
     ) from err
 
 
@@ -175,20 +174,20 @@ class TurboHTML:
 
         # Include all handlers with HANDLED_START_TAGS or custom should_handle_start
         self._active_start_handlers = [
-            h for h in self.tag_handlers
+            h
+            for h in self.tag_handlers
             if h.__class__.HANDLED_START_TAGS is not None
             or h.should_handle_start.__func__ is not base_should_handle_start
         ]
         # Exclude GenericEndTagHandler from normal dispatch (handled separately as fallback)
         self._active_end_handlers = [
-            h for h in self.tag_handlers
-            if (h.__class__.HANDLED_END_TAGS is not None
-                or h.should_handle_end.__func__ is not base_should_handle_end)
+            h
+            for h in self.tag_handlers
+            if (h.__class__.HANDLED_END_TAGS is not None or h.should_handle_end.__func__ is not base_should_handle_end)
             and not isinstance(h, GenericEndTagHandler)
         ]
         self._active_text_handlers = [
-            h for h in self.tag_handlers
-            if h.should_handle_text.__func__ is not base_should_handle_text
+            h for h in self.tag_handlers if h.should_handle_text.__func__ is not base_should_handle_text
         ]
 
         # Pre-compute handler metadata: (handler, HANDLED_TAGS, has_custom_should_handle)
@@ -285,10 +284,14 @@ class TurboHTML:
                     context.current_parent.find_first_ancestor_in_tags({"td", "th", "caption"}),
                 )
                 # Don't foster table-related elements or elements specifically allowed in tables (form)
-                tableish = ("table","tbody","thead","tfoot","tr","td","th","caption","colgroup","col","form")
+                tableish = ("table", "tbody", "thead", "tfoot", "tr", "td", "th", "caption", "colgroup", "col", "form")
                 if not in_cell_or_caption and tag_name not in tableish:
                     target_parent, target_before = foster_parent(
-                        context.current_parent, context.open_elements, self.root, context.current_parent, tag_name,
+                        context.current_parent,
+                        context.open_elements,
+                        self.root,
+                        context.current_parent,
+                        tag_name,
                     )
 
         # Guard: transient mode only allowed inside template content subtrees (content under a template)
@@ -296,11 +299,7 @@ class TurboHTML:
             cur = context.current_parent
             in_template_content = False
             while cur:
-                if (
-                    cur.tag_name == "content"
-                    and cur.parent
-                    and cur.parent.tag_name == "template"
-                ):
+                if cur.tag_name == "content" and cur.parent and cur.parent.tag_name == "template":
                     in_template_content = True
                     break
                 cur = cur.parent
@@ -309,9 +308,7 @@ class TurboHTML:
                 raise ValueError(
                     msg,
                 )
-        attrs = (
-            attributes_override if attributes_override is not None else token.attributes
-        )
+        attrs = attributes_override if attributes_override is not None else token.attributes
         new_node = Node(tag_name, attrs, preserve_attr_case=preserve_attr_case, namespace=namespace)
         if target_before and target_before.parent is target_parent:
             target_parent.insert_before(new_node, target_before)
@@ -326,12 +323,7 @@ class TurboHTML:
             if do_push:
                 context.open_elements.push(new_node)
         # Do not enter a node that the token marked self-closing (HTML void-like syntax) even if not in VOID_ELEMENTS
-        if (
-            enter
-            and not is_void
-            and mode in ("normal", "transient")
-            and not token.is_self_closing
-        ):
+        if enter and not is_void and mode in ("normal", "transient") and not token.is_self_closing:
             context.enter_element(new_node)
 
         # Activate RAWTEXT mode if token requires it (deferred activation for elements like textarea)
@@ -408,11 +400,7 @@ class TurboHTML:
         if before is not None and before.parent is target_parent:
             idx = target_parent.children.index(before)
             prev_idx = idx - 1
-            if (
-                merge
-                and prev_idx >= 0
-                and target_parent.children[prev_idx].tag_name == "#text"
-            ):
+            if merge and prev_idx >= 0 and target_parent.children[prev_idx].tag_name == "#text":
                 prev_node = target_parent.children[prev_idx]
                 prev_node.text_content += text
                 return prev_node
@@ -420,14 +408,12 @@ class TurboHTML:
             target_parent.insert_before(new_node, before)
             return new_node
 
-        if (
-            merge
-            and target_parent.children
-            and target_parent.children[-1].tag_name == "#text"
-        ):
+        if merge and target_parent.children and target_parent.children[-1].tag_name == "#text":
             last = target_parent.children[-1]
             if self._debug:
-                self.debug(f"[insert_text] merging into existing text node len_before={len(last.text_content)} add_len={len(text)}")
+                self.debug(
+                    f"[insert_text] merging into existing text node len_before={len(last.text_content)} add_len={len(text)}"
+                )
             last.text_content += text
             return last
 
@@ -484,11 +470,12 @@ class TurboHTML:
                             break
                 continue
 
-
             if token.type == "Comment":
                 handled = False
                 for handler in self.tag_handlers:
-                    if handler.should_handle_comment(token.data, context) and handler.handle_comment(token.data, context):
+                    if handler.should_handle_comment(token.data, context) and handler.handle_comment(
+                        token.data, context
+                    ):
                         handled = True
                         break
                 if not handled:
@@ -521,8 +508,8 @@ class TurboHTML:
                         if handler.should_handle_text(data, context):
                             if self._debug:
                                 self.debug(
-                                f"{handler.__class__.__name__}: handling {token}, context={context}",
-                            )
+                                    f"{handler.__class__.__name__}: handling {token}, context={context}",
+                                )
                             if handler.handle_text(data, context):
                                 break
 
@@ -551,6 +538,7 @@ class TurboHTML:
                 self.debug(f"Malformed tag detected: {tag_name}, inserting as normal element")
             # Ensure body exists for malformed tags (they're treated as content, not structure)
             from turbohtml.utils import ensure_body
+
             if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD, DocumentState.AFTER_HEAD):
                 body = ensure_body(self.root, context.document_state, self.fragment_context)
                 if body:

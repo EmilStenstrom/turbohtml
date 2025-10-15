@@ -8,7 +8,8 @@ import pstats
 from turbohtml import TurboHTML
 
 # Sample HTML
-html = """
+html = (
+    """
 <!DOCTYPE html>
 <html>
 <head><title>Test</title></head>
@@ -23,7 +24,9 @@ html = """
     </div>
 </body>
 </html>
-""" * 100  # Repeat for more meaningful results
+"""
+    * 100
+)  # Repeat for more meaningful results
 
 # Profile
 pr = cProfile.Profile()

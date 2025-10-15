@@ -56,12 +56,7 @@ def decode_entities(text, in_attribute=False):
             continue
 
         # Spec behavior: preserve literal '&gt' when immediately followed by alphanumeric (no semicolon)
-        if (
-            in_attribute
-            and i + 3 < length
-            and text[i:i+3] == "&gt"
-            and text[i + 3].isalnum()
-        ):
+        if in_attribute and i + 3 < length and text[i : i + 3] == "&gt" and text[i + 3].isalnum():
             result.append("&gt")
             i += 3
             continue

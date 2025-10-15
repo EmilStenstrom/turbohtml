@@ -48,6 +48,7 @@ class TestCase:
         self.fragment_context = fragment_context
         self.script_directive = script_directive
 
+
 class TestResult:
     """Result object for a single test (typing removed)."""
 
@@ -122,9 +123,7 @@ class TestRunner:
             # Check if we've reached the end of a test (next line starts a new test or is EOF)
             if i + 1 >= len(lines) or (i + 1 < len(lines) and lines[i + 1] == "#data"):
                 # Process the current test if it's not empty
-                if current_test_lines and any(
-                    line.strip() for line in current_test_lines
-                ):
+                if current_test_lines and any(line.strip() for line in current_test_lines):
                     test = self._parse_single_test(current_test_lines)
                     if test:
                         tests.append(test)
@@ -205,13 +204,14 @@ class TestRunner:
                 return False
 
         if self.config["exclude_errors"] and any(
-            exclude in error
-            for exclude in self.config["exclude_errors"]
-            for error in test.errors
+            exclude in error for exclude in self.config["exclude_errors"] for error in test.errors
         ):
             return False
 
-        return not (self.config["filter_errors"] and not any(include in error for include in self.config["filter_errors"] for error in test.errors))
+        return not (
+            self.config["filter_errors"]
+            and not any(include in error for include in self.config["filter_errors"] for error in test.errors)
+        )
 
     def load_tests(self):
         """Load and filter test files based on configuration."""
@@ -223,22 +223,10 @@ class TestRunner:
         files = list(self.test_dir.rglob("*.dat"))
 
         if self.config["exclude_files"]:
-            files = [
-                f
-                for f in files
-                if not any(
-                    exclude in f.name for exclude in self.config["exclude_files"]
-                )
-            ]
+            files = [f for f in files if not any(exclude in f.name for exclude in self.config["exclude_files"])]
 
         if self.config["filter_files"]:
-            files = [
-                f
-                for f in files
-                if any(
-                    filter_str in f.name for filter_str in self.config["filter_files"]
-                )
-            ]
+            files = [f for f in files if any(filter_str in f.name for filter_str in self.config["filter_files"])]
 
         return sorted(files, key=self._natural_sort_key)
 
@@ -345,6 +333,7 @@ class TestRunner:
 class TestReporter:
     def __init__(self, config):
         self.config = config
+
     # A "full" run means no narrowing flags were supplied. Only then do we write test-summary.txt.
     def is_full_run(self):
         return not (
@@ -417,13 +406,10 @@ class TestReporter:
         """Generate a detailed summary with per-file breakdown."""
         lines = [overall_summary, ""]
 
-    # Sort files naturally (tests1.dat, tests2.dat, etc.)
+        # Sort files naturally (tests1.dat, tests2.dat, etc.)
 
         def natural_sort_key(filename):
-            return [
-                int(text) if text.isdigit() else text.lower()
-                for text in re.split("([0-9]+)", filename)
-            ]
+            return [int(text) if text.isdigit() else text.lower() for text in re.split("([0-9]+)", filename)]
 
         sorted_files = sorted(file_results.keys(), key=natural_sort_key)
 
@@ -437,9 +423,7 @@ class TestReporter:
             # Format: "filename: 15/16 (94%) [.....x] (2 skipped)"
             if runnable_tests > 0:
                 percentage = round(result["passed"] * 100 / runnable_tests)
-                status_line = (
-                    f"{filename}: {result['passed']}/{runnable_tests} ({percentage}%)"
-                )
+                status_line = f"{filename}: {result['passed']}/{runnable_tests} ({percentage}%)"
             else:
                 status_line = f"{filename}: 0/0 (N/A)"
 
@@ -480,7 +464,10 @@ class TestReporter:
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "-x", "--fail-fast", action="store_true", help="Break on first test failure",
+        "-x",
+        "--fail-fast",
+        action="store_true",
+        help="Break on first test failure",
     )
     parser.add_argument(
         "--test-specs",

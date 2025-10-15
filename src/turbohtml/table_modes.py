@@ -13,6 +13,7 @@ implements the spec transitions. For now we expose:
 
 Each function mirrors logic currently embedded in parser._handle_start_tag.
 """
+
 from turbohtml.constants import (
     TABLE_CELL_TAGS,
     TABLE_PRELUDE_TAGS,
@@ -24,20 +25,23 @@ from turbohtml.node import Node
 
 # Elements treated specially in table mode when deciding foster parenting.
 # Mirrors exclusions in parser._handle_start_tag condition.
-TABLE_ELEMENTS_CANON = frozenset({
-    "table",
-    "thead",
-    "tbody",
-    "tfoot",
-    "tr",
-    "td",
-    "th",
-    "caption",
-    "colgroup",
-    "col",
-})
+TABLE_ELEMENTS_CANON = frozenset(
+    {
+        "table",
+        "thead",
+        "tbody",
+        "tfoot",
+        "tr",
+        "td",
+        "th",
+        "caption",
+        "colgroup",
+        "col",
+    }
+)
 
 HEAD_ELEMENTS_CANON = frozenset({"head", "base", "basefont", "bgsound", "link", "meta", "title", "style"})
+
 
 def should_foster_parent(tag_name, attrs, context, parser):
     """Mirror the existing foster parenting compound condition.
