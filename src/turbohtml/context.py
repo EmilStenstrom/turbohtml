@@ -178,6 +178,114 @@ class ParseContext:
     def current_parent(self):
         return self._current_parent
 
+    def _update_integration_point_cache_incremental(self, old_parent, new_parent):
+        """Incrementally update integration point cache when moving to new parent.
+        
+        This is much faster than walking the entire tree every time. We leverage the
+        fact that when moving from old_parent to new_parent:
+        1. If new_parent is a child of old_parent, we just need to check the parent itself
+        2. If moving up or sideways, we walk from new_parent (but cache is still valid)
+        3. Most common case: moving to a child node (forward progress through tree)
+        
+        NOTE: Only called when has_foreign_content is True.
+        """
+        # Check if moving to a child (most common case - forward progress)
+        if new_parent.parent == old_parent:
+            # Moving down to a child - check if new_parent is an integration point or foreign ancestor
+            # Check new_parent node itself for integration point properties
+            self._check_node_for_integration_point(new_parent)
+            
+            # If new_parent has a parent, inherit foreign ancestors from parent chain
+            if new_parent.parent:
+                self._inherit_foreign_ancestors_from_parent(new_parent)
+        else:
+            # Moving up or sideways - need to walk from new_parent
+            # This is less common (closing tags, adoption agency, etc)
+            self._reset_integration_point_cache()
+            self._walk_ancestors_for_integration_points(new_parent)
+    
+    def _reset_integration_point_cache(self):
+        """Reset integration point cache to default values."""
+        self._ip_in_svg_html = False
+        self._ip_in_mathml_html = False
+        self._ip_in_mathml_text = False
+        self._ip_svg_node = None
+        self._ip_mathml_node = None
+        self._svg_ancestor = None
+        self._math_ancestor = None
+    
+    def _check_node_for_integration_point(self, node):
+        """Check if a single node is an integration point or foreign ancestor."""
+        # SVG namespace ancestor
+        if node.namespace == "svg":
+            if self._svg_ancestor is None:
+                self._svg_ancestor = node
+            
+            # SVG HTML integration point: foreignObject, desc, title
+            if node.tag_name in {"foreignObject", "desc", "title"}:
+                self._ip_in_svg_html = True
+                if self._ip_svg_node is None:
+                    self._ip_svg_node = node
+        
+        # MathML namespace ancestor
+        elif node.namespace == "math":
+            if self._math_ancestor is None:
+                self._math_ancestor = node
+            
+            # MathML HTML integration point: annotation-xml with HTML encoding
+            if node.tag_name == "annotation-xml":
+                encoding = node.attributes.get("encoding", "").lower()
+                if encoding in ("text/html", "application/xhtml+xml"):
+                    self._ip_in_mathml_html = True
+                    if self._ip_mathml_node is None:
+                        self._ip_mathml_node = node
+            
+            # MathML text integration point: mi, mo, mn, ms, mtext
+            elif node.tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
+                self._ip_in_mathml_text = True
+                if self._ip_mathml_node is None:
+                    self._ip_mathml_node = node
+    
+    def _inherit_foreign_ancestors_from_parent(self, node):
+        """Walk up from node to find foreign ancestors."""
+        current = node.parent
+        while current:
+            if current.namespace == "svg" and self._svg_ancestor is None:
+                self._svg_ancestor = current
+            if current.namespace == "math" and self._math_ancestor is None:
+                self._math_ancestor = current
+            
+            # Check for integration points
+            if current.namespace == "svg" and current.tag_name in {"foreignObject", "desc", "title"}:
+                if not self._ip_in_svg_html:
+                    self._ip_in_svg_html = True
+                    if self._ip_svg_node is None:
+                        self._ip_svg_node = current
+            
+            if current.namespace == "math":
+                if current.tag_name == "annotation-xml":
+                    encoding = current.attributes.get("encoding", "").lower()
+                    if encoding in ("text/html", "application/xhtml+xml"):
+                        if not self._ip_in_mathml_html:
+                            self._ip_in_mathml_html = True
+                            if self._ip_mathml_node is None:
+                                self._ip_mathml_node = current
+                
+                if current.tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
+                    if not self._ip_in_mathml_text:
+                        self._ip_in_mathml_text = True
+                        if self._ip_mathml_node is None:
+                            self._ip_mathml_node = current
+            
+            current = current.parent
+    
+    def _walk_ancestors_for_integration_points(self, node):
+        """Walk ancestors to find all integration points and foreign ancestors."""
+        current = node
+        while current:
+            self._check_node_for_integration_point(current)
+            current = current.parent
+
     def _set_current_parent(self, new_parent):
         if new_parent is None:
             msg = "ParseContext requires a valid current_parent"
@@ -185,14 +293,17 @@ class ParseContext:
 
         if new_parent != self._current_parent:
             old_parent = self._current_parent
-            # Invalidate integration point cache when parent changes
-            self._ip_cache_node = None
-            # Invalidate select cache when parent changes
+            
+            # Invalidate other caches when parent changes
             self._select_cache_node = None
-            # Invalidate button cache when parent changes
             self._button_cache_node = None
-            # Invalidate table cache when parent changes
             self._table_cache_node = None
+
+            # Update integration point cache
+            # Fast path: if no foreign content, just mark as cached without any work
+            self._ip_cache_node = new_parent
+            if self.has_foreign_content:
+                self._update_integration_point_cache_incremental(old_parent, new_parent)
 
             # Track template content depth for fast in_template_content checks
             # Exit: moving FROM a content node to a non-descendant
@@ -300,8 +411,8 @@ class ParseContext:
 def _update_integration_point_cache(context):
     """Update integration point cache for current_parent.
 
-    Walks ancestors once and sets all three integration point flags.
-    Called automatically by is_in_integration_point() when cache is stale.
+    With incremental updates in _set_current_parent, this is now mostly a no-op
+    unless the cache is explicitly invalidated or uninitialized.
     """
     node = context._current_parent
 
@@ -309,46 +420,17 @@ def _update_integration_point_cache(context):
     if context._ip_cache_node is node:
         return
 
-    # Reset cache for new node
+    # Cache miss - need to compute from scratch
+    # This should be rare with incremental updates
     context._ip_cache_node = node
-    context._ip_in_svg_html = False
-    context._ip_in_mathml_html = False
-    context._ip_in_mathml_text = False
-    context._ip_svg_node = None
-    context._ip_mathml_node = None
-    context._svg_ancestor = None
-    context._math_ancestor = None
-
-    # Walk ancestors once, setting all flags
-    current = node
-    while current:
-        # Cache any SVG/MathML namespace ancestor (for foreign namespace detection)
-        if current.namespace == "svg" and context._svg_ancestor is None:
-            context._svg_ancestor = current
-        if current.namespace == "math" and context._math_ancestor is None:
-            context._math_ancestor = current
-
-        # SVG HTML integration point: foreignObject, desc, title
-        if current.namespace == "svg" and current.tag_name in {"foreignObject", "desc", "title"}:
-            context._ip_in_svg_html = True
-            if context._ip_svg_node is None:
-                context._ip_svg_node = current
-
-        # MathML HTML integration point: annotation-xml with HTML encoding
-        if current.namespace == "math" and current.tag_name == "annotation-xml":
-            encoding = current.attributes.get("encoding", "").lower()
-            if encoding in ("text/html", "application/xhtml+xml"):
-                context._ip_in_mathml_html = True
-                if context._ip_mathml_node is None:
-                    context._ip_mathml_node = current
-
-        # MathML text integration point: mi, mo, mn, ms, mtext
-        if current.namespace == "math" and current.tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
-            context._ip_in_mathml_text = True
-            if context._ip_mathml_node is None:
-                context._ip_mathml_node = current
-
-        current = current.parent
+    context._reset_integration_point_cache()
+    
+    # Fast path: no foreign content means no integration points
+    if not context.has_foreign_content:
+        return
+    
+    # Walk ancestors to populate cache
+    context._walk_ancestors_for_integration_points(node)
 
 
 def is_in_integration_point(context, check="any"):
