@@ -492,7 +492,21 @@ class TemplateContentFilterHandler(TagHandler):
     """
 
     HANDLED_START_TAGS = ALL_TAGS  # Complex context-dependent filtering inside template content
-    HANDLED_END_TAGS = ALL_TAGS  # Handles end tags for table elements and templates inside template content
+    HANDLED_END_TAGS = frozenset(
+        {
+            "template",
+            "table",
+            "thead",
+            "tbody",
+            "tfoot",
+            "caption",
+            "colgroup",
+            "tr",
+            "td",
+            "th",
+            "select",
+        }
+    )
 
     # Ignore only top-level/document-structure things inside template content
     IGNORED_START = ("html", "head", "body", "frameset", "frame")
@@ -2010,7 +2024,7 @@ class SelectTagHandler(TagHandler):
     """Handles select elements and their children (option, optgroup) and datalist."""
 
     HANDLED_START_TAGS = ALL_TAGS  # Complex context-dependent handling inside/outside select
-    HANDLED_END_TAGS = ALL_TAGS  # Handles select, option, optgroup, datalist, and formatting elements
+    HANDLED_END_TAGS = frozenset({"select", "option", "optgroup", "datalist"} | FORMATTING_ELEMENTS | BLOCK_ELEMENTS)
 
     def __init__(self, parser=None):
         super().__init__(parser)
@@ -3043,7 +3057,7 @@ class TableTagHandler(TagHandler):
     """Handles table-related elements."""
 
     HANDLED_START_TAGS = ALL_TAGS  # Complex table element handling with context dependencies
-    HANDLED_END_TAGS = ALL_TAGS  # Handles all table-related end tags
+    HANDLED_END_TAGS = frozenset({"table", "tbody", "thead", "tfoot", "tr", "caption", "colgroup"})
     HANDLES_TEXT = True  # Handles text in table contexts (foster parenting)
     
     # Class-level constants to avoid recreation on every call
