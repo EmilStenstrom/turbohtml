@@ -96,6 +96,8 @@ class ParseContext:
         "_ip_in_svg_html",
         "_ip_svg_node",
         "_ip_mathml_node",
+        "_svg_ancestor",
+        "_math_ancestor",
         "_select_cache_node",
         "_select_cached_value",
         "active_formatting_elements",
@@ -132,6 +134,8 @@ class ParseContext:
         self._ip_in_mathml_text = False  # In MathML text integration point (mi/mo/mn/ms/mtext)
         self._ip_svg_node = None  # Cached SVG integration point node
         self._ip_mathml_node = None  # Cached MathML integration point node
+        self._svg_ancestor = None  # Cached SVG namespace ancestor (any SVG element)
+        self._math_ancestor = None  # Cached MathML namespace ancestor (any MathML element)
         self._select_cache_node = None  # Select cache: which node is cached
         self._select_cached_value = False  # Cached result of is_inside_tag("select")
         self._button_cache_node = None  # Button cache: which node is cached
@@ -303,10 +307,18 @@ def _update_integration_point_cache(context):
     context._ip_in_mathml_text = False
     context._ip_svg_node = None
     context._ip_mathml_node = None
+    context._svg_ancestor = None
+    context._math_ancestor = None
 
     # Walk ancestors once, setting all flags
     current = node
     while current:
+        # Cache any SVG/MathML namespace ancestor (for foreign namespace detection)
+        if current.namespace == "svg" and context._svg_ancestor is None:
+            context._svg_ancestor = current
+        if current.namespace == "math" and context._math_ancestor is None:
+            context._math_ancestor = current
+
         # SVG HTML integration point: foreignObject, desc, title
         if current.namespace == "svg" and current.tag_name in {"foreignObject", "desc", "title"}:
             context._ip_in_svg_html = True
@@ -376,3 +388,91 @@ def get_integration_point_node(context, check="any"):
     if context._ip_svg_node:
         return context._ip_svg_node
     return context._ip_mathml_node
+
+
+def get_svg_ancestor(context):
+    """Get the cached SVG namespace ancestor.
+
+    Returns the nearest SVG namespace ancestor (any SVG element),
+    or None if not inside SVG content. Uses cached result for O(1) performance.
+
+    Args:
+        context: ParseContext instance
+
+    Returns:
+        Node or None: The SVG ancestor, or None if not in SVG
+    """
+    _update_integration_point_cache(context)
+    return context._svg_ancestor
+
+
+def get_math_ancestor(context):
+    """Get the cached MathML namespace ancestor.
+
+    Returns the nearest MathML namespace ancestor (any MathML element),
+    or None if not inside MathML content. Uses cached result for O(1) performance.
+
+    Args:
+        context: ParseContext instance
+
+    Returns:
+        Node or None: The MathML ancestor, or None if not in MathML
+    """
+    _update_integration_point_cache(context)
+    return context._math_ancestor
+
+
+def get_foreign_object_ancestor(context):
+    """Get the cached foreignObject ancestor.
+
+    Returns the nearest SVG foreignObject ancestor, or None if not inside one.
+    Uses cached result for O(1) performance by checking if the SVG integration
+    point is specifically a foreignObject.
+
+    Args:
+        context: ParseContext instance
+
+    Returns:
+        Node or None: The foreignObject ancestor, or None if not in one
+    """
+    _update_integration_point_cache(context)
+    # Check if the cached SVG integration point is a foreignObject
+    if context._ip_svg_node and context._ip_svg_node.tag_name == "foreignObject":
+        return context._ip_svg_node
+    return None
+
+
+def get_foreign_namespace_ancestor(context):
+    """Get the cached foreign namespace ancestor (SVG or MathML).
+
+    Returns the nearest foreign namespace ancestor. If both SVG and MathML
+    ancestors exist, returns whichever is closer to current_parent.
+    Uses cached results for O(1) performance.
+
+    Args:
+        context: ParseContext instance
+
+    Returns:
+        Node or None: The foreign ancestor (SVG or MathML), or None if not in foreign content
+    """
+    _update_integration_point_cache(context)
+    
+    # If we only have one, return it
+    if context._svg_ancestor and not context._math_ancestor:
+        return context._svg_ancestor
+    if context._math_ancestor and not context._svg_ancestor:
+        return context._math_ancestor
+    if not context._svg_ancestor and not context._math_ancestor:
+        return None
+    
+    # Both exist - find which is nearest by walking from current_parent
+    current = context._current_parent
+    while current:
+        if current is context._svg_ancestor:
+            return context._svg_ancestor
+        if current is context._math_ancestor:
+            return context._math_ancestor
+        current = current.parent
+    
+    # Fallback (shouldn't reach here if cache is correct)
+    return context._svg_ancestor

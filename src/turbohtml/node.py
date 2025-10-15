@@ -353,15 +353,6 @@ class Node:
             current = current.parent
         return None
 
-    def find_svg_integration_point_ancestor(self):
-        """Find nearest SVG integration point ancestor."""
-        current = self
-        while current:
-            if current.tag_name in SVG_INTEGRATION_POINTS:
-                return current
-            current = current.parent
-        return None
-
     def find_formatting_element_ancestor(self):
         """Find nearest formatting element ancestor."""
         current = self
@@ -421,35 +412,6 @@ class Node:
             current = current.parent
         return None
 
-    def find_mathml_text_integration_point_ancestor(self):
-        """Find nearest MathML text integration point ancestor (mi, mo, mn, ms, mtext). Optimized common pattern."""
-        current = self
-        while current:
-            if current.namespace == "math":
-                tag = current.tag_name
-                if tag == "mi" or tag == "mo" or tag == "mn" or tag == "ms" or tag == "mtext":
-                    return current
-            current = current.parent
-        return None
-
-    def find_svg_namespace_ancestor(self):
-        """Find nearest ancestor with SVG namespace. Optimized namespace-only check."""
-        current = self
-        while current:
-            if current.namespace == "svg":
-                return current
-            current = current.parent
-        return None
-
-    def find_math_namespace_ancestor(self):
-        """Find nearest ancestor with MathML namespace. Optimized namespace-only check."""
-        current = self
-        while current:
-            if current.namespace == "math":
-                return current
-            current = current.parent
-        return None
-
     def find_foreign_object_ancestor(self):
         """Find nearest SVG foreignObject ancestor. Optimized common pattern."""
         current = self
@@ -475,24 +437,6 @@ class Node:
         while current:
             tag = current.tag_name
             if tag == "td" or tag == "th" or tag == "caption" or tag == "select":
-                return current
-            current = current.parent
-        return None
-
-    def find_svg_html_integration_point_ancestor(self):
-        """Find nearest SVG HTML integration point (foreignObject, desc, title). Optimized common pattern."""
-        current = self
-        while current:
-            if current.namespace == "svg" and current.tag_name in {"foreignObject", "desc", "title"}:
-                return current
-            current = current.parent
-        return None
-
-    def find_foreign_namespace_ancestor(self):
-        """Find nearest SVG or MathML namespace ancestor. Optimized foreign content check."""
-        current = self
-        while current:
-            if current.namespace == "svg" or current.namespace == "math":
                 return current
             current = current.parent
         return None
