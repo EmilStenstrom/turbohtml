@@ -4732,26 +4732,20 @@ class BlockFormattingReconstructionHandler(TagHandler):
     auto_close_current_parent_if_needed() helper method.
     """
 
-    HANDLED_START_TAGS = BLOCK_ELEMENTS  # Only handles block elements for formatting reconstruction
+    HANDLED_START_TAGS = BLOCK_ELEMENTS - {"dt", "dd", "li"}  # Only handles block elements for formatting reconstruction
     HANDLED_END_TAGS = None  # Doesn't handle end tags
 
     def should_handle_start(self, tag_name, context):
-        # All AUTO_CLOSING_TAGS keys (p, li, dt, dd, tr, td, th, rt, rp, button, h1-h6, menuitem)
-        # are now handled by their specific handlers with auto_close_current_parent_if_needed()
-        #
-        # AutoClosingTagHandler now only handles: BLOCK_ELEMENTS with formatting ancestors
-        # (for formatting element reconstruction)
-
-        # Let ListTagHandler handle dt/dd with its specialized formatting duplication logic
-        if tag_name in ("dt", "dd", "li"):
-            return False
 
         # Don't claim tags inside integration points - let HTML handlers deal with them
         if is_in_integration_point(context):
             return False
 
         # Only handle BLOCK_ELEMENTS that have a formatting element ancestor
-        return tag_name in BLOCK_ELEMENTS and context.current_parent.find_formatting_element_ancestor() is not None
+        if context.current_parent.find_formatting_element_ancestor():
+            return True
+        
+        return False
 
     def handle_start(self, token, context):
         # This handler now ONLY handles formatting reconstruction for BLOCK_ELEMENTS
@@ -7140,10 +7134,27 @@ class MenuitemTagHandler(TagHandler):
         return True
 
 
+# Elements that may require foster parenting when in table insertion modes.
+# Union of all non-table HTML elements. Table-specific tags are excluded
+# because they're handled by TableTagHandler and don't need foster logic.
+FOSTER_PARENT_TAGS = frozenset(
+    tag
+    for tag in (
+        HTML_ELEMENTS
+        | VOID_ELEMENTS
+        | FORMATTING_ELEMENTS
+        | BLOCK_ELEMENTS
+        | SPECIAL_CATEGORY_ELEMENTS
+        | {"html", "head", "body", "script", "style"}
+    )
+    if tag not in table_modes.TABLE_ELEMENTS_CANON
+)
+
+
 class TableFosterHandler(TagHandler):
     """Foster parents unclaimed elements in table context per HTML5 algorithm."""
 
-    HANDLED_START_TAGS = ALL_TAGS  # Context-dependent foster parenting in table contexts
+    HANDLED_START_TAGS = FOSTER_PARENT_TAGS
     HANDLED_END_TAGS = None  # Doesn't handle end tags
 
     def should_handle_start(self, tag_name, context):
