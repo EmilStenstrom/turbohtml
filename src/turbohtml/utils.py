@@ -5,7 +5,7 @@ that don't belong to any specific domain (foster parenting, formatting, adoption
 """
 
 from turbohtml.constants import FORMATTING_ELEMENTS
-from turbohtml.context import DocumentState
+from turbohtml.context import DocumentState, get_current_table
 from turbohtml.node import Node
 
 
@@ -120,23 +120,6 @@ def ensure_body(root, document_state, fragment_context=None):
     return body
 
 
-def find_current_table(context):
-    """Find the current table element from the open elements stack when in table context."""
-    # Always search open elements stack first (even in IN_BODY) so foster-parenting decisions
-    # can detect an open table that the insertion mode no longer reflects (foreign breakout, etc.).
-    for element in reversed(context.open_elements):
-        if element.tag_name == "table":
-            return element
-
-    # Fallback: traverse ancestors from current parent (rare recovery)
-    current = context.current_parent
-    while current:
-        if current.tag_name == "table":
-            return current
-        current = current.parent
-    return None
-
-
 def reconstruct_active_formatting_elements(parser, context):
     """Reconstruct active formatting elements inside the current parent.
 
@@ -214,7 +197,7 @@ def reconstruct_active_formatting_elements(parser, context):
             DocumentState.IN_TABLE_BODY,
             DocumentState.IN_ROW,
         ):
-            table_node = find_current_table(context)
+            table_node = get_current_table(context)
             inside_table_subtree = False
             cur_parent = context.current_parent
             while cur_parent:

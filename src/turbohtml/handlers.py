@@ -20,13 +20,12 @@ from turbohtml.constants import (
     TABLE_ELEMENTS,
     VOID_ELEMENTS,
 )
-from turbohtml.context import ContentState, DocumentState, is_in_integration_point, get_integration_point_node, get_svg_ancestor, get_math_ancestor, get_foreign_object_ancestor, get_foreign_namespace_ancestor
+from turbohtml.context import ContentState, DocumentState, is_in_integration_point, get_integration_point_node, get_svg_ancestor, get_math_ancestor, get_foreign_object_ancestor, get_foreign_namespace_ancestor, get_current_table
 from turbohtml.foster import foster_parent, needs_foster_parenting
 from turbohtml.node import Node
 from turbohtml.utils import (
     ensure_body,
     ensure_head,
-    find_current_table,
     get_body,
     get_head,
     is_in_cell_or_caption,
@@ -1649,7 +1648,7 @@ class FormattingTagHandler(TagHandler):
                 and self.parser.fragment_context
                 and self.parser.fragment_context.matches(("tr", "td", "th", "tbody", "thead", "tfoot"))
             ):
-                table = find_current_table(context)
+                table = get_current_table(context)
                 if table and table.parent and table.parent.tag_name in {"td", "th"}:
                     # Determine if table has real structure yet (rows/cells or caption/colgroup/col)
                     def _has_real_structure(tbl):
@@ -2073,7 +2072,7 @@ class SelectTagHandler(TagHandler):
             if context.document_state == DocumentState.IN_TABLE and not is_in_cell_or_caption(context):
                 if self.parser._debug:
                     self.debug("Foster parenting select out of table")
-                table = find_current_table(context)
+                table = get_current_table(context)
                 if table and table.parent:
                     new_node = self.parser.insert_element(
                         token, context, mode="normal", enter=True, parent=table.parent, before=table,
@@ -2630,7 +2629,7 @@ class ParagraphTagHandler(TagHandler):
         
         # In body but with table ancestor and not in cell
         if context.document_state == DocumentState.IN_BODY:
-            has_table = find_current_table(context) or any(el.tag_name == "table" for el in context.open_elements)
+            has_table = get_current_table(context) or any(el.tag_name == "table" for el in context.open_elements)
             not_in_cell = context.current_parent.tag_name not in ("td", "th")
             return has_table and not_in_cell
         
@@ -2844,11 +2843,11 @@ class ParagraphTagHandler(TagHandler):
             not in_svg_ip
             and not in_math_ip
             and context.document_state == DocumentState.IN_TABLE
-            and find_current_table(context)
+            and get_current_table(context)
         ):
             if self.parser._debug:
                 self.debug("In table context; creating implicit p relative to table")
-            table = find_current_table(context)
+            table = get_current_table(context)
             # If the table is inside a paragraph, insert an empty <p> BEFORE the table inside that paragraph
             paragraph_ancestor = table.find_ancestor("p")
             if paragraph_ancestor:
@@ -3036,7 +3035,7 @@ class TableTagHandler(TagHandler):
         if self.parser._debug:
             self.debug(f"Handling {tag_name} in table context")
 
-        current_table = find_current_table(context)
+        current_table = get_current_table(context)
         in_integration_point = is_in_integration_point(context)
 
         if not current_table:
@@ -3102,7 +3101,7 @@ class TableTagHandler(TagHandler):
                 or context.current_parent.find_first_ancestor_in_tags({"td", "th"}) is not None
             )
             if not in_cell:
-                current_table = find_current_table(context)
+                current_table = get_current_table(context)
                 if current_table and current_table.parent:
                     parent = current_table.parent
                     idx = parent.children.index(current_table)
@@ -3124,7 +3123,7 @@ class TableTagHandler(TagHandler):
 
     def _handle_caption(self, token, context):
         """Handle caption element."""
-        table_parent = find_current_table(context)
+        table_parent = get_current_table(context)
         self.parser.insert_element(
             token,
             context,
@@ -3138,7 +3137,7 @@ class TableTagHandler(TagHandler):
     def _handle_colgroup(self, token, context):
         """Handle colgroup element according to spec."""
 
-        table_parent = find_current_table(context)
+        table_parent = get_current_table(context)
         self.parser.insert_element(
             token,
             context,
@@ -3156,13 +3155,13 @@ class TableTagHandler(TagHandler):
         last_colgroup = None
 
         # Look for last colgroup that's still valid
-        for child in reversed(find_current_table(context).children):
+        for child in reversed(get_current_table(context).children):
             if child.tag_name == "colgroup":
                 # Found a colgroup, but check if there's tbody/tr/td after it
-                idx = find_current_table(context).children.index(child)
+                idx = get_current_table(context).children.index(child)
                 has_content_after = any(
                     c.tag_name in ("tbody", "tr", "td")
-                    for c in find_current_table(context).children[idx + 1 :]
+                    for c in get_current_table(context).children[idx + 1 :]
                 )
                 if self.parser._debug:
                     self.debug(
@@ -3183,7 +3182,7 @@ class TableTagHandler(TagHandler):
                 context,
                 mode="normal",
                 enter=False,
-                parent=find_current_table(context),
+                parent=get_current_table(context),
                 push_override=False,
             )
         else:
@@ -3211,7 +3210,7 @@ class TableTagHandler(TagHandler):
         # Stay at table level
         if self.parser._debug:
             self.debug("No tbody/tr/td ancestors, staying at table level")
-        context.move_to_element(find_current_table(context))
+        context.move_to_element(get_current_table(context))
         return True
 
     def _handle_tbody(self, token, context):
@@ -3219,7 +3218,7 @@ class TableTagHandler(TagHandler):
 
         If colgroup is currently open, close it first (implicit colgroup end).
         """
-        table_parent = find_current_table(context)
+        table_parent = get_current_table(context)
 
         # Implicitly close colgroup if open
         if context.current_parent.tag_name == "colgroup":
@@ -3358,7 +3357,7 @@ class TableTagHandler(TagHandler):
         if tbody_ancestor:
             return tbody_ancestor
 
-        table = find_current_table(context)
+        table = get_current_table(context)
         if not table:
             return None
 
@@ -3484,7 +3483,7 @@ class TableTagHandler(TagHandler):
             self._merge_or_insert_text(text, context.current_parent, context)
             return True
 
-        table = find_current_table(context)
+        table = get_current_table(context)
 
         # Colgroup: split whitespace (stays) vs non-whitespace (foster-parented)
         if context.current_parent.tag_name == "colgroup":
@@ -3816,7 +3815,7 @@ class TableTagHandler(TagHandler):
 
     def should_handle_end(self, tag_name, context):
         # Ignore stray </table> when no table is open
-        if tag_name == "table" and not find_current_table(context):
+        if tag_name == "table" and not get_current_table(context):
             return True
 
         return tag_name in {
@@ -3835,7 +3834,7 @@ class TableTagHandler(TagHandler):
             self.debug(f"handling end tag {tag_name}")
 
         # Ignore stray </table> when no table is open
-        if tag_name == "table" and not find_current_table(context):
+        if tag_name == "table" and not get_current_table(context):
             return True
 
         # Dispatch to handler by tag name
@@ -3862,7 +3861,7 @@ class TableTagHandler(TagHandler):
 
     def _handle_table_end(self, token, context):
         """Handle table end tag."""
-        table_node = find_current_table(context)
+        table_node = get_current_table(context)
         if not table_node:
             return False
 
@@ -4198,7 +4197,7 @@ class ListTagHandler(TagHandler):
         if context.document_state == DocumentState.IN_TABLE:
             if self.parser._debug:
                 self.debug("Foster parenting li out of table")
-            table = find_current_table(context)
+            table = get_current_table(context)
             if table and table.parent:
                 # Foster parent li before table using helper (normal mode enters and pushes); specify parent/before.
                 new_node = self.parser.insert_element(
@@ -4576,7 +4575,7 @@ class VoidTagHandler(TagHandler):
             )
             if not is_clean_hidden:
                 # Foster parent using centralized helper
-                table = find_current_table(context)
+                table = get_current_table(context)
                 if table:
                     foster_parent_node, before = foster_parent(
                         context.current_parent, context.open_elements, self.parser.root,
@@ -4591,7 +4590,7 @@ class VoidTagHandler(TagHandler):
                     return True
             else:
                 # Clean hidden: ensure it becomes child of table (not foster parented) even if current_parent not table
-                table = find_current_table(context)
+                table = get_current_table(context)
                 if table:
                     self.parser.insert_element(
                         token, context, mode="void", enter=False, parent=table,
@@ -4645,7 +4644,7 @@ class VoidTagHandler(TagHandler):
             el.tag_name in {"td", "th"} for el in context.open_elements
         )
         if in_table_mode and not inside_cell:
-            table = find_current_table(context)
+            table = get_current_table(context)
             if table and table.parent:
                 br = Node("br")
                 parent = table.parent
@@ -4962,7 +4961,7 @@ class ForeignTagHandler(TagHandler):
         ):
             # If we are in a cell, caption, or select, handle normally (don't foster)
             if not is_in_cell_or_caption(context) and not context.in_select:
-                table = find_current_table(context)
+                table = get_current_table(context)
                 if table and table.parent:
                     if self.parser._debug:
                         self.debug(
@@ -5065,8 +5064,8 @@ class ForeignTagHandler(TagHandler):
             context.current_context = None
 
             table = context.current_parent.find_ancestor("table")
-            if not table and find_current_table(context):
-                table = find_current_table(context)
+            if not table and get_current_table(context):
+                table = get_current_table(context)
 
             # Check if we're inside a caption/cell before deciding to foster parent
             in_caption_or_cell = context.current_parent.find_first_ancestor_in_tags({"td", "th", "caption"}) is not None
@@ -5992,7 +5991,7 @@ class HeadTagHandler(TagHandler):
             DocumentState.IN_TABLE_BODY,
             DocumentState.IN_ROW,
         ):
-            table = find_current_table(context)
+            table = get_current_table(context)
             if table:
                 # Only style/script should be treated as early rawtext inside table. Title/textarea should be fostered.
                 if tag_name in ("style", "script"):
@@ -6970,7 +6969,7 @@ class PlaintextHandler(TagHandler):
             and context.current_parent.tag_name not in ("td", "th", "caption")
             and not context.in_select  # Don't foster if inside select
         ):
-            table = find_current_table(context)
+            table = get_current_table(context)
             if table and table.parent:
                 self.parser.insert_element(
                     token,

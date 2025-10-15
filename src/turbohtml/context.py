@@ -100,6 +100,8 @@ class ParseContext:
         "_math_ancestor",
         "_select_cache_node",
         "_select_cached_value",
+        "_table_cache_node",
+        "_table_cached_value",
         "active_formatting_elements",
         "anchor_resume_element",
         "current_context",
@@ -140,6 +142,8 @@ class ParseContext:
         self._select_cached_value = False  # Cached result of is_inside_tag("select")
         self._button_cache_node = None  # Button cache: which node is cached
         self._button_cached_value = False  # Cached result of is_inside_tag("button")
+        self._table_cache_node = None  # Table cache: which node is cached
+        self._table_cached_value = None  # Cached result of find_current_table()
         self._debug = debug_callback
         self.doctype_seen = False
         self.quirks_mode = True  # Quirks mode (no DOCTYPE = quirks), set by DoctypeHandler
@@ -184,6 +188,8 @@ class ParseContext:
             self._select_cache_node = None
             # Invalidate button cache when parent changes
             self._button_cache_node = None
+            # Invalidate table cache when parent changes
+            self._table_cache_node = None
 
             # Track template content depth for fast in_template_content checks
             # Exit: moving FROM a content node to a non-descendant
@@ -476,3 +482,41 @@ def get_foreign_namespace_ancestor(context):
     
     # Fallback (shouldn't reach here if cache is correct)
     return context._svg_ancestor
+
+
+def get_current_table(context):
+    """Find the current table element from the open elements stack when in table context.
+    
+    Cached for O(1) performance. Walks ancestors once on cache miss and stores result.
+    Cache invalidated automatically when current_parent changes.
+    
+    Args:
+        context: ParseContext instance
+    
+    Returns:
+        Node or None: The current table element, or None if not in table context
+    """
+    # Cache hit - already computed for this node
+    if context._table_cache_node is context._current_parent:
+        return context._table_cached_value
+    
+    # Reset cache for new node
+    context._table_cache_node = context._current_parent
+    context._table_cached_value = None
+    
+    # Always search open elements stack first (even in IN_BODY) so foster-parenting decisions
+    # can detect an open table that the insertion mode no longer reflects (foreign breakout, etc.).
+    for element in reversed(context.open_elements):
+        if element.tag_name == "table":
+            context._table_cached_value = element
+            return element
+    
+    # Fallback: traverse ancestors from current parent (rare recovery)
+    current = context._current_parent
+    while current:
+        if current.tag_name == "table":
+            context._table_cached_value = current
+            return current
+        current = current.parent
+    
+    return None
