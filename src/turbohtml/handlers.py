@@ -20,7 +20,7 @@ from turbohtml.constants import (
     TABLE_ELEMENTS,
     VOID_ELEMENTS,
 )
-from turbohtml.context import ContentState, DocumentState, is_in_integration_point
+from turbohtml.context import ContentState, DocumentState, is_in_integration_point, get_integration_point_node
 from turbohtml.foster import foster_parent, needs_foster_parenting
 from turbohtml.node import Node
 from turbohtml.utils import (
@@ -2762,17 +2762,22 @@ class ParagraphTagHandler(TagHandler):
         )
         if not has_open_p and context.document_state in in_body_like_states:
             insertion_parent = context.current_parent
-            # Check if we're NOT in an integration point
+            # If in foreign content but not at an integration point, exit to nearest integration point
+            # or to the first non-foreign ancestor
             if insertion_parent.is_foreign and not ForeignTagHandler.is_integration_point(insertion_parent):
-                ancestor = insertion_parent.parent
-                while ancestor and ancestor.is_foreign:
-                    # Check if ancestor is an integration point
-                    if ForeignTagHandler.is_integration_point(ancestor):
-                        break
-                    ancestor = ancestor.parent
-                if ancestor is not None:
-                    insertion_parent = ancestor
+                # Use cached integration point node - eliminates redundant tree walks
+                ip_node = get_integration_point_node(context)
+                if ip_node:
+                    insertion_parent = ip_node
                     context.move_to_element(insertion_parent)
+                else:
+                    # Not in integration point - exit foreign content to first non-foreign ancestor
+                    current = insertion_parent.parent
+                    while current and current.is_foreign:
+                        current = current.parent
+                    if current is not None:
+                        insertion_parent = current
+                        context.move_to_element(insertion_parent)
             p_token = self._synth_token("p")
             self.parser.insert_element(
                 p_token,

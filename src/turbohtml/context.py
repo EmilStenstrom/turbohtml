@@ -94,6 +94,8 @@ class ParseContext:
         "_ip_in_mathml_html",
         "_ip_in_mathml_text",
         "_ip_in_svg_html",
+        "_ip_svg_node",
+        "_ip_mathml_node",
         "_select_cache_node",
         "_select_cached_value",
         "active_formatting_elements",
@@ -128,6 +130,8 @@ class ParseContext:
         self._ip_in_svg_html = False  # In SVG HTML integration point (foreignObject/desc/title)
         self._ip_in_mathml_html = False  # In MathML HTML integration point (annotation-xml)
         self._ip_in_mathml_text = False  # In MathML text integration point (mi/mo/mn/ms/mtext)
+        self._ip_svg_node = None  # Cached SVG integration point node
+        self._ip_mathml_node = None  # Cached MathML integration point node
         self._select_cache_node = None  # Select cache: which node is cached
         self._select_cached_value = False  # Cached result of is_inside_tag("select")
         self._button_cache_node = None  # Button cache: which node is cached
@@ -297,6 +301,8 @@ def _update_integration_point_cache(context):
     context._ip_in_svg_html = False
     context._ip_in_mathml_html = False
     context._ip_in_mathml_text = False
+    context._ip_svg_node = None
+    context._ip_mathml_node = None
 
     # Walk ancestors once, setting all flags
     current = node
@@ -304,16 +310,22 @@ def _update_integration_point_cache(context):
         # SVG HTML integration point: foreignObject, desc, title
         if current.namespace == "svg" and current.tag_name in {"foreignObject", "desc", "title"}:
             context._ip_in_svg_html = True
+            if context._ip_svg_node is None:
+                context._ip_svg_node = current
 
         # MathML HTML integration point: annotation-xml with HTML encoding
         if current.namespace == "math" and current.tag_name == "annotation-xml":
             encoding = current.attributes.get("encoding", "").lower()
             if encoding in ("text/html", "application/xhtml+xml"):
                 context._ip_in_mathml_html = True
+                if context._ip_mathml_node is None:
+                    context._ip_mathml_node = current
 
         # MathML text integration point: mi, mo, mn, ms, mtext
         if current.namespace == "math" and current.tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
             context._ip_in_mathml_text = True
+            if context._ip_mathml_node is None:
+                context._ip_mathml_node = current
 
         # Stop at SVG/MathML roots (don't walk into HTML)
         if (current.namespace == "svg" and current.tag_name == "svg") or \
@@ -344,3 +356,28 @@ def is_in_integration_point(context, check="any"):
         return context._ip_in_mathml_html or context._ip_in_mathml_text
     # "any"
     return context._ip_in_svg_html or context._ip_in_mathml_html or context._ip_in_mathml_text
+
+
+def get_integration_point_node(context, check="any"):
+    """Get the cached integration point node.
+
+    Returns the actual integration point node found during cache update,
+    eliminating need for redundant tree walks.
+
+    Args:
+        context: ParseContext instance
+        check: Type to get - "svg", "mathml", or "any" (default)
+
+    Returns:
+        Node or None: The integration point node, or None if not in one
+    """
+    _update_integration_point_cache(context)
+
+    if check == "svg":
+        return context._ip_svg_node if context._ip_in_svg_html else None
+    if check == "mathml":
+        return context._ip_mathml_node if (context._ip_in_mathml_html or context._ip_in_mathml_text) else None
+    # "any" - return first available
+    if context._ip_svg_node:
+        return context._ip_svg_node
+    return context._ip_mathml_node
