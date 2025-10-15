@@ -607,6 +607,15 @@ class TurboHTML:
             self.insert_element(token, context, mode="normal")
             return
 
+        # Short-circuit for PLAINTEXT mode: all tags become text (avoids dispatch entirely)
+        if context.content_state == ContentState.PLAINTEXT:
+            if self._debug:
+                self.debug(f"PLAINTEXT mode: treating <{tag_name}> as text")
+            from turbohtml.node import Node
+            text_node = Node("#text", text_content=f"<{tag_name}>")
+            context.current_parent.append_child(text_node)
+            return
+
         # Inline frameset preprocessing (guards frameset_ok and consumes invalid tokens)
         if self.frameset_handler:
             if self.frameset_handler.preprocess_start(token, context):

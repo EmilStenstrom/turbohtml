@@ -6749,18 +6749,12 @@ class DoctypeHandler(TagHandler):
 class PlaintextHandler(TagHandler):
     """Handles plaintext element which switches to plaintext mode."""
 
-    HANDLED_START_TAGS = frozenset(["plaintext"])  # Only plaintext tag; should_handle_start checks PLAINTEXT mode
+    HANDLED_START_TAGS = frozenset(["plaintext"])  # Only plaintext tag; parser short-circuits PLAINTEXT mode
     HANDLED_END_TAGS = None  # Doesn't handle end tags
 
     def should_handle_start(self, tag_name, context):
-        # While in PLAINTEXT mode we treat all subsequent tags as literal text
-        if context.content_state == ContentState.PLAINTEXT:
-            return True
-
         # Fast path: check tag first
         if tag_name != "plaintext":
-            # SelectAware behavior would normally return False here, but we need special handling
-            # Skip if inside select (would be ignored anyway)
             return False
 
         # Inside plain SVG/MathML foreign subtree that is NOT an integration point, we should NOT
@@ -6774,13 +6768,6 @@ class PlaintextHandler(TagHandler):
         return True
 
     def handle_start(self, token, context):
-        if context.content_state == ContentState.PLAINTEXT:
-            if self.parser._debug:
-                self.debug(f"treating tag as text: <{token.tag_name}>")
-            text_node = Node("#text", text_content=f"<{token.tag_name}>")
-            context.current_parent.append_child(text_node)
-            return True
-
         if self.parser._debug:
             self.debug("handling plaintext")
         # EARLY adjustment: if current context is <p> whose last child is a <button>, move insertion
