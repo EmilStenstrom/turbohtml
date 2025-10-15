@@ -4732,7 +4732,7 @@ class BlockFormattingReconstructionHandler(TagHandler):
     auto_close_current_parent_if_needed() helper method.
     """
 
-    HANDLED_START_TAGS = ALL_TAGS  # Context-dependent BLOCK_ELEMENTS handling
+    HANDLED_START_TAGS = BLOCK_ELEMENTS  # Only handles block elements for formatting reconstruction
     HANDLED_END_TAGS = None  # Doesn't handle end tags
 
     def should_handle_start(self, tag_name, context):
@@ -6755,7 +6755,7 @@ class DoctypeHandler(TagHandler):
 class PlaintextHandler(TagHandler):
     """Handles plaintext element which switches to plaintext mode."""
 
-    HANDLED_START_TAGS = ALL_TAGS  # In PLAINTEXT mode, intercepts all tags as literal text
+    HANDLED_START_TAGS = frozenset(["plaintext"])  # Only plaintext tag; should_handle_start checks PLAINTEXT mode
     HANDLED_END_TAGS = None  # Doesn't handle end tags
 
     def should_handle_start(self, tag_name, context):
