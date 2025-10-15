@@ -327,11 +327,6 @@ def _update_integration_point_cache(context):
             if context._ip_mathml_node is None:
                 context._ip_mathml_node = current
 
-        # Stop at SVG/MathML roots (don't walk into HTML)
-        if (current.namespace == "svg" and current.tag_name == "svg") or \
-           (current.namespace == "math" and current.tag_name == "math"):
-            break
-
         current = current.parent
 
 
@@ -354,7 +349,7 @@ def is_in_integration_point(context, check="any"):
         return context._ip_in_svg_html
     if check == "mathml":
         return context._ip_in_mathml_html or context._ip_in_mathml_text
-    # "any"
+
     return context._ip_in_svg_html or context._ip_in_mathml_html or context._ip_in_mathml_text
 
 

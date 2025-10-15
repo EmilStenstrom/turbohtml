@@ -2837,13 +2837,8 @@ class ParagraphTagHandler(TagHandler):
         # a table subtree. An implicit empty <p> element should appear around tables in this case.
         # Do NOT apply this behavior inside HTML integration points within foreign content
         # (e.g., inside <svg foreignObject> or MathML text IPs); keep paragraph handling local there.
-        in_svg_ip = (context.current_parent.tag_name in SVG_INTEGRATION_POINTS
-                     or context.current_parent.find_svg_integration_point_ancestor() is not None)
-        in_math_ip = context.current_parent.find_mathml_text_integration_point_ancestor() is not None or (
-            context.current_parent.namespace == "math" and context.current_parent.tag_name == "annotation-xml"
-            and context.current_parent.attributes.get("encoding", "").lower()
-            in ("text/html", "application/xhtml+xml")
-        )
+        in_svg_ip = is_in_integration_point(context, check="svg")
+        in_math_ip = is_in_integration_point(context, check="mathml")
         if (
             not in_svg_ip
             and not in_math_ip
@@ -4830,10 +4825,8 @@ class BlockFormattingReconstructionHandler(TagHandler):
             # But check for integration points first - they override foreign element boundaries
             boundary = None
             if context.current_context in ("svg", "math"):
-                # Check if we're in an integration point
-                svg_ip = context.current_parent.find_svg_html_integration_point_ancestor()
-                math_ip = context.current_parent.find_mathml_text_integration_point_ancestor()
-                ip = svg_ip or math_ip
+                # Check if we're in an integration point - use cached node
+                ip = get_integration_point_node(context)
                 if ip:
                     # Integration point becomes the boundary, not the foreign root
                     boundary = ip
@@ -5124,13 +5117,11 @@ class ForeignTagHandler(TagHandler):
 
     def _is_in_svg_integration_point(self, context):
         """Check if current parent is inside an SVG integration point."""
-        return ((context.current_parent.namespace == "svg" and 
-                 context.current_parent.tag_name in {"foreignObject", "desc", "title"}) or
-                context.current_parent.find_svg_html_integration_point_ancestor() is not None)
+        return is_in_integration_point(context, check="svg")
     
     def _is_in_mathml_text_integration_point(self, context):
         """Check if current parent is inside a MathML text integration point."""
-        return context.current_parent.find_mathml_text_integration_point_ancestor() is not None
+        return is_in_integration_point(context, check="mathml")
     
     def _is_in_mathml_annotation_html_integration_point(self, context):
         """Check if current parent is annotation-xml with HTML/XHTML encoding."""
@@ -5347,7 +5338,7 @@ class ForeignTagHandler(TagHandler):
             # If we're inside a MathML text integration point (mi/mo/mn/ms/mtext) and encounter <svg>,
             # create a leaf <svg svg> element WITHOUT switching context or entering it (so following
             # MathML siblings remain siblings). This corresponds to logic in should_handle_start.
-            parent_ip = context.current_parent.find_mathml_text_integration_point_ancestor()
+            parent_ip = get_integration_point_node(context, check="mathml")
             # Nested <foreignObject> immediately following a leaf <svg svg> under a MathML text integration point:
             # move into that svg leaf (activating svg context) so that foreignObject becomes its child.
             if tag_name_lower == "foreignobject" and parent_ip is not None:
@@ -5462,9 +5453,7 @@ class ForeignTagHandler(TagHandler):
             # If we're inside an SVG integration point (foreignObject, desc, title),
             # delegate ALL tags to HTML handlers. HTML parsing rules apply within these
             # subtrees per the HTML spec.
-            if (context.current_parent.namespace == "svg" and context.current_parent.tag_name in {"foreignObject", "desc", "title"}) or (
-                context.current_parent.find_svg_html_integration_point_ancestor() is not None
-            ):
+            if is_in_integration_point(context, check="svg"):
                 # foreignObject: treat <math> as math root; leaf math tokens without preceding root act as HTML
                 if context.current_parent.namespace == "svg" and context.current_parent.tag_name == "foreignObject":
                     if tag_name_lower == "math":
@@ -5679,16 +5668,13 @@ class ForeignTagHandler(TagHandler):
         """
         # While explicitly in SVG context
         if context.current_context == "svg":
-            in_ip = (context.current_parent.namespace == "svg" and context.current_parent.tag_name in {"foreignObject", "desc", "title"}) or (
-                context.current_parent.find_svg_html_integration_point_ancestor() is not None
-            )
-            if in_ip:
+            if is_in_integration_point(context, check="svg"):
                 tl = tag_name.lower()
                 if tl in HTML_ELEMENTS or tl in TABLE_ELEMENTS or tl == "table":
                     return False  # delegate to HTML handlers
         # While explicitly in MathML context
         elif context.current_context == "math":
-            in_text_ip = context.current_parent.find_mathml_text_integration_point_ancestor() is not None
+            in_text_ip = is_in_integration_point(context, check="mathml")
             tag_name_lower = tag_name.lower()
             if in_text_ip and tag_name_lower in HTML_ELEMENTS:
                 return False
@@ -5768,24 +5754,9 @@ class ForeignTagHandler(TagHandler):
         # points (svg foreignObject/desc/title or MathML text/annotation-xml with HTML/XHTML),
         # where HTML rules apply in-place.
         if context.current_context in ("svg", "math"):
-            # Integration point guard
-            in_integration_point = False
-            if context.current_context == "svg":
-                in_integration_point = (context.current_parent.namespace == "svg" and context.current_parent.tag_name in {"foreignObject", "desc", "title"}) or (
-                    context.current_parent.find_svg_html_integration_point_ancestor() is not None
-                )
-            elif context.current_context == "math":
-                in_integration_point = context.current_parent.find_mathml_text_integration_point_ancestor() is not None or (
-                    context.current_parent.namespace == "math" and context.current_parent.tag_name == "annotation-xml"
-                    and context.current_parent.attributes.get("encoding", "").lower()
-                    in ("application/xhtml+xml", "text/html")
-                )
-                # Treat being inside an SVG integration point (foreignObject/desc/title) that contains a MathML subtree
-                # as an integration point for purposes of stray HTML end tags so they are ignored instead of
-                # breaking out and moving text outside the foreignObject (tests expect trailing text to remain inside).
-                if not in_integration_point and context.current_parent.find_svg_html_integration_point_ancestor() is not None:
-                    in_integration_point = True
-
+            # Integration point guard - use cached check
+            in_integration_point = is_in_integration_point(context)
+            
             tl = tag_name
             # Treat common HTML end tags including p and br specially
             if tl in HTML_ELEMENTS or tl in ("p", "br"):
@@ -5798,11 +5769,10 @@ class ForeignTagHandler(TagHandler):
                         # Swallow stray end tag inside integration point (no routing sentinel maintained)
                         return True  # consume silently
                     # If the found ancestor lies OUTSIDE the integration point subtree, treat as unmatched and swallow.
-                    # Determine nearest integration point ancestor
-                    ip = context.current_parent.find_svg_html_integration_point_ancestor()
-                    if ip is not None:
-                        # If opened is an ancestor of ip (i.e., outside subtree), ignore end tag
-                        cur = ip.parent
+                    ip_node = get_integration_point_node(context)
+                    if ip_node:
+                        # If opened is an ancestor of ip_node (i.e., outside subtree), ignore end tag
+                        cur = ip_node.parent
                         outside = False
                         while cur:
                             if cur is opened:
@@ -5815,9 +5785,9 @@ class ForeignTagHandler(TagHandler):
                             return True
                         # Additional safeguard: if opened is the integration point itself but current_parent has an open paragraph (<p>)
                         # we keep the paragraph inside by swallowing the end tag that would close foreignObject prematurely.
-                        if opened is ip:
+                        if opened is ip_node:
                             p_inside = context.current_parent.find_ancestor("p")
-                            if p_inside and ip.is_ancestor_of(p_inside):
+                            if p_inside and ip_node.is_ancestor_of(p_inside):
                                 # Keep text inside integration point by ignoring this end tag
                                 return True
                     return False  # matched ancestor handled elsewhere
