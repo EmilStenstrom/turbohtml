@@ -128,15 +128,6 @@ class TagHandler:
                 return True
         return False
 
-    # Pre-dispatch hooks (token guards and preprocessing, called before handler dispatch)
-    def preprocess_start(self, token, context):
-        """Pre-process start tags before dispatch (guards, side effects). Return True to consume token."""
-        return False
-
-    def preprocess_end(self, token, context):
-        """Pre-process end tags before dispatch (guards, side effects). Return True to consume token."""
-        return False
-
     # Comment hooks (default no-ops so parser can call unconditionally)
     def should_handle_comment(self, comment, context):
         return False

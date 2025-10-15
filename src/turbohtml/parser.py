@@ -588,10 +588,6 @@ class TurboHTML:
         """Handle all closing HTML tags (spec-aligned, no auxiliary adoption flags)."""
         tag_name = token.tag_name
 
-        # Inline frameset preprocessing (guards invalid end tags in frameset contexts)
-        if self.frameset_handler and self.frameset_handler.preprocess_end(token, context):
-            return
-
         # Dispatch with fast-path optimization using pre-computed handler metadata
         for handler, handled_end_tags, has_custom_should_handle in self._end_handler_metadata:
             # Pre-filter by HANDLED_END_TAGS before calling any handler logic
