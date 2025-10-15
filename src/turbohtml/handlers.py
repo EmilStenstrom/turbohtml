@@ -2712,7 +2712,7 @@ class ParagraphTagHandler(TagHandler):
         
         if p_ancestor:
             # Inside button - create new <p> without closing ancestor
-            if context.current_parent.find_ancestor("button"):
+            if context.in_button:
                 return self.parser.insert_element(token, context, mode="normal", enter=True) and True
             
             # Close ancestor <p> and detach its formatting descendants
