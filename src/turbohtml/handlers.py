@@ -905,17 +905,13 @@ class TemplateContentFilterHandler(TagHandler):
             ):
                 return True
 
-            if (
-                context.current_parent
-                and context.current_parent.tag_name == "content"
-                and context.current_parent.parent
-                and context.current_parent.parent.tag_name == "template"
-            ):
+            if context.in_template_content > 0:
                 context.move_to_element_with_fallback(
                     context.current_parent.parent,
                     context.current_parent,
                 )
 
+            # Move to template container
             while context.current_parent and context.current_parent.tag_name != "template":
                 if context.current_parent.parent:
                     context.move_to_element_with_fallback(
@@ -930,6 +926,7 @@ class TemplateContentFilterHandler(TagHandler):
                 if context.open_elements:
                     new_stack = []
                     for el in context.open_elements:
+                        # Keep elements that are not descendants of template_node
                         cur = el.parent
                         keep = True
                         while cur:
@@ -1060,12 +1057,7 @@ class TemplateElementHandler(TagHandler):
         ):
             return True
 
-        if (
-            context.current_parent
-            and context.current_parent.tag_name == "content"
-            and context.current_parent.parent
-            and context.current_parent.parent.tag_name == "template"
-        ):
+        if context.in_template_content > 0:
             context.move_to_element_with_fallback(
                 context.current_parent.parent,
                 context.current_parent,
@@ -5867,11 +5859,8 @@ class ForeignTagHandler(TagHandler):
         if context.current_context not in ("svg", "math"):
             return False
         # If inside an integration point that uses HTML parsing, do not special-case CDATA
-        current = context.current_parent
-        while current:
-            if current.namespace == "svg" and current.tag_name in {"foreignObject", "desc", "title"}:
-                return False
-            current = current.parent
+        if context.current_parent.find_first_ancestor_in_tags({"foreignObject", "desc", "title"}, namespace="svg"):
+            return False
         return comment.startswith("[CDATA[")
 
     def handle_comment(self, comment, context):
@@ -6022,11 +6011,8 @@ class HeadTagHandler(TagHandler):
         
         # style/script: suppress if inside table cells/captions
         if tag_name in ("style", "script"):
-            anc = context.current_parent
-            while anc and anc.tag_name not in ("document", "html"):
-                if anc.tag_name in ("caption", "tr", "td", "th", "tbody", "thead", "tfoot"):
-                    return False
-                anc = anc.parent
+            if context.current_parent.find_first_ancestor_in_tags({"caption", "tr", "td", "th", "tbody", "thead", "tfoot"}):
+                return False
             
             # In table context: insert inside table structure (before sections)
             if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
@@ -6623,13 +6609,7 @@ class MarqueeTagHandler(TagHandler):
             )
 
         # Find deepest formatting ancestor (e.g. <b><i>) so marquee sits inside it.
-        deepest_fmt = None
-        cursor = context.current_parent
-        while cursor:
-            if cursor.tag_name in FORMATTING_ELEMENTS:
-                deepest_fmt = cursor
-            cursor = cursor.parent
-
+        deepest_fmt = context.current_parent.find_formatting_element_ancestor()
         parent_for_marquee = deepest_fmt if deepest_fmt else context.current_parent
         self.parser.insert_element(
             token,
@@ -6873,12 +6853,7 @@ class PlaintextHandler(TagHandler):
             return True
 
         # Do not synthesize body or change insertion mode when inside template content fragment
-        in_template_content = (
-            context.current_parent.tag_name == "content"
-            and context.current_parent.parent
-            and context.current_parent.parent.tag_name == "template"
-        )
-        if not in_template_content and context.document_state in (
+        if not context.in_template_content > 0 and context.document_state in (
             DocumentState.INITIAL,
             DocumentState.AFTER_HEAD,
             DocumentState.AFTER_BODY,
