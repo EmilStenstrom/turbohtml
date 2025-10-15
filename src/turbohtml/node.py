@@ -72,13 +72,6 @@ class Node:
         return self.namespace in ("svg", "math")
 
     def append_child(self, child):
-        # Check for circular reference before adding
-        if self._would_create_circular_reference(child):
-            msg = f"Adding {child.tag_name} as child of {self.tag_name} would create circular reference"
-            raise ValueError(
-                msg,
-            )
-
         if child.parent:
             # Update sibling links in old location
             if child.previous_sibling:
@@ -97,33 +90,6 @@ class Node:
         child.parent = self
         child.next_sibling = None
         self.children.append(child)
-
-    def _would_create_circular_reference(self, child):
-        """Check if adding child would create a circular reference."""
-        # Fast path: if child has no parent, it can't be our ancestor
-        if not child.parent:
-            return False
-
-        # Check if self is a descendant of child
-        current = self
-        visited = set()
-        depth = 0
-
-        while current and depth < 100:  # Safety limit
-            if current == child:
-                return True  # Self is a descendant of child
-
-            # Only track visited if we have a parent (to detect cycles in existing tree)
-            if current.parent:
-                node_id = id(current)
-                if node_id in visited:
-                    return True  # Already found circular reference in current tree
-                visited.add(node_id)
-
-            current = current.parent
-            depth += 1
-
-        return False
 
     def insert_child_at(self, index, child):
         """Insert a child at the specified index."""
