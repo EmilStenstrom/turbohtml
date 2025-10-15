@@ -3062,6 +3062,10 @@ class TableTagHandler(TagHandler):
     HANDLED_START_TAGS = ALL_TAGS  # Complex table element handling with context dependencies
     HANDLED_END_TAGS = ALL_TAGS  # Handles all table-related end tags
     HANDLES_TEXT = True  # Handles text in table contexts (foster parenting)
+    
+    # Class-level constants to avoid recreation on every call
+    _TABLE_CONTEXT_TAGS = frozenset({"html", "body", "table"})
+    _TABLE_SECTION_TAGS = frozenset({"tbody", "thead", "tfoot"})
 
     def should_handle_start(self, tag_name, context):
         # Skip template content (TemplateAware behavior)
@@ -3300,17 +3304,17 @@ class TableTagHandler(TagHandler):
         2. Insert an HTML element for the token
         3. Switch to "in row" mode
         """
-        # In tbody/thead/tfoot fragment context, insertion point is already correct
-        if context.current_parent.tag_name in {"tbody", "thead", "tfoot"}:
+        # Fast path: In tbody/thead/tfoot fragment context, insertion point is already correct
+        current_parent_tag = context.current_parent.tag_name
+        if current_parent_tag in self._TABLE_SECTION_TAGS:
             self.parser.insert_element(token, context, mode="normal", enter=True)
             return True
 
         # In "in table" mode: clear stack back to table context before creating tbody
         # Per spec 13.2.6.4.7: removes foster-parented formatting elements from stack
-        table_context_tags = {"html", "body", "table"}
         while context.open_elements:
             current_tag = context.open_elements[-1].tag_name
-            if current_tag in table_context_tags:
+            if current_tag in self._TABLE_CONTEXT_TAGS:
                 break
             popped = context.open_elements.pop()
             if self.parser._debug:
@@ -3327,8 +3331,9 @@ class TableTagHandler(TagHandler):
 
     def _handle_cell(self, token, context):
         """Handle td/th elements."""
-        # If current parent is a section (thead/tbody/tfoot) and not inside a tr yet, synthesize a tr (spec step).
-        if context.current_parent.tag_name in ("thead", "tbody", "tfoot"):
+        # Fast path: If current parent is a section (thead/tbody/tfoot) and not inside a tr yet, synthesize a tr (spec step).
+        current_parent_tag = context.current_parent.tag_name
+        if current_parent_tag in self._TABLE_SECTION_TAGS:
             fake_tr = self._synth_token("tr")
             self.parser.insert_element(
                 fake_tr,
