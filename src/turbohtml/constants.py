@@ -685,3 +685,8 @@ HTML5_NUMERIC_REPLACEMENTS = MappingProxyType(
 # These elements allow HTML content to be nested within SVG/MathML foreign content
 SVG_INTEGRATION_POINTS = ("foreignObject", "desc", "title")
 MATHML_TEXT_INTEGRATION_POINTS = ("mtext", "mi", "mo", "mn", "ms")
+
+# Table-related elements that don't need foster parenting when inserted in table context
+TABLE_ELEMENTS_NO_FOSTER = frozenset(
+    ["table", "tbody", "thead", "tfoot", "tr", "td", "th", "caption", "colgroup", "col", "form"]
+)

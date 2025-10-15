@@ -1,7 +1,7 @@
 """TurboHTML parser (type annotations removed)."""
 
 from turbohtml.adoption import AdoptionAgencyAlgorithm
-from turbohtml.constants import NUMERIC_ENTITY_INVALID_SENTINEL, VOID_ELEMENTS
+from turbohtml.constants import NUMERIC_ENTITY_INVALID_SENTINEL, VOID_ELEMENTS, TABLE_ELEMENTS_NO_FOSTER
 from turbohtml.context import ContentState, DocumentState, FragmentContext, ParseContext, is_in_integration_point
 from turbohtml.foster import foster_parent, needs_foster_parenting
 from turbohtml.fragment import parse_fragment
@@ -262,15 +262,15 @@ class TurboHTML:
         auto_foster: When True (default) and parent=None, automatically applies foster
         parenting if current_parent is in table context. Set to False to bypass.
         """
-        if mode not in ("normal", "transient", "void"):
-            msg = f"insert_element: unknown mode '{mode}'"
-            raise ValueError(msg)
-
+        # Cache frequently accessed attributes
+        tag_name = tag_name_override or token.tag_name
+        token_tag_name = token.tag_name
+        is_self_closing = token.is_self_closing
+        
         # Foster parenting: When inserting into default parent (parent=None) and in table context,
         # spec requires insertion before the table rather than inside it (unless in cell/caption).
         target_parent = parent or context.current_parent
         target_before = before
-        tag_name = tag_name_override or token.tag_name
 
         # Determine namespace: explicit parameter, or inherit from context
         # BUT: don't auto-namespace if we're in an integration point where HTML elements are HTML
@@ -291,8 +291,7 @@ class TurboHTML:
                     context.current_parent.find_first_ancestor_in_tags({"td", "th", "caption"}),
                 )
                 # Don't foster table-related elements or elements specifically allowed in tables (form)
-                tableish = ("table", "tbody", "thead", "tfoot", "tr", "td", "th", "caption", "colgroup", "col", "form")
-                if not in_cell_or_caption and tag_name not in tableish:
+                if not in_cell_or_caption and tag_name not in TABLE_ELEMENTS_NO_FOSTER:
                     target_parent, target_before = foster_parent(
                         context.current_parent,
                         context.open_elements,
@@ -321,17 +320,25 @@ class TurboHTML:
             target_parent.insert_before(new_node, target_before)
         else:
             target_parent.append_child(new_node)
-        # Determine effective voidness
-        is_void = False
-        is_void = True if mode == "void" else treat_as_void or token.tag_name in VOID_ELEMENTS
-
-        if mode == "normal" and not is_void:
-            do_push = True if push_override is None else push_override
-            if do_push:
-                context.open_elements.push(new_node)
-        # Do not enter a node that the token marked self-closing (HTML void-like syntax) even if not in VOID_ELEMENTS
-        if enter and not is_void and mode in ("normal", "transient") and not token.is_self_closing:
-            context.enter_element(new_node)
+        
+        # Determine effective voidness - mode "void" always results in void behavior
+        # Otherwise check treat_as_void flag or if tag is in VOID_ELEMENTS set
+        if mode == "void":
+            is_void = True
+        elif mode == "normal":
+            is_void = treat_as_void or token_tag_name in VOID_ELEMENTS
+            if not is_void:
+                do_push = True if push_override is None else push_override
+                if do_push:
+                    context.open_elements.push(new_node)
+            # Do not enter a node that the token marked self-closing even if not in VOID_ELEMENTS
+            if enter and not is_void and not is_self_closing:
+                context.enter_element(new_node)
+        else:  # mode == "transient"
+            is_void = treat_as_void or token_tag_name in VOID_ELEMENTS
+            # Do not enter a node that the token marked self-closing even if not in VOID_ELEMENTS
+            if enter and not is_void and not is_self_closing:
+                context.enter_element(new_node)
 
         # Activate RAWTEXT mode if token requires it (deferred activation for elements like textarea)
         if token.needs_rawtext and self.tokenizer:
@@ -557,8 +564,9 @@ class TurboHTML:
             return
 
         # Inline frameset preprocessing (guards frameset_ok and consumes invalid tokens)
-        if self.frameset_handler and self.frameset_handler.preprocess_start(token, context):
-            return
+        if self.frameset_handler:
+            if self.frameset_handler.preprocess_start(token, context):
+                return
 
         # Inline formatting element reconstruction (must happen before handler dispatch)
         if self.formatting_handler:
