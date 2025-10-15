@@ -186,8 +186,11 @@ class TurboHTML:
             if (h.__class__.HANDLED_END_TAGS is not None or h.should_handle_end.__func__ is not base_should_handle_end)
             and not isinstance(h, GenericEndTagHandler)
         ]
+        # Only include handlers that declare HANDLES_TEXT=True or have custom should_handle_text
         self._active_text_handlers = [
-            h for h in self.tag_handlers if h.should_handle_text.__func__ is not base_should_handle_text
+            h
+            for h in self.tag_handlers
+            if h.__class__.HANDLES_TEXT or h.should_handle_text.__func__ is not base_should_handle_text
         ]
 
         # Pre-compute handler metadata: (handler, HANDLED_TAGS, has_custom_should_handle)
@@ -198,6 +201,10 @@ class TurboHTML:
         self._end_handler_metadata = [
             (h, h.__class__.HANDLED_END_TAGS, h.should_handle_end.__func__ is not base_should_handle_end)
             for h in self._active_end_handlers
+        ]
+        # Pre-compute text handler metadata: (handler, has_custom_should_handle)
+        self._text_handler_metadata = [
+            (h, h.should_handle_text.__func__ is not base_should_handle_text) for h in self._active_text_handlers
         ]
 
     def debug(self, *args, indent=4, **kwargs):
@@ -503,9 +510,11 @@ class TurboHTML:
             elif token.type == "Character":
                 data = token.data
                 if data:
-                    # Use pre-filtered list of text handlers
-                    for handler in self._active_text_handlers:
-                        if handler.should_handle_text(data, context):
+                    # Use pre-filtered list of text handlers with optimized dispatch
+                    for handler, has_custom_should_handle in self._text_handler_metadata:
+                        # If handler has custom should_handle_text logic, call it
+                        # Otherwise, HANDLES_TEXT=True means it always wants to check
+                        if not has_custom_should_handle or handler.should_handle_text(data, context):
                             if self._debug:
                                 self.debug(
                                     f"{handler.__class__.__name__}: handling {token}, context={context}",

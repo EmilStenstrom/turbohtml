@@ -93,6 +93,11 @@ class HTMLToken:
 class TagHandler:
     """Base class for tag-specific handling logic (full feature set)."""
 
+    # Class attributes for fast dispatch (subclasses override)
+    HANDLED_START_TAGS = None  # frozenset of tag names, ALL_TAGS sentinel, or None
+    HANDLED_END_TAGS = None  # frozenset of tag names, ALL_TAGS sentinel, or None
+    HANDLES_TEXT = False  # True if this handler processes text nodes
+
     def __init__(self, parser):
         self.parser = parser
 
@@ -1146,6 +1151,7 @@ class TextHandler(TagHandler):
 
     HANDLED_START_TAGS = None  # Doesn't handle start tags
     HANDLED_END_TAGS = FORMATTING_ELEMENTS
+    HANDLES_TEXT = True  # Always handles text (fallback)
 
     def should_handle_text(self, text, context):
         return True
@@ -3070,6 +3076,7 @@ class TableTagHandler(TagHandler):
 
     HANDLED_START_TAGS = ALL_TAGS  # Complex table element handling with context dependencies
     HANDLED_END_TAGS = ALL_TAGS  # Handles all table-related end tags
+    HANDLES_TEXT = True  # Handles text in table contexts (foster parenting)
 
     def should_handle_start(self, tag_name, context):
         # Skip template content (TemplateAware behavior)
@@ -3476,7 +3483,7 @@ class TableTagHandler(TagHandler):
         ):
             return False
 
-        if context.current_parent.find_first_ancestor_in_tags({"select", "option", "optgroup"}) is not None:
+        if context.current_parent.find_first_ancestor_in_tags({"select", "option", "optgroup"}):
             return False
 
         return True
@@ -4495,6 +4502,7 @@ class RawtextTagHandler(TagHandler):
 
     HANDLED_START_TAGS = RAWTEXT_ELEMENTS
     HANDLED_END_TAGS = RAWTEXT_ELEMENTS
+    HANDLES_TEXT = True  # Handles text in RAWTEXT mode
 
     def handle_start(self, token, context):
         tag_name = token.tag_name
@@ -5975,6 +5983,7 @@ class HeadTagHandler(TagHandler):
 
     HANDLED_START_TAGS = HEAD_ELEMENTS
     HANDLED_END_TAGS = frozenset(["head", "noscript"])
+    HANDLES_TEXT = True  # Handles whitespace in head and RAWTEXT in head elements
 
     def should_handle_start(self, tag_name, context):
         # Do not let head element handler interfere inside template content
