@@ -4596,9 +4596,21 @@ class RawtextTagHandler(TagHandler):
     def handle_text(self, text, context):
         if self.parser._debug:
             self.debug(f"handling text in content_state {context.content_state}")
-        if not self.should_handle_text(text, context):
-            return False
-
+        
+        # Special handling for textarea: ignore first newline if present and it's the first content
+        # Per HTML5 spec, a leading newline in textarea is stripped
+        if (
+            context.current_parent.tag_name == "textarea"
+            and not context.current_parent.children
+            and text.startswith("\n")
+        ):
+            if self.parser._debug:
+                self.debug("Removing initial newline from textarea")
+            text = text[1:]
+            # If the text was only a newline, don't create a text node
+            if not text:
+                return True
+        
         # Unterminated rawtext end tag fragments now handled in tokenizer (contextual honoring); no suppression here.
 
         # Try to merge with previous text node if it exists
@@ -5992,39 +6004,21 @@ class HeadTagHandler(TagHandler):
         # Script/style/title etc. can appear as normal content in templates
         if context.in_template_content > 0:
             return False
-        # Template elements handled by TemplateElementHandler
-        if tag_name == "template":
-            return False
+
         # Late meta/title after body/html: still handle here so we can explicitly place them into body (spec parse error recovery)
         if tag_name in ("meta", "title") and context.document_state in (
             DocumentState.AFTER_BODY,
             DocumentState.AFTER_HTML,
         ):
             return True
-        return tag_name in HEAD_ELEMENTS
+
+        if tag_name in HEAD_ELEMENTS:
+            return True
+
+        return False
 
     def handle_start(self, token, context):
         tag_name = token.tag_name
-        if self.parser._debug:
-            self.debug(f"handling {tag_name}")
-        if self.parser._debug:
-            self.debug(
-                f"Current state: {context.document_state}, current_parent: {context.current_parent}",
-            )
-
-        # Debug current parent details
-        if context.current_parent:
-            if self.parser._debug:
-                self.debug(f"Current parent tag: {context.current_parent.tag_name}")
-            if self.parser._debug:
-                self.debug(
-                    f"Current parent children: {len(context.current_parent.children)}",
-                )
-            if context.current_parent.children:
-                if self.parser._debug:
-                    self.debug(
-                        f"Current parent's children: {[c.tag_name for c in context.current_parent.children]}",
-                    )
 
         # Suppress head-level handling for style/script inside table cells/captions (delegate to other handlers)
         if tag_name in ("style", "script"):
@@ -6033,10 +6027,6 @@ class HeadTagHandler(TagHandler):
                 if anc.tag_name in ("caption", "tr", "td", "th", "tbody", "thead", "tfoot"):
                     return False
                 anc = anc.parent
-
-        # Special handling for template elements
-        if tag_name == "template":
-            return self._handle_template_start(token, context)
 
         # If we're in any table-related context, place style/script (and other head elements) inside the
         # current table or its section rather than fostering before the table. Expected trees
@@ -6174,12 +6164,6 @@ class HeadTagHandler(TagHandler):
 
         return True
 
-    def _handle_template_start(self, token, context):
-        """Handle template element start tag with special content document fragment."""
-        if self.parser._debug:
-            self.debug("handling template start tag")
-        return True
-
     def handle_end(self, token, context):
         if self.parser._debug:
             self.debug(f"handling end tag {token.tag_name}")
@@ -6204,39 +6188,16 @@ class HeadTagHandler(TagHandler):
         return True
 
     def should_handle_text(self, text, context):
-        # Handle text in RAWTEXT mode or spaces in head
+        # Handle text in RAWTEXT mode for HEAD elements only (not textarea which is a form element)
+        # Also handle whitespace in head state
+        head_rawtext_elements = {"title", "style", "script", "noframes", "noembed"}
         return (
             context.content_state == ContentState.RAWTEXT
             and context.current_parent
-            and context.current_parent.tag_name in RAWTEXT_ELEMENTS
+            and context.current_parent.tag_name in head_rawtext_elements
         ) or (context.document_state == DocumentState.IN_HEAD and text.isspace())
 
     def handle_text(self, text, context):
-        if not self.should_handle_text(text, context):
-            return False
-
-        if self.parser._debug:
-            self.debug(f"handling text '{text}' in {context.current_parent.tag_name}")
-
-        # If we're in head state and see non-space text, don't handle it
-        if context.document_state == DocumentState.IN_HEAD and not text.isspace():
-            if self.parser._debug:
-                self.debug("Non-space text in head, not handling")
-            return False
-
-        # Special handling for textarea: ignore first newline if present and it's the first content
-        if (
-            context.current_parent.tag_name == "textarea"
-            and not context.current_parent.children
-            and text.startswith("\n")
-        ):
-            if self.parser._debug:
-                self.debug("Removing initial newline from textarea")
-            text = text[1:]
-            # If the text was only a newline, don't create a text node
-            if not text:
-                return True
-
         # Try to combine with previous text node if it exists
         if context.current_parent.children and context.current_parent.children[-1].tag_name == "#text":
             if self.parser._debug:

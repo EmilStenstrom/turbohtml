@@ -267,7 +267,6 @@ HEAD_ELEMENTS = frozenset(
         "noscript",
         "script",
         "style",
-        "template",
         "title",
     ]
 )
