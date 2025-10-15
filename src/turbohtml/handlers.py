@@ -532,18 +532,20 @@ class TemplateContentFilterHandler(TagHandler):
             node = node.parent
         return None
 
-    # This will be the last to get refactored.
     def should_handle_start(self, tag_name, context):
-        """Filter content inside templates (auto-enter content, handle nested templates).
+        """Handle template content: auto-enter content node + filter specific tags.
 
-        As a side effect, auto-enters content node when inserting under a template.
+        Side-effect: auto-enters content node when needed.
+        Returns True only for tags that need special template handling.
+        Other handlers can still run (head elements, formatting, lists, etc.) after this does its setup.
         """
-        # Check if inside template content for filtering logic FIRST
-        in_template = context.in_template_content > 0
+        # Not in template content? Nothing to do
+        if context.in_template_content == 0:
+            return False
 
         # Side effect: Auto-enter content node if we're under a template but not already inside content
-        # ONLY do this if we're already in template content (otherwise we're outside the template)
-        if tag_name != "template" and in_template:
+        # This happens for ALL tags (even those we don't claim), ensuring proper insertion point
+        if tag_name != "template":
             node = context.current_parent
             template_ancestor = None
             while node and node.tag_name not in ("html", "document-fragment"):
@@ -568,23 +570,20 @@ class TemplateContentFilterHandler(TagHandler):
                     if not inside:
                         context.move_to_element(content)
 
-        # Handle nested templates inside template content
+        # Now decide if we should claim this tag (handle it ourselves)
+        # Nested templates: always claim
         if tag_name == "template":
             if self.parser.foreign_handler and context.current_context in ("svg", "math"):
-                return bool(in_template)
-            # Handle if we're inside template content (nested template)
-            if in_template:
-                return True
-            # Top-level templates handled by TemplateElementHandler
-            return False
+                return True  # Claim nested templates in foreign content
+            return True  # Claim nested templates
 
-        # Filter other content inside templates
-        if not in_template:
-            return False
+        # Foreign content: let ForeignTagHandler deal with it
         if self.parser.foreign_handler and context.current_context in ("svg", "math"):
             return False
         if tag_name in {"svg", "math"}:
             return False
+
+        # Table-related special handling
         if context.current_parent and context.current_parent.tag_name == "tr":
             return True
         boundary = self._current_content_boundary(context)
@@ -592,6 +591,9 @@ class TemplateContentFilterHandler(TagHandler):
             last = boundary.children[-1]
             if last.tag_name in {"col", "colgroup"}:
                 return True
+
+        # Only claim tags that need special template handling
+        # Let other handlers (formatting, head, list, etc.) run for their respective tags
         return tag_name in (self.IGNORED_START + self.GENERIC_AS_PLAIN)
 
     def _handle_nested_template(self, token, context):
@@ -5986,9 +5988,11 @@ class HeadTagHandler(TagHandler):
     HANDLES_TEXT = True  # Handles whitespace in head and RAWTEXT in head elements
 
     def should_handle_start(self, tag_name, context):
-        # Do not let head element handler interfere inside template content
+        # Inside template content: don't apply head-specific insertion logic
+        # Script/style/title etc. can appear as normal content in templates
         if context.in_template_content > 0:
             return False
+        # Template elements handled by TemplateElementHandler
         if tag_name == "template":
             return False
         # Late meta/title after body/html: still handle here so we can explicitly place them into body (spec parse error recovery)
