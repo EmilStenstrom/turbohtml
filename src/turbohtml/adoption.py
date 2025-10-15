@@ -187,7 +187,8 @@ class OpenElementsStack:
         idx = self.index_of(element)
         if idx == -1:
             return False
-        self._stack = self._stack[:idx]
+        # Use list comprehension with public __getitem__ to build new stack
+        self.replace_stack([self[i] for i in range(idx)])
         return True
 
     # --- structural mutation ---
