@@ -92,11 +92,7 @@ class ParseContext:
         "_debug",
         "_document_state",
         "_ip_cache_node",
-        "_ip_in_mathml_html",
-        "_ip_in_mathml_text",
-        "_ip_in_svg_html",
-        "_ip_svg_node",
-        "_ip_mathml_node",
+        "_integration_point",  # (type, node): type in (None, "svg", "mathml_html", "mathml_text")
         "_svg_ancestor",
         "_math_ancestor",
         "_select_cache_node",
@@ -133,11 +129,7 @@ class ParseContext:
         self._content_state = ContentState.NONE
         self.in_template_content = 0  # Depth counter for nested template content
         self._ip_cache_node = None  # Integration point cache: which node is cached
-        self._ip_in_svg_html = False  # In SVG HTML integration point (foreignObject/desc/title)
-        self._ip_in_mathml_html = False  # In MathML HTML integration point (annotation-xml)
-        self._ip_in_mathml_text = False  # In MathML text integration point (mi/mo/mn/ms/mtext)
-        self._ip_svg_node = None  # Cached SVG integration point node
-        self._ip_mathml_node = None  # Cached MathML integration point node
+        self._integration_point = (None, None)  # (type, node): active integration point
         self._svg_ancestor = None  # Cached SVG namespace ancestor (any SVG element)
         self._math_ancestor = None  # Cached MathML namespace ancestor (any MathML element)
         self._select_cache_node = None  # Select cache: which node is cached
@@ -181,110 +173,59 @@ class ParseContext:
     def _update_integration_point_cache_incremental(self, old_parent, new_parent):
         """Incrementally update integration point cache when moving to new parent.
         
-        This is much faster than walking the entire tree every time. We leverage the
-        fact that when moving from old_parent to new_parent:
-        1. If new_parent is a child of old_parent, we just need to check the parent itself
-        2. If moving up or sideways, we walk from new_parent (but cache is still valid)
-        3. Most common case: moving to a child node (forward progress through tree)
-        
-        NOTE: Only called when has_foreign_content is True.
+        Optimized for the common case (forward progress to child) while handling
+        backward/sideways moves. Only called when has_foreign_content is True.
         """
-        # Check if moving to a child (most common case - forward progress)
-        if new_parent.parent == old_parent:
-            # Moving down to a child - check if new_parent is an integration point or foreign ancestor
-            # Check new_parent node itself for integration point properties
-            self._check_node_for_integration_point(new_parent)
-            
-            # If new_parent has a parent, inherit foreign ancestors from parent chain
-            if new_parent.parent:
-                self._inherit_foreign_ancestors_from_parent(new_parent)
-        else:
-            # Moving up or sideways - need to walk from new_parent
-            # This is less common (closing tags, adoption agency, etc)
-            self._reset_integration_point_cache()
-            self._walk_ancestors_for_integration_points(new_parent)
-    
-    def _reset_integration_point_cache(self):
-        """Reset integration point cache to default values."""
-        self._ip_in_svg_html = False
-        self._ip_in_mathml_html = False
-        self._ip_in_mathml_text = False
-        self._ip_svg_node = None
-        self._ip_mathml_node = None
+        # Reset cached state
+        self._integration_point = (None, None)
         self._svg_ancestor = None
         self._math_ancestor = None
-    
-    def _check_node_for_integration_point(self, node):
-        """Check if a single node is an integration point or foreign ancestor."""
-        # SVG namespace ancestor
-        if node.namespace == "svg":
-            if self._svg_ancestor is None:
-                self._svg_ancestor = node
-            
-            # SVG HTML integration point: foreignObject, desc, title
-            if node.tag_name in {"foreignObject", "desc", "title"}:
-                self._ip_in_svg_html = True
-                if self._ip_svg_node is None:
-                    self._ip_svg_node = node
         
-        # MathML namespace ancestor
-        elif node.namespace == "math":
-            if self._math_ancestor is None:
-                self._math_ancestor = node
-            
-            # MathML HTML integration point: annotation-xml with HTML encoding
-            if node.tag_name == "annotation-xml":
-                encoding = node.attributes.get("encoding", "").lower()
-                if encoding in ("text/html", "application/xhtml+xml"):
-                    self._ip_in_mathml_html = True
-                    if self._ip_mathml_node is None:
-                        self._ip_mathml_node = node
-            
-            # MathML text integration point: mi, mo, mn, ms, mtext
-            elif node.tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
-                self._ip_in_mathml_text = True
-                if self._ip_mathml_node is None:
-                    self._ip_mathml_node = node
-    
-    def _inherit_foreign_ancestors_from_parent(self, node):
-        """Walk up from node to find foreign ancestors."""
-        current = node.parent
-        while current:
-            if current.namespace == "svg" and self._svg_ancestor is None:
-                self._svg_ancestor = current
-            if current.namespace == "math" and self._math_ancestor is None:
-                self._math_ancestor = current
-            
-            # Check for integration points
-            if current.namespace == "svg" and current.tag_name in {"foreignObject", "desc", "title"}:
-                if not self._ip_in_svg_html:
-                    self._ip_in_svg_html = True
-                    if self._ip_svg_node is None:
-                        self._ip_svg_node = current
-            
-            if current.namespace == "math":
-                if current.tag_name == "annotation-xml":
-                    encoding = current.attributes.get("encoding", "").lower()
-                    if encoding in ("text/html", "application/xhtml+xml"):
-                        if not self._ip_in_mathml_html:
-                            self._ip_in_mathml_html = True
-                            if self._ip_mathml_node is None:
-                                self._ip_mathml_node = current
+        # Check if moving to a child (most common case - forward progress)
+        if new_parent.parent == old_parent:
+            # Moving to child: check new_parent, then inherit from ancestors
+            current = new_parent
+            while current:
+                # Check for integration points (only store first found)
+                if self._integration_point[0] is None:
+                    if current.namespace == "svg" and current.tag_name in {"foreignObject", "desc", "title"}:
+                        self._integration_point = ("svg", current)
+                    elif current.namespace == "math":
+                        if current.tag_name == "annotation-xml":
+                            encoding = current.attributes.get("encoding", "").lower()
+                            if encoding in ("text/html", "application/xhtml+xml"):
+                                self._integration_point = ("mathml_html", current)
+                        elif current.tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
+                            self._integration_point = ("mathml_text", current)
                 
-                if current.tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
-                    if not self._ip_in_mathml_text:
-                        self._ip_in_mathml_text = True
-                        if self._ip_mathml_node is None:
-                            self._ip_mathml_node = current
-            
-            current = current.parent
-    
-    def _walk_ancestors_for_integration_points(self, node):
-        """Walk ancestors to find all integration points and foreign ancestors."""
-        current = node
-        while current:
-            self._check_node_for_integration_point(current)
-            current = current.parent
+                # Track foreign ancestors (nearest of each type)
+                if current.namespace == "svg" and self._svg_ancestor is None:
+                    self._svg_ancestor = current
+                if current.namespace == "math" and self._math_ancestor is None:
+                    self._math_ancestor = current
+                
+                current = current.parent
+        else:
+            # Moving up/sideways: full walk from new position
+            current = new_parent
+            while current:
+                if self._integration_point[0] is None:
+                    if current.namespace == "svg" and current.tag_name in {"foreignObject", "desc", "title"}:
+                        self._integration_point = ("svg", current)
+                    elif current.namespace == "math":
+                        if current.tag_name == "annotation-xml":
+                            encoding = current.attributes.get("encoding", "").lower()
+                            if encoding in ("text/html", "application/xhtml+xml"):
+                                self._integration_point = ("mathml_html", current)
+                        elif current.tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
+                            self._integration_point = ("mathml_text", current)
+                
+                if current.namespace == "svg" and self._svg_ancestor is None:
+                    self._svg_ancestor = current
+                if current.namespace == "math" and self._math_ancestor is None:
+                    self._math_ancestor = current
+                
+                current = current.parent
 
     def _set_current_parent(self, new_parent):
         if new_parent is None:
@@ -420,17 +361,36 @@ def _update_integration_point_cache(context):
     if context._ip_cache_node is node:
         return
 
-    # Cache miss - need to compute from scratch
-    # This should be rare with incremental updates
+    # Cache miss - compute from scratch
     context._ip_cache_node = node
-    context._reset_integration_point_cache()
+    context._integration_point = (None, None)
+    context._svg_ancestor = None
+    context._math_ancestor = None
     
     # Fast path: no foreign content means no integration points
     if not context.has_foreign_content:
         return
     
     # Walk ancestors to populate cache
-    context._walk_ancestors_for_integration_points(node)
+    current = node
+    while current:
+        if context._integration_point[0] is None:
+            if current.namespace == "svg" and current.tag_name in {"foreignObject", "desc", "title"}:
+                context._integration_point = ("svg", current)
+            elif current.namespace == "math":
+                if current.tag_name == "annotation-xml":
+                    encoding = current.attributes.get("encoding", "").lower()
+                    if encoding in ("text/html", "application/xhtml+xml"):
+                        context._integration_point = ("mathml_html", current)
+                elif current.tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
+                    context._integration_point = ("mathml_text", current)
+        
+        if current.namespace == "svg" and context._svg_ancestor is None:
+            context._svg_ancestor = current
+        if current.namespace == "math" and context._math_ancestor is None:
+            context._math_ancestor = current
+        
+        current = current.parent
 
 
 def is_in_integration_point(context, check="any"):
@@ -453,12 +413,13 @@ def is_in_integration_point(context, check="any"):
 
     _update_integration_point_cache(context)
 
+    ip_type = context._integration_point[0]
     if check == "svg":
-        return context._ip_in_svg_html
+        return ip_type == "svg"
     if check == "mathml":
-        return context._ip_in_mathml_html or context._ip_in_mathml_text
-
-    return context._ip_in_svg_html or context._ip_in_mathml_html or context._ip_in_mathml_text
+        return ip_type in ("mathml_html", "mathml_text")
+    
+    return ip_type is not None
 
 
 def get_integration_point_node(context, check="any"):
@@ -480,14 +441,13 @@ def get_integration_point_node(context, check="any"):
 
     _update_integration_point_cache(context)
 
+    ip_type, ip_node = context._integration_point
     if check == "svg":
-        return context._ip_svg_node if context._ip_in_svg_html else None
+        return ip_node if ip_type == "svg" else None
     if check == "mathml":
-        return context._ip_mathml_node if (context._ip_in_mathml_html or context._ip_in_mathml_text) else None
-    # "any" - return first available
-    if context._ip_svg_node:
-        return context._ip_svg_node
-    return context._ip_mathml_node
+        return ip_node if ip_type in ("mathml_html", "mathml_text") else None
+    
+    return ip_node
 
 
 def get_svg_ancestor(context):
@@ -534,7 +494,7 @@ def get_foreign_object_ancestor(context):
     """Get the cached foreignObject ancestor.
 
     Returns the nearest SVG foreignObject ancestor, or None if not inside one.
-    Uses cached result for O(1) performance by checking if the SVG integration
+    Uses cached result for O(1) performance by checking if the integration
     point is specifically a foreignObject.
 
     Args:
@@ -548,9 +508,9 @@ def get_foreign_object_ancestor(context):
         return None
 
     _update_integration_point_cache(context)
-    # Check if the cached SVG integration point is a foreignObject
-    if context._ip_svg_node and context._ip_svg_node.tag_name == "foreignObject":
-        return context._ip_svg_node
+    ip_type, ip_node = context._integration_point
+    if ip_type == "svg" and ip_node and ip_node.tag_name == "foreignObject":
+        return ip_node
     return None
 
 
