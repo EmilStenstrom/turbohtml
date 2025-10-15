@@ -4893,24 +4893,6 @@ class ForeignTagHandler(TagHandler):
 
     _MATHML_LEAFS = ("mi", "mo", "mn", "ms", "mtext")
 
-    def is_plain_svg_foreign(self, context):
-        """Return True if current parent is inside an <svg> subtree that is NOT an HTML integration point.
-
-        In such cases, HTML table-related tags (table, tbody, thead, tfoot, tr, td, th, caption, col, colgroup)
-        should NOT trigger HTML table construction; instead they are treated as raw foreign elements so the
-        resulting tree preserves nested <svg tagname> nodes instead of introducing HTML table scaffolding.
-        """
-        cur = context.current_parent
-        seen_svg = False
-        while cur:
-            if cur.namespace == "svg":
-                seen_svg = True
-            # Any integration point breaks the foreign-only condition
-            if cur.tag_name in SVG_INTEGRATION_POINTS:
-                return False
-            cur = cur.parent
-        return seen_svg
-
     @staticmethod
     def is_integration_point(node):
         """Check if a given node is an HTML integration point (SVG or MathML).
@@ -6277,7 +6259,7 @@ class FramesetTagHandler(TagHandler):
     Manages frameset_ok flag for all tags, handles frameset/frame/noframes elements.
     """
 
-    HANDLED_START_TAGS = ALL_TAGS  # Preprocessing for all tags (frameset_ok management)
+    HANDLED_START_TAGS = frozenset(["frameset", "frame", "noframes"])  # Preprocessing for all tags (frameset_ok management)
     HANDLED_END_TAGS = frozenset(["frameset", "noframes"])
 
     _FRAMES_HTML_EMPTY_CONTAINERS = (
@@ -6407,22 +6389,11 @@ class FramesetTagHandler(TagHandler):
             for child in node.children
         )
 
-    def preprocess_end(self, token, context):
-        if context.document_state in (
-            DocumentState.IN_FRAMESET,
-            DocumentState.AFTER_FRAMESET,
-        ) and token.tag_name not in ("frameset", "noframes", "html"):
-            if self.parser._debug:
-                self.debug(
-                f"Ignoring </{token.tag_name}> in frameset context (handler)",
-            )
-            return True
-        return False
-
     def should_handle_start(self, tag_name, context):
-        if tag_name not in ("frameset", "frame", "noframes"):
+        if (context.current_context == "svg" and not is_in_integration_point(context, check="svg")):
             return False
-        return not (tag_name == "frameset" and context.current_context in {"svg", "math"} and self.parser.foreign_handler.is_plain_svg_foreign(context))
+
+        return True
 
     def handle_start(self, token, context):
         tag_name = token.tag_name
@@ -6901,7 +6872,7 @@ class PlaintextHandler(TagHandler):
         # enter HTML PLAINTEXT mode; instead the <plaintext> tag is just another foreign element
         # with normal parsing of its (HTML) end tag token. We still handle it here so we can create
         # the element explicitly and not trigger global PLAINTEXT consumption.
-        if self.parser.foreign_handler.is_plain_svg_foreign(context):
+        if context.current_context == "svg" and not is_in_integration_point(context, check="svg"):
             return True
 
         # Always intercept inside select so we can ignore (prevent fallback generic element creation)
@@ -6931,7 +6902,7 @@ class PlaintextHandler(TagHandler):
         # REMOVED: Tests show plaintext SHOULD work inside select and enter PLAINTEXT mode
 
         # Plain foreign SVG/MathML: create a foreign plaintext element but DO NOT switch tokenizer
-        if self.parser.foreign_handler.is_plain_svg_foreign(context):
+        if context.current_context == "svg" and not is_in_integration_point(context, check="svg"):
             if self.parser._debug:
                 self.debug(
                 "Plain foreign context: creating <plaintext> as foreign element (no PLAINTEXT mode)",
