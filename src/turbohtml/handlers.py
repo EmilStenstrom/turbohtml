@@ -1463,12 +1463,7 @@ class TextHandler(TagHandler):
                 if self.parser._debug:
                     self.debug(f"created node with content '{node.text_content}'")
 
-    def _handle_pre_text(
-        self,
-        text,
-        context,
-        parent,
-    ):
+    def _handle_pre_text(self, text, context, parent):
         """Handle text for <pre> and <listing> elements (both strip leading newline)."""
         decoded_text = self._decode_html_entities(text)
 
@@ -1557,15 +1552,7 @@ class FormattingTagHandler(TagHandler):
             reconstruct_if_needed(self.parser, context)
         return False
 
-    def _insert_formatting_element(
-        self,
-        token,
-        context,
-        *,
-        parent=None,
-        before=None,
-        push_nobr_late=False,
-    ):
+    def _insert_formatting_element(self, token, context, *, parent=None, before=None, push_nobr_late=False):
         """Insert formatting element; <nobr> push may be deferred."""
         tag_name = token.tag_name
         if tag_name == "nobr":
@@ -1605,11 +1592,7 @@ class FormattingTagHandler(TagHandler):
 
         return True
 
-    def handle_start(
-        self,
-        token,
-        context,
-    ):
+    def handle_start(self, token, context):
         tag_name = token.tag_name
         if self.parser._debug:
             self.debug(f"Handling <{tag_name}>, context={context}")
@@ -2075,11 +2058,7 @@ class SelectTagHandler(TagHandler):
 
         return False
 
-    def handle_start(
-        self,
-        token,
-        context,
-    ):
+    def handle_start(self, token, context):
         tag_name = token.tag_name
 
         if self.parser._debug:
@@ -4086,11 +4065,7 @@ class FormTagHandler(TagHandler):
     HANDLED_START_TAGS = frozenset(["form", "input", "button", "textarea", "select", "label"])
     HANDLED_END_TAGS = frozenset(["form", "button", "select", "label"])
 
-    def handle_start(
-        self,
-        token,
-        context,
-    ):
+    def handle_start(self, token, context):
         tag_name = token.tag_name
 
         # If we're in head, implicitly close it and switch to body
@@ -4209,11 +4184,7 @@ class ListTagHandler(TagHandler):
     HANDLED_START_TAGS = frozenset(["li", "dt", "dd"])
     HANDLED_END_TAGS = frozenset(["ul", "ol", "li", "dl", "dt", "dd"])
 
-    def handle_start(
-        self,
-        token,
-        context,
-    ):
+    def handle_start(self, token, context):
         if self.parser._debug:
             self.debug(f"handling {token.tag_name}")
         if self.parser._debug:
@@ -4243,11 +4214,7 @@ class ListTagHandler(TagHandler):
 
         return False
 
-    def _handle_definition_list_item(
-        self,
-        token,
-        context,
-    ):
+    def _handle_definition_list_item(self, token, context):
         """Handle dd/dt elements with implied end of previous item and formatting reconstruction.
 
         Goals:
@@ -4364,11 +4331,7 @@ class ListTagHandler(TagHandler):
             self.debug(f"Created new li: {new_node}")
         return True
 
-    def _handle_list_container(
-        self,
-        token,
-        context,
-    ):
+    def _handle_list_container(self, token, context):
         """Handle ul/ol/dl elements."""
 
     def handle_end(self, token, context):
@@ -4389,11 +4352,7 @@ class ListTagHandler(TagHandler):
 
         return False
 
-    def _handle_definition_list_item_end(
-        self,
-        token,
-        context,
-    ):
+    def _handle_definition_list_item_end(self, token, context):
         """Handle end tags for dt/dd."""
         tag_name = token.tag_name
         if self.parser._debug:
@@ -4409,11 +4368,7 @@ class ListTagHandler(TagHandler):
             self.debug(f"No matching {tag_name} found")
         return False
 
-    def _handle_list_item_end(
-        self,
-        token,
-        context,
-    ):
+    def _handle_list_item_end(self, token, context):
         """Handle end tags for li."""
         if self.parser._debug:
             self.debug("Handling end tag for li")
@@ -4440,11 +4395,7 @@ class ListTagHandler(TagHandler):
 
         return True
 
-    def _handle_list_container_end(
-        self,
-        token,
-        context,
-    ):
+    def _handle_list_container_end(self, token, context):
         """Handle end tags for ul/ol/dl."""
         tag_name = token.tag_name
         if self.parser._debug:
@@ -4470,11 +4421,7 @@ class HeadingTagHandler(TagHandler):
     HANDLED_START_TAGS = HEADING_ELEMENTS
     HANDLED_END_TAGS = HEADING_ELEMENTS
 
-    def handle_start(
-        self,
-        token,
-        context,
-    ):
+    def handle_start(self, token, context):
         # Auto-close current parent if needed (e.g., <p><h1> auto-closes <p>)
         self.auto_close_current_parent_if_needed(token, context)
 
@@ -4549,11 +4496,7 @@ class RawtextTagHandler(TagHandler):
     HANDLED_START_TAGS = RAWTEXT_ELEMENTS
     HANDLED_END_TAGS = RAWTEXT_ELEMENTS
 
-    def handle_start(
-        self,
-        token,
-        context,
-    ):
+    def handle_start(self, token, context):
         tag_name = token.tag_name
 
         # Suppress start tags in RAWTEXT state
@@ -4673,11 +4616,7 @@ class VoidTagHandler(TagHandler):
     HANDLED_START_TAGS = VOID_ELEMENTS
     HANDLED_END_TAGS = frozenset(["br"])  # Only <br> has end tag handling
 
-    def handle_start(
-        self,
-        token,
-        context,
-    ):
+    def handle_start(self, token, context):
         tag_name = token.tag_name
         if self.parser._debug:
             self.debug(f"handling {tag_name}, context={context}")
@@ -4833,11 +4772,7 @@ class BlockFormattingReconstructionHandler(TagHandler):
         # Only handle BLOCK_ELEMENTS that have a formatting element ancestor
         return tag_name in BLOCK_ELEMENTS and context.current_parent.find_formatting_element_ancestor() is not None
 
-    def handle_start(
-        self,
-        token,
-        context,
-    ):
+    def handle_start(self, token, context):
         # This handler now ONLY handles formatting reconstruction for BLOCK_ELEMENTS
         # with formatting ancestors. Auto-closing logic has been moved to specific handlers.
 
@@ -5333,11 +5268,7 @@ class ForeignTagHandler(TagHandler):
 
         return False
 
-    def handle_start(
-        self,
-        token,
-        context,
-    ):
+    def handle_start(self, token, context):
         tag_name = token.tag_name
         fc = self.parser.fragment_context
 
@@ -6059,11 +5990,7 @@ class HeadTagHandler(TagHandler):
             return True
         return tag_name in HEAD_ELEMENTS
 
-    def handle_start(
-        self,
-        token,
-        context,
-    ):
+    def handle_start(self, token, context):
         tag_name = token.tag_name
         if self.parser._debug:
             self.debug(f"handling {tag_name}")
