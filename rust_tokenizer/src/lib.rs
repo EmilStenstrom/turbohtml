@@ -1,6 +1,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyModule, PyDict, PyIterator, PyAny};
 use indexmap::IndexMap;
+use std::sync::Mutex;
 
 // Static string constants for token types to avoid allocations
 const TOKEN_CHARACTER: &str = "Character";
@@ -15,7 +16,6 @@ const STATE_RAWTEXT: &str = "RAWTEXT";
 const STATE_PLAINTEXT: &str = "PLAINTEXT";
 
 #[pyclass]
-#[derive(Clone)]
 pub struct HTMLToken {
     #[pyo3(get, set)]
     pub type_: String,
@@ -25,6 +25,8 @@ pub struct HTMLToken {
     pub tag_name: String,
     // Internal storage - not directly exposed to Python
     attributes_map: IndexMap<String, String>,
+    // Cached Python dict - wrapped in Mutex for thread safety
+    attributes_cache: Mutex<Option<Py<PyDict>>>,
     #[pyo3(get, set)]
     pub is_self_closing: bool,
     #[pyo3(get, set)]
@@ -51,6 +53,7 @@ impl HTMLToken {
             data: data.unwrap_or_default(),
             tag_name: tag_name.unwrap_or_default().to_lowercase(),
             attributes_map: attributes_map.unwrap_or_default(),
+            attributes_cache: Mutex::new(None),
             is_self_closing: is_self_closing.unwrap_or(false),
             is_last_token: is_last_token.unwrap_or(false),
             needs_rawtext: needs_rawtext.unwrap_or(false),
@@ -66,6 +69,7 @@ impl HTMLToken {
             data,
             tag_name: String::new(),
             attributes_map: IndexMap::new(),
+            attributes_cache: Mutex::new(None),
             is_self_closing: false,
             is_last_token: false,
             needs_rawtext: false,
@@ -80,6 +84,7 @@ impl HTMLToken {
             data: String::new(),
             tag_name: tag_name.to_lowercase(),
             attributes_map,
+            attributes_cache: Mutex::new(None),
             is_self_closing,
             is_last_token: false,
             needs_rawtext,
@@ -94,6 +99,7 @@ impl HTMLToken {
             data: String::new(),
             tag_name: tag_name.to_lowercase(),
             attributes_map: IndexMap::new(),
+            attributes_cache: Mutex::new(None),
             is_self_closing: false,
             is_last_token: false,
             needs_rawtext: false,
@@ -108,6 +114,7 @@ impl HTMLToken {
             data,
             tag_name: String::new(),
             attributes_map: IndexMap::new(),
+            attributes_cache: Mutex::new(None),
             is_self_closing: false,
             is_last_token: false,
             needs_rawtext: false,
@@ -122,6 +129,7 @@ impl HTMLToken {
             data,
             tag_name: String::new(),
             attributes_map: IndexMap::new(),
+            attributes_cache: Mutex::new(None),
             is_self_closing: false,
             is_last_token: false,
             needs_rawtext: false,
@@ -167,6 +175,7 @@ impl HTMLToken {
             data: data.unwrap_or_default(),
             tag_name: tag_name.unwrap_or_default().to_lowercase(),
             attributes_map,
+            attributes_cache: Mutex::new(None),
             is_self_closing: is_self_closing.unwrap_or(false),
             is_last_token: is_last_token.unwrap_or(false),
             needs_rawtext: needs_rawtext.unwrap_or(false),
@@ -175,18 +184,33 @@ impl HTMLToken {
     }
 
     // Custom getter for attributes: convert IndexMap to PyDict preserving order
+    // Uses caching to avoid repeated conversions on multiple accesses
     #[getter]
     fn attributes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        // Check if we have a cached dict
+        let mut cache = self.attributes_cache.lock().unwrap();
+        if let Some(cached) = cache.as_ref() {
+            // Return the cached dict
+            return Ok(cached.bind(py).clone());
+        }
+        
+        // Build the dict for the first time
         let dict = PyDict::new(py);
         for (k, v) in &self.attributes_map {
             dict.set_item(k, v)?;
         }
+        
+        // Cache it for future accesses
+        *cache = Some(dict.clone().unbind());
         Ok(dict)
     }
 
     // Custom setter for attributes: convert PyDict to IndexMap preserving order
     #[setter]
     fn set_attributes(&mut self, py: Python, value: Py<PyDict>) -> PyResult<()> {
+        // Clear the cache when attributes are modified
+        *self.attributes_cache.lock().unwrap() = None;
+        
         self.attributes_map.clear();
         let dict = value.bind(py);
         // Iterate dict.items() directly to preserve insertion order (Python 3.7+)

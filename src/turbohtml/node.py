@@ -39,23 +39,16 @@ class Node:
         self.tag_name = tag_name
         self.namespace = namespace  # None for HTML, "svg" or "math" for foreign elements
         if attributes:
-            if preserve_attr_case:
-                # Keep first occurrence preserving original key casing
-                kept = {}
-                for k, v in attributes.items():
-                    if k not in kept:
-                        kept[k] = v
-                self.attributes = kept
-            else:
-                # Lowercase attribute names deterministically; keep first occurrence
-                lowered = {}
-                for k, v in attributes.items():
-                    lk = k.lower()
-                    if lk not in lowered:
-                        lowered[lk] = v
-                self.attributes = lowered
+            # Attributes are already lowercased (from Rust tokenizer) - use directly
+            # Still deduplicate in case of redundant keys (keep first)
+            kept = {}
+            for k, v in attributes.items():
+                if k not in kept:
+                    kept[k] = v
+            self.attributes = kept
         else:
             self.attributes = {}
+
         self.children = []
         self.parent = None
         # For text and comment nodes store inline text; for element nodes this may be unused
