@@ -1,7 +1,9 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyModule, PyDict, PyIterator, PyAny};
 use indexmap::IndexMap;
+use std::collections::VecDeque;
 use std::sync::Mutex;
+use std::env;
 
 // Static string constants for token types to avoid allocations
 const TOKEN_CHARACTER: &str = "Character";
@@ -35,6 +37,54 @@ pub struct HTMLToken {
     pub needs_rawtext: bool,
     #[pyo3(get, set)]
     pub ignored_end_tag: bool,
+}
+
+enum PendingBuffer {
+    Deque(VecDeque<HTMLToken>),
+    Legacy(Vec<HTMLToken>),
+}
+
+impl PendingBuffer {
+    fn new(use_legacy: bool) -> Self {
+        if use_legacy {
+            PendingBuffer::Legacy(Vec::new())
+        } else {
+            PendingBuffer::Deque(VecDeque::new())
+        }
+    }
+
+    fn enqueue(&mut self, token: HTMLToken) {
+        match self {
+            PendingBuffer::Deque(queue) => queue.push_back(token),
+            PendingBuffer::Legacy(queue) => queue.push(token),
+        }
+    }
+
+    fn pop_front(&mut self) -> Option<HTMLToken> {
+        match self {
+            PendingBuffer::Deque(queue) => queue.pop_front(),
+            PendingBuffer::Legacy(queue) => {
+                if queue.is_empty() {
+                    None
+                } else {
+                    Some(queue.remove(0))
+                }
+            }
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        match self {
+            PendingBuffer::Deque(queue) => queue.is_empty(),
+            PendingBuffer::Legacy(queue) => queue.is_empty(),
+        }
+    }
+}
+
+fn use_legacy_pending_buffer() -> bool {
+    env::var("TURBOHTML_PENDING_BUFFER")
+        .map(|value| value.eq_ignore_ascii_case("legacy"))
+        .unwrap_or(false)
 }
 
 impl HTMLToken {
@@ -268,7 +318,7 @@ pub struct RustTokenizer {
     script_non_executable: bool,
     script_suppressed_end_once: bool,
     script_type_value: String,
-    pending_tokens: Vec<HTMLToken>,
+    pending_tokens: PendingBuffer,
 }
 
 #[pymethods]
@@ -289,7 +339,7 @@ impl RustTokenizer {
             script_non_executable: false,
             script_suppressed_end_once: false,
             script_type_value: String::new(),
-            pending_tokens: Vec::new(),
+            pending_tokens: PendingBuffer::new(use_legacy_pending_buffer()),
         }
     }
 
@@ -300,8 +350,7 @@ impl RustTokenizer {
     fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<HTMLToken>> {
         loop {
             // Yield pending tokens first
-            if !slf.pending_tokens.is_empty() {
-                let mut token = slf.pending_tokens.remove(0);
+            if let Some(mut token) = slf.pending_tokens.pop_front() {
                 slf.debug(&format!("PENDING token: {}", token.type_));
                 token.is_last_token = slf.pos >= slf.last_pos && slf.pending_tokens.is_empty();
                 return Ok(Some(token));
@@ -605,7 +654,7 @@ impl RustTokenizer {
 
                         if !text_before.is_empty() {
                             let text_before = self.replace_invalid_characters(&text_before);
-                            self.pending_tokens.push(HTMLToken::new_end_tag(potential_tag));
+                            self.pending_tokens.enqueue(HTMLToken::new_end_tag(potential_tag));
                             return Ok(Some(HTMLToken::new_character(text_before)));
                         }
                         return Ok(Some(HTMLToken::new_end_tag(potential_tag)));
@@ -627,7 +676,7 @@ impl RustTokenizer {
 
                         if !text_before.is_empty() {
                             let text_before = self.replace_invalid_characters(&text_before);
-                            self.pending_tokens.push(HTMLToken::new_end_tag(potential_tag));
+                            self.pending_tokens.enqueue(HTMLToken::new_end_tag(potential_tag));
                             return Ok(Some(HTMLToken::new_character(text_before)));
                         }
                         return Ok(Some(HTMLToken::new_end_tag(potential_tag)));
@@ -776,7 +825,7 @@ impl RustTokenizer {
                     } else {
                         text_before
                     };
-                    self.pending_tokens.push(HTMLToken::new_end_tag(potential_tag));
+                    self.pending_tokens.enqueue(HTMLToken::new_end_tag(potential_tag));
                     return Ok(Some(HTMLToken::new_character(text_before)));
                 }
                 // No text - emit end tag directly
