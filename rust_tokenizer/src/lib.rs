@@ -17,7 +17,7 @@ const STATE_DATA: &str = "DATA";
 const STATE_RAWTEXT: &str = "RAWTEXT";
 const STATE_PLAINTEXT: &str = "PLAINTEXT";
 
-#[pyclass]
+#[pyclass(freelist = 1024)]
 pub struct HTMLToken {
     #[pyo3(get, set)]
     pub type_: String,
