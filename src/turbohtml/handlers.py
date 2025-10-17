@@ -515,70 +515,6 @@ class TemplateContentFilterHandler(TagHandler):
             node = node.parent
         return None
 
-    def should_handle_start(self, tag_name, context):
-        """Handle template content: auto-enter content node + filter specific tags.
-
-        Side-effect: auto-enters content node when needed.
-        Returns True only for tags that need special template handling.
-        Other handlers can still run (head elements, formatting, lists, etc.) after this does its setup.
-        """
-        # Not in template content? Nothing to do
-        if context.in_template_content == 0:
-            return False
-
-        # Side effect: Auto-enter content node if we're under a template but not already inside content
-        # This happens for ALL tags (even those we don't claim), ensuring proper insertion point
-        if tag_name != "template":
-            node = context.current_parent
-            template_ancestor = None
-            while node and node.tag_name not in ("html", "document-fragment"):
-                if node.tag_name == "template":
-                    template_ancestor = node
-                    break
-                node = node.parent
-            if template_ancestor:
-                content = None
-                for ch in template_ancestor.children:
-                    if ch.tag_name == "content":
-                        content = ch
-                        break
-                if content:
-                    inside = False
-                    probe = context.current_parent
-                    while probe and probe is not template_ancestor:
-                        if probe is content:
-                            inside = True
-                            break
-                        probe = probe.parent
-                    if not inside:
-                        context.move_to_element(content)
-
-        # Now decide if we should claim this tag (handle it ourselves)
-        # Nested templates: always claim
-        if tag_name == "template":
-            if self.parser.foreign_handler and context.current_context in ("svg", "math"):
-                return True  # Claim nested templates in foreign content
-            return True  # Claim nested templates
-
-        # Foreign content: let ForeignTagHandler deal with it
-        if self.parser.foreign_handler and context.current_context in ("svg", "math"):
-            return False
-        if tag_name in {"svg", "math"}:
-            return False
-
-        # Table-related special handling
-        if context.current_parent and context.current_parent.tag_name == "tr":
-            return True
-        boundary = self._current_content_boundary(context)
-        if boundary and boundary.children:
-            last = boundary.children[-1]
-            if last.tag_name in {"col", "colgroup"}:
-                return True
-
-        # Only claim tags that need special template handling
-        # Let other handlers (formatting, head, list, etc.) run for their respective tags
-        return tag_name in (self.IGNORED_START + self.GENERIC_AS_PLAIN)
-
     def _handle_nested_template(self, token, context):
         """Handle nested template inside template content."""
         in_foreign = self.parser.foreign_handler and context.current_context in ("svg", "math")
@@ -814,11 +750,55 @@ class TemplateContentFilterHandler(TagHandler):
         """Filter and adjust content inside templates."""
         tag_name = token.tag_name
 
+        if context.content_state == ContentState.PLAINTEXT:
+            return False
+
+        if context.in_template_content == 0:
+            return False
+
+        if tag_name != "template":
+            node = context.current_parent
+            template_ancestor = None
+            while node and node.tag_name not in ("html", "document-fragment"):
+                if node.tag_name == "template":
+                    template_ancestor = node
+                    break
+                node = node.parent
+            if template_ancestor:
+                content = None
+                for ch in template_ancestor.children:
+                    if ch.tag_name == "content":
+                        content = ch
+                        break
+                if content:
+                    inside = False
+                    probe = context.current_parent
+                    while probe and probe is not template_ancestor:
+                        if probe is content:
+                            inside = True
+                            break
+                        probe = probe.parent
+                    if not inside:
+                        context.move_to_element(content)
+
+        if self.parser.foreign_handler:
+            context_foreign = context.current_context in ("svg", "math")
+            if context_foreign:
+                if tag_name in ("svg", "math"):
+                    return False
+                if tag_name not in ("template", "foreignObject", "desc", "title"):
+                    return False
+
         # Handle nested templates inside template content
         if tag_name == "template":
             return self._handle_nested_template(token, context)
 
         # Filter other content inside templates
+        if self.parser.foreign_handler and context.current_context in ("svg", "math"):
+            return False
+        if tag_name in {"svg", "math"}:
+            return False
+
         if token.tag_name in self.IGNORED_START:
             return self._handle_ignored_tags(token, context)
 
@@ -829,6 +809,11 @@ class TemplateContentFilterHandler(TagHandler):
             allowed_after_col = {"col", "#text"}
             if token.tag_name not in allowed_after_col:
                 return True
+
+        allow_tr_context = context.current_parent.tag_name == "tr"
+        allow_after_col = last_child and last_child.tag_name in {"col", "colgroup"}
+        if not allow_tr_context and not allow_after_col and tag_name not in self.GENERIC_AS_PLAIN:
+            return False
 
         if token.tag_name in {"tbody", "caption", "colgroup", "thead", "tfoot"}:
             return self._handle_table_sections(token, context, boundary)
@@ -1924,31 +1909,21 @@ class SelectTagHandler(TagHandler):
             return True
         return False
 
-    # Override to widen interception scope inside select
-    def should_handle_start(self, tag_name, context):
-        # Skip template content (TemplateAware behavior inline)
-        if context.in_template_content > 0:
-            return False
-
-        is_foreign = context.current_parent.namespace in ("svg", "math")
-        if context.in_select and not is_foreign:
-            return True
-
-        # Not in select, check if this is a select-related tag
-        if tag_name in {"select", "option", "optgroup", "datalist"}:
-            return True
-
-        return False
-
     def handle_start(self, token, context):
         tag_name = token.tag_name
 
+        is_foreign = context.current_parent.namespace in ("svg", "math")
 
-        # If we're inside template content, block select semantics entirely. The content filter
-        # will represent option/optgroup/select as plain elements without promotion or relocation.
         if context.in_template_content > 0:
-            # Inside template content, suppress select-specific behavior entirely
-            return True
+            return False
+
+        if context.in_select:
+            if is_foreign:
+                return False
+        elif tag_name not in {"select", "option", "optgroup", "datalist"}:
+            return False
+
+        # Template content guard above keeps select-specific logic out of template fragments.
 
         if tag_name == "select":
             # If direct child of table before any row group/caption, foster-parent select BEFORE table
@@ -4317,47 +4292,24 @@ class BlockFormattingReconstructionHandler(TagHandler):
     HANDLED_START_TAGS = BLOCK_ELEMENTS - {"dt", "dd", "li"}  # Only handles block elements for formatting reconstruction
     HANDLED_END_TAGS = None  # Doesn't handle end tags
 
-    def should_handle_start(self, tag_name, context):
-
-        # Don't claim tags inside integration points - let HTML handlers deal with them
+    def handle_start(self, token, context):
         if is_in_integration_point(context):
             return False
 
-        # Only handle BLOCK_ELEMENTS that have a formatting element ancestor
-        if context.current_parent.find_formatting_element_ancestor():
-            return True
-        
-        return False
-
-    def handle_start(self, token, context):
-        # This handler now ONLY handles formatting reconstruction for BLOCK_ELEMENTS
-        # with formatting ancestors. Auto-closing logic has been moved to specific handlers.
-
-
-        # Check if we're inside a formatting element AND this is a block element
         formatting_element = context.current_parent.find_formatting_element_ancestor()
-
-        # Also check if there are active formatting elements that need reconstruction
         has_active_formatting = bool(context.active_formatting_elements)
+        if not formatting_element and not has_active_formatting:
+            return False
 
         block_tag = token.tag_name
-        if (formatting_element or has_active_formatting) and block_tag in BLOCK_ELEMENTS and block_tag != "li":
-            # Do not perform auto-closing/reconstruction inside HTML integration points
-            if is_in_integration_point(context):
-                return False
-            # Reconstruct active formatting elements before creating the block
+        if block_tag in BLOCK_ELEMENTS and block_tag != "li":
             if context.active_formatting_elements:
-                # Spec: reconstruct active formatting elements only if at least one formatting
-                # entry's element is not currently on the stack of open elements (markers ignored).
                 needs_reconstruct = False
                 for entry in context.active_formatting_elements:
-                    if entry.element and not context.open_elements.contains(
-                        entry.element,
-                    ):
+                    if entry.element and not context.open_elements.contains(entry.element):
                         needs_reconstruct = True
                         break
-            # Create block element normally
-            new_block = self.parser.insert_element(token, context, mode="normal")
+            self.parser.insert_element(token, context, mode="normal")
             return True
 
         return False
@@ -4736,40 +4688,24 @@ class ForeignTagHandler(TagHandler):
             yield current
             current = current.parent
 
-    def should_handle_start(self, tag_name, context):
-        """Decide if foreign handler should process start tag.
-
-        Simple filtering based on tag name and foreign context state.
-        Complex decisions deferred to handle_start for clarity.
-        """
-        fc = self.parser.fragment_context
-
-        # Handle if in active foreign context
-        if context.current_context in ("svg", "math"):
-            return True
-
-        # Handle foreign roots
-        if tag_name in ("svg", "math"):
-            return True
-
-        # Handle MathML elements with fragment or active context
-        if tag_name in MATHML_ELEMENTS:
-            if context.current_context or (fc and fc.namespace == "math"):
-                return True
-
-        # Handle SVG fragment fallback
-        if fc and fc.namespace == "svg":
-            return True
-
-        # Handle MathML fragment root (for self-closing normalization)
-        if fc and fc.namespace == "math" and fc.tag_name in self._MATHML_LEAFS and tag_name == fc.tag_name:
-            return True
-
-        return False
-
     def handle_start(self, token, context):
         tag_name = token.tag_name
         fc = self.parser.fragment_context
+
+        allowed = False
+        if context.current_context in ("svg", "math"):
+            allowed = True
+        elif tag_name in ("svg", "math"):
+            allowed = True
+        elif tag_name in MATHML_ELEMENTS and (context.current_context or (fc and fc.namespace == "math")):
+            allowed = True
+        elif fc and fc.namespace == "svg":
+            allowed = True
+        elif fc and fc.namespace == "math" and fc.tag_name in self._MATHML_LEAFS and tag_name == fc.tag_name:
+            allowed = True
+
+        if not allowed:
+            return False
 
         # Clear stale foreign context early (fast path: O(1) for non-foreign, O(1) when parent matches)
         self._clear_stale_foreign_context(context)
@@ -5747,14 +5683,11 @@ class FramesetTagHandler(TagHandler):
         # Foreign elements with children: recurse
         return any(self._frameset_node_has_meaningful_content(child, allowed) for child in node.children)
 
-    def should_handle_start(self, tag_name, context):
-        if context.current_context == "svg" and not is_in_integration_point(context, check="svg"):
-            return False
-
-        return True
-
     def handle_start(self, token, context):
         tag_name = token.tag_name
+
+        if context.current_context == "svg" and not is_in_integration_point(context, check="svg"):
+            return False
 
         if tag_name == "frameset":
             if not self.parser.html_node:
@@ -6162,21 +6095,6 @@ class PlaintextHandler(TagHandler):
     HANDLED_START_TAGS = frozenset(["plaintext"])  # Only plaintext tag; parser short-circuits PLAINTEXT mode
     HANDLED_END_TAGS = None  # Doesn't handle end tags
 
-    def should_handle_start(self, tag_name, context):
-        # Fast path: check tag first
-        if tag_name != "plaintext":
-            return False
-
-        # Inside plain SVG/MathML foreign subtree that is NOT an integration point, we should NOT
-        # enter HTML PLAINTEXT mode; instead the <plaintext> tag is just another foreign element
-        # with normal parsing of its (HTML) end tag token. We still handle it here so we can create
-        # the element explicitly and not trigger global PLAINTEXT consumption.
-        if context.current_context == "svg" and not is_in_integration_point(context, check="svg"):
-            return True
-
-        # Always intercept inside select so we can ignore (prevent fallback generic element creation)
-        return True
-
     def handle_start(self, token, context):
         # EARLY adjustment: if current context is <p> whose last child is a <button>, move insertion
         # point into that <button> so the plaintext element is inserted as its child.
@@ -6513,15 +6431,6 @@ class TableFosterHandler(TagHandler):
     HANDLED_START_TAGS = FOSTER_PARENT_TAGS
     HANDLED_END_TAGS = None  # Doesn't handle end tags
 
-    def should_handle_start(self, tag_name, context):
-        # Check if we're in table context where foster parenting might apply
-        # Actual foster-parenting decision happens in handle_start with full token
-        return context.document_state in (
-            DocumentState.IN_TABLE,
-            DocumentState.IN_TABLE_BODY,
-            DocumentState.IN_ROW,
-        )
-
     def handle_start(self, token, context):
         """Foster parent residual start tags per table algorithm.
 
@@ -6529,6 +6438,13 @@ class TableFosterHandler(TagHandler):
         fostering before table. Allows ParagraphTagHandler to manage cell re-entry.
         """
         tag_name = token.tag_name
+
+        if context.document_state not in (
+            DocumentState.IN_TABLE,
+            DocumentState.IN_TABLE_BODY,
+            DocumentState.IN_ROW,
+        ):
+            return False
 
         if table_modes.should_foster_parent(tag_name, token.attributes, context, self.parser):
             # Allow ParagraphTagHandler to manage re-entry into cells.
