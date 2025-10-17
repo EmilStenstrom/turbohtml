@@ -505,28 +505,66 @@ class TurboHTML:
 
         # Use Rust tokenizer
         self.tokenizer = RustTokenizer(html, debug=self._debug)
+        if not hasattr(self.tokenizer, "set_text_sink"):
+            msg = "Rust tokenizer build missing required text sink support"
+            raise RuntimeError(msg)
+
+        text_sink_registered = False
+        debug_enabled = self._debug
+        debug_call = self.debug
+        ensure_html_node = self.ensure_html_node
+        dispatch_text = self._dispatch_text
+        handle_start_tag = self.handle_start_tag
+        handle_end_tag = self.handle_end_tag
+        tag_handlers = self.tag_handlers
+
+        def _text_sink(
+            data,
+            is_last,
+            *,
+            _ctx=context,
+            _dispatch=dispatch_text,
+            _ensure=ensure_html_node,
+            _debug_enabled=debug_enabled,
+            _debug=debug_call,
+            _self=self,
+        ):
+            # Mirror token-loop semantics when Rust fast path short-circuits Character tokens
+            _self._token_counter += 1
+            if _debug_enabled:
+                _debug(
+                    f"_parse: Character(fast, len={len(data)}) context: {_ctx}",
+                    indent=0,
+                )
+            _ensure()
+            _dispatch(data, _ctx)
+            return True
+
+        self.tokenizer.set_text_sink(_text_sink)
+        text_sink_registered = True
+
         tokens = self.tokenizer
 
         for token in tokens:
             # Increment token counter for deduplication tracking
             self._token_counter += 1
 
-            if self._debug:
-                self.debug(f"_parse: {token}, context: {context}", indent=0)
+            if debug_enabled:
+                debug_call(f"_parse: {token}, context: {context}", indent=0)
 
             if token.type == "DOCTYPE":
                 # Handle DOCTYPE through the DoctypeHandler first
-                for handler in self.tag_handlers:
+                for handler in tag_handlers:
                     if handler.should_handle_doctype(token.data, context):
-                        if self._debug:
-                            self.debug(f"{handler.__class__.__name__}: handling DOCTYPE")
+                        if debug_enabled:
+                            debug_call(f"{handler.__class__.__name__}: handling DOCTYPE")
                         if handler.handle_doctype(token.data, context):
                             break
                 continue
 
             if token.type == "Comment":
                 handled = False
-                for handler in self.tag_handlers:
+                for handler in tag_handlers:
                     if handler.should_handle_comment(token.data, context) and handler.handle_comment(
                         token.data, context
                     ):
@@ -538,10 +576,10 @@ class TurboHTML:
                 continue
 
             # Ensure html node is in tree before processing any non-DOCTYPE/Comment token
-            self.ensure_html_node()
+            ensure_html_node()
 
             if token.type == "StartTag":
-                self.handle_start_tag(token, context)
+                handle_start_tag(token, context)
 
             elif token.type == "EndTag":
                 # In template fragment context, ignore the context's own end tag
@@ -552,29 +590,17 @@ class TurboHTML:
                     and token.tag_name == "template"
                 ):
                     continue
-                self.handle_end_tag(token, context)
+                handle_end_tag(token, context)
 
             elif token.type == "Character":
-                data = token.data
-                if data:
-                    # Use pre-filtered list of text handlers with optimized dispatch
-                    for handler, has_custom_should_handle in self._text_handler_metadata:
-                        # If handler has custom should_handle_text logic, call it
-                        # Otherwise, HANDLES_TEXT=True means it always wants to check
-                        if not has_custom_should_handle or handler.should_handle_text(data, context):
-                            if self._debug:
-                                self.debug(
-                                    f"{handler.__class__.__name__}: handling {token}, context={context}",
-                                )
-                            if handler.handle_text(data, context):
-                                break
+                dispatch_text(token.data, context)
 
         # At EOF, handle any unclosed option elements for selectedcontent cloning
         # This is spec-compliant: selectedcontent mirrors the selected option's content
         for elem in reversed(list(context.open_elements)):
             if elem.tag_name == "option":
                 # Find SelectTagHandler and call its cloning logic
-                for handler in self.tag_handlers:
+                for handler in tag_handlers:
                     if handler.__class__.__name__ == "SelectTagHandler":
                         # Temporarily move to the option to clone its content
                         saved_parent = context.current_parent
@@ -583,6 +609,29 @@ class TurboHTML:
                         context.move_to_element(saved_parent)
                         break
                 break  # Only handle the first (innermost) option
+
+        if text_sink_registered:
+            self.tokenizer.set_text_sink(None)
+
+    def _dispatch_text(self, data, context):
+        if not data:
+            return
+
+        handlers = self._text_handler_metadata
+        debug_enabled = self._debug
+        debug_call = self.debug
+
+        for handler, has_custom_should_handle in handlers:
+            if has_custom_should_handle and not handler.should_handle_text(data, context):
+                continue
+            if debug_enabled:
+                preview = data[:20]
+                ellipsis = "..." if len(data) > 20 else ""
+                debug_call(
+                    f"{handler.__class__.__name__}: handling Character('{preview}{ellipsis}') context={context}",
+                )
+            if handler.handle_text(data, context):
+                break
 
     def handle_start_tag(self, token, context):
         """Handle all opening HTML tags."""

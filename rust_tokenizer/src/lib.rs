@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyModule, PyDict, PyIterator, PyAny};
+use pyo3::types::{PyModule, PyDict, PyIterator, PyAny, PyString};
 use indexmap::IndexMap;
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -319,6 +319,8 @@ pub struct RustTokenizer {
     script_suppressed_end_once: bool,
     script_type_value: String,
     pending_tokens: PendingBuffer,
+    text_sink: Option<Py<PyAny>>,
+    text_sink_consumed: bool,
 }
 
 #[pymethods]
@@ -340,7 +342,13 @@ impl RustTokenizer {
             script_suppressed_end_once: false,
             script_type_value: String::new(),
             pending_tokens: PendingBuffer::new(use_legacy_pending_buffer()),
+            text_sink: None,
+            text_sink_consumed: false,
         }
+    }
+    #[pyo3(signature = (sink=None))]
+    fn set_text_sink(&mut self, sink: Option<Py<PyAny>>) {
+        self.text_sink = sink;
     }
 
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -349,6 +357,7 @@ impl RustTokenizer {
 
     fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<HTMLToken>> {
         loop {
+            slf.text_sink_consumed = false;
             // Yield pending tokens first
             if let Some(mut token) = slf.pending_tokens.pop_front() {
                 slf.debug(&format!("PENDING token: {}", token.type_));
@@ -369,11 +378,16 @@ impl RustTokenizer {
 
             match slf.state {
                 STATE_DATA => {
-                    let token = slf.try_tag()?.or_else(|| slf.try_text());
-                    if let Some(mut token) = token {
+                    if let Some(mut token) = slf.try_tag()? {
                         slf.debug(&format!("DATA token: {}", token.type_));
                         token.is_last_token = slf.pos >= slf.last_pos;
                         return Ok(Some(token));
+                    } else if let Some(mut token) = slf.try_text()? {
+                        slf.debug(&format!("DATA token: {}", token.type_));
+                        token.is_last_token = slf.pos >= slf.last_pos;
+                        return Ok(Some(token));
+                    } else if slf.text_sink_consumed {
+                        continue;
                     } else if slf.pos < slf.length {
                         slf.pos += 1;
                         // Continue loop
@@ -386,6 +400,8 @@ impl RustTokenizer {
                         slf.debug(&format!("RAWTEXT token: {}", token.type_));
                         token.is_last_token = slf.pos >= slf.last_pos;
                         return Ok(Some(token));
+                    } else if slf.text_sink_consumed {
+                        continue;
                     } else {
                         return Ok(None);
                     }
@@ -395,9 +411,10 @@ impl RustTokenizer {
                         let raw = &slf.html[slf.pos..];
                         let data = slf.replace_invalid_characters(raw);
                         slf.pos = slf.length;
-                        let mut token = HTMLToken::new_character(data);
-                        token.is_last_token = true;
-                        return Ok(Some(token));
+                        if let Some(token) = slf.emit_character(data, true)? {
+                            return Ok(Some(token));
+                        }
+                        continue;
                     } else {
                         return Ok(None);
                     }
@@ -530,6 +547,32 @@ impl RustTokenizer {
         })
     }
 
+    fn emit_character(&mut self, text: String, is_last: bool) -> PyResult<Option<HTMLToken>> {
+        self.text_sink_consumed = false;
+
+        if text.is_empty() {
+            return Ok(None);
+        }
+
+        if let Some(ref sink) = self.text_sink {
+            let consumed = Python::with_gil(|py| -> PyResult<bool> {
+                let sink = sink.bind(py);
+                let py_text = PyString::new(py, &text);
+                let result = sink.call1((py_text, is_last))?;
+                result.extract()
+            })?;
+
+            if consumed {
+                self.text_sink_consumed = true;
+                return Ok(None);
+            }
+        }
+
+        let mut token = HTMLToken::new_character(text);
+        token.is_last_token = is_last;
+        Ok(Some(token))
+    }
+
     fn tokenize_rawtext(&mut self) -> PyResult<Option<HTMLToken>> {
         self.debug(&format!(
             "_tokenize_rawtext: pos={}, next_chars={:?}",
@@ -571,7 +614,7 @@ impl RustTokenizer {
                     self.pos = self.length;
                     let frag = self.replace_invalid_characters(frag);
                     self.script_content.push_str(&frag);
-                    return Ok(Some(HTMLToken::new_character(frag)));
+                    return self.emit_character(frag, true);
                 }
 
                 let next_char = self.html.as_bytes()[i];
@@ -582,7 +625,7 @@ impl RustTokenizer {
                     self.pos = self.length;
                     let frag = self.replace_invalid_characters(frag);
                     self.script_content.push_str(&frag);
-                    return Ok(Some(HTMLToken::new_character(frag)));
+                    return self.emit_character(frag, true);
                 }
 
                 // Scan through attribute-like content until closing '>', handling quotes
@@ -596,6 +639,8 @@ impl RustTokenizer {
                     if let Some(q) = quote {
                         if c == q {
                             quote = None;
+                            scan += 1;
+                            continue;
                         }
                         scan += 1;
                         continue;
@@ -655,7 +700,10 @@ impl RustTokenizer {
                         if !text_before.is_empty() {
                             let text_before = self.replace_invalid_characters(&text_before);
                             self.pending_tokens.enqueue(HTMLToken::new_end_tag(potential_tag));
-                            return Ok(Some(HTMLToken::new_character(text_before)));
+                                if let Some(token) = self.emit_character(text_before, self.pos >= self.last_pos)? {
+                                    return Ok(Some(token));
+                                }
+                                return Ok(None);
                         }
                         return Ok(Some(HTMLToken::new_end_tag(potential_tag)));
                     } else {
@@ -677,7 +725,10 @@ impl RustTokenizer {
                         if !text_before.is_empty() {
                             let text_before = self.replace_invalid_characters(&text_before);
                             self.pending_tokens.enqueue(HTMLToken::new_end_tag(potential_tag));
-                            return Ok(Some(HTMLToken::new_character(text_before)));
+                            if let Some(token) = self.emit_character(text_before, self.pos >= self.last_pos)? {
+                                return Ok(Some(token));
+                            }
+                            return Ok(None);
                         }
                         return Ok(Some(HTMLToken::new_end_tag(potential_tag)));
                     } else {
@@ -701,7 +752,7 @@ impl RustTokenizer {
         if !text.is_empty() {
             self.script_content.push_str(&text);
             let text = self.replace_invalid_characters(&text);
-            return Ok(Some(HTMLToken::new_character(text)));
+            return self.emit_character(text, self.pos >= self.last_pos);
         }
 
         Ok(None)
@@ -826,7 +877,10 @@ impl RustTokenizer {
                         text_before
                     };
                     self.pending_tokens.enqueue(HTMLToken::new_end_tag(potential_tag));
-                    return Ok(Some(HTMLToken::new_character(text_before)));
+                    if let Some(token) = self.emit_character(text_before, self.pos >= self.last_pos)? {
+                        return Ok(Some(token));
+                    }
+                    return Ok(None);
                 }
                 // No text - emit end tag directly
                 return Ok(Some(HTMLToken::new_end_tag(potential_tag)));
@@ -853,7 +907,7 @@ impl RustTokenizer {
             } else {
                 text
             };
-            return Ok(Some(HTMLToken::new_character(text)));
+            return self.emit_character(text, self.pos >= self.last_pos);
         }
 
         Ok(None)
@@ -884,30 +938,14 @@ impl RustTokenizer {
             let nxt = html.as_bytes()[pos + 1];
             if !nxt.is_ascii_alphabetic() && !matches!(nxt, b'!' | b'/' | b'?') {
                 self.pos = pos + 1;
-                return Ok(Some(HTMLToken::new(
-                    TOKEN_CHARACTER.to_string(),
-                    Some("<".to_string()),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )));
+                return self.emit_character("<".to_string(), self.pos >= self.last_pos);
             }
         }
 
         // If '<' is at EOF, treat as text
         if pos + 1 >= length {
             self.pos = pos + 1;
-            return Ok(Some(HTMLToken::new(
-                TOKEN_CHARACTER.to_string(),
-                Some("<".to_string()),
-                None,
-                None,
-                None,
-                None,
-                None,
-            )));
+            return self.emit_character("<".to_string(), self.pos >= self.last_pos);
         }
 
         // Handle DOCTYPE (case-insensitive)
@@ -985,17 +1023,15 @@ impl RustTokenizer {
             return Ok(Some(token));
         }
 
+        // If parse_simple_tag consumed characters, it handled the input (even if it
+        // returned no token). Avoid falling back to emitting '<' as text.
+        if self.pos != pos {
+            return Ok(None);
+        }
+
         // Couldn't parse - emit '<' as character
         self.pos = pos + 1;
-        Ok(Some(HTMLToken::new(
-            TOKEN_CHARACTER.to_string(),
-            Some("<".to_string()),
-            None,
-            None,
-            None,
-            None,
-            None,
-        )))
+        self.emit_character("<".to_string(), self.pos >= self.last_pos)
     }
 
     fn parse_simple_tag(&mut self) -> PyResult<Option<HTMLToken>> {
@@ -1110,15 +1146,7 @@ impl RustTokenizer {
                     self.pos = self.length;
                 }
 
-                return Ok(Some(HTMLToken::new(
-                    TOKEN_CHARACTER.to_string(),
-                    Some(String::new()),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )));
+                return self.emit_character(String::new(), self.pos >= self.last_pos);
             }
 
             // Use extended attributes
@@ -1130,15 +1158,7 @@ impl RustTokenizer {
                     return Ok(Some(HTMLToken::new_end_tag(tag_name)));
                 }
 
-                return Ok(Some(HTMLToken::new(
-                    TOKEN_CHARACTER.to_string(),
-                    Some(String::new()),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )));
+                return self.emit_character(String::new(), self.pos >= self.last_pos);
             }
 
             // Skip the '>'
@@ -1196,25 +1216,9 @@ impl RustTokenizer {
 
             // Start tags at EOF without unbalanced quotes
             if attr_string.trim().is_empty() {
-                return Ok(Some(HTMLToken::new(
-                    TOKEN_CHARACTER.to_string(),
-                    Some(String::new()),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )));
+                return self.emit_character(String::new(), self.pos >= self.last_pos);
             } else {
-                return Ok(Some(HTMLToken::new(
-                    TOKEN_CHARACTER.to_string(),
-                    Some(attr_string.to_string()),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )));
+                return self.emit_character(attr_string.to_string(), self.pos >= self.last_pos);
             }
         }
 
@@ -1515,9 +1519,9 @@ impl RustTokenizer {
         Ok(Some(HTMLToken::new_comment(comment_text)))
     }
 
-    fn try_text(&mut self) -> Option<HTMLToken> {
+    fn try_text(&mut self) -> PyResult<Option<HTMLToken>> {
         if self.pos >= self.length {
-            return None;
+            return Ok(None);
         }
 
         let start = self.pos;
@@ -1525,7 +1529,7 @@ impl RustTokenizer {
 
         // Don't parse '<' as text
         if html[start..].starts_with('<') {
-            return None;
+            return Ok(None);
         }
 
         // Find next '<' or EOF
@@ -1533,7 +1537,7 @@ impl RustTokenizer {
         let end = next_lt.unwrap_or(self.length);
 
         if end == start {
-            return None;
+            return Ok(None);
         }
 
         let text = &html[start..end];
@@ -1543,7 +1547,18 @@ impl RustTokenizer {
         let text = self.replace_invalid_characters(text);
         let decoded = self.decode_entities(&text);
 
-        Some(HTMLToken::new_character(decoded))
+        let is_last = self.pos >= self.last_pos;
+        let result = self.emit_character(decoded, is_last)?;
+        if self.env_debug {
+            self.debug(&format!(
+                "try_text: start={} end={} sink_consumed={} returned_token={}",
+                start,
+                self.pos,
+                self.text_sink_consumed,
+                result.is_some(),
+            ));
+        }
+        Ok(result)
     }
 }
 
