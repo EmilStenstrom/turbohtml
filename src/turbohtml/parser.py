@@ -169,6 +169,7 @@ class TurboHTML:
         """
         base_should_handle_start = TagHandler.should_handle_start
         base_should_handle_end = TagHandler.should_handle_end
+        base_handle_end = TagHandler.handle_end
         base_should_handle_text = TagHandler.should_handle_text
 
         # Build ordered metadata (same as before, for compatibility with text handlers)
@@ -181,7 +182,11 @@ class TurboHTML:
         self._end_handler_metadata = [
             (h, h.__class__.HANDLED_END_TAGS, h.should_handle_end.__func__ is not base_should_handle_end)
             for h in self.tag_handlers
-            if (h.__class__.HANDLED_END_TAGS is not None or h.should_handle_end.__func__ is not base_should_handle_end)
+            if (
+                h.__class__.HANDLED_END_TAGS is not None
+                or h.should_handle_end.__func__ is not base_should_handle_end
+                or h.handle_end.__func__ is not base_handle_end
+            )
             and not isinstance(h, GenericEndTagHandler)
         ]
         self._text_handler_metadata = [

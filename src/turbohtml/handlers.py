@@ -826,43 +826,41 @@ class TemplateContentFilterHandler(TagHandler):
 
         return self._handle_generic_template_content(token, context, boundary)
 
-    def should_handle_end(self, tag_name, context):
-        """Filter end tags inside templates."""
-        if tag_name == "template":
-            # Nested templates handled here, top-level by TemplateElementHandler
-            if context.content_state == ContentState.PLAINTEXT:
-                return False
-            if self.parser.foreign_handler and context.current_context in ("svg", "math"):
-                return context.in_template_content > 0
-            # Only handle if we're NESTED inside template content (not at the immediate content level)
-            # When current_parent is the template's content node, a depth > 1 indicates a nested template
-            if context.current_parent.tag_name == "content":
-                return context.in_template_content > 1
-            # If we're deeper inside (past the content node), check if we're in template content
-            return context.in_template_content > 0
-
-        if not context.in_template_content > 0:
-            return False
-        if self.parser.foreign_handler and context.current_context in ("svg", "math"):
-            return False
-        if tag_name in ("svg", "math"):
-            return False
-        table_like = {
-            "table",
-            "thead",
-            "tbody",
-            "tfoot",
-            "caption",
-            "colgroup",
-            "tr",
-            "td",
-            "th",
-        }
-        return tag_name in (table_like | {"select"})
-
     def handle_end(self, token, context):
         """Close elements inside template content."""
         tag_name = token.tag_name
+
+        if tag_name == "template":
+            if context.content_state == ContentState.PLAINTEXT:
+                return False
+            if self.parser.foreign_handler and context.current_context in ("svg", "math"):
+                if context.in_template_content == 0:
+                    return False
+            if context.current_parent.tag_name == "content":
+                if context.in_template_content <= 1:
+                    return False
+            elif context.in_template_content == 0:
+                return False
+        else:
+            if context.in_template_content == 0:
+                return False
+            if self.parser.foreign_handler and context.current_context in ("svg", "math"):
+                return False
+            if tag_name in ("svg", "math"):
+                return False
+            table_like = {
+                "table",
+                "thead",
+                "tbody",
+                "tfoot",
+                "caption",
+                "colgroup",
+                "tr",
+                "td",
+                "th",
+            }
+            if tag_name not in table_like and tag_name != "select":
+                return False
 
         # Handle nested </template> (closing a template that's inside another template's content)
         if tag_name == "template":
@@ -997,23 +995,14 @@ class TemplateElementHandler(TagHandler):
         )
         return True
 
-    def should_handle_end(self, tag_name, context):
-        """Handle </template> tags for top-level templates.
-
-        Note: dispatcher pre-filters by HANDLED_END_TAGS, so tag_name is always "template" here.
-        """
-        if context.content_state == ContentState.PLAINTEXT:
-            return False
-        # Distinguish between:
-        # 1. Nested template (inside template content) - handled by TemplateContentFilterHandler
-        # 2. Top-level template (even if currently inside its content) - handled here
-        if context.current_parent.tag_name == "content" and context.in_template_content > 1:
-            # Nested template end tags are handled by TemplateContentFilterHandler
-            return False
-        return True
-
     def handle_end(self, token, context):
         """Close <template> element."""
+        if context.content_state == ContentState.PLAINTEXT:
+            return False
+
+        if context.current_parent.tag_name == "content" and context.in_template_content > 1:
+            return False
+
         if context.document_state in (
             DocumentState.IN_FRAMESET,
             DocumentState.AFTER_FRAMESET,
@@ -1067,9 +1056,6 @@ class GenericEndTagHandler(TagHandler):
 
     HANDLED_START_TAGS = None  # Doesn't handle start tags
     HANDLED_END_TAGS = ALL_TAGS  # Fallback handler for all unclaimed end tags
-
-    def should_handle_end(self, tag_name, context):
-        return True
 
     def handle_end(self, token, context):
         target = token.tag_name
@@ -2184,23 +2170,17 @@ class SelectTagHandler(TagHandler):
 
         return False
 
-    def should_handle_end(self, tag_name, context):
-        # Handle select-related end tags
-        if tag_name in {"select", "option", "optgroup", "datalist"}:
-            return True
-
-        # Handle formatting element end tags when inside select
-        if tag_name in FORMATTING_ELEMENTS and context.in_select:
-            return True
-
-        # Handle block element end tags when inside select (need to recreate formatting)
-        if tag_name in BLOCK_ELEMENTS and context.in_select:
-            return True
-
-        return False
-
     def handle_end(self, token, context):
         tag_name = token.tag_name
+
+        if tag_name not in {"select", "option", "optgroup", "datalist"}:
+            if not context.in_select:
+                return False
+            if tag_name not in FORMATTING_ELEMENTS and tag_name not in BLOCK_ELEMENTS:
+                return False
+
+        if tag_name in BLOCK_ELEMENTS and not context.in_select:
+            return False
 
         # Handle block element end tags inside select (recreate formatting elements)
         if tag_name in BLOCK_ELEMENTS and context.in_select:
@@ -3565,12 +3545,10 @@ class TableTagHandler(TagHandler):
             text, context, parent=foster_parent, before=foster_parent.children[table_index], merge=True
         )
 
-    def should_handle_end(self, tag_name, context):
-        # Ignore stray </table> when no table is open
-        if tag_name == "table" and not get_current_table(context):
-            return True
+    def handle_end(self, token, context):
+        tag_name = token.tag_name
 
-        return tag_name in {
+        allowed = {
             "table",
             "tbody",
             "thead",
@@ -3580,8 +3558,8 @@ class TableTagHandler(TagHandler):
             "colgroup",
         }
 
-    def handle_end(self, token, context):
-        tag_name = token.tag_name
+        if tag_name not in allowed:
+            return False
 
         # Ignore stray </table> when no table is open
         if tag_name == "table" and not get_current_table(context):
@@ -4098,10 +4076,9 @@ class RawtextTagHandler(TagHandler):
             context.content_state = ContentState.RAWTEXT
         return True
 
-    def should_handle_end(self, tag_name, context):
-        return tag_name in RAWTEXT_ELEMENTS
-
     def handle_end(self, token, context):
+        if token.tag_name not in RAWTEXT_ELEMENTS:
+            return False
 
         if context.content_state == ContentState.RAWTEXT and token.tag_name == context.current_parent.tag_name:
             # Find the original parent before the RAWTEXT element
@@ -4314,8 +4291,9 @@ class BlockFormattingReconstructionHandler(TagHandler):
 
         return False
 
-    def should_handle_end(self, tag_name, context):
-        # Don't handle end tags inside template content that would affect document state
+    def handle_end(self, token, context):
+        tag_name = token.tag_name
+
         if context.in_template_content > 0:
             return False
 
@@ -4325,19 +4303,20 @@ class BlockFormattingReconstructionHandler(TagHandler):
         if tag_name in {"li", "dt", "dd"}:
             return False
 
-        # Handle end tags for block elements and elements that close when their parent closes
         if tag_name == "form":
-            return False  # Let FormTagHandler handle explicit form closure semantics
-        return (
-            tag_name in CLOSE_ON_PARENT_CLOSE or tag_name in BLOCK_ELEMENTS or tag_name in ("tr", "td", "th")
-        )  # Add table elements
+            return False
 
-    def handle_end(self, token, context):
+        if (
+            tag_name not in BLOCK_ELEMENTS
+            and tag_name not in CLOSE_ON_PARENT_CLOSE
+            and tag_name not in {"tr", "td", "th"}
+        ):
+            return False
 
         # Handle block elements
-        if token.tag_name in BLOCK_ELEMENTS:
+        if tag_name in BLOCK_ELEMENTS:
             # Find matching block element
-            current = context.current_parent.find_ancestor(token.tag_name)
+            current = context.current_parent.find_ancestor(tag_name)
             if not current:
                 return False
 
@@ -4402,8 +4381,8 @@ class BlockFormattingReconstructionHandler(TagHandler):
             # Formatting reconstruction will occur automatically on the next start tag; no extra state.
             return True
 
-        if token.tag_name in CLOSE_ON_PARENT_CLOSE:
-            parent_tags = CLOSE_ON_PARENT_CLOSE[token.tag_name]
+        if tag_name in CLOSE_ON_PARENT_CLOSE:
+            parent_tags = CLOSE_ON_PARENT_CLOSE[tag_name]
             for parent_tag in parent_tags:
                 parent = context.current_parent.find_ancestor(parent_tag)
                 if parent:
@@ -5125,31 +5104,22 @@ class ForeignTagHandler(TagHandler):
 
         return False
 
-    def should_handle_end(self, tag_name, context):
-        """Decide if this handler should process an end tag.
-
-        We keep handling end tags while in a foreign context or when still inside
-        a subtree created by a foreign root (even if current_context was cleared).
-        HTML/table end tags inside integration points are delegated to HTML handlers.
-        """
-        # While explicitly in SVG context
-        if context.current_context == "svg":
-            if is_in_integration_point(context, check="svg"):
-                if tag_name in HTML_ELEMENTS or tag_name in TABLE_ELEMENTS or tag_name == "table":
-                    return False  # delegate to HTML handlers
-        # While explicitly in MathML context
-        elif context.current_context == "math":
-            in_text_ip = is_in_integration_point(context, check="mathml")
-            if in_text_ip and tag_name in HTML_ELEMENTS:
-                return False
-        # If we are still inside a foreign context
-        if context.current_context in ("svg", "math"):
-            return True
-        # Otherwise detect if any foreign ancestor remains (context may have been cleared by breakout)
-        return get_svg_ancestor(context) is not None or get_math_ancestor(context) is not None
-
     def handle_end(self, token, context):
         tag_name = token.tag_name
+
+        current_ctx = context.current_context
+        if current_ctx == "svg":
+            if is_in_integration_point(context, check="svg"):
+                if tag_name in HTML_ELEMENTS or tag_name in TABLE_ELEMENTS or tag_name == "table":
+                    return False
+        elif current_ctx == "math":
+            if is_in_integration_point(context, check="mathml") and tag_name in HTML_ELEMENTS:
+                return False
+
+        if current_ctx not in ("svg", "math"):
+            if get_svg_ancestor(context) is None and get_math_ancestor(context) is None:
+                return False
+
         # Find matching element (case-insensitive)
         # tag_name is now the local name (namespace is separate), so no split needed
         matching_element = context.current_parent.find_ancestor_case_insensitive(tag_name)
@@ -6256,14 +6226,11 @@ class PlaintextHandler(TagHandler):
             context.frameset_ok = False
         return True
 
-    def should_handle_end(self, tag_name, context):
-        # Handle all end tags in PLAINTEXT mode
-        if context.content_state == ContentState.PLAINTEXT:
-            return True
-        # Treat stray </plaintext> as literal text when not in PLAINTEXT state
-        return tag_name == "plaintext"
-
     def handle_end(self, token, context):
+        in_plaintext_mode = context.content_state == ContentState.PLAINTEXT
+        if not in_plaintext_mode and token.tag_name != "plaintext":
+            return False
+
         # Outside PLAINTEXT mode: if we have an actual <svg plaintext> (or math) element open, close it normally
         if token.tag_name == "plaintext":
             # Look for a foreign plaintext element on stack (namespace-aware)
