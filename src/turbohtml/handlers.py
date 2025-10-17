@@ -966,16 +966,11 @@ class TemplateElementHandler(TagHandler):
     HANDLED_START_TAGS = frozenset(["template"])
     HANDLED_END_TAGS = frozenset(["template"])
 
-    def should_handle_start(self, tag_name, context):
-        """Handle top-level <template> tags."""
-
+    def handle_start(self, token, context):
+        """Create top-level <template> element."""
         if context.in_template_content > 0:
             return False
 
-        return True
-
-    def handle_start(self, token, context):
-        """Create top-level <template> element."""
         if context.document_state in (
             DocumentState.IN_FRAMESET,
             DocumentState.AFTER_FRAMESET,
@@ -1537,13 +1532,10 @@ class FormattingTagHandler(TagHandler):
                 context.move_to_element(node)
         return node
 
-    def should_handle_start(self, tag_name, context):
+    def handle_start(self, token, context):
         if context.in_select:
             return False
 
-        return True
-
-    def handle_start(self, token, context):
         tag_name = token.tag_name
         restore_cell_after_adoption = context.current_parent if tag_name == "a" and is_in_table_cell(context) else None
 
@@ -2414,7 +2406,7 @@ class ParagraphTagHandler(TagHandler):
     """Handles paragraph elements."""
 
     # Context-dependent: handles "p" plus tags that implicitly close <p> when <p> is in scope
-    HANDLED_START_TAGS = None  # Too complex - checks AUTO_CLOSING_TAGS["p"] + scope
+    HANDLED_START_TAGS = frozenset({"p", *AUTO_CLOSING_TAGS["p"]})
     HANDLED_END_TAGS = frozenset(["p"])
 
     def _find_p_in_scope(self, context):
@@ -2463,20 +2455,10 @@ class ParagraphTagHandler(TagHandler):
 
         return False
 
-    def should_handle_start(self, tag_name, context):
+    def handle_start(self, token, context):
         if context.in_template_content > 0:
             return False
 
-        if tag_name == "p":
-            return True
-
-        # Handle tags that implicitly close <p> when <p> is in button scope
-        if tag_name in AUTO_CLOSING_TAGS["p"]:
-            return True
-
-        return False
-
-    def handle_start(self, token, context):
         tag_name = token.tag_name
 
         # Case 1: Block element auto-closes ancestor <p> (but not current parent)
@@ -2809,7 +2791,20 @@ class ParagraphTagHandler(TagHandler):
 class TableTagHandler(TagHandler):
     """Handles table-related elements."""
 
-    HANDLED_START_TAGS = ALL_TAGS  # Complex table element handling with context dependencies
+    HANDLED_START_TAGS = frozenset(
+        {
+            "table",
+            "caption",
+            "colgroup",
+            "col",
+            "tbody",
+            "thead",
+            "tfoot",
+            "tr",
+            "td",
+            "th",
+        }
+    )
     HANDLED_END_TAGS = frozenset({"table", "tbody", "thead", "tfoot", "tr", "caption", "colgroup"})
     HANDLES_TEXT = True  # Handles text in table contexts (foster parenting)
     
@@ -2817,26 +2812,17 @@ class TableTagHandler(TagHandler):
     _TABLE_CONTEXT_TAGS = frozenset({"html", "body", "table"})
     _TABLE_SECTION_TAGS = frozenset({"tbody", "thead", "tfoot"})
 
-    def should_handle_start(self, tag_name, context):
-        # Skip template content (TemplateAware behavior)
+    def handle_start(self, token, context):
         if context.in_template_content > 0:
             return False
 
-        in_integration_point = is_in_integration_point(context)
-        in_foreign = context.current_context in ("math", "svg")
-        if in_foreign and not in_integration_point:
-            return False
-
-        if tag_name in {"table", "tr", "td", "th", "caption", "col", "colgroup", "thead", "tbody", "tfoot"}:
-            return True
-
-        return False
-
-    def handle_start(self, token, context):
         tag_name = token.tag_name
 
         current_table = get_current_table(context)
         in_integration_point = is_in_integration_point(context)
+        in_foreign = context.current_context in ("math", "svg")
+        if in_foreign and not in_integration_point:
+            return False
 
         if not current_table:
             # Integration point without table: ignore table structure tags
@@ -5471,25 +5457,10 @@ class HeadTagHandler(TagHandler):
     HANDLED_END_TAGS = frozenset(["head", "noscript"])
     HANDLES_TEXT = True  # Handles whitespace in head and RAWTEXT in head elements
 
-    def should_handle_start(self, tag_name, context):
-        # Inside template content: don't apply head-specific insertion logic
-        # Script/style/title etc. can appear as normal content in templates
+    def handle_start(self, token, context):
         if context.in_template_content > 0:
             return False
 
-        # Late meta/title after body/html: still handle here so we can explicitly place them into body (spec parse error recovery)
-        if tag_name in ("meta", "title") and context.document_state in (
-            DocumentState.AFTER_BODY,
-            DocumentState.AFTER_HTML,
-        ):
-            return True
-
-        if tag_name in HEAD_ELEMENTS:
-            return True
-
-        return False
-
-    def handle_start(self, token, context):
         tag_name = token.tag_name
         
         # style/script: suppress if inside table cells/captions
