@@ -133,24 +133,8 @@ class TagHandler:
     def handle_comment(self, comment, context):
         return False
 
-    # Dispatch predicates and handlers (main tag processing)
-    def should_handle_start(self, tag_name, context):
-        """Deprecated: use HANDLED_START_TAGS class attribute instead.
-
-        Subclasses override for complex context-dependent logic only.
-        Simple tag-based dispatch now uses HANDLED_START_TAGS directly.
-        """
-        return False
-
+    # Dispatch handlers (main tag processing)
     def handle_start(self, token, context):
-        return False
-
-    def should_handle_end(self, tag_name, context):
-        """Deprecated: use HANDLED_END_TAGS class attribute instead.
-
-        Subclasses override for complex context-dependent logic only.
-        Simple tag-based dispatch now uses HANDLED_END_TAGS directly.
-        """
         return False
 
     def handle_end(self, token, context):
@@ -269,8 +253,8 @@ class DocumentStructureHandler(TagHandler):
     """Handles document structure: <html>, <head>, <body> start tags and </html> end tag.
 
     Unified handler managing root structure lifecycle:
-    - Start tags (<html>, <head>, <body>) via should_handle_start/handle_start
-    - End tag (</html>) via should_handle_end/handle_end
+    - Start tags (<html>, <head>, <body>) via handle_start
+    - End tags (</html>, </body>) via handle_end
     - Implicit head/body transitions for non-head content
     - Attribute merging for duplicate structure tags
     - Re-entering IN_BODY from AFTER_BODY/AFTER_HTML states
@@ -4797,7 +4781,7 @@ class ForeignTagHandler(TagHandler):
         if context.current_context == "math":
             # If we're inside a MathML text integration point (mi/mo/mn/ms/mtext) and encounter <svg>,
             # create a leaf <svg svg> element WITHOUT switching context or entering it (so following
-            # MathML siblings remain siblings). This corresponds to logic in should_handle_start.
+            # MathML siblings remain siblings). This matches the early exits in handle_start.
             parent_ip = get_integration_point_node(context, check="mathml")
             # Nested <foreignObject> immediately following a leaf <svg svg> under a MathML text integration point:
             # move into that svg leaf (activating svg context) so that foreignObject becomes its child.

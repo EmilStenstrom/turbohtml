@@ -167,24 +167,21 @@ class TurboHTML:
 
         Builds direct tag->handlers list to replace linear scan over all handlers.
         """
-        base_should_handle_start = TagHandler.should_handle_start
-        base_should_handle_end = TagHandler.should_handle_end
+        base_handle_start = TagHandler.handle_start
         base_handle_end = TagHandler.handle_end
         base_should_handle_text = TagHandler.should_handle_text
 
         # Build ordered metadata (same as before, for compatibility with text handlers)
         self._start_handler_metadata = [
-            (h, h.__class__.HANDLED_START_TAGS, h.should_handle_start.__func__ is not base_should_handle_start)
+            (h, h.__class__.HANDLED_START_TAGS)
             for h in self.tag_handlers
-            if h.__class__.HANDLED_START_TAGS is not None
-            or h.should_handle_start.__func__ is not base_should_handle_start
+            if h.__class__.HANDLED_START_TAGS is not None or h.handle_start.__func__ is not base_handle_start
         ]
         self._end_handler_metadata = [
-            (h, h.__class__.HANDLED_END_TAGS, h.should_handle_end.__func__ is not base_should_handle_end)
+            (h, h.__class__.HANDLED_END_TAGS)
             for h in self.tag_handlers
             if (
                 h.__class__.HANDLED_END_TAGS is not None
-                or h.should_handle_end.__func__ is not base_should_handle_end
                 or h.handle_end.__func__ is not base_handle_end
             )
             and not isinstance(h, GenericEndTagHandler)
@@ -202,12 +199,12 @@ class TurboHTML:
         # Collect all known tags from all handlers
         all_start_tags = set()
         all_end_tags = set()
-        for h, handled_tags, _ in self._start_handler_metadata:
+        for h, handled_tags in self._start_handler_metadata:
             if handled_tags is not None and hasattr(handled_tags, '__iter__'):
                 # Skip ALL_TAGS sentinel (has __contains__ but don't iterate)
                 if not hasattr(handled_tags, '__class__') or handled_tags.__class__.__name__ != '_AllTagsSentinel':
                     all_start_tags.update(handled_tags)
-        for h, handled_tags, _ in self._end_handler_metadata:
+        for h, handled_tags in self._end_handler_metadata:
             if handled_tags is not None and hasattr(handled_tags, '__iter__'):
                 if not hasattr(handled_tags, '__class__') or handled_tags.__class__.__name__ != '_AllTagsSentinel':
                     all_end_tags.update(handled_tags)
@@ -235,18 +232,23 @@ class TurboHTML:
         # For each known tag, build list of handlers that match it
         for tag in all_start_tags:
             handlers_for_tag = []
-            for handler, handled_tags, has_custom in self._start_handler_metadata:
-                # Check if this handler handles this tag
-                if handled_tags is None or tag in handled_tags:
-                    handlers_for_tag.append((handler, has_custom))
+            for handler, handled_tags in self._start_handler_metadata:
+                if handled_tags is None:
+                    handlers_for_tag.append(handler)
+                    continue
+                if tag in handled_tags:
+                    handlers_for_tag.append(handler)
             if handlers_for_tag:
                 self._start_dispatch[tag] = handlers_for_tag
 
         for tag in all_end_tags:
             handlers_for_tag = []
-            for handler, handled_tags, has_custom in self._end_handler_metadata:
-                if handled_tags is None or tag in handled_tags:
-                    handlers_for_tag.append((handler, has_custom))
+            for handler, handled_tags in self._end_handler_metadata:
+                if handled_tags is None:
+                    handlers_for_tag.append(handler)
+                    continue
+                if tag in handled_tags:
+                    handlers_for_tag.append(handler)
             if handlers_for_tag:
                 self._end_dispatch[tag] = handlers_for_tag
 
@@ -679,25 +681,17 @@ class TurboHTML:
         handlers = self._start_dispatch.get(tag_name)
         if handlers:
             # Fast path: known tag with pre-computed handler list (99.8% of real-world tags)
-            for handler, has_custom_check in handlers:
-                if has_custom_check:
-                    if handler.should_handle_start(tag_name, context) and handler.handle_start(token, context):
-                        return
-                else:
-                    if handler.handle_start(token, context):
-                        return
+            for handler in handlers:
+                if handler.handle_start(token, context):
+                    return
         else:
             # Slow path: rare/unknown tags (0.2% of real-world tags)
             # Needed for custom elements and ALL_TAGS handlers with complex logic
-            for handler, handled_tags, has_custom_check in self._start_handler_metadata:
+            for handler, handled_tags in self._start_handler_metadata:
                 if handled_tags is not None and tag_name not in handled_tags:
                     continue
-                if has_custom_check:
-                    if handler.should_handle_start(tag_name, context) and handler.handle_start(token, context):
-                        return
-                else:
-                    if handler.handle_start(token, context):
-                        return
+                if handler.handle_start(token, context):
+                    return
 
         # Fallback: if no handler claimed this start tag, insert it with default behavior.
         self.insert_element(token, context, mode="normal", enter=not token.is_self_closing)
@@ -710,27 +704,18 @@ class TurboHTML:
         handlers = self._end_dispatch.get(tag_name)
         if handlers:
             # Fast path: known tag with pre-computed handler list (99.7% of real-world tags)
-            for handler, has_custom_check in handlers:
-                if has_custom_check:
-                    if handler.should_handle_end(tag_name, context) and handler.handle_end(token, context):
-                        return
-                else:
-                    if handler.handle_end(token, context):
-                        return
+            for handler in handlers:
+                if handler.handle_end(token, context):
+                    return
         else:
             # Slow path: rare/unknown tags (0.3% of real-world tags)
             # Needed for custom elements and ALL_TAGS handlers with complex logic
-            for handler, handled_tags, has_custom_check in self._end_handler_metadata:
+            for handler, handled_tags in self._end_handler_metadata:
                 if handled_tags is not None and tag_name not in handled_tags:
                     continue
-                if has_custom_check:
-                    if handler.should_handle_end(tag_name, context) and handler.handle_end(token, context):
-                        return
-                else:
-                    if handler.handle_end(token, context):
-                        return
+                if handler.handle_end(token, context):
+                    return
 
         # Fallback: GenericEndTagHandler as last resort (spec "any other end tag")
-        # No need for should_handle_end check since it always returns True
         if self.generic_end_handler:
             self.generic_end_handler.handle_end(token, context)
