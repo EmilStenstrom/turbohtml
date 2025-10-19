@@ -4648,6 +4648,14 @@ class ForeignTagHandler(TagHandler):
         tag_name = token.tag_name
         fc = self.parser.fragment_context
 
+        if (
+            context.current_context not in ("svg", "math")
+            and tag_name not in ("svg", "math")
+            and not context.has_foreign_content
+            and not (fc and getattr(fc, "namespace", None) in ("svg", "math"))
+        ):
+            return False
+
         allowed = False
         if context.current_context in ("svg", "math"):
             allowed = True
@@ -5085,6 +5093,14 @@ class ForeignTagHandler(TagHandler):
         tag_name = token.tag_name
 
         current_ctx = context.current_context
+        fc = self.parser.fragment_context
+
+        if (
+            current_ctx not in ("svg", "math")
+            and not context.has_foreign_content
+            and not (fc and getattr(fc, "namespace", None) in ("svg", "math"))
+        ):
+            return False
         if current_ctx == "svg":
             if is_in_integration_point(context, check="svg"):
                 if tag_name in HTML_ELEMENTS or tag_name in TABLE_ELEMENTS or tag_name == "table":
