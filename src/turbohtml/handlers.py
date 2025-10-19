@@ -267,6 +267,14 @@ class DocumentStructureHandler(TagHandler):
     def handle_start(self, token, context):
         tag = token.tag_name
         parser = self.parser
+        state = context.document_state
+
+        # Fast path: most tokens arrive while we're already inside the body. In that case
+        # the handler has nothing to do, so return immediately unless we need to run the
+        # re-entry logic or handle the structural tags themselves. This avoids repeated
+        # helper lookups during the hot path.
+        if state == DocumentState.IN_BODY and tag not in ("html", "head", "body"):
+            return False
 
         # Re-entry logic: when content appears after </body> but before </html>, move insertion
         # point back into the body (deepest still open descendant) and transition to IN_BODY
@@ -316,11 +324,11 @@ class DocumentStructureHandler(TagHandler):
             context.transition_to_state(DocumentState.IN_HEAD, head)
             return True
         # <body>
-        if tag == "body" and context.document_state != DocumentState.IN_FRAMESET:
-            if context.frameset_ok and context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
+        if tag == "body" and state != DocumentState.IN_FRAMESET:
+            if context.frameset_ok and state in (DocumentState.INITIAL, DocumentState.IN_HEAD):
                 context.frameset_ok = False
             context.saw_body_start_tag = True
-            body = ensure_body(parser.root, context.document_state, parser.fragment_context)
+            body = ensure_body(parser.root, state, parser.fragment_context)
             if body:
                 for k, v in token.attributes.items():
                     if k not in body.attributes:
@@ -328,19 +336,32 @@ class DocumentStructureHandler(TagHandler):
                 context.transition_to_state(DocumentState.IN_BODY, body)
             return True
         # Defer <frameset> (handled by Frameset handlers) when in INITIAL
-        if tag == "frameset" and context.document_state == DocumentState.INITIAL:
+        if tag == "frameset" and state == DocumentState.INITIAL:
             return False
-        # Implicit head/body transitions: any non-head element outside frameset mode while still in INITIAL/IN_HEAD
-        if tag not in HEAD_ELEMENTS and context.document_state != DocumentState.IN_FRAMESET:
-            if context.document_state == DocumentState.INITIAL or context.current_parent == get_head(parser):
-                body = ensure_body(parser.root, context.document_state, parser.fragment_context)
+        head_elements = HEAD_ELEMENTS
+        if tag in head_elements:
+            if state == DocumentState.INITIAL:
+                head = ensure_head(parser)
+                if head:
+                    context.transition_to_state(DocumentState.IN_HEAD, head)
+            return False
+
+        if state == DocumentState.IN_FRAMESET:
+            return False
+
+        if state == DocumentState.INITIAL:
+            body = ensure_body(parser.root, state, parser.fragment_context)
+            if body:
+                context.transition_to_state(DocumentState.IN_BODY, body)
+            return False
+
+        if state == DocumentState.IN_HEAD:
+            head_node = get_head(parser)
+            if head_node and context.current_parent is head_node:
+                body = ensure_body(parser.root, state, parser.fragment_context)
                 if body:
                     context.transition_to_state(DocumentState.IN_BODY, body)
-        elif tag in HEAD_ELEMENTS and context.document_state == DocumentState.INITIAL:
-            # Head element in INITIAL state: ensure head exists and transition to IN_HEAD
-            head = ensure_head(parser)
-            if head:
-                context.transition_to_state(DocumentState.IN_HEAD, head)
+
         return False
 
     def handle_end(self, token, context):
