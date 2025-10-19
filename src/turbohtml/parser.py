@@ -132,6 +132,7 @@ class TurboHTML:
         self.formatting_handler = None
         self.frameset_handler = None
         self.generic_end_handler = None
+        self.document_handler = None
 
         for handler in self.tag_handlers:
             if isinstance(handler, TextHandler):
@@ -144,6 +145,8 @@ class TurboHTML:
                 self.frameset_handler = handler
             elif isinstance(handler, GenericEndTagHandler):
                 self.generic_end_handler = handler
+            elif isinstance(handler, DocumentStructureHandler):
+                self.document_handler = handler
 
         if self.text_handler is None:
             msg = "TextHandler not found in tag_handlers"
@@ -669,19 +672,24 @@ class TurboHTML:
             return
 
         # Inline frameset preprocessing (guards frameset_ok and consumes invalid tokens)
-        if self.frameset_handler:
+        if self.frameset_handler and (context.frameset_ok or self._has_frameset):
             if self.frameset_handler.preprocess_start(token, context):
                 return
 
         # Inline formatting element reconstruction (must happen before handler dispatch)
         if self.formatting_handler:
-            self.formatting_handler.preprocess_start(token, context)
+            if context.needs_reconstruction or context.active_formatting_elements:
+                self.formatting_handler.preprocess_start(token, context)
 
         # Dispatch with O(1) per-tag lookup using pre-computed dispatch tables
         handlers = self._start_dispatch.get(tag_name)
         if handlers:
             # Fast path: known tag with pre-computed handler list (99.8% of real-world tags)
             for handler in handlers:
+                if handler is self.document_handler:
+                    state = context.document_state
+                    if state == DocumentState.IN_BODY and tag_name not in ("html", "head", "body"):
+                        continue
                 if handler.handle_start(token, context):
                     return
         else:
@@ -690,6 +698,10 @@ class TurboHTML:
             for handler, handled_tags in self._start_handler_metadata:
                 if handled_tags is not None and tag_name not in handled_tags:
                     continue
+                if handler is self.document_handler:
+                    state = context.document_state
+                    if state == DocumentState.IN_BODY and tag_name not in ("html", "head", "body"):
+                        continue
                 if handler.handle_start(token, context):
                     return
 
