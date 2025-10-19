@@ -1576,16 +1576,9 @@ class FormattingTagHandler(TagHandler):
                         )
                         if not inside_object:
                             context.active_formatting_elements.push(new_element, token)
-                        # After relocation restore insertion point to existing section wrapper (tbody/thead/tfoot)
-                        # if present so the upcoming <tr> becomes its child (expected tree keeps wrapper),
-                        # otherwise fall back to table.
-                        # Preserve or restore section wrapper (tbody/thead/tfoot) if present so that
-                        # a following <tr> token becomes its child. Previous logic fell back to the
-                        # table when no wrapper was found, which is correct, but it also overwrote
-                        # the insertion point with the table even when a wrapper existed but had no
-                        # rows yet. That caused the subsequent <tr> to bypass the wrapper in fragment
-                        # contexts producing: <table> <tr> instead of <table><tbody><tr>. We now only
-                        # change insertion point if a wrapper exists; otherwise leave as-is (table).
+                        # After relocation restore insertion point to an existing section wrapper (tbody/thead/tfoot)
+                        # so the upcoming <tr> attaches beneath it; if none exists we keep the insertion point on the
+                        # table. This preserves the wrapper structure expected by the spec in fragments.
                         section_wrapper = None
                         for ch in table.children:
                             if ch.tag_name in {"tbody", "thead", "tfoot"}:
@@ -6058,9 +6051,6 @@ class PlaintextHandler(TagHandler):
             and context.current_parent.children[-1].tag_name == "button"
         ):
             context.move_to_element(context.current_parent.children[-1])
-        # Ignore plaintext start tag entirely inside a select subtree (spec: disallowed start tag ignored)
-        # REMOVED: Tests show plaintext SHOULD work inside select and enter PLAINTEXT mode
-
         # Plain foreign SVG/MathML: create a foreign plaintext element but DO NOT switch tokenizer
         if context.current_context == "svg" and not is_in_integration_point(context, check="svg"):
             self.parser.insert_element(

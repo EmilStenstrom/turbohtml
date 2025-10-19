@@ -1,7 +1,6 @@
 """Adoption Agency Algorithm (HTML5 tree construction: formatting element adoption).
 
 Implementation focuses on spec steps; comments describe intent (why) rather than history.
-All static type annotations removed (runtime only).
 """
 
 from turbohtml.constants import (

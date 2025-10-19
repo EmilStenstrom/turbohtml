@@ -276,7 +276,7 @@ def reconstruct_if_needed(parser, context, *, force=False, allow_foster=False):
       * Not inside template content boundary (template content handled separately).
       * If in a table insertion mode, only reconstruct when current insertion point is inside a cell ('td'/'th') or caption.
         Exception: allow_foster=True permits reconstruction when foster parenting (text inserted before table).
-    force=True bypasses checks (used for post-adoption pending reconstruction to match previous behavior).
+    force=True bypasses checks (used when adoption cleanup requires immediate reconstruction).
     Returns True if reconstruction executed.
     """
     if force:

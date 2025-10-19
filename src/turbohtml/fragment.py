@@ -97,14 +97,12 @@ def _supp_duplicate_section_wrapper(parser, context, token, fragment_context):
 
 
 def _supp_duplicate_cell_or_initial_row(parser, context, token, fragment_context):
-    """Suppress first context-matching cell tag (td/th) or initial stray <tr> in td/th fragment.
+    """Suppress the synthetic context cell or early row at the fragment root.
 
-    Mirrors legacy parser._should_ignore_fragment_start_tag behavior:
-      * In a td or th fragment, ignore the very first td/th start tag encountered at the
-        synthetic fragment root (we are conceptually already inside that cell).
-      * In a td or th fragment, if a leading <tr> appears before any cell has been accepted,
-        suppress it (legacy ignored this as context alignment artifact).
-    After one suppression, subsequent cells or rows are allowed.
+    td/th fragments begin inside their context element; the first td/th token the tokenizer
+    yields would otherwise create an extra wrapper. Likewise, a stray leading <tr> before any
+    cell should be ignored until the fragment context has been satisfied. After this guard
+    trips once, subsequent cells or rows are processed normally.
     """
     if token.type != "StartTag":
         return False
@@ -148,22 +146,19 @@ def _supp_fragment_nonhtml_structure(parser, context, token, fragment_context):
         return bool(not has_body)
     return tn in {"caption", "colgroup", "tbody", "thead", "tfoot", "tr", "td", "th"}
 
+def _supp_fragment_restricted_context(parser, context, token, fragment_context):
+    """Apply additional fragment-only structural suppression rules.
 
-def _supp_fragment_legacy_context(parser, context, token, fragment_context):
-    """Aggregate remaining legacy suppression logic.
-
-    Responsibilities migrated:
-      * Single initial context element suppression for tbody/thead/tfoot/tr/td/th (now covered elsewhere but kept idempotent)
-      * Nested <table> start tag suppression inside a table fragment
-      * Frameset-mode restrictions inside html fragment (non structural tokens dropped after frameset)
+    Covers nested <table> tags inside table fragments (the context already supplies the root) and
+    frameset-mode restrictions inside html fragments while frameset parsing remains active.
     """
+
     if token.type != "StartTag":
         return False
+
     tn = token.tag_name
-    # Table fragment: ignore nested <table>
     if fragment_context and fragment_context.matches("table") and tn == "table":
         return True
-    # Additional frameset restrictions (html fragment only)
     if (
         fragment_context
         and fragment_context.matches("html")
@@ -221,7 +216,7 @@ FRAGMENT_SPECS = {
     ),
     "html": FragmentSpec(
         name="html",
-        suppression_predicates=[_supp_doctype, _supp_fragment_legacy_context],
+    suppression_predicates=[_supp_doctype, _supp_fragment_restricted_context],
     ),
     "select": FragmentSpec(
         name="select",
@@ -256,7 +251,7 @@ FRAGMENT_SPECS = {
         suppression_predicates=[
             _supp_doctype,
             _fragment_table_preprocess,
-            _supp_fragment_legacy_context,
+            _supp_fragment_restricted_context,
         ],
         pre_token_hooks=[],
     ),

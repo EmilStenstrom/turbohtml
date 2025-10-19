@@ -233,7 +233,7 @@ def fragment_table_section_insert(tag_name, token, context, parser):
             context.move_to_element(tr)
             context.transition_to_state(DocumentState.IN_ROW, tr)
             return True
-        # Fallback: root-level row insertion (previous behavior)
+        # Fallback: insert row at fragment root when no nested section applies
         tr = Node("tr", token.attributes)
         root.append_child(tr)
         context.open_elements.push(tr)

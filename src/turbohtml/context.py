@@ -21,7 +21,7 @@ class FragmentContext:
         return True
 
     def __eq__(self, other):
-        # Prevent accidental string comparisons (old code pattern)
+        # Reject direct string comparisons so FragmentContext semantics stay explicit
         if isinstance(other, str):
             msg = (
                 f"FragmentContext comparison with string '{other}' - "

@@ -1,4 +1,4 @@
-"""TurboHTML parser (type annotations removed)."""
+"""TurboHTML parser entry point."""
 
 from turbohtml.adoption import AdoptionAgencyAlgorithm
 from turbohtml.constants import NUMERIC_ENTITY_INVALID_SENTINEL, VOID_ELEMENTS, TABLE_ELEMENTS_NO_FOSTER
