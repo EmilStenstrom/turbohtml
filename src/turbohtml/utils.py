@@ -126,7 +126,7 @@ def reconstruct_active_formatting_elements(parser, context):
     across block boundaries and table foster parenting scenarios.
     """
     afe = context.active_formatting_elements
-    if afe.is_empty():
+    if not afe:
         return
     afe_list = list(afe)
     if not afe_list:

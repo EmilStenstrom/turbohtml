@@ -1250,7 +1250,6 @@ class TextHandler(TagHandler):
                     elems
                     and elems[-1].tag_name == "table"
                     and context.active_formatting_elements
-                    and not context.active_formatting_elements.is_empty()
                 ):
                     for entry in context.active_formatting_elements:
                         if not entry.element:
@@ -3127,7 +3126,7 @@ class TableTagHandler(TagHandler):
         were created inside table cells (e.g., <a> inside <td>).
         """
         afe = context.active_formatting_elements
-        if not afe or afe.is_empty():
+        if not afe:
             return
 
         for entry in list(afe):

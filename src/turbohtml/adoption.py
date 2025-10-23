@@ -81,9 +81,6 @@ class ActiveFormattingElements:
             if earliest in self._stack:
                 self._stack.remove(earliest)
 
-    def is_empty(self):
-        return not self._stack
-
     def __iter__(self):
         return iter(self._stack)
 
