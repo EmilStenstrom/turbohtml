@@ -7,6 +7,20 @@ from turbohtml.constants import (
     FORMATTING_ELEMENTS,
     SPECIAL_CATEGORY_ELEMENTS,
 )
+_FONT_INLINE_FOLLOWERS = {
+    "p",
+    "span",
+    "sub",
+    "sup",
+    "mark",
+    "abbr",
+    "cite",
+    "ins",
+    "del",
+    "bdi",
+    "bdo",
+}
+_FONT_INLINE_FOLLOWERS |= FORMATTING_ELEMENTS
 from turbohtml.foster import foster_parent, needs_foster_parenting
 from turbohtml.node import Node
 
@@ -57,10 +71,8 @@ class ActiveFormattingElements:
         return None
 
     def remove_entry(self, entry):
-        try:
+        if entry in self._stack:
             self._stack.remove(entry)
-        except ValueError:
-            pass
 
     def _apply_noahs_ark(self, new_entry):
         matching = [
@@ -146,10 +158,8 @@ class OpenElementsStack:
         return -1
 
     def remove_element(self, element):
-        try:
+        if element in self._stack:
             self._stack.remove(element)
-        except ValueError:
-            pass
 
     def pop_until(self, element):
         """Pop all elements from stack up to and including the specified element."""
@@ -322,33 +332,9 @@ class AdoptionAgencyAlgorithm:
         # font clone so foster-parented block/table nodes stay outside the formatting scope.
         self._wrap_trailing_font_content(formatting_element, context)
 
-        # If the formatting element still has a parent that is a viable insertion point,
-        # realign the insertion location to that ancestor so foreign content stays nested.
-        fmt_parent = formatting_element.parent
-        target = None
-        if fmt_parent is not None:
-            if fmt_parent.tag_name in {"td", "th", "caption"}:
-                target = fmt_parent
-            else:
-                candidate = fmt_parent
-                while candidate is not None:
-                    if candidate is context.current_parent:
-                        target = candidate
-                        break
-                    if context.open_elements.contains(candidate):
-                        target = candidate
-                        break
-                    # Stop at foreign elements (SVG/MathML)
-                    if candidate.namespace in ("svg", "math"):
-                        break
-                    candidate = candidate.parent
-                if target is None:
-                    target = fmt_parent
+        target = formatting_element.parent
         if target is None:
-            if context.open_elements:
-                target = context.open_elements[-1]
-            else:
-                target = self.parser.root
+            target = context.open_elements[-1] if context.open_elements else self.parser.root
         context.move_to_element(target)
         context.needs_reconstruction = True
 
@@ -376,33 +362,20 @@ class AdoptionAgencyAlgorithm:
         if not trailing:
             return
 
-        allowed_inline = {
-            "p",
-            "span",
-            "sub",
-            "sup",
-            "mark",
-            "abbr",
-            "cite",
-            "ins",
-            "del",
-            "bdi",
-            "bdo",
-        }
-        allowed_inline.update(FORMATTING_ELEMENTS)
-
         def _is_inline(node):
-            tag_name = node.tag_name
-            if tag_name in ("#text", "#comment"):
+            tag = node.tag_name
+            if tag in {"#text", "#comment"}:
                 return True
-            return tag_name in allowed_inline
+            return tag in _FONT_INLINE_FOLLOWERS
 
-        last_block_idx = -1
-        for idx, node in enumerate(trailing):
+        movable = []
+        for node in reversed(trailing):
             if not _is_inline(node):
-                last_block_idx = idx
+                break
+            movable.append(node)
 
-        movable = [node for node in trailing[last_block_idx + 1 :] if _is_inline(node)]
+        if movable:
+            movable.reverse()
 
         if not movable:
             return
