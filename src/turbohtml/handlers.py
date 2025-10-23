@@ -3851,7 +3851,7 @@ class ListTagHandler(TagHandler):
             # Remove formatting descendants from open elements stack (implicit close)
             # but keep them in active formatting elements so they can be reconstructed in the new dt/dd
             if context.open_elements and ancestor in context.open_elements:
-                anc_index = context.open_elements.index(ancestor)
+                anc_index = context.open_elements.index_of(ancestor)
                 for el in context.open_elements[anc_index + 1 :]:
                     if ancestor.is_ancestor_of(el) and el.tag_name in FORMATTING_ELEMENTS:
                         context.open_elements.remove_element(el)

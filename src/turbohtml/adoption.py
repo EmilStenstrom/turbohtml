@@ -34,18 +34,15 @@ class FormattingElementEntry:
 class ActiveFormattingElements:
     """Active formatting elements list (spec stack with markers + Noah's Ark clause)."""
 
-    __slots__ = ("_max_size", "_stack")
+    __slots__ = ("_stack",)
 
-    def __init__(self, max_size=12):
+    def __init__(self):
         self._stack = []
-        self._max_size = max_size
 
     def push(self, element, token):
         entry = FormattingElementEntry(element, token)
         self._apply_noahs_ark(entry)
         self._stack.append(entry)
-        if len(self._stack) > self._max_size:
-            self._stack.pop(0)
 
     def find(self, tag_name, attributes=None):
         for entry in reversed(self._stack):
@@ -60,10 +57,10 @@ class ActiveFormattingElements:
         return None
 
     def remove_entry(self, entry):
-        if entry in self._stack:
+        try:
             self._stack.remove(entry)
-            return True
-        return False
+        except ValueError:
+            pass
 
     def _apply_noahs_ark(self, new_entry):
         matching = [
@@ -71,8 +68,7 @@ class ActiveFormattingElements:
         ]
         if len(matching) >= 3:
             earliest = matching[0]
-            if earliest in self._stack:
-                self._stack.remove(earliest)
+            self._stack.remove(earliest)
 
     def __iter__(self):
         return iter(self._stack)
@@ -101,8 +97,6 @@ class ActiveFormattingElements:
         index = min(index, len(self._stack))
         entry = FormattingElementEntry(element, token)
         self._stack.insert(index, entry)
-        if len(self._stack) > self._max_size:
-            self._stack.pop(0)
 
     def replace_entry(self, old_entry, new_element, new_token):
         for i, entry in enumerate(self._stack):
@@ -154,14 +148,6 @@ class OpenElementsStack:
                 return i
         return -1
 
-    def index(self, element):
-        """Get the index of an element (list-compatible method)."""
-        idx = self.index_of(element)
-        if idx == -1:
-            msg = f"{element} is not in stack"
-            raise ValueError(msg)
-        return idx
-
     def remove_element(self, element):
         if element in self._stack:
             self._stack.remove(element)
@@ -169,16 +155,11 @@ class OpenElementsStack:
         return False
 
     def pop_until(self, element):
-        """Pop all elements from stack up to and including the specified element.
-        
-        Returns True if element was found and popped, False otherwise.
-        """
+        """Pop all elements from stack up to and including the specified element."""
         idx = self.index_of(element)
         if idx == -1:
-            return False
-        # Use list comprehension with public __getitem__ to build new stack
-        self.replace_stack([self[i] for i in range(idx)])
-        return True
+            return
+        self.replace_stack(self._stack[:idx])
 
     # --- structural mutation ---
     def replace_element(self, old, new):
@@ -339,10 +320,7 @@ class AdoptionAgencyAlgorithm:
                     cleaned_stack.append(element)
                 if removed_anchor:
                     context.open_elements.replace_stack(cleaned_stack)
-                    if cleaned_stack:
-                        context.move_to_element(cleaned_stack[-1])
-                    else:
-                        context.move_to_element(self._get_body_or_root(context))
+                    context.move_to_element(cleaned_stack[-1])
 
         # Spec 12.2.6.4.7 (adoption agency step 8): rewrap the remaining inline siblings in a fresh
         # font clone so foster-parented block/table nodes stay outside the formatting scope.
@@ -371,7 +349,10 @@ class AdoptionAgencyAlgorithm:
                 if target is None:
                     target = fmt_parent
         if target is None:
-            target = context.open_elements[-1] if context.open_elements else self._get_body_or_root(context)
+            if context.open_elements:
+                target = context.open_elements[-1]
+            else:
+                target = self.parser.root
         context.move_to_element(target)
         context.needs_reconstruction = True
 
@@ -439,20 +420,6 @@ class AdoptionAgencyAlgorithm:
 
         # Structural change means upcoming insertions should reconsider reconstruction.
         context.needs_reconstruction = True
-
-    def _get_body_or_root(self, context):
-        """Get the body element or fallback to root."""
-        body_node = None
-        # Get HTML node from parser instead of context
-        html_node = self.parser.html_node
-        if html_node:
-            for child in html_node.children:
-                if child.tag_name == "body":
-                    body_node = child
-                    break
-        if body_node:
-            return body_node
-        return self.parser.root
 
     def _run_complex_case(self, formatting_entry, formatting_element, furthest_block, context):
         bookmark_index = context.active_formatting_elements.get_index(formatting_entry)
