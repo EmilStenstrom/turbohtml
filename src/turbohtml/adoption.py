@@ -235,7 +235,7 @@ class AdoptionAgencyAlgorithm:
             return False
         return self._find_active_entry(tag_name, context) is not None
 
-    def run_algorithm(self, tag_name, context, outer_invocation=1):
+    def run_algorithm(self, tag_name, context):
         made_progress = False
         outer_loop_counter = 0
 
@@ -274,19 +274,6 @@ class AdoptionAgencyAlgorithm:
             context.needs_reconstruction = True
 
         return made_progress
-
-    # Helper: run adoption repeatedly (spec max 8) until no action
-    def run_until_stable(self, tag_name, context, max_runs=8):
-        """Run the adoption agency algorithm up to max_runs times until it reports no further action.
-
-        Returns the number of successful runs performed. Encapsulates the counter that used
-        to live in various callers so external code no longer manages the iteration variable.
-        """
-        runs = 0
-        # With the internal spec loop implemented inside run_algorithm, one invocation is sufficient.
-        if self.should_run_adoption(tag_name, context) and self.run_algorithm(tag_name, context):
-            runs = 1
-        return runs
 
     # --- Spec helpers ---
     def _find_furthest_block(self, formatting_element, context):

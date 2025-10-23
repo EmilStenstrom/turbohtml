@@ -1522,7 +1522,7 @@ class FormattingTagHandler(TagHandler):
                 # Duplicate <a>: run adoption once to close previous anchor per spec.
                 prev_flag = context.in_end_tag_dispatch
                 context.in_end_tag_dispatch = True
-                self.parser.adoption_agency.run_until_stable("a", context, max_runs=1)
+                self.parser.adoption_agency.run_algorithm("a", context)
                 context.in_end_tag_dispatch = prev_flag
                 context.needs_reconstruction = True
                 adoption_ran_for_anchor = True
@@ -1548,7 +1548,7 @@ class FormattingTagHandler(TagHandler):
         if tag_name == "nobr" and context.open_elements.has_element_in_scope("nobr"):
             # Spec: when a <nobr> start tag is seen and one is already in scope, run the adoption
             # agency algorithm once for "nobr" then continue with normal insertion.
-            self.parser.adoption_agency.run_algorithm("nobr", context, 1)
+            self.parser.adoption_agency.run_algorithm("nobr", context)
             reconstruct_active_formatting_elements(self.parser, context)
             # Allow multiple <nobr> entries (no artificial pruning)
 
@@ -1818,8 +1818,8 @@ class FormattingTagHandler(TagHandler):
         context.in_end_tag_dispatch = True
 
         # Run adoption agency
-        runs = self.parser.adoption_agency.run_until_stable(tag_name, context, max_runs=8)
-        if runs > 0:
+        ran = self.parser.adoption_agency.run_algorithm(tag_name, context)
+        if ran:
             context.in_end_tag_dispatch = prev_processing
             return True
 
