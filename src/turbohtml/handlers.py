@@ -4357,21 +4357,6 @@ class ForeignTagHandler(TagHandler):
 
     _MATHML_LEAFS = ("mi", "mo", "mn", "ms", "mtext")
 
-    @staticmethod
-    def is_integration_point(node):
-        """Check if a given node is an HTML integration point (SVG or MathML).
-
-        Integration points are where HTML parsing rules apply inside foreign content:
-        - SVG: foreignObject, desc, title
-        - MathML: annotation-xml with text/html or application/xhtml+xml encoding
-        """
-        if node.namespace == "svg" and node.tag_name in {"foreignObject", "desc", "title"}:
-            return True
-        if node.namespace == "math" and node.tag_name == "annotation-xml":
-            encoding = node.attributes.get("encoding", "").lower()
-            return encoding in ("text/html", "application/xhtml+xml")
-        return False
-
     def _fix_foreign_attribute_case(self, attributes, element_context):
         """Fix case for SVG/MathML attributes according to HTML5 spec.
 
@@ -4561,14 +4546,6 @@ class ForeignTagHandler(TagHandler):
             return False  # Let other handlers process this element
 
         return False
-
-    def _is_in_svg_integration_point(self, context):
-        """Check if current parent is inside an SVG integration point."""
-        return is_in_integration_point(context, check="svg")
-
-    def _is_in_mathml_text_integration_point(self, context):
-        """Check if current parent is inside a MathML text integration point."""
-        return is_in_integration_point(context, check="mathml")
 
     def _is_table_related(self, tag_name):
         """Check if tag is table-related."""
