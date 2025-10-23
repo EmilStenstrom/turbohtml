@@ -4033,10 +4033,11 @@ class RawtextTagHandler(TagHandler):
         return True
 
     def handle_end(self, token, context):
-        if token.tag_name not in RAWTEXT_ELEMENTS:
+        tag_name = token.tag_name
+        if tag_name not in RAWTEXT_ELEMENTS:
             return False
 
-        if context.content_state == ContentState.RAWTEXT and token.tag_name == context.current_parent.tag_name:
+        if context.content_state == ContentState.RAWTEXT and tag_name == context.current_parent.tag_name:
             # Find the original parent before the RAWTEXT element
             original_parent = context.current_parent.parent
 
@@ -6183,12 +6184,13 @@ class PlaintextHandler(TagHandler):
         return True
 
     def handle_end(self, token, context):
+        tag_name = token.tag_name
         in_plaintext_mode = context.content_state == ContentState.PLAINTEXT
-        if not in_plaintext_mode and token.tag_name != "plaintext":
+        if not in_plaintext_mode and tag_name != "plaintext":
             return False
 
         # Outside PLAINTEXT mode: if we have an actual <svg plaintext> (or math) element open, close it normally
-        if token.tag_name == "plaintext":
+        if tag_name == "plaintext":
             # Look for a foreign plaintext element on stack (namespace-aware)
             target = None
             if context.current_parent.tag_name == "plaintext" and context.current_parent.namespace in ("svg", "math"):
@@ -6217,7 +6219,7 @@ class PlaintextHandler(TagHandler):
                 context.current_parent.append_child(text_node)
             return True
         # Any other end tag we claimed (shouldn't happen) literalize
-        literal = f"</{token.tag_name}>"
+        literal = f"</{tag_name}>"
         text_node = Node("#text", text_content=literal)
         context.current_parent.append_child(text_node)
         return True
