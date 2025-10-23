@@ -93,8 +93,6 @@ class ActiveFormattingElements:
         return len(self._stack)
 
     def insert_at_index(self, index, element, token):
-        index = max(index, 0)
-        index = min(index, len(self._stack))
         entry = FormattingElementEntry(element, token)
         self._stack.insert(index, entry)
 
@@ -103,7 +101,6 @@ class ActiveFormattingElements:
             if entry is old_entry:
                 self._stack[i] = FormattingElementEntry(new_element, new_token)
                 return
-        self.push(new_element, new_token)
 
 
 class OpenElementsStack:
@@ -149,10 +146,10 @@ class OpenElementsStack:
         return -1
 
     def remove_element(self, element):
-        if element in self._stack:
+        try:
             self._stack.remove(element)
-            return True
-        return False
+        except ValueError:
+            pass
 
     def pop_until(self, element):
         """Pop all elements from stack up to and including the specified element."""
@@ -302,8 +299,7 @@ class AdoptionAgencyAlgorithm:
             return
 
         # Pop elements until the formatting element has been removed (step 7c)
-        if formatting_element in stack:
-            stack.pop_until(formatting_element)
+        stack.pop_until(formatting_element)
 
         # Anchor specific clean-up: remove stray open anchors no longer in AFE
         if formatting_element.tag_name == "a":
