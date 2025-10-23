@@ -91,6 +91,30 @@ class Trie:
 
         return text[:longest_match_len], longest_value
 
+    def has_keys_with_prefix(self, prefix):
+        """Check if any entity name has this prefix.
+
+        Used during incremental entity consumption to decide whether
+        to continue reading characters. Returns True if:
+          - prefix itself is a complete entity, OR
+          - prefix is a proper prefix of at least one entity name
+
+        Args:
+            prefix: string to check (without leading '&')
+
+        Returns:
+            bool: True if any entity starts with this prefix
+        """
+        node = self.root
+        children = node.children
+        for char in prefix:
+            if char not in children:
+                return False
+            node = children[char]
+            children = node.children
+        # True if terminal or has more children
+        return node.is_terminal or bool(children)
+
     def __contains__(self, name):
         """Check if entity name exists in trie.
 

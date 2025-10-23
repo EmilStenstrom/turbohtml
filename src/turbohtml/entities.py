@@ -105,42 +105,44 @@ def decode_entities(text, in_attribute=False):
             i = j
             continue
 
-        # Named entity: read all alphanumeric chars, then use trie to find longest match
+        # Named entity: use incremental prefix checking (html5lib pattern)
+        # Read characters one at a time, stopping when no entity could match
         j = i + 1
+        prefix = ""
         while j < length and text[j].isalnum():
+            prefix += text[j]
+            if not _ENTITIES_TRIE.has_keys_with_prefix(prefix):
+                # No entity can match this prefix, stop here
+                break
             j += 1
 
-        name_without_ampersand = text[i + 1 : j]
+        # Now check if we have a complete entity match
         has_semicolon = j < length and text[j] == ";"
-
-        # Try to find longest entity match using trie
         found_entity = False
-        entity_name = None  # Entity name without semicolon
+        entity_name = None
         decoded = None
-        consumed_len = 0  # How many chars after '&' were consumed
+        consumed_len = 0
 
-        if has_semicolon:
-            # Try with semicolon first (preferred)
-            try:
-                matched_name, decoded = _ENTITIES_TRIE.longest_prefix_item(
-                    name_without_ampersand + ";"
-                )
-                # matched_name might be "lt;" or "lt" depending on what's in trie
-                entity_name = matched_name.rstrip(";")
-                consumed_len = len(matched_name)  # This includes the semicolon if matched
-                found_entity = True
-            except KeyError:
-                pass
+        if prefix:
+            if has_semicolon:
+                # Try with semicolon first (preferred)
+                try:
+                    matched_name, decoded = _ENTITIES_TRIE.longest_prefix_item(prefix + ";")
+                    entity_name = matched_name.rstrip(";")
+                    consumed_len = len(matched_name)
+                    found_entity = True
+                except KeyError:
+                    pass
 
-        if not found_entity:
-            # Try without semicolon
-            try:
-                matched_name, decoded = _ENTITIES_TRIE.longest_prefix_item(name_without_ampersand)
-                entity_name = matched_name
-                consumed_len = len(matched_name)
-                found_entity = True
-            except KeyError:
-                pass
+            if not found_entity:
+                # Try without semicolon
+                try:
+                    matched_name, decoded = _ENTITIES_TRIE.longest_prefix_item(prefix)
+                    entity_name = matched_name
+                    consumed_len = len(matched_name)
+                    found_entity = True
+                except KeyError:
+                    pass
 
         if found_entity:
             if in_attribute and not has_semicolon:
