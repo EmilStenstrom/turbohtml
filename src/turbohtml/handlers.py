@@ -3786,11 +3786,11 @@ class FormTagHandler(TagHandler):
 
 
 class ListTagHandler(TagHandler):
-    """Handles list-related elements (ul, ol, li, dl, dt, dd)."""
+    """Handles list-related start tags and li end tags."""
 
     # Fast-path: tags this handler processes
     HANDLED_START_TAGS = frozenset(["li", "dt", "dd"])
-    HANDLED_END_TAGS = frozenset(["ul", "ol", "li", "dl", "dt", "dd"])
+    HANDLED_END_TAGS = frozenset(["li"])
 
     def handle_start(self, token, context):
         tag_name = token.tag_name
@@ -3895,23 +3895,9 @@ class ListTagHandler(TagHandler):
     def handle_end(self, token, context):
         tag_name = token.tag_name
 
-        if tag_name in ("dt", "dd"):
-            return self._handle_definition_list_item_end(token, context)
-
         if tag_name == "li":
             return self._handle_list_item_end(token, context)
 
-        if tag_name in ("ul", "ol", "dl"):
-            return self._handle_list_container_end(token, context)
-
-        return False
-
-    def _handle_definition_list_item_end(self, token, context):
-        """Handle end tags for dt/dd."""
-        tag_name = token.tag_name
-
-        # Find the nearest dt/dd ancestor
-        dt_dd_ancestor = context.current_parent.find_first_ancestor_in_tags({"dt", "dd"})
         return False
 
     def _handle_list_item_end(self, token, context):
@@ -3936,21 +3922,6 @@ class ListTagHandler(TagHandler):
                 context.move_to_element(parent)
 
         return True
-
-    def _handle_list_container_end(self, token, context):
-        """Handle end tags for ul/ol/dl."""
-        tag_name = token.tag_name
-
-        # Find the matching list container
-        matching_container = context.current_parent.find_ancestor_until(
-            tag_name,
-            self.parser.html_node,
-        )
-
-        if matching_container:
-            return True
-
-        return False
 
 
 class HeadingTagHandler(TagHandler):
