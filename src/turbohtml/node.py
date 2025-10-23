@@ -1,3 +1,5 @@
+import sys
+
 from turbohtml.constants import BOUNDARY_ELEMENTS, FORMATTING_ELEMENTS, SVG_INTEGRATION_POINTS
 
 
@@ -36,7 +38,9 @@ class Node:
                 msg,
             )
 
-        self.tag_name = tag_name
+        # Intern tag names for faster identity comparison (Python automatically interns short strings,
+        # but explicit interning ensures all tag names share the same object for == to use pointer comparison)
+        self.tag_name = sys.intern(tag_name) if isinstance(tag_name, str) else tag_name
         self.namespace = namespace  # None for HTML, "svg" or "math" for foreign elements
         if attributes:
             # Attributes are already lowercased (from Rust tokenizer) - use directly
@@ -218,7 +222,11 @@ class Node:
             The matching ancestor Node or None if not found
 
         """
-        current = self
+        # Fast self-check before traversal (eliminates one loop iteration)
+        if self.tag_name == tag_name:
+            return self
+
+        current = self.parent
 
         # Fast path: no boundary checking (most common - ~90% of calls)
         if not stop_at_boundary:
@@ -348,23 +356,35 @@ class Node:
             node.find_first_ancestor_in_tags(["foreignObject"], namespace="svg")
 
         """
+        # Fast self-check for single tag name (common case)
         if isinstance(tag_names, str):
+            if self.tag_name == tag_names and (namespace is None or self.namespace == namespace):
+                return self
             tag_names = {tag_names}
         elif isinstance(tag_names, list):
             # Check if we're using (namespace, tag) tuple format
             if tag_names and isinstance(tag_names[0], tuple):
-                current = self
+                # Check self first
+                for ns, tag in tag_names:
+                    if self.tag_name == tag and (ns is None or self.namespace == ns):
+                        return self
+                current = self.parent
                 while current and current != stop_at:
                     for ns, tag in tag_names:
                         if current.tag_name == tag and (ns is None or current.namespace == ns):
                             return current
                     current = current.parent
                 return None
-            # Convert list to set for O(1) lookups
-            tag_names = set(tag_names)
+            # Convert list to frozenset for O(1) lookups (immutable, can be cached)
+            tag_names = frozenset(tag_names)
+        
+        # Check self first for set-based lookups
+        if self.tag_name in tag_names:
+            if namespace is None or self.namespace == namespace:
+                return self
 
         # Plain tag name set with optional namespace (fast O(1) lookup)
-        current = self
+        current = self.parent
         while current and current != stop_at:
             if current.tag_name in tag_names:
                 if namespace is None or current.namespace == namespace:
@@ -373,8 +393,15 @@ class Node:
         return None
 
     def last_child_is_text(self):
-        """Check if the last child is a text node."""
-        return self.children and self.children[-1].tag_name == "#text"
+        """Check if the last child is a text node.
+        
+        Optimized: direct array access + interned string comparison.
+        """
+        # Fast path: empty children list
+        if not self.children:
+            return False
+        # Interned string comparison (pointer equality check in CPython)
+        return self.children[-1].tag_name == "#text"
 
     def is_inside_tag(self, tag_name):
         """Check if this node is inside an element with the given tag name.

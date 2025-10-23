@@ -48,31 +48,48 @@ class FormattingElementEntry:
 class ActiveFormattingElements:
     """Active formatting elements list (spec stack with markers + Noah's Ark clause)."""
 
-    __slots__ = ("_stack",)
+    __slots__ = ("_stack", "_element_index")
 
     def __init__(self):
         self._stack = []
+        # Fast element->index lookup cache (cleared on structural changes)
+        self._element_index = {}
 
     def push(self, element, token):
         entry = FormattingElementEntry(element, token)
         self._apply_noahs_ark(entry)
         self._stack.append(entry)
+        # Update index cache
+        self._element_index[id(element)] = len(self._stack) - 1
 
     def find(self, tag_name, attributes=None):
-        for entry in reversed(self._stack):
+        # Reverse iteration for most-recent-first semantics (common pattern)
+        for i in range(len(self._stack) - 1, -1, -1):
+            entry = self._stack[i]
             if entry.matches(tag_name, attributes):
                 return entry
         return None
 
     def find_element(self, element):
-        for entry in self._stack:
+        # O(1) lookup via index cache when element exists
+        elem_id = id(element)
+        if elem_id in self._element_index:
+            idx = self._element_index[elem_id]
+            # Verify cache is still valid (element hasn't been removed)
+            if idx < len(self._stack) and self._stack[idx].element is element:
+                return self._stack[idx]
+        # Fallback: linear search and rebuild cache
+        for i, entry in enumerate(self._stack):
             if entry.element is element:
+                self._element_index[elem_id] = i
                 return entry
         return None
 
     def remove_entry(self, entry):
         if entry in self._stack:
             self._stack.remove(entry)
+            # Invalidate cache on removal (rebuild on next access)
+            self._element_index.clear()
 
     def _apply_noahs_ark(self, new_entry):
         matching = [
@@ -81,6 +98,8 @@ class ActiveFormattingElements:
         if len(matching) >= 3:
             earliest = matching[0]
             self._stack.remove(earliest)
+            # Invalidate cache after removal
+            self._element_index.clear()
 
     def __iter__(self):
         return iter(self._stack)
@@ -94,8 +113,10 @@ class ActiveFormattingElements:
     def clear(self):
         """Clear all entries from the list."""
         self._stack.clear()
+        self._element_index.clear()
 
     def get_index(self, entry):
+        # Direct list search (entries don't have stable IDs)
         for i, e in enumerate(self._stack):
             if e is entry:
                 return i
@@ -107,11 +128,15 @@ class ActiveFormattingElements:
     def insert_at_index(self, index, element, token):
         entry = FormattingElementEntry(element, token)
         self._stack.insert(index, entry)
+        # Invalidate cache after insertion
+        self._element_index.clear()
 
     def replace_entry(self, old_entry, new_element, new_token):
         for i, entry in enumerate(self._stack):
             if entry is old_entry:
                 self._stack[i] = FormattingElementEntry(new_element, new_token)
+                # Invalidate cache after replacement
+                self._element_index.clear()
                 return
 
 
@@ -126,17 +151,24 @@ class OpenElementsStack:
       * _is_special_category (category check used during adoption)
     """
 
-    __slots__ = ("_stack",)
+    __slots__ = ("_stack", "_element_set")
 
     def __init__(self):
         self._stack = []
+        # O(1) membership testing via set of element IDs
+        self._element_set = set()
 
     # --- basic stack ops ---
     def push(self, element):
         self._stack.append(element)
+        self._element_set.add(id(element))
 
     def pop(self):
-        return self._stack.pop() if self._stack else None
+        if self._stack:
+            element = self._stack.pop()
+            self._element_set.discard(id(element))
+            return element
+        return None
 
     def current(self):
         return self._stack[-1] if self._stack else None
@@ -149,34 +181,45 @@ class OpenElementsStack:
 
     # --- membership / search ---
     def contains(self, element):
-        return element in self._stack
+        # O(1) membership test via set
+        return id(element) in self._element_set
 
     def index_of(self, element):
+        # Linear search for index (no cache since indices change on pop/insert)
         for i, el in enumerate(self._stack):
             if el is element:
                 return i
         return -1
 
     def remove_element(self, element):
-        if element in self._stack:
+        if id(element) in self._element_set:
             self._stack.remove(element)
+            self._element_set.discard(id(element))
 
     def pop_until(self, element):
         """Pop all elements from stack up to and including the specified element."""
         idx = self.index_of(element)
         if idx == -1:
             return
-        self.replace_stack(self._stack[:idx])
+        # Remove elements from index onwards
+        removed = self._stack[idx:]
+        self._stack = self._stack[:idx]
+        # Update set
+        for el in removed:
+            self._element_set.discard(id(el))
 
     # --- structural mutation ---
     def replace_element(self, old, new):
         idx = self.index_of(old)
         if idx != -1:
             self._stack[idx] = new
+            self._element_set.discard(id(old))
+            self._element_set.add(id(new))
 
     def insert(self, index, element):
         """Insert an element at the specified index."""
         self._stack.insert(index, element)
+        self._element_set.add(id(element))
 
     # --- scope handling ---
     def has_element_in_scope(self, tag_name):
@@ -214,6 +257,8 @@ class OpenElementsStack:
     def replace_stack(self, new_stack):
         """Replace the entire stack with a new list of elements."""
         self._stack = new_stack
+        # Rebuild set from new stack
+        self._element_set = {id(el) for el in new_stack}
 
 
 class AdoptionAgencyAlgorithm:
