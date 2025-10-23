@@ -5307,7 +5307,7 @@ class HeadTagHandler(TagHandler):
     """Handles head element and its contents."""
 
     HANDLED_START_TAGS = HEAD_ELEMENTS
-    HANDLED_END_TAGS = frozenset(["head", "noscript"])
+    HANDLED_END_TAGS = frozenset(["head"])
     HANDLES_TEXT = True  # Handles whitespace in head and RAWTEXT in head elements
 
     def handle_start(self, token, context):
@@ -5315,14 +5315,19 @@ class HeadTagHandler(TagHandler):
             return False
 
         tag_name = token.tag_name
-        
+        state = context.document_state
+
+        if state == DocumentState.IN_HEAD:
+            self._insert_head_element(token, context, tag_name)
+            return True
+
         # style/script: suppress if inside table cells/captions
         if tag_name in ("style", "script"):
             if context.current_parent.find_first_ancestor_in_tags({"caption", "tr", "td", "th", "tbody", "thead", "tfoot"}):
                 return False
-            
+
             # In table context: insert inside table structure (before sections)
-            if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
+            if state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
                 table = get_current_table(context)
                 if table:
                     parent_tag = context.current_parent.tag_name
@@ -5337,7 +5342,7 @@ class HeadTagHandler(TagHandler):
                     return True
         
         # Non-style/script in table context: foster parent before table
-        if context.document_state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
+        if state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
             table = get_current_table(context)
             if table:
                 parent_for_foster = table.parent or context.current_parent
@@ -5346,15 +5351,15 @@ class HeadTagHandler(TagHandler):
                 return True
         
         # IN_BODY: insert at current position (misplaced head elements stay in body)
-        if context.document_state == DocumentState.IN_BODY:
+        if state == DocumentState.IN_BODY:
             self._insert_head_element(token, context, tag_name)
             return True
         
         # Normal head handling: ensure head exists and insert there
-        if context.document_state not in (DocumentState.IN_HEAD, DocumentState.AFTER_HEAD):
+        if state not in (DocumentState.IN_HEAD, DocumentState.AFTER_HEAD):
             head = ensure_head(self.parser)
             context.transition_to_state(DocumentState.IN_HEAD, head)
-        elif context.document_state == DocumentState.AFTER_HEAD:
+        elif state == DocumentState.AFTER_HEAD:
             head = ensure_head(self.parser)
             if head:
                 context.move_to_element(head)
