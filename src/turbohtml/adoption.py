@@ -59,13 +59,6 @@ class ActiveFormattingElements:
                 return entry
         return None
 
-    def remove(self, element):
-        for i, entry in enumerate(self._stack):
-            if entry.element is element:
-                self._stack.pop(i)
-                return True
-        return False
-
     def remove_entry(self, entry):
         if entry in self._stack:
             self._stack.remove(entry)

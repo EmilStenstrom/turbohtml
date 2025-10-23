@@ -1855,7 +1855,7 @@ class FormattingTagHandler(TagHandler):
 
         entry = context.active_formatting_elements.find_element(current)
         if entry:
-            context.active_formatting_elements.remove(current)
+            context.active_formatting_elements.remove_entry(entry)
         while not context.open_elements.is_empty():
             popped = context.open_elements.pop()
             if popped == current:
@@ -6141,28 +6141,27 @@ class PlaintextHandler(TagHandler):
         recreate_anchor = False
         recreated_anchor_attrs = None
         if a_entry:
-            a_el = a_entry.element
-            # Recreate a fresh <a> inside <plaintext> per expected tree
-            if a_el:
-                recreated_anchor_attrs = a_el.attributes.copy() if a_el.attributes else {}
+            anchor_element = a_entry.element
+            if anchor_element:
+                recreated_anchor_attrs = anchor_element.attributes.copy() if anchor_element.attributes else {}
             recreate_anchor = True
-            # If it is still on the stack, pop it (spec would have left it; we force close to match test expectations)
-            context.active_formatting_elements.remove(a_el)
-        elif not a_entry:
-            # Fallback: active formatting elements list may not have tracked <a>; detect via current parent / ancestor
+            context.active_formatting_elements.remove_entry(a_entry)
+        else:
             cur_a = (
                 context.current_parent
                 if context.current_parent.tag_name == "a"
                 else context.current_parent.find_ancestor("a")
             )
             if cur_a and context.open_elements.contains(cur_a):
-                a_el = cur_a
-                # Capture attributes then detach similarly
-                # active formatting list may or may not contain; guard remove
-                if context.active_formatting_elements:
-                    context.active_formatting_elements.remove(a_el)
-                if a_el.parent:
-                    context.move_to_element(a_el.parent)
+                entry = (
+                    context.active_formatting_elements.find_element(cur_a)
+                    if context.active_formatting_elements
+                    else None
+                )
+                if entry:
+                    context.active_formatting_elements.remove_entry(entry)
+                if cur_a.parent:
+                    context.move_to_element(cur_a.parent)
 
         if (
             context.document_state == DocumentState.IN_TABLE
