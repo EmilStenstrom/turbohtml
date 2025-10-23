@@ -2902,7 +2902,9 @@ class TableTagHandler(TagHandler):
             return True
 
         # Look for last colgroup that's still valid
-        for child in reversed(table.children):
+        children = table.children
+        for idx in range(len(children) - 1, -1, -1):
+            child = children[idx]
             if child.tag_name == "colgroup":
                 # Found a colgroup, but check if there's tbody/tr/td after it
                 has_content_after = any(c.tag_name in ("tbody", "tr", "td") for c in children[idx + 1 :])
@@ -4111,10 +4113,10 @@ class VoidTagHandler(TagHandler):
         ):
             raw_type = token.attributes.get("type", "")
             is_clean_hidden = raw_type.lower() == "hidden" and raw_type == raw_type.strip()
-            if not is_clean_hidden:
-                # Foster parent using centralized helper
-                table = get_current_table(context)
-                if table:
+            table = get_current_table(context)
+            if table:
+                if not is_clean_hidden:
+                    # Foster parent using centralized helper
                     foster_parent_node, before = foster_parent(
                         context.current_parent,
                         context.open_elements,
@@ -4130,11 +4132,8 @@ class VoidTagHandler(TagHandler):
                         parent=foster_parent_node,
                         before=before,
                     )
-                    return True
-            else:
-                # Clean hidden: ensure it becomes child of table (not foster parented) even if current_parent not table
-                table = get_current_table(context)
-                if table:
+                else:
+                    # Clean hidden: ensure it becomes child of table (not foster parented) even if current_parent not table
                     self.parser.insert_element(
                         token,
                         context,
@@ -4142,7 +4141,7 @@ class VoidTagHandler(TagHandler):
                         enter=False,
                         parent=table,
                     )
-                    return True
+                return True
 
         # Special input handling when a form appears inside a table
         if tag_name == "input":
