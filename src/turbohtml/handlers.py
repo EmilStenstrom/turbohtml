@@ -2769,38 +2769,49 @@ class TableTagHandler(TagHandler):
             return False
 
         tag_name = token.tag_name
+        current_context = context.current_context
+        in_foreign = current_context in ("math", "svg")
+        in_integration_point = False
+
+        if in_foreign:
+            in_integration_point = is_in_integration_point(context)
+            if not in_integration_point:
+                return False
+
+        if tag_name == "table":
+            return self._handle_table(token, context)
 
         current_table = get_current_table(context)
-        in_integration_point = is_in_integration_point(context)
-        in_foreign = context.current_context in ("math", "svg")
-        if in_foreign and not in_integration_point:
-            return False
 
         if not current_table:
-            # Integration point without table: ignore table structure tags
-            if in_integration_point and tag_name != "table":
+            if not in_integration_point:
+                in_integration_point = is_in_integration_point(context)
+            if in_integration_point:
                 return True
 
-            # Prelude tags (caption/col/colgroup/thead/tbody/tfoot) without table context: ignore
             if tag_name in ("caption", "col", "colgroup", "thead", "tbody", "tfoot"):
-                if context.current_context not in ("math", "svg"):
+                if current_context not in ("math", "svg"):
                     return True
 
-        # Dispatch to handler by tag name
-        handlers = {
-            "table": self._handle_table,
-            "caption": self._handle_caption,
-            "colgroup": self._handle_colgroup,
-            "col": self._handle_col,
-            "tbody": self._handle_tbody,
-            "thead": self._handle_tbody,
-            "tfoot": self._handle_tbody,
-            "tr": self._handle_tr,
-            "td": self._handle_cell,
-            "th": self._handle_cell,
-        }
+        if tag_name == "caption":
+            return self._handle_caption(token, context)
 
-        return handlers[tag_name](token, context)
+        if tag_name == "colgroup":
+            return self._handle_colgroup(token, context)
+
+        if tag_name == "col":
+            return self._handle_col(token, context)
+
+        if tag_name in ("tbody", "thead", "tfoot"):
+            return self._handle_tbody(token, context)
+
+        if tag_name == "tr":
+            return self._handle_tr(token, context)
+
+        if tag_name in ("td", "th"):
+            return self._handle_cell(token, context)
+
+        return True
 
     def _handle_table(self, token, context):
         """Handle table element per HTML5 spec 13.2.6.4.7 (in body) and 13.2.6.4.9 (in table).
@@ -2888,13 +2899,17 @@ class TableTagHandler(TagHandler):
         need_new_colgroup = True
         last_colgroup = None
 
+        table = get_current_table(context)
+        if not table:
+            return True
+
         # Look for last colgroup that's still valid
-        for child in reversed(get_current_table(context).children):
+        for child in reversed(table.children):
             if child.tag_name == "colgroup":
                 # Found a colgroup, but check if there's tbody/tr/td after it
-                idx = get_current_table(context).children.index(child)
+                idx = table.children.index(child)
                 has_content_after = any(
-                    c.tag_name in ("tbody", "tr", "td") for c in get_current_table(context).children[idx + 1 :]
+                    c.tag_name in ("tbody", "tr", "td") for c in table.children[idx + 1 :]
                 )
                 if not has_content_after:
                     last_colgroup = child
@@ -2909,7 +2924,7 @@ class TableTagHandler(TagHandler):
                 context,
                 mode="normal",
                 enter=False,
-                parent=get_current_table(context),
+                parent=table,
                 push_override=False,
             )
 
@@ -2928,7 +2943,7 @@ class TableTagHandler(TagHandler):
             return True
 
         # Stay at table level
-        context.move_to_element(get_current_table(context))
+        context.move_to_element(table)
         return True
 
     def _handle_tbody(self, token, context):
@@ -3545,16 +3560,10 @@ class TableTagHandler(TagHandler):
     def handle_end(self, token, context):
         tag_name = token.tag_name
 
-        allowed = {
-            "table",
-            "tbody",
-            "thead",
-            "tfoot",
-            "tr",
-            "caption",
-        }
+        if tag_name not in self.HANDLED_END_TAGS:
+            return False
 
-        if tag_name not in allowed:
+        if tag_name == "colgroup":
             return False
 
         # Ignore stray </table> when no table is open
