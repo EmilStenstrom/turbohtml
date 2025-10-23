@@ -220,13 +220,6 @@ class OpenElementsStack:
                 return False
         return False
 
-    def find_last_index(self, predicate):
-        """Find the index of the last (deepest) element matching predicate, or -1 if not found."""
-        for i in range(len(self._stack) - 1, -1, -1):
-            if predicate(self._stack[i]):
-                return i
-        return -1
-
     # --- iteration helpers ---
     def __iter__(self):
         return iter(self._stack)
@@ -329,8 +322,6 @@ class AdoptionAgencyAlgorithm:
 
     def _run_simple_case(self, formatting_entry, formatting_element, context):
         stack = context.open_elements
-
-        any(child.tag_name == "table" for child in formatting_element.children)
 
         # Remove the formatting element entry from the active list (spec step 7a)
         context.active_formatting_elements.remove_entry(formatting_entry)
