@@ -344,6 +344,10 @@ class AdoptionAgencyAlgorithm:
                     else:
                         context.move_to_element(self._get_body_or_root(context))
 
+        # Spec 12.2.6.4.7 (adoption agency step 8): rewrap the remaining inline siblings in a fresh
+        # font clone so foster-parented block/table nodes stay outside the formatting scope.
+        self._wrap_trailing_font_content(formatting_element, context)
+
         # If the formatting element still has a parent that is a viable insertion point,
         # realign the insertion location to that ancestor so foreign content stays nested.
         fmt_parent = formatting_element.parent
@@ -369,9 +373,6 @@ class AdoptionAgencyAlgorithm:
         if target is None:
             target = context.open_elements[-1] if context.open_elements else self._get_body_or_root(context)
         context.move_to_element(target)
-        if formatting_element.tag_name == "font":
-            wrapper_parent = fmt_parent if fmt_parent is not None else target
-            self._wrap_trailing_font_content(wrapper_parent, context)
         context.needs_reconstruction = True
 
         # Trigger reconstruction if any active formatting entries are now stale
@@ -381,36 +382,63 @@ class AdoptionAgencyAlgorithm:
                 context.needs_reconstruction = True
                 break
 
-    def _wrap_trailing_font_content(self, parent, context):
-        if parent is None or not parent.children:
-            return None
-        last_table_index = None
-        for idx, child in enumerate(parent.children):
-            if child.tag_name == "table":
-                last_table_index = idx
-        if last_table_index is None:
-            return None
-        start_index = last_table_index + 1
-        if start_index >= len(parent.children):
-            return None
-        movable = []
-        idx = start_index
-        while idx < len(parent.children):
-            node = parent.children[idx]
-            if node.tag_name == "a" and node.children:
-                break
-            if node.tag_name == "font" and node.children:
-                break
-            movable.append(node)
-            idx += 1
+    def _wrap_trailing_font_content(self, formatting_element, context):
+        if formatting_element.tag_name != "font":
+            return
+
+        parent = formatting_element.parent
+        if parent is None:
+            return
+
+        try:
+            start_index = parent.children.index(formatting_element) + 1
+        except ValueError:
+            return
+
+        trailing = list(parent.children[start_index:])
+        if not trailing:
+            return
+
+        allowed_inline = {
+            "p",
+            "span",
+            "sub",
+            "sup",
+            "mark",
+            "abbr",
+            "cite",
+            "ins",
+            "del",
+            "bdi",
+            "bdo",
+        }
+        allowed_inline.update(FORMATTING_ELEMENTS)
+
+        def _is_inline(node):
+            tag_name = node.tag_name
+            if tag_name in ("#text", "#comment"):
+                return True
+            return tag_name in allowed_inline
+
+        last_block_idx = -1
+        for idx, node in enumerate(trailing):
+            if not _is_inline(node):
+                last_block_idx = idx
+
+        movable = [node for node in trailing[last_block_idx + 1 :] if _is_inline(node)]
+
         if not movable:
-            return None
-        new_wrapper = Node("font")
-        parent.insert_child_at(start_index, new_wrapper)
+            return
+
+        wrapper = Node(formatting_element.tag_name, formatting_element.attributes.copy())
+        first = movable[0]
+        parent.insert_before(wrapper, first)
+
         for node in movable:
-            parent.remove_child(node)
-            new_wrapper.append_child(node)
-        return new_wrapper
+            wrapper.append_child(node)
+
+        # Structural change means upcoming insertions should reconsider reconstruction.
+        context.needs_reconstruction = True
 
     def _get_body_or_root(self, context):
         """Get the body element or fallback to root."""
