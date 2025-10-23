@@ -16,20 +16,19 @@ from turbohtml.constants import (
     SPECIAL_CATEGORY_ELEMENTS,
     SVG_CASE_SENSITIVE_ATTRIBUTES,
     SVG_CASE_SENSITIVE_ELEMENTS,
-    SVG_INTEGRATION_POINTS,
     TABLE_ELEMENTS,
     VOID_ELEMENTS,
 )
 from turbohtml.context import (
     ContentState,
     DocumentState,
-    is_in_integration_point,
-    get_integration_point_node,
-    get_svg_ancestor,
-    get_math_ancestor,
-    get_foreign_object_ancestor,
-    get_foreign_namespace_ancestor,
     get_current_table,
+    get_foreign_namespace_ancestor,
+    get_foreign_object_ancestor,
+    get_integration_point_node,
+    get_math_ancestor,
+    get_svg_ancestor,
+    is_in_integration_point,
 )
 from turbohtml.foster import foster_parent, needs_foster_parenting
 from turbohtml.node import Node
@@ -439,7 +438,7 @@ class DocumentStructureHandler(TagHandler):
                 )
             return True
         body = get_body(self.parser.root) or ensure_body(
-            self.parser.root, context.document_state, self.parser.fragment_context
+            self.parser.root, context.document_state, self.parser.fragment_context,
         )
         if body:
             context.move_to_element(body)
@@ -488,7 +487,7 @@ class TemplateContentFilterHandler(TagHandler):
             "td",
             "th",
             "select",
-        }
+        },
     )
 
     # Ignore only top-level/document-structure things inside template content
@@ -1377,7 +1376,7 @@ class TextHandler(TagHandler):
                 prev_node.text_content += text
         else:
             # Create new text node
-            node = self.parser.insert_text(
+            self.parser.insert_text(
                 text,
                 context,
                 parent=context.current_parent,
@@ -2136,7 +2135,7 @@ class SelectTagHandler(TagHandler):
                         context.move_to_element(closing_option.parent)
                     else:
                         parent_body = ensure_body(
-                            self.parser.root, context.document_state, self.parser.fragment_context
+                            self.parser.root, context.document_state, self.parser.fragment_context,
                         )
                         if parent_body:
                             context.move_to_element(parent_body)
@@ -2145,7 +2144,7 @@ class SelectTagHandler(TagHandler):
                     container = context.current_parent.find_first_ancestor_in_tags({"select", "datalist"})
                     if container:
                         context.move_to_element(container)
-                new_optgroup = self.parser.insert_element(
+                self.parser.insert_element(
                     token,
                     context,
                     mode="normal",
@@ -2157,7 +2156,7 @@ class SelectTagHandler(TagHandler):
             # BUT if current parent is option, implicitly close it first (options don't nest)
             if context.current_parent.tag_name == "option":
                 context.move_up_one_level()
-            new_option = self.parser.insert_element(
+            self.parser.insert_element(
                 token,
                 context,
                 mode="normal",
@@ -2194,7 +2193,7 @@ class SelectTagHandler(TagHandler):
                 while current and current is not block_element:
                     if current.tag_name in FORMATTING_ELEMENTS:
                         formatting_to_recreate.insert(
-                            0, (current.tag_name, current.attributes.copy() if current.attributes else {})
+                            0, (current.tag_name, current.attributes.copy() if current.attributes else {}),
                         )
                     current = current.parent
 
@@ -2230,7 +2229,7 @@ class SelectTagHandler(TagHandler):
                 while current and current is not fmt_element:
                     if current.tag_name in FORMATTING_ELEMENTS:
                         nested_formatting.insert(
-                            0, (current.tag_name, current.attributes.copy() if current.attributes else {})
+                            0, (current.tag_name, current.attributes.copy() if current.attributes else {}),
                         )
                     current = current.parent
 
@@ -2446,7 +2445,7 @@ class ParagraphTagHandler(TagHandler):
         if self._needs_table_foster_parenting(context):
             # Inside cell - create normally
             if context.current_parent.tag_name in ("td", "th") or context.current_parent.find_first_ancestor_in_tags(
-                {"td", "th"}
+                {"td", "th"},
             ):
                 pass  # Fall through to default
             elif is_in_integration_point(context):
@@ -2458,7 +2457,7 @@ class ParagraphTagHandler(TagHandler):
                     fake_end = HTMLToken("EndTag", tag_name="p")
                     self.handle_end(fake_end, context)
                 target_parent, target_before = foster_parent(
-                    context.current_parent, context.open_elements, self.parser.root, context.current_parent, tag_name
+                    context.current_parent, context.open_elements, self.parser.root, context.current_parent, tag_name,
                 )
                 self.parser.insert_element(token, context, parent=target_parent, before=target_before)
                 return True
@@ -2488,7 +2487,7 @@ class ParagraphTagHandler(TagHandler):
 
             if formatting_descendants:
                 context.open_elements.replace_stack(
-                    [el for el in context.open_elements if el not in formatting_descendants]
+                    [el for el in context.open_elements if el not in formatting_descendants],
                 )
 
         # Case 8: Container element - create inside
@@ -2755,11 +2754,11 @@ class TableTagHandler(TagHandler):
             "tr",
             "td",
             "th",
-        }
+        },
     )
     HANDLED_END_TAGS = frozenset({"table", "tbody", "thead", "tfoot", "tr", "caption", "colgroup"})
     HANDLES_TEXT = True  # Handles text in table contexts (foster parenting)
-    
+
     # Class-level constants to avoid recreation on every call
     _TABLE_CONTEXT_TAGS = frozenset({"html", "body", "table"})
     _TABLE_SECTION_TAGS = frozenset({"tbody", "thead", "tfoot"})
@@ -2926,7 +2925,7 @@ class TableTagHandler(TagHandler):
             )
 
         # Add col to colgroup
-        new_col = self.parser.insert_element(
+        self.parser.insert_element(
             token,
             context,
             mode="normal",
@@ -2993,7 +2992,7 @@ class TableTagHandler(TagHandler):
             current_tag = context.open_elements[-1].tag_name
             if current_tag in self._TABLE_CONTEXT_TAGS:
                 break
-            popped = context.open_elements.pop()
+            context.open_elements.pop()
 
         # Update current_parent to top of stack after clearing
         if context.open_elements:
@@ -3373,7 +3372,7 @@ class TableTagHandler(TagHandler):
 
         if has_formatting_context:
             text_holder = self._build_formatting_chain(
-                formatting_elements, reused_wrapper, context, foster_parent, table_index
+                formatting_elements, reused_wrapper, context, foster_parent, table_index,
             )
             self.parser.insert_text(text, context, parent=text_holder, merge=True)
         else:
@@ -3551,7 +3550,7 @@ class TableTagHandler(TagHandler):
 
         # Final fallback: insert directly before table
         self.parser.insert_text(
-            text, context, parent=foster_parent, before=foster_parent.children[table_index], merge=True
+            text, context, parent=foster_parent, before=foster_parent.children[table_index], merge=True,
         )
 
     def handle_end(self, token, context):
@@ -3610,7 +3609,7 @@ class TableTagHandler(TagHandler):
         # Determine where to move insertion point after closing table
         formatting_parent = table_node.parent
         foreign_ancestor = table_node.find_first_ancestor_in_tags(
-            [("svg", "foreignObject")]
+            [("svg", "foreignObject")],
         ) or table_node.find_first_ancestor_in_tags([("math", "annotation-xml")])
 
         # Priority 1: Formatting element parent (with special anchor handling)
@@ -3828,8 +3827,6 @@ class ListTagHandler(TagHandler):
             stack but keep active formatting entries so they can reconstruct in the new item)
           - Reconstruct formatting after creating the new item so duplication (<b>) is possible.
         """
-        tag_name = token.tag_name
-
         ancestor = context.current_parent.find_first_ancestor_in_tags(["dt", "dd"])
         if ancestor:
 
@@ -3854,7 +3851,7 @@ class ListTagHandler(TagHandler):
                 context.open_elements.remove_element(ancestor)
 
         # Create new dt/dd using centralized insertion helper (normal mode) to create and push the dt/dd element.
-        new_node = self.parser.insert_element(token, context, mode="normal", enter=True)
+        self.parser.insert_element(token, context, mode="normal", enter=True)
         return True
 
     def _handle_list_item(self, token, context):
@@ -3872,7 +3869,7 @@ class ListTagHandler(TagHandler):
             table = get_current_table(context)
             if table and table.parent:
                 # Foster parent li before table using helper (normal mode enters and pushes); specify parent/before.
-                new_node = self.parser.insert_element(
+                self.parser.insert_element(
                     token,
                     context,
                     mode="normal",
@@ -3894,7 +3891,7 @@ class ListTagHandler(TagHandler):
                 ):
                     context.move_to_element(list_ancestor)
 
-        new_node = self.parser.insert_element(token, context, mode="normal", enter=True)
+        self.parser.insert_element(token, context, mode="normal", enter=True)
         return True
 
     def handle_end(self, token, context):
@@ -4066,7 +4063,7 @@ class RawtextTagHandler(TagHandler):
         return context.content_state == ContentState.RAWTEXT
 
     def handle_text(self, text, context):
-        
+
         # Special handling for textarea: ignore first newline if present and it's the first content
         # Per HTML5 spec, a leading newline in textarea is stripped
         if (
@@ -4078,12 +4075,11 @@ class RawtextTagHandler(TagHandler):
             # If the text was only a newline, don't create a text node
             if not text:
                 return True
-        
+
         # Unterminated rawtext end tag fragments now handled in tokenizer (contextual honoring); no suppression here.
 
         # Try to merge with previous text node if it exists
         # Use centralized insertion (merge with previous if allowed)
-        merged = context.current_parent.children and context.current_parent.children[-1].tag_name == "#text"
         # Preserve replacement characters inside <script> rawtext per spec expectations (domjs-unsafe cases)
         self.parser.insert_text(
             text,
@@ -4237,10 +4233,8 @@ class BlockFormattingReconstructionHandler(TagHandler):
         block_tag = token.tag_name
         if block_tag in BLOCK_ELEMENTS and block_tag != "li":
             if context.active_formatting_elements:
-                needs_reconstruct = False
                 for entry in context.active_formatting_elements:
                     if entry.element and not context.open_elements.contains(entry.element):
-                        needs_reconstruct = True
                         break
             self.parser.insert_element(token, context, mode="normal")
             return True
@@ -4411,7 +4405,8 @@ class ForeignTagHandler(TagHandler):
 
                     # Create the new node via unified insertion (no push onto open elements stack)
                     if tag_name == "math":
-                        context.has_foreign_content = True; context.current_context = "math"  # set context before insertion for downstream handlers
+                        context.has_foreign_content = True
+                        context.current_context = "math"  # set context before insertion for downstream handlers
                         fixed_attrs = self._fix_foreign_attribute_case(
                             token.attributes,
                             "math",
@@ -4430,7 +4425,8 @@ class ForeignTagHandler(TagHandler):
                             push_override=False,
                         )
                     else:  # svg
-                        context.has_foreign_content = True; context.current_context = "svg"
+                        context.has_foreign_content = True
+                        context.current_context = "svg"
                         fixed_attrs = self._fix_foreign_attribute_case(
                             token.attributes,
                             "svg",
@@ -4746,7 +4742,8 @@ class ForeignTagHandler(TagHandler):
                 last_child = context.current_parent.children[-1] if context.current_parent.children else None
                 if last_child and last_child.namespace == "svg" and last_child.tag_name == "svg":
                     context.move_to_element(last_child)
-                    context.has_foreign_content = True; context.current_context = "svg"
+                    context.has_foreign_content = True
+                    context.current_context = "svg"
                     # Create integration point element with svg prefix (mirrors svg context logic)
                     self.parser.insert_element(
                         token,
@@ -4812,7 +4809,8 @@ class ForeignTagHandler(TagHandler):
                         attributes_override=fixed_attrs,
                         push_override=False,
                     )
-                    context.has_foreign_content = True; context.current_context = "svg"
+                    context.has_foreign_content = True
+                    context.current_context = "svg"
                     return True
 
             # Check if we're in a MathML integration point - if so, delegate HTML elements to HTML handlers
@@ -4867,7 +4865,8 @@ class ForeignTagHandler(TagHandler):
                             push_override=False,
                         )
                         if not token.is_self_closing:
-                            context.has_foreign_content = True; context.current_context = "math"
+                            context.has_foreign_content = True
+                            context.current_context = "math"
                         return True
                     if tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
                         return False
@@ -4887,7 +4886,8 @@ class ForeignTagHandler(TagHandler):
                         push_override=False,
                     )
                     if not token.is_self_closing:
-                        context.has_foreign_content = True; context.current_context = "math"
+                        context.has_foreign_content = True
+                        context.current_context = "math"
                     return True
                 # Descendant of a foreignObject/desc/title (current parent not the integration point itself):
                 # math root appearing here should still start a MathML subtree (tests expect <math math> not <svg math>),
@@ -5022,7 +5022,8 @@ class ForeignTagHandler(TagHandler):
                 push_override=False,
             )
             if not token.is_self_closing:
-                context.has_foreign_content = True; context.current_context = "math"
+                context.has_foreign_content = True
+                context.current_context = "math"
             return True
 
         if tag_name == "svg":
@@ -5039,7 +5040,8 @@ class ForeignTagHandler(TagHandler):
                 push_override=False,
             )
             if not token.is_self_closing:
-                context.has_foreign_content = True; context.current_context = "svg"
+                context.has_foreign_content = True
+                context.current_context = "svg"
             return True
         # No additional foreign handling
 
@@ -5115,9 +5117,11 @@ class ForeignTagHandler(TagHandler):
             ancestor = get_foreign_namespace_ancestor(context)
             if ancestor:
                 if ancestor.namespace == "svg":
-                    context.has_foreign_content = True; context.current_context = "svg"
+                    context.has_foreign_content = True
+                    context.current_context = "svg"
                 elif ancestor.namespace == "math":
-                    context.has_foreign_content = True; context.current_context = "math"
+                    context.has_foreign_content = True
+                    context.current_context = "math"
             return True
 
         # If we didn't find a matching foreign element, but we're inside a foreign context
@@ -5171,9 +5175,11 @@ class ForeignTagHandler(TagHandler):
                 fc = self.parser.fragment_context
                 if fc and fc.namespace in ("svg", "math") and prev_foreign in ("svg", "math"):
                     if prev_foreign == "svg" and fc.namespace == "svg":
-                        context.has_foreign_content = True; context.current_context = "svg"
+                        context.has_foreign_content = True
+                        context.current_context = "svg"
                     elif prev_foreign == "math" and fc.namespace == "math":
-                        context.has_foreign_content = True; context.current_context = "math"
+                        context.has_foreign_content = True
+                        context.current_context = "math"
                 return False
 
         return True  # Ignore if nothing matched and not a breakout case
@@ -5342,7 +5348,7 @@ class HeadTagHandler(TagHandler):
                                 break
                     self._insert_head_element(token, context, tag_name, parent=container, before=before)
                     return True
-        
+
         # Non-style/script in table context: foster parent before table
         if state in (DocumentState.IN_TABLE, DocumentState.IN_TABLE_BODY, DocumentState.IN_ROW):
             table = get_current_table(context)
@@ -5351,12 +5357,12 @@ class HeadTagHandler(TagHandler):
                 before = table if table in parent_for_foster.children else None
                 self._insert_head_element(token, context, tag_name, parent=parent_for_foster, before=before)
                 return True
-        
+
         # IN_BODY: insert at current position (misplaced head elements stay in body)
         if state == DocumentState.IN_BODY:
             self._insert_head_element(token, context, tag_name)
             return True
-        
+
         # Normal head handling: ensure head exists and insert there
         if state not in (DocumentState.IN_HEAD, DocumentState.AFTER_HEAD):
             head = ensure_head(self.parser)
@@ -5365,10 +5371,10 @@ class HeadTagHandler(TagHandler):
             head = ensure_head(self.parser)
             if head:
                 context.move_to_element(head)
-        
+
         self._insert_head_element(token, context, tag_name)
         return True
-    
+
     def _insert_head_element(self, token, context, tag_name, parent=None, before=None):
         """Insert head element and activate RAWTEXT mode if needed."""
         self.parser.insert_element(
@@ -5446,7 +5452,7 @@ class FramesetTagHandler(TagHandler):
     """
 
     HANDLED_START_TAGS = frozenset(
-        ["frameset", "frame", "noframes"]
+        ["frameset", "frame", "noframes"],
     )  # Preprocessing for all tags (frameset_ok management)
     HANDLED_END_TAGS = frozenset(["frameset", "noframes"])
 
@@ -5775,7 +5781,7 @@ class FramesetTagHandler(TagHandler):
                     if parent:
                         context.move_to_element(parent)
                     body = get_body(self.parser.root) or ensure_body(
-                        self.parser.root, context.document_state, self.parser.fragment_context
+                        self.parser.root, context.document_state, self.parser.fragment_context,
                     )
                     if body:
                         context.move_to_element(body)
@@ -5808,7 +5814,7 @@ class FramesetTagHandler(TagHandler):
                 if not self.parser._has_frameset:
                     # Non-frameset document: subsequent character/comment tokens belong in <body>
                     body = get_body(self.parser.root) or ensure_body(
-                        self.parser.root, context.document_state, self.parser.fragment_context
+                        self.parser.root, context.document_state, self.parser.fragment_context,
                     )
                     if body:
                         context.move_to_element(body)
@@ -6189,7 +6195,7 @@ class PlaintextHandler(TagHandler):
                 target = context.current_parent
             else:
                 target = context.current_parent.find_first_ancestor_in_tags(
-                    [("svg", "plaintext"), ("math", "plaintext")]
+                    [("svg", "plaintext"), ("math", "plaintext")],
                 )
             if target:
                 # Pop stack until target
@@ -6377,7 +6383,7 @@ class TableFosterHandler(TagHandler):
                 tag_name,
             )
             self.parser.insert_element(
-                token, context, tag_name_override=tag_name, parent=target_parent, before=target_before
+                token, context, tag_name_override=tag_name, parent=target_parent, before=target_before,
             )
             return True
 

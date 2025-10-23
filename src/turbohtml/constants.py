@@ -36,7 +36,7 @@ VOID_ELEMENTS = frozenset(
         "source",
         "track",
         "wbr",
-    ]
+    ],
 )
 
 HTML_ELEMENTS = frozenset(
@@ -93,7 +93,7 @@ HTML_ELEMENTS = frozenset(
         "u",
         "ul",
         "var",
-    ]
+    ],
 )
 
 BLOCK_ELEMENTS = frozenset(
@@ -139,7 +139,7 @@ BLOCK_ELEMENTS = frozenset(
         "table",
         "ul",
         "summary",
-    ]
+    ],
 )
 
 # Elements considered "special" for various tree construction steps (e.g.,
@@ -229,7 +229,7 @@ SPECIAL_CATEGORY_ELEMENTS = frozenset(
         "ul",
         "wbr",
         "xmp",
-    }
+    },
 )
 
 TABLE_ELEMENTS = frozenset(
@@ -246,7 +246,7 @@ TABLE_ELEMENTS = frozenset(
         # Cell elements
         "td",
         "th",
-    ]
+    ],
 )
 
 # Canonical table category constant sets (centralized from table_modes):
@@ -268,7 +268,7 @@ HEAD_ELEMENTS = frozenset(
         "script",
         "style",
         "title",
-    ]
+    ],
 )
 
 # Sentinel used during tokenization to mark invalid numeric character references whose
@@ -289,7 +289,7 @@ RAWTEXT_ELEMENTS = frozenset(
         "iframe",
         "noembed",
         "noframes",
-    ]
+    ],
 )
 
 FORMATTING_ELEMENTS = frozenset(
@@ -308,7 +308,7 @@ FORMATTING_ELEMENTS = frozenset(
         "strong",
         "tt",
         "u",
-    ]
+    ],
 )
 
 # HTML elements that break out of foreign content (SVG/MathML)
@@ -363,7 +363,7 @@ HTML_BREAK_OUT_ELEMENTS = frozenset(
         "u",
         "ul",
         "var",
-    ]
+    ],
 )
 
 BOUNDARY_ELEMENTS = frozenset(
@@ -376,7 +376,7 @@ BOUNDARY_ELEMENTS = frozenset(
         "table",
         "th",
         "td",
-    }
+    },
 )
 
 HEADING_ELEMENTS = frozenset(["h1", "h2", "h3", "h4", "h5", "h6"])
@@ -399,7 +399,7 @@ OPTIONAL_END_TAG_ELEMENTS = frozenset(
         "tr",
         "td",
         "th",
-    ]
+    ],
 )
 
 AUTO_CLOSING_TAGS = MappingProxyType(
@@ -450,7 +450,7 @@ AUTO_CLOSING_TAGS = MappingProxyType(
                 "rt",
                 "rp",
                 "rtc",
-            ]
+            ],
         ),
         "li": frozenset(["li"]),
         "menuitem": frozenset(),
@@ -468,7 +468,7 @@ AUTO_CLOSING_TAGS = MappingProxyType(
         "h4": frozenset(["h1", "h2", "h3", "h4", "h5", "h6"]),
         "h5": frozenset(["h1", "h2", "h3", "h4", "h5", "h6"]),
         "h6": frozenset(["h1", "h2", "h3", "h4", "h5", "h6"]),
-    }
+    },
 )
 
 CLOSE_ON_PARENT_CLOSE = MappingProxyType(
@@ -485,7 +485,7 @@ CLOSE_ON_PARENT_CLOSE = MappingProxyType(
         "tr": ("table", "thead", "tbody", "tfoot"),
         "td": ("tr",),
         "th": ("tr",),
-    }
+    },
 )
 
 SVG_CASE_SENSITIVE_ELEMENTS = MappingProxyType(
@@ -527,7 +527,7 @@ SVG_CASE_SENSITIVE_ELEMENTS = MappingProxyType(
         "animatecolor": "animateColor",
         "femerge": "feMerge",
         "glyphref": "glyphRef",
-    }
+    },
 )
 
 # MathML elements that should automatically enter MathML context
@@ -564,7 +564,7 @@ MATHML_ELEMENTS = frozenset(
         "mphantom",
         "mglyph",
         "annotation-xml",
-    ]
+    ],
 )
 
 # SVG attributes that should have their case preserved
@@ -630,14 +630,14 @@ SVG_CASE_SENSITIVE_ATTRIBUTES = MappingProxyType(
         "zoomandpan": "zoomAndPan",
         # The spec keeps some attributes lowercase; tests expect these untouched
         # contentscripttype, contentstyletype, externalresourcesrequired, filterres remain lowercase
-    }
+    },
 )
 
 # MathML case-sensitive attribute adjustments per HTML5 spec
 MATHML_CASE_SENSITIVE_ATTRIBUTES = MappingProxyType(
     {
         "definitionurl": "definitionURL",
-    }
+    },
 )
 
 # HTML5 Numeric Character Reference Replacements
@@ -678,7 +678,7 @@ HTML5_NUMERIC_REPLACEMENTS = MappingProxyType(
         0x9D: "\u009d",  # 0x9D -> <control>
         0x9E: "\u017e",  # 0x9E -> LATIN SMALL LETTER Z WITH CARON
         0x9F: "\u0178",  # 0x9F -> LATIN CAPITAL LETTER Y WITH DIAERESIS
-    }
+    },
 )
 
 # SVG/MathML integration point constants (HTML5 spec §13.2.6.5)
@@ -688,5 +688,5 @@ MATHML_TEXT_INTEGRATION_POINTS = ("mtext", "mi", "mo", "mn", "ms")
 
 # Table-related elements that don't need foster parenting when inserted in table context
 TABLE_ELEMENTS_NO_FOSTER = frozenset(
-    ["table", "tbody", "thead", "tfoot", "tr", "td", "th", "caption", "colgroup", "col", "form"]
+    ["table", "tbody", "thead", "tfoot", "tr", "td", "th", "caption", "colgroup", "col", "form"],
 )

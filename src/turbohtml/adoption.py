@@ -7,6 +7,9 @@ from turbohtml.constants import (
     FORMATTING_ELEMENTS,
     SPECIAL_CATEGORY_ELEMENTS,
 )
+from turbohtml.foster import foster_parent, needs_foster_parenting
+from turbohtml.node import Node
+
 _FONT_INLINE_FOLLOWERS = {
     "p",
     "span",
@@ -21,8 +24,6 @@ _FONT_INLINE_FOLLOWERS = {
     "bdo",
 }
 _FONT_INLINE_FOLLOWERS |= FORMATTING_ELEMENTS
-from turbohtml.foster import foster_parent, needs_foster_parenting
-from turbohtml.node import Node
 
 
 class FormattingElementEntry:
@@ -48,7 +49,7 @@ class FormattingElementEntry:
 class ActiveFormattingElements:
     """Active formatting elements list (spec stack with markers + Noah's Ark clause)."""
 
-    __slots__ = ("_stack", "_element_index")
+    __slots__ = ("_element_index", "_stack")
 
     def __init__(self):
         self._stack = []
@@ -151,7 +152,7 @@ class OpenElementsStack:
       * _is_special_category (category check used during adoption)
     """
 
-    __slots__ = ("_stack", "_element_set")
+    __slots__ = ("_element_set", "_stack")
 
     def __init__(self):
         self._stack = []

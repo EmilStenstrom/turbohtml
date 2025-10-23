@@ -13,7 +13,7 @@ enabling:
 
 class TrieNode:
     """Single node in the trie tree."""
-    __slots__ = ("children", "value", "is_terminal")
+    __slots__ = ("children", "is_terminal", "value")
 
     def __init__(self):
         self.children = {}  # char -> TrieNode

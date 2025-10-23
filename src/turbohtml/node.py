@@ -1,6 +1,6 @@
 import sys
 
-from turbohtml.constants import BOUNDARY_ELEMENTS, FORMATTING_ELEMENTS, SVG_INTEGRATION_POINTS
+from turbohtml.constants import BOUNDARY_ELEMENTS, FORMATTING_ELEMENTS
 
 
 class Node:
@@ -377,7 +377,7 @@ class Node:
                 return None
             # Convert list to frozenset for O(1) lookups (immutable, can be cached)
             tag_names = frozenset(tag_names)
-        
+
         # Check self first for set-based lookups
         if self.tag_name in tag_names:
             if namespace is None or self.namespace == namespace:
@@ -394,7 +394,7 @@ class Node:
 
     def last_child_is_text(self):
         """Check if the last child is a text node.
-        
+
         Optimized: direct array access + interned string comparison.
         """
         # Fast path: empty children list

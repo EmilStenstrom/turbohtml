@@ -95,7 +95,7 @@ def iter_html_from_downloaded(
 
     # Get all .html.zst files
     html_files = sorted(downloaded_dir.glob("*.html.zst"))
-    
+
     if limit:
         html_files = html_files[:limit]
 
@@ -126,7 +126,7 @@ def iter_html_from_all_batches(
         sys.exit(1)
 
     batch_files = sorted(batches_dir.glob("web100k-batch-*.tar.zst"))
-    
+
     if not batch_files:
         print(f"ERROR: No batch files found in {batches_dir}")
         sys.exit(1)
@@ -136,7 +136,7 @@ def iter_html_from_all_batches(
         print(f"  Loading {batch_file.name}...")
         batch_results = iter_html_from_batch(batch_file, dict_bytes, limit=None)
         all_results.extend(batch_results)
-        
+
         if limit and len(all_results) >= limit:
             all_results = all_results[:limit]
             break
@@ -532,7 +532,7 @@ def main():
 
     # Load HTML files into memory
     limit = args.limit if args.limit > 0 else None
-    
+
     if args.downloaded:
         print(f"Loading HTML files from {args.downloaded}...")
         html_files = iter_html_from_downloaded(args.downloaded, dict_bytes, limit)

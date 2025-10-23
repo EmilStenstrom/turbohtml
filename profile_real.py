@@ -2,10 +2,12 @@
 """Profile TurboHTML on real-world HTML."""
 
 import cProfile
-import pstats
 import pathlib
+import pstats
 import tarfile
+
 import zstandard as zstd
+
 from turbohtml import TurboHTML
 
 
@@ -58,7 +60,7 @@ print(f"Loaded {len(html_files)} files")
 profiler = cProfile.Profile()
 profiler.enable()
 
-for filename, html in html_files:
+for _filename, html in html_files:
     parser = TurboHTML(html)
     _ = parser.root
 
@@ -66,5 +68,5 @@ profiler.disable()
 
 # Print stats
 stats = pstats.Stats(profiler)
-stats.sort_stats('tottime')
+stats.sort_stats("tottime")
 stats.print_stats(80)

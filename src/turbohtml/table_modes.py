@@ -37,7 +37,7 @@ TABLE_ELEMENTS_CANON = frozenset(
         "caption",
         "colgroup",
         "col",
-    }
+    },
 )
 
 HEAD_ELEMENTS_CANON = frozenset({"head", "base", "basefont", "bgsound", "link", "meta", "title", "style"})

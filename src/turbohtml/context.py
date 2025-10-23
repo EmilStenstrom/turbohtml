@@ -87,16 +87,18 @@ class ParseContext:
     """Mutable parser state: stacks, modes, insertion point."""
 
     __slots__ = (
+        "_button_cache_node",
+        "_button_cached_value",
         "_content_state",
         "_current_parent",
         "_debug",
         "_document_state",
-        "_ip_cache_node",
         "_integration_point",  # (type, node): type in (None, "svg", "mathml_html", "mathml_text")
-        "_svg_ancestor",
+        "_ip_cache_node",
         "_math_ancestor",
         "_select_cache_node",
         "_select_cached_value",
+        "_svg_ancestor",
         "_table_cache_node",
         "_table_cached_value",
         "active_formatting_elements",
@@ -114,8 +116,6 @@ class ParseContext:
         "quirks_mode",
         "saw_body_start_tag",
         "saw_html_end_tag",
-        "_button_cache_node",
-        "_button_cached_value",
     )
 
     def __init__(self, initial_parent, debug_callback=None):
@@ -172,7 +172,7 @@ class ParseContext:
 
     def _update_integration_point_cache_incremental(self, old_parent, new_parent):
         """Incrementally update integration point cache when moving to new parent.
-        
+
         Optimized for the common case (forward progress to child) while handling
         backward/sideways moves. Only called when has_foreign_content is True.
         """
@@ -180,7 +180,7 @@ class ParseContext:
         self._integration_point = (None, None)
         self._svg_ancestor = None
         self._math_ancestor = None
-        
+
         # Check if moving to a child (most common case - forward progress)
         if new_parent.parent == old_parent:
             # Moving to child: check new_parent, then inherit from ancestors
@@ -197,13 +197,13 @@ class ParseContext:
                                 self._integration_point = ("mathml_html", current)
                         elif current.tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
                             self._integration_point = ("mathml_text", current)
-                
+
                 # Track foreign ancestors (nearest of each type)
                 if current.namespace == "svg" and self._svg_ancestor is None:
                     self._svg_ancestor = current
                 if current.namespace == "math" and self._math_ancestor is None:
                     self._math_ancestor = current
-                
+
                 current = current.parent
         else:
             # Moving up/sideways: full walk from new position
@@ -219,12 +219,12 @@ class ParseContext:
                                 self._integration_point = ("mathml_html", current)
                         elif current.tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
                             self._integration_point = ("mathml_text", current)
-                
+
                 if current.namespace == "svg" and self._svg_ancestor is None:
                     self._svg_ancestor = current
                 if current.namespace == "math" and self._math_ancestor is None:
                     self._math_ancestor = current
-                
+
                 current = current.parent
 
     def _set_current_parent(self, new_parent):
@@ -234,7 +234,7 @@ class ParseContext:
 
         if new_parent != self._current_parent:
             old_parent = self._current_parent
-            
+
             # Invalidate other caches when parent changes
             self._select_cache_node = None
             self._button_cache_node = None
@@ -366,11 +366,11 @@ def _update_integration_point_cache(context):
     context._integration_point = (None, None)
     context._svg_ancestor = None
     context._math_ancestor = None
-    
+
     # Fast path: no foreign content means no integration points
     if not context.has_foreign_content:
         return
-    
+
     # Walk ancestors to populate cache
     current = node
     while current:
@@ -384,12 +384,12 @@ def _update_integration_point_cache(context):
                         context._integration_point = ("mathml_html", current)
                 elif current.tag_name in {"mi", "mo", "mn", "ms", "mtext"}:
                     context._integration_point = ("mathml_text", current)
-        
+
         if current.namespace == "svg" and context._svg_ancestor is None:
             context._svg_ancestor = current
         if current.namespace == "math" and context._math_ancestor is None:
             context._math_ancestor = current
-        
+
         current = current.parent
 
 
@@ -418,7 +418,7 @@ def is_in_integration_point(context, check="any"):
         return ip_type == "svg"
     if check == "mathml":
         return ip_type in ("mathml_html", "mathml_text")
-    
+
     return ip_type is not None
 
 
@@ -446,7 +446,7 @@ def get_integration_point_node(context, check="any"):
         return ip_node if ip_type == "svg" else None
     if check == "mathml":
         return ip_node if ip_type in ("mathml_html", "mathml_text") else None
-    
+
     return ip_node
 
 

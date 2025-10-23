@@ -231,7 +231,7 @@ def reconstruct_active_formatting_elements(parser, context):
             ):
                 if parser._debug:
                     parser.debug(
-                        f"Skipping reconstruction of {clone.tag_name} (foster-parented before table) inside table structure"
+                        f"Skipping reconstruction of {clone.tag_name} (foster-parented before table) inside table structure",
                     )
                 continue
 

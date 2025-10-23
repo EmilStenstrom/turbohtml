@@ -1,7 +1,7 @@
 """TurboHTML parser entry point."""
 
 from turbohtml.adoption import AdoptionAgencyAlgorithm
-from turbohtml.constants import NUMERIC_ENTITY_INVALID_SENTINEL, VOID_ELEMENTS, TABLE_ELEMENTS_NO_FOSTER
+from turbohtml.constants import NUMERIC_ENTITY_INVALID_SENTINEL, TABLE_ELEMENTS_NO_FOSTER, VOID_ELEMENTS
 from turbohtml.context import ContentState, DocumentState, FragmentContext, ParseContext, is_in_integration_point
 from turbohtml.foster import foster_parent, needs_foster_parenting
 from turbohtml.fragment import parse_fragment
@@ -36,6 +36,7 @@ from turbohtml.handlers import (
     VoidTagHandler,
 )
 from turbohtml.node import Node
+from turbohtml.utils import ensure_body
 
 try:
     from rust_tokenizer import RustTokenizer
@@ -202,32 +203,32 @@ class TurboHTML:
         # Collect all known tags from all handlers
         all_start_tags = set()
         all_end_tags = set()
-        for h, handled_tags in self._start_handler_metadata:
-            if handled_tags is not None and hasattr(handled_tags, '__iter__'):
+        for _h, handled_tags in self._start_handler_metadata:
+            if handled_tags is not None and hasattr(handled_tags, "__iter__"):
                 # Skip ALL_TAGS sentinel (has __contains__ but don't iterate)
-                if not hasattr(handled_tags, '__class__') or handled_tags.__class__.__name__ != '_AllTagsSentinel':
+                if not hasattr(handled_tags, "__class__") or handled_tags.__class__.__name__ != "_AllTagsSentinel":
                     all_start_tags.update(handled_tags)
-        for h, handled_tags in self._end_handler_metadata:
-            if handled_tags is not None and hasattr(handled_tags, '__iter__'):
-                if not hasattr(handled_tags, '__class__') or handled_tags.__class__.__name__ != '_AllTagsSentinel':
+        for _h, handled_tags in self._end_handler_metadata:
+            if handled_tags is not None and hasattr(handled_tags, "__iter__"):
+                if not hasattr(handled_tags, "__class__") or handled_tags.__class__.__name__ != "_AllTagsSentinel":
                     all_end_tags.update(handled_tags)
 
         # Add high-frequency tags to ensure fast path (ALL_TAGS handlers will match these)
         common_tags = {
             # HTML structure
-            'html', 'head', 'body', 'div', 'p', 'span', 'table', 'tbody', 'thead', 'tfoot',
-            'tr', 'td', 'th', 'caption', 'colgroup', 'ul', 'ol', 'article', 'section',
-            'nav', 'header', 'footer', 'aside', 'main', 'figure', 'figcaption',
+            "html", "head", "body", "div", "p", "span", "table", "tbody", "thead", "tfoot",
+            "tr", "td", "th", "caption", "colgroup", "ul", "ol", "article", "section",
+            "nav", "header", "footer", "aside", "main", "figure", "figcaption",
             # SVG elements (high frequency in real web data)
-            'svg', 'path', 'g', 'defs', 'use', 'symbol', 'rect', 'line', 'circle',
-            'polygon', 'polyline', 'ellipse', 'lineargradient', 'radialgradient', 'stop',
-            'clippath', 'filter', 'fecolormatrix', 'fegaussianblur', 'femerge', 'femergenode',
-            'fecomposite', 'feflood', 'femorphology', 'foreignobject', 'text', 'tspan',
-            'pattern', 'animatetransform',
+            "svg", "path", "g", "defs", "use", "symbol", "rect", "line", "circle",
+            "polygon", "polyline", "ellipse", "lineargradient", "radialgradient", "stop",
+            "clippath", "filter", "fecolormatrix", "fegaussianblur", "femerge", "femergenode",
+            "fecomposite", "feflood", "femorphology", "foreignobject", "text", "tspan",
+            "pattern", "animatetransform",
             # Other common elements
-            'option', 'picture', 'video', 'canvas', 'time', 'blockquote', 'pre', 'ins',
-            'sup', 'details', 'summary', 'center', 'dl', 'fieldset', 'kbd', 'map',
-            'address',
+            "option", "picture", "video", "canvas", "time", "blockquote", "pre", "ins",
+            "sup", "details", "summary", "center", "dl", "fieldset", "kbd", "map",
+            "address",
         }
         all_start_tags.update(common_tags)
         all_end_tags.update(common_tags)
@@ -320,7 +321,7 @@ class TurboHTML:
         tag_name = tag_name_override or token.tag_name
         token_tag_name = token.tag_name
         is_self_closing = token.is_self_closing
-        
+
         # Foster parenting: When inserting into default parent (parent=None) and in table context,
         # spec requires insertion before the table rather than inside it (unless in cell/caption).
         target_parent = parent or context.current_parent
@@ -370,7 +371,7 @@ class TurboHTML:
             target_parent.insert_before(new_node, target_before)
         else:
             target_parent.append_child(new_node)
-        
+
         # Determine effective voidness - mode "void" always results in void behavior
         # Otherwise check treat_as_void flag or if tag is in VOID_ELEMENTS set
         if mode == "void":
@@ -476,7 +477,7 @@ class TurboHTML:
             last = target_parent.children[-1]
             if self._debug:
                 self.debug(
-                    f"[insert_text] merging into existing text node len_before={len(last.text_content)} add_len={len(text)}"
+                    f"[insert_text] merging into existing text node len_before={len(last.text_content)} add_len={len(text)}",
                 )
             last.text_content += text
             return last
@@ -576,7 +577,7 @@ class TurboHTML:
                 handled = False
                 for handler in tag_handlers:
                     if handler.should_handle_comment(token.data, context) and handler.handle_comment(
-                        token.data, context
+                        token.data, context,
                     ):
                         handled = True
                         break
@@ -652,7 +653,6 @@ class TurboHTML:
             if self._debug:
                 self.debug(f"Malformed tag detected: {tag_name}, inserting as normal element")
             # Ensure body exists for malformed tags (they're treated as content, not structure)
-            from turbohtml.utils import ensure_body
 
             if context.document_state in (DocumentState.INITIAL, DocumentState.IN_HEAD, DocumentState.AFTER_HEAD):
                 body = ensure_body(self.root, context.document_state, self.fragment_context)
@@ -666,7 +666,6 @@ class TurboHTML:
         if context.content_state == ContentState.PLAINTEXT:
             if self._debug:
                 self.debug(f"PLAINTEXT mode: treating <{tag_name}> as text")
-            from turbohtml.node import Node
             text_node = Node("#text", text_content=f"<{tag_name}>")
             context.current_parent.append_child(text_node)
             return
