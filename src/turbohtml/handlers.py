@@ -2763,6 +2763,7 @@ class TableTagHandler(TagHandler):
     # Class-level constants to avoid recreation on every call
     _TABLE_CONTEXT_TAGS = frozenset({"html", "body", "table"})
     _TABLE_SECTION_TAGS = frozenset({"tbody", "thead", "tfoot"})
+    _PRELUDE_START_TAGS = frozenset({"caption", "col", "colgroup", "thead", "tbody", "tfoot"})
 
     def handle_start(self, token, context):
         if context.in_template_content > 0:
@@ -2784,14 +2785,11 @@ class TableTagHandler(TagHandler):
         current_table = get_current_table(context)
 
         if not current_table:
-            if not in_integration_point:
-                in_integration_point = is_in_integration_point(context)
-            if in_integration_point:
+            if in_integration_point or is_in_integration_point(context):
                 return True
 
-            if tag_name in ("caption", "col", "colgroup", "thead", "tbody", "tfoot"):
-                if current_context not in ("math", "svg"):
-                    return True
+            if tag_name in self._PRELUDE_START_TAGS and current_context not in ("math", "svg"):
+                return True
 
         if tag_name == "caption":
             return self._handle_caption(token, context)
@@ -2907,10 +2905,7 @@ class TableTagHandler(TagHandler):
         for child in reversed(table.children):
             if child.tag_name == "colgroup":
                 # Found a colgroup, but check if there's tbody/tr/td after it
-                idx = table.children.index(child)
-                has_content_after = any(
-                    c.tag_name in ("tbody", "tr", "td") for c in table.children[idx + 1 :]
-                )
+                has_content_after = any(c.tag_name in ("tbody", "tr", "td") for c in children[idx + 1 :])
                 if not has_content_after:
                     last_colgroup = child
                     need_new_colgroup = False
@@ -3570,17 +3565,16 @@ class TableTagHandler(TagHandler):
         if tag_name == "table" and not get_current_table(context):
             return True
 
-        # Dispatch to handler by tag name
-        handlers = {
-            "caption": self._handle_caption_end,
-            "table": self._handle_table_end,
-            "tbody": self._handle_tbody_end,
-            "thead": self._handle_tbody_end,
-            "tfoot": self._handle_tbody_end,
-            "tr": self._handle_tr_end,
-        }
+        if tag_name == "caption":
+            return self._handle_caption_end(token, context)
 
-        return handlers[tag_name](token, context)
+        if tag_name == "table":
+            return self._handle_table_end(token, context)
+
+        if tag_name in ("tbody", "thead", "tfoot"):
+            return self._handle_tbody_end(token, context)
+
+        return self._handle_tr_end(token, context)
 
     def _handle_caption_end(self, token, context):
         """Handle caption end tag."""
