@@ -3552,7 +3552,6 @@ class TableTagHandler(TagHandler):
             "tfoot",
             "tr",
             "caption",
-            "colgroup",
         }
 
         if tag_name not in allowed:
@@ -3570,7 +3569,6 @@ class TableTagHandler(TagHandler):
             "thead": self._handle_tbody_end,
             "tfoot": self._handle_tbody_end,
             "tr": self._handle_tr_end,
-            "colgroup": self._handle_colgroup_end,
         }
 
         return handlers[tag_name](token, context)
@@ -3685,11 +3683,6 @@ class TableTagHandler(TagHandler):
         context.move_to_element(next_parent)
         context.transition_to_state(DocumentState.IN_TABLE_BODY)
         return True
-
-    def _handle_colgroup_end(self, token, context):
-        """Handle colgroup end tag."""
-        return False
-
 
 class FormTagHandler(TagHandler):
     """Handles form-related elements (form, input, button, etc.)."""
@@ -3819,10 +3812,6 @@ class ListTagHandler(TagHandler):
         if tag_name == "li":
             return self._handle_list_item(token, context)
 
-        # Handle ul/ol/dl elements
-        if tag_name in ("ul", "ol", "dl"):
-            return self._handle_list_container(token, context)
-
         return False
 
     def _handle_definition_list_item(self, token, context):
@@ -3902,9 +3891,6 @@ class ListTagHandler(TagHandler):
 
         new_node = self.parser.insert_element(token, context, mode="normal", enter=True)
         return True
-
-    def _handle_list_container(self, token, context):
-        """Handle ul/ol/dl elements."""
 
     def handle_end(self, token, context):
         tag_name = token.tag_name
