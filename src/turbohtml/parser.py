@@ -324,7 +324,8 @@ class TurboHTML:
 
         # Foster parenting: When inserting into default parent (parent=None) and in table context,
         # spec requires insertion before the table rather than inside it (unless in cell/caption).
-        target_parent = parent or context.current_parent
+        current_parent = context.current_parent
+        target_parent = parent or current_parent
         target_before = before
 
         # Determine namespace: explicit parameter, or inherit from context
@@ -332,7 +333,7 @@ class TurboHTML:
         # ALSO: don't auto-namespace synthetic HTML elements at fragment root in foreign contexts
         if namespace is None and context.current_context in ("svg", "math"):
             # If at fragment root (document-fragment parent), don't auto-namespace
-            if context.current_parent.tag_name == "document-fragment":
+            if current_parent.tag_name == "document-fragment":
                 pass  # Keep namespace=None (HTML)
             else:
                 # Only auto-namespace if NOT in an integration point
@@ -340,18 +341,18 @@ class TurboHTML:
                     namespace = context.current_context
 
         if auto_foster and parent is None and before is None:
-            if needs_foster_parenting(context.current_parent):
+            if needs_foster_parenting(current_parent):
                 # Check if we're inside a cell or caption (foster parenting doesn't apply there)
                 in_cell_or_caption = bool(
-                    context.current_parent.find_first_ancestor_in_tags({"td", "th", "caption"}),
+                    current_parent.find_first_ancestor_in_tags({"td", "th", "caption"}),
                 )
                 # Don't foster table-related elements or elements specifically allowed in tables (form)
                 if not in_cell_or_caption and tag_name not in TABLE_ELEMENTS_NO_FOSTER:
                     target_parent, target_before = foster_parent(
-                        context.current_parent,
+                        current_parent,
                         context.open_elements,
                         self.root,
-                        context.current_parent,
+                        current_parent,
                         tag_name,
                     )
 
@@ -516,43 +517,7 @@ class TurboHTML:
 
         # Use Rust tokenizer
         self.tokenizer = RustTokenizer(html, debug=self._debug)
-        if not hasattr(self.tokenizer, "set_text_sink"):
-            msg = "Rust tokenizer build missing required text sink support"
-            raise RuntimeError(msg)
-
-        text_sink_registered = False
-        debug_enabled = self._debug
-        debug_call = self.debug
-        ensure_html_node = self.ensure_html_node
-        dispatch_text = self._dispatch_text
-        handle_start_tag = self.handle_start_tag
-        handle_end_tag = self.handle_end_tag
-        tag_handlers = self.tag_handlers
-
-        def _text_sink(
-            data,
-            is_last,
-            *,
-            _ctx=context,
-            _dispatch=dispatch_text,
-            _ensure=ensure_html_node,
-            _debug_enabled=debug_enabled,
-            _debug=debug_call,
-            _self=self,
-        ):
-            # Mirror token-loop semantics when Rust fast path short-circuits Character tokens
-            _self._token_counter += 1
-            if _debug_enabled:
-                _debug(
-                    f"_parse: Character(fast, len={len(data)}) context: {_ctx}",
-                    indent=0,
-                )
-            _ensure()
-            _dispatch(data, _ctx)
-            return True
-
-        self.tokenizer.set_text_sink(_text_sink)
-        text_sink_registered = True
+        self.tokenizer.set_text_sink(lambda data, is_last: self._text_sink(data, is_last, context))
 
         tokens = self.tokenizer
 
@@ -560,39 +525,43 @@ class TurboHTML:
             # Increment token counter for deduplication tracking
             self._token_counter += 1
 
-            if debug_enabled:
-                debug_call(f"_parse: {token}, context: {context}", indent=0)
+            if self._debug:
+                self.debug(f"_parse: {token}, context: {context}", indent=0)
 
-            if token.type == "DOCTYPE":
+            token_type = token.type
+
+            if token_type == "DOCTYPE":
                 # Handle DOCTYPE through the DoctypeHandler first
-                for handler in tag_handlers:
-                    if handler.should_handle_doctype(token.data, context):
-                        if debug_enabled:
-                            debug_call(f"{handler.__class__.__name__}: handling DOCTYPE")
-                        if handler.handle_doctype(token.data, context):
+                token_data = token.data
+                for handler in self.tag_handlers:
+                    if handler.should_handle_doctype(token_data, context):
+                        if self._debug:
+                            self.debug(f"{handler.__class__.__name__}: handling DOCTYPE")
+                        if handler.handle_doctype(token_data, context):
                             break
                 continue
 
-            if token.type == "Comment":
+            if token_type == "Comment":
+                token_data = token.data
                 handled = False
-                for handler in tag_handlers:
-                    if handler.should_handle_comment(token.data, context) and handler.handle_comment(
-                        token.data, context,
+                for handler in self.tag_handlers:
+                    if handler.should_handle_comment(token_data, context) and handler.handle_comment(
+                        token_data, context,
                     ):
                         handled = True
                         break
                 if not handled:
-                    node = Node("#comment", text_content=token.data)
+                    node = Node("#comment", text_content=token_data)
                     context.current_parent.append_child(node)
                 continue
 
             # Ensure html node is in tree before processing any non-DOCTYPE/Comment token
-            ensure_html_node()
+            self.ensure_html_node()
 
-            if token.type == "StartTag":
-                handle_start_tag(token, context)
+            if token_type == "StartTag":
+                self.handle_start_tag(token, context)
 
-            elif token.type == "EndTag":
+            elif token_type == "EndTag":
                 # In template fragment context, ignore the context's own end tag
                 if (
                     self.fragment_context
@@ -601,17 +570,17 @@ class TurboHTML:
                     and token.tag_name == "template"
                 ):
                     continue
-                handle_end_tag(token, context)
+                self.handle_end_tag(token, context)
 
-            elif token.type == "Character":
-                dispatch_text(token.data, context)
+            elif token_type == "Character":
+                self._dispatch_text(token.data, context)
 
         # At EOF, handle any unclosed option elements for selectedcontent cloning
         # This is spec-compliant: selectedcontent mirrors the selected option's content
         for elem in reversed(list(context.open_elements)):
             if elem.tag_name == "option":
                 # Find SelectTagHandler and call its cloning logic
-                for handler in tag_handlers:
+                for handler in self.tag_handlers:
                     if handler.__class__.__name__ == "SelectTagHandler":
                         # Temporarily move to the option to clone its content
                         saved_parent = context.current_parent
@@ -621,8 +590,16 @@ class TurboHTML:
                         break
                 break  # Only handle the first (innermost) option
 
-        if text_sink_registered:
-            self.tokenizer.set_text_sink(None)
+        self.tokenizer.set_text_sink(None)
+
+    def _text_sink(self, data, is_last, context):
+        """Fast path text sink called directly from Rust tokenizer."""
+        self._token_counter += 1
+        if self._debug:
+            self.debug(f"_parse: Character(fast, len={len(data)}) context: {context}", indent=0)
+        self.ensure_html_node()
+        self._dispatch_text(data, context)
+        return True
 
     def _dispatch_text(self, data, context):
         if not data:

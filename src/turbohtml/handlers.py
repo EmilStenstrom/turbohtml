@@ -711,12 +711,13 @@ class TemplateContentFilterHandler(TagHandler):
             "col",
             "colgroup",
         }
-        if context.current_parent.tag_name in tableish and token.tag_name not in (
+        current_parent_tag = context.current_parent.tag_name
+        if current_parent_tag in tableish and token.tag_name not in (
             self.IGNORED_START + self.GENERIC_AS_PLAIN + ("template",)
         ):
-            if context.current_parent.tag_name in {"col", "colgroup"}:
+            if current_parent_tag in {"col", "colgroup"}:
                 return True
-            if context.current_parent.tag_name not in {"td", "th"}:
+            if current_parent_tag not in {"td", "th"}:
                 boundary2 = self._current_content_boundary(context)
                 if boundary2:
                     context.move_to_element(boundary2)
@@ -728,6 +729,7 @@ class TemplateContentFilterHandler(TagHandler):
                 context.move_to_element(boundary2)
                 boundary = boundary2
 
+        tag_name = token.tag_name
         do_not_enter = {
             "thead",
             "tbody",
@@ -738,8 +740,8 @@ class TemplateContentFilterHandler(TagHandler):
             "meta",
             "link",
         }
-        treat_as_void = token.tag_name in do_not_enter
-        mode = "normal" if (token.tag_name == "table" or not treat_as_void) else "void"
+        treat_as_void = tag_name in do_not_enter
+        mode = "normal" if (tag_name == "table" or not treat_as_void) else "void"
         self.parser.insert_element(
             token,
             context,
@@ -811,7 +813,7 @@ class TemplateContentFilterHandler(TagHandler):
         last_child = boundary.children[-1] if boundary and boundary.children else None
         if last_child and last_child.tag_name in {"col", "colgroup"}:
             allowed_after_col = {"col", "#text"}
-            if token.tag_name not in allowed_after_col:
+            if tag_name not in allowed_after_col:
                 return True
 
         allow_tr_context = context.current_parent.tag_name == "tr"
@@ -819,13 +821,13 @@ class TemplateContentFilterHandler(TagHandler):
         if not allow_tr_context and not allow_after_col and tag_name not in self.GENERIC_AS_PLAIN:
             return False
 
-        if token.tag_name in {"tbody", "caption", "colgroup", "thead", "tfoot"}:
+        if tag_name in {"tbody", "caption", "colgroup", "thead", "tfoot"}:
             return self._handle_table_sections(token, context, boundary)
 
-        if token.tag_name in {"td", "th"}:
+        if tag_name in {"td", "th"}:
             return self._handle_table_cells(token, context, boundary)
 
-        if token.tag_name == "tr":
+        if tag_name == "tr":
             return self._handle_table_rows(token, context, boundary)
 
         return self._handle_generic_template_content(token, context, boundary)
@@ -928,15 +930,18 @@ class TemplateContentFilterHandler(TagHandler):
             cursor = cursor.parent
         if not found:
             return True
-        while context.current_parent is not found and context.current_parent and context.current_parent.parent:
+        current_parent = context.current_parent
+        while current_parent is not found and current_parent and current_parent.parent:
             context.move_to_element_with_fallback(
-                context.current_parent.parent,
-                context.current_parent,
+                current_parent.parent,
+                current_parent,
             )
-        if context.current_parent is found and context.current_parent.parent:
+            current_parent = context.current_parent
+        current_parent = context.current_parent
+        if current_parent is found and current_parent.parent:
             context.move_to_element_with_fallback(
-                context.current_parent.parent,
-                context.current_parent,
+                current_parent.parent,
+                current_parent,
             )
         return True
 
