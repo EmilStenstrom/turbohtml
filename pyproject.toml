@@ -42,5 +42,6 @@ ignore = [
     "SIM",
     "ARG",
     "ERA001",
-    "SLF001",  # Private member access - intentional for module-level cache functions
+    "SLF001",
+    "S105",
 ]
