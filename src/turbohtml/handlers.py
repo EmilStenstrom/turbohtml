@@ -22,6 +22,7 @@ from turbohtml.constants import (
 from turbohtml.context import (
     ContentState,
     DocumentState,
+    ParseContext,
     get_current_table,
     get_foreign_namespace_ancestor,
     get_foreign_object_ancestor,
@@ -1549,13 +1550,11 @@ class FormattingTagHandler(TagHandler):
             and restore_cell_after_adoption.parent is not None
         ):
             context.move_to_element(restore_cell_after_adoption)
-            table_node = restore_cell_after_adoption.find_first_ancestor_in_tags("table")
         # Pending reconstruction after new adoption segmentation
         if context.needs_reconstruction and reconstruct_if_needed(self.parser, context):
             context.needs_reconstruction = False
 
         if context.in_template_content > 0:
-            tableish = {"table", "thead", "tbody", "tfoot"}
             # Template content handling for formatting elements: if ancestor formatting with same tag exists
             # inside template content boundary, reuse insertion point at that ancestor; otherwise remain at current.
             same_ancestor = context.current_parent.find_ancestor(tag_name)
@@ -1781,7 +1780,6 @@ class FormattingTagHandler(TagHandler):
         if tag_name == "nobr" and context.current_parent.tag_name == "nobr" and context.current_parent.parent:
             context.move_to_element(context.current_parent.parent)
 
-        pending_target = locals().get("pending_insert_before")
         if context.in_template_content > 0:
             parent = context.current_parent
             last_child = parent.children[-1] if parent.children else None
@@ -1796,13 +1794,13 @@ class FormattingTagHandler(TagHandler):
                 if not inside_object:
                     context.active_formatting_elements.push(new_element, token)
                 return True
-        if not (pending_target and pending_target.parent is current_parent):
-            new_element = self._insert_formatting_element(
-                token,
-                context,
-                parent=current_parent,
-                push_nobr_late=is_nobr,
-            )
+
+        new_element = self._insert_formatting_element(
+            token,
+            context,
+            parent=current_parent,
+            push_nobr_late=is_nobr,
+        )
         if not inside_object:
             context.active_formatting_elements.push(new_element, token)
         if is_anchor and new_element.parent is not None:
@@ -2374,29 +2372,28 @@ class SelectTagHandler(TagHandler):
 
     def postprocess(self, parser):
         """At EOF, handle any unclosed option elements for selectedcontent cloning.
-        
+
         This is spec-compliant: selectedcontent mirrors the selected option's content.
         """
         # Get the context from parser's current state
         # Since we're in postprocess, we need to check the final tree state
-        if not hasattr(parser, 'root'):
+        if not parser.root:
             return
-        
+
         # Find any unclosed option elements in the tree
         def find_options(node, options_list):
             if node.tag_name == "option":
                 options_list.append(node)
             for child in node.children:
                 find_options(child, options_list)
-        
+
         options = []
         find_options(parser.root, options)
-        
+
         # Process the last (innermost) option found
         if options:
             option = options[-1]
             # Temporarily create a context pointing to this option
-            from turbohtml.context import ParseContext
             temp_context = ParseContext(option)
             self.clone_option_to_selectedcontent(temp_context)
 
