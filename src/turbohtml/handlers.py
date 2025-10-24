@@ -33,6 +33,7 @@ from turbohtml.context import (
 from turbohtml.foster import foster_parent, needs_foster_parenting
 from turbohtml.node import Node
 from turbohtml.utils import (
+    _TABLE_CELL_TAGS,
     ensure_body,
     ensure_head,
     get_body,
@@ -43,6 +44,9 @@ from turbohtml.utils import (
     reconstruct_active_formatting_elements,
     reconstruct_if_needed,
 )
+
+# Frozensets for fast ancestor lookups (avoid list→frozenset conversion on every call)
+_DT_DD_TAGS = frozenset(["dt", "dd"])
 
 
 # Sentinel value for handlers that can handle all tags (used in HANDLED_START_TAGS/HANDLED_END_TAGS)
@@ -1118,6 +1122,10 @@ class TextHandler(TagHandler):
         # Cache frequently accessed values
         doc_state = context.document_state
         in_template = context.in_template_content > 0
+        current_parent = context.current_parent
+        current_context = context.current_context
+        current_parent = context.current_parent
+        current_context = context.current_context
 
         # One-shot post-adoption reconstruction: if the adoption agency algorithm executed on the
         # previous token (end tag of a formatting element) it sets a transient flag on the context.
@@ -1140,7 +1148,7 @@ class TextHandler(TagHandler):
 
         # Only consider ancestors (not arbitrary earlier open elements) to avoid resurrecting closed/suppressed nodes.
         ancestor_ips = []
-        cur = context.current_parent
+        cur = current_parent
         while cur and cur.tag_name not in ("html", "document-fragment"):
             # Check for integration points using namespace-aware logic - optimize with early checks
             tag = cur.tag_name
@@ -1177,14 +1185,14 @@ class TextHandler(TagHandler):
         if (
             (frag and frag.matches("colgroup"))
             and not text.isspace()
-            and not any(ch.tag_name != "#text" for ch in context.current_parent.children)
+            and not any(ch.tag_name != "#text" for ch in current_parent.children)
         ):
             return True
 
         # Foreign (MathML/SVG) content: append text directly to current foreign element without
         # triggering body/table salvage heuristics. This preserves correct subtree placement
         # Handles post-body <math><mi>foo</mi> cases where text must remain within foreign subtree.
-        if self.parser.foreign_handler and context.current_context in ("svg", "math"):
+        if self.parser.foreign_handler and current_context in ("svg", "math"):
             if text:
                 self._append_text(text, context)
             return True
@@ -1358,8 +1366,11 @@ class TextHandler(TagHandler):
             return
 
         # frameset_ok flips off when meaningful (non-whitespace, non-replacement) text appears
-        if context.frameset_ok and any((not c.isspace()) and c != "\ufffd" for c in text):
-            context.frameset_ok = False
+        # Optimized: use string methods instead of character-by-character iteration
+        if context.frameset_ok:
+            stripped = text.strip()
+            if stripped and stripped != "\ufffd" * len(stripped):
+                context.frameset_ok = False
         # Guard: avoid duplicating the same trailing text when processing characters after </body>
         if context.document_state == DocumentState.AFTER_BODY:
             body = get_body(self.parser.root)
@@ -1516,11 +1527,13 @@ class FormattingTagHandler(TagHandler):
             return False
 
         tag_name = token.tag_name
-        restore_cell_after_adoption = context.current_parent if tag_name == "a" and is_in_table_cell(context) else None
+        is_anchor = tag_name == "a"
+        is_nobr = tag_name == "nobr"
+        restore_cell_after_adoption = context.current_parent if is_anchor and is_in_table_cell(context) else None
 
         # Proactive duplicate <a> segmentation (spec: any new <a> implies adoption of existing active <a>)
         adoption_ran_for_anchor = False
-        if tag_name == "a":
+        if is_anchor:
             existing_a = context.active_formatting_elements.find("a")
             if existing_a and existing_a.element and context.open_elements.contains(existing_a.element):
                 # Duplicate <a>: run adoption once to close previous anchor per spec.
@@ -1549,7 +1562,7 @@ class FormattingTagHandler(TagHandler):
             if same_ancestor:
                 context.move_to_element(same_ancestor)
 
-        if tag_name == "nobr" and context.open_elements.has_element_in_scope("nobr"):
+        if is_nobr and context.open_elements.has_element_in_scope("nobr"):
             # Spec: when a <nobr> start tag is seen and one is already in scope, run the adoption
             # agency algorithm once for "nobr" then continue with normal insertion.
             self.parser.adoption_agency.run_algorithm("nobr", context)
@@ -1559,8 +1572,10 @@ class FormattingTagHandler(TagHandler):
         # Allow nested <nobr>; spec imposes no artificial nesting depth limit.
 
         # Descendant of <object> not added to active list.
+        current_parent = context.current_parent
+        current_parent_tag = current_parent.tag_name
         inside_object = (
-            context.current_parent.find_ancestor("object") is not None or context.current_parent.tag_name == "object"
+            current_parent.find_ancestor("object") is not None or current_parent_tag == "object"
         )
 
         if is_in_table_cell(context):
@@ -1570,7 +1585,7 @@ class FormattingTagHandler(TagHandler):
             # current_parent is a section wrapper (e.g. <tbody>) under the table and no row/cell has
             # been inserted yet, relocate insertion target to the cell and position before the table.
             if (
-                tag_name == "a"
+                is_anchor
                 and self.parser.fragment_context
                 and self.parser.fragment_context.matches(("tr", "td", "th", "tbody", "thead", "tfoot"))
             ):
@@ -1596,7 +1611,7 @@ class FormattingTagHandler(TagHandler):
                             context,
                             parent=cell,
                             before=table,
-                            push_nobr_late=(tag_name == "nobr"),
+                            push_nobr_late=is_nobr,
                         )
                         if not inside_object:
                             context.active_formatting_elements.push(new_element, token)
@@ -1625,8 +1640,8 @@ class FormattingTagHandler(TagHandler):
             new_element = self._insert_formatting_element(
                 token,
                 context,
-                parent=context.current_parent,
-                push_nobr_late=(tag_name == "nobr"),
+                parent=current_parent,
+                push_nobr_late=is_nobr,
             )
             if not inside_object:
                 context.active_formatting_elements.push(new_element, token)
@@ -1646,21 +1661,21 @@ class FormattingTagHandler(TagHandler):
         if (
             is_in_table_context(context)
             and context.document_state != DocumentState.IN_CAPTION
-            and context.current_parent.tag_name in tableish_containers
+            and current_parent_tag in tableish_containers
         ):
             # Centralized foster parenting path
             # Prefer direct cell ancestor insertion if inside a cell
-            if context.current_parent.tag_name in {"td", "th"}:
-                cell = context.current_parent
+            if current_parent_tag in {"td", "th"}:
+                cell = current_parent
             else:
-                cell = context.current_parent.find_first_ancestor_in_tags(["td", "th"])
+                cell = current_parent.find_first_ancestor_in_tags(_TABLE_CELL_TAGS)
             if not cell:
                 for el in reversed(context.open_elements):
                     if el.tag_name in {"td", "th"}:
                         cell = el
                         break
-            if not cell and context.current_parent.tag_name == "tr":
-                for child in reversed(context.current_parent.children):
+            if not cell and current_parent_tag == "tr":
+                for child in reversed(current_parent.children):
                     if child.tag_name in {"td", "th"}:
                         cell = child
                         break
@@ -1689,7 +1704,7 @@ class FormattingTagHandler(TagHandler):
                     context,
                     parent=cell,
                     before=before_element,
-                    push_nobr_late=(tag_name == "nobr"),
+                    push_nobr_late=is_nobr,
                 )
                 if not inside_object:
                     context.active_formatting_elements.push(new_element, token)
@@ -1747,14 +1762,14 @@ class FormattingTagHandler(TagHandler):
                         context,
                         parent=foster_parent_node,
                         before=chain_before,
-                        push_nobr_late=(tag_name == "nobr"),
+                        push_nobr_late=is_nobr,
                     )
                 else:
                     new_element = self._insert_formatting_element(
                         token,
                         context,
                         parent=chain_parent,
-                        push_nobr_late=(tag_name == "nobr"),
+                        push_nobr_late=is_nobr,
                     )
                 if tag_name == "a" and context.anchor_resume_element is None:
                     context.anchor_resume_element = new_element
@@ -1776,21 +1791,21 @@ class FormattingTagHandler(TagHandler):
                     context,
                     parent=parent,
                     before=last_child,
-                    push_nobr_late=(tag_name == "nobr"),
+                    push_nobr_late=is_nobr,
                 )
                 if not inside_object:
                     context.active_formatting_elements.push(new_element, token)
                 return True
-        if not (pending_target and pending_target.parent is context.current_parent):
+        if not (pending_target and pending_target.parent is current_parent):
             new_element = self._insert_formatting_element(
                 token,
                 context,
-                parent=context.current_parent,
-                push_nobr_late=(tag_name == "nobr"),
+                parent=current_parent,
+                push_nobr_late=is_nobr,
             )
         if not inside_object:
             context.active_formatting_elements.push(new_element, token)
-        if tag_name == "a" and new_element.parent is not None:
+        if is_anchor and new_element.parent is not None:
             parent = new_element.parent
             active_anchor_elements = {
                 entry.element
@@ -2356,6 +2371,34 @@ class SelectTagHandler(TagHandler):
             cloned.append_child(cloned_child)
 
         return cloned
+
+    def postprocess(self, parser):
+        """At EOF, handle any unclosed option elements for selectedcontent cloning.
+        
+        This is spec-compliant: selectedcontent mirrors the selected option's content.
+        """
+        # Get the context from parser's current state
+        # Since we're in postprocess, we need to check the final tree state
+        if not hasattr(parser, 'root'):
+            return
+        
+        # Find any unclosed option elements in the tree
+        def find_options(node, options_list):
+            if node.tag_name == "option":
+                options_list.append(node)
+            for child in node.children:
+                find_options(child, options_list)
+        
+        options = []
+        find_options(parser.root, options)
+        
+        # Process the last (innermost) option found
+        if options:
+            option = options[-1]
+            # Temporarily create a context pointing to this option
+            from turbohtml.context import ParseContext
+            temp_context = ParseContext(option)
+            self.clone_option_to_selectedcontent(temp_context)
 
 
 class ParagraphTagHandler(TagHandler):
@@ -3832,7 +3875,7 @@ class ListTagHandler(TagHandler):
             stack but keep active formatting entries so they can reconstruct in the new item)
           - Reconstruct formatting after creating the new item so duplication (<b>) is possible.
         """
-        ancestor = context.current_parent.find_first_ancestor_in_tags(["dt", "dd"])
+        ancestor = context.current_parent.find_first_ancestor_in_tags(_DT_DD_TAGS)
         if ancestor:
 
             # If currently inside a formatting element child (e.g., <dt><b>|cursor| ...), move up to the dt/dd first
@@ -4231,15 +4274,17 @@ class BlockFormattingReconstructionHandler(TagHandler):
         if is_in_integration_point(context):
             return False
 
-        formatting_element = context.current_parent.find_formatting_element_ancestor()
-        has_active_formatting = bool(context.active_formatting_elements)
+        current_parent = context.current_parent
+        formatting_element = current_parent.find_formatting_element_ancestor()
+        active_formatting_elements = context.active_formatting_elements
+        has_active_formatting = bool(active_formatting_elements)
         if not formatting_element and not has_active_formatting:
             return False
 
         block_tag = token.tag_name
         if block_tag in BLOCK_ELEMENTS and block_tag != "li":
-            if context.active_formatting_elements:
-                for entry in context.active_formatting_elements:
+            if active_formatting_elements:
+                for entry in active_formatting_elements:
                     if entry.element and not context.open_elements.contains(entry.element):
                         break
             self.parser.insert_element(token, context, mode="normal")

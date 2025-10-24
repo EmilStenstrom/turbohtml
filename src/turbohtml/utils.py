@@ -8,19 +8,23 @@ from turbohtml.constants import FORMATTING_ELEMENTS
 from turbohtml.context import DocumentState, get_current_table
 from turbohtml.node import Node
 
+# Frozensets for fast ancestor lookups (avoid list→frozenset conversion on every call)
+_TABLE_CELL_TAGS = frozenset(["td", "th"])
+_CELL_OR_CAPTION_TAGS = frozenset(["td", "th", "caption"])
+
 
 def is_in_table_cell(context):
     """Check if current insertion point is inside a table cell (td/th)."""
     parent = context.current_parent
     if parent is None:
         return False
-    if parent.tag_name in {"td", "th"}:
+    if parent.tag_name in _TABLE_CELL_TAGS:
         return True
     # If we're at a table element itself, we're not in a cell OF that table
     # (even if the table is nested inside a cell of an outer table)
     if parent.tag_name == "table":
         return False
-    return parent.find_first_ancestor_in_tags(["td", "th"]) is not None
+    return parent.find_first_ancestor_in_tags(_TABLE_CELL_TAGS) is not None
 
 
 def is_in_table_context(context):
@@ -35,7 +39,7 @@ def is_in_table_context(context):
 
 def is_in_cell_or_caption(context):
     """Check if current insertion point is inside a cell or caption."""
-    return bool(context.current_parent.find_first_ancestor_in_tags({"td", "th", "caption"}))
+    return bool(context.current_parent.find_first_ancestor_in_tags(_CELL_OR_CAPTION_TAGS))
 
 
 def get_body(root):
