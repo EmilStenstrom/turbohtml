@@ -599,10 +599,22 @@ class TreeBuilder:
         self.pending_table_text = []
 
         if fragment_context is not None:
-            context = self._create_element(fragment_context.tag_name, fragment_context.namespace or None, [])
-            self.document.append_child(context)
-            self.open_elements.append(context)
-            self.mode = InsertionMode.IN_BODY
+            # Fragment parsing per HTML5 spec
+            root = self._create_element("html", None, [])
+            self.document.append_child(root)
+            self.open_elements.append(root)
+            # Set mode based on context element name
+            name = fragment_context.tag_name.lower()
+            if name in {"tbody", "thead", "tfoot"}:
+                self.mode = InsertionMode.IN_TABLE_BODY
+            elif name == "tr":
+                self.mode = InsertionMode.IN_ROW
+            elif name in {"td", "th"}:
+                self.mode = InsertionMode.IN_CELL
+            elif name == "table":
+                self.mode = InsertionMode.IN_TABLE
+            else:
+                self.mode = InsertionMode.IN_BODY
             self.frameset_ok = False
 
     def process_token(self, token):
@@ -621,6 +633,14 @@ class TreeBuilder:
             if self._should_use_foreign_content(current_token):
                 result = self._process_foreign_content(current_token)
             else:
+                if self.open_elements:
+                    current = self.open_elements[-1]
+                    if current.namespace not in {None, "html"} and not isinstance(current_token, EOFToken):
+                        # Keep EOF in after-body handling even when the top element is foreign.
+                        # Pop foreign elements and reset mode before dispatch
+                        while self.open_elements and self.open_elements[-1].namespace not in {None, "html"}:
+                            self.open_elements.pop()
+                        self._reset_insertion_mode()
                 result = self._dispatch(current_token)
             if result is None:
                 return TokenSinkResult.Continue
@@ -652,6 +672,12 @@ class TreeBuilder:
         return TokenSinkResult.Continue
 
     def finish(self):
+        if self.fragment_context is not None:
+            # For fragments, just remove the root html element wrapper
+            if self.document.children and self.document.children[0].name == "html":
+                root = self.document.children[0]
+                self._reparent_children(root, self.document)
+                self.document.remove_child(root)
         return self.document
 
     # Insertion mode dispatch ------------------------------------------------
@@ -1866,6 +1892,9 @@ class TreeBuilder:
     def _clear_stack_to_table_context(self):
         while self.open_elements:
             node = self.open_elements[-1]
+            # Only clear HTML elements; stop at table/template/html or foreign content
+            if node.namespace not in {None, "html"}:
+                break
             if node.name in {"table", "template", "html"}:
                 break
             self.open_elements.pop()
@@ -1873,6 +1902,9 @@ class TreeBuilder:
     def _clear_stack_to_table_body_context(self):
         while self.open_elements:
             node = self.open_elements[-1]
+            # Only clear HTML elements; stop at tbody/tfoot/thead/template/html or foreign content
+            if node.namespace not in {None, "html"}:
+                break
             if node.name in {"tbody", "tfoot", "thead", "template", "html"}:
                 break
             self.open_elements.pop()
@@ -1880,6 +1912,9 @@ class TreeBuilder:
     def _clear_stack_to_table_row_context(self):
         while self.open_elements:
             node = self.open_elements[-1]
+            # Only clear HTML elements; stop at tr/template/html or foreign content
+            if node.namespace not in {None, "html"}:
+                break
             if node.name in {"tr", "template", "html"}:
                 break
             self.open_elements.pop()
@@ -2080,13 +2115,14 @@ class TreeBuilder:
 
     def _pop_until_html_or_integration_point(self):
         while self.open_elements:
-            node = self.open_elements.pop()
+            node = self.open_elements[-1]
             if node.namespace in {None, "html"}:
-                return
+                break
             if self._is_html_integration_point(node):
-                return
+                break
             if self._is_mathml_text_integration_point(node):
-                return
+                break
+            self.open_elements.pop()
 
     def _process_foreign_content(self, token):
         current = self.open_elements[-1]
@@ -2117,6 +2153,7 @@ class TreeBuilder:
                 if name_lower in FOREIGN_BREAKOUT_ELEMENTS or (name_lower == "font" and self._foreign_breakout_font(token)):
                     self._parse_error("Unexpected HTML element in foreign content")
                     self._pop_until_html_or_integration_point()
+                    self._reset_insertion_mode()
                     return ("reprocess", self.mode, token)
 
                 namespace = current.namespace
@@ -2132,16 +2169,27 @@ class TreeBuilder:
 
             if token.kind == Tag.END:
                 idx = len(self.open_elements) - 1
+                first = True
                 while idx >= 0:
+                    if idx == 0:
+                        return None
+
                     node = self.open_elements[idx]
-                    if node.namespace not in {None, "html"}:
-                        if self._lower_ascii(node.name) == name_lower:
-                            del self.open_elements[idx:]
-                            return None
-                    else:
-                        self._parse_error("unexpected-html-element-in-foreign-context")
-                        self._pop_until_html_or_integration_point()
+                    is_html = node.namespace in {None, "html"}
+                    if not first and is_html:
+                        # Pop foreign elements above the HTML node, then reprocess
+                        del self.open_elements[idx + 1:]
+                        self._reset_insertion_mode()
                         return ("reprocess", self.mode, token)
+
+                    if self._lower_ascii(node.name) == name_lower:
+                        del self.open_elements[idx:]
+                        return None
+
+                    if first:
+                        self._parse_error("unexpected-end-tag-in-foreign-content")
+                        first = False
+
                     idx -= 1
                 return None
 
