@@ -1,4 +1,4 @@
-Tests passed: 784/1740 (45.1%) (39 skipped)
+Tests passed: 787/1740 (45.2%) (39 skipped)
 
 adoption01.dat: 17/18 (94%) [..........x.......]
 adoption02.dat: 2/2 (100%) [..]
@@ -8,7 +8,7 @@ doctype01.dat: 37/37 (100%) [.....................................]
 domjs-unsafe.dat: 23/49 (47%) [xxx.xxxxxxxxxxxxxxxxxxxxxx..........x............]
 entities01.dat: 8/75 (11%) [xxxxxx....xxxx..x..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx]
 entities02.dat: 13/26 (50%) [x........xxxxx.xx..x.xxx.x]
-foreign-fragment.dat: 43/66 (65%) [..xx..............xx..xx..xx..xx..xx...x.x........xxx......xxxxx.x]
+foreign-fragment.dat: 44/66 (67%) [..xx..............xx..xx..xx..xx..xx...x.x........xx.......xxxxx.x]
 html5test-com.dat: 11/24 (46%) [......xxxxxxxxxxxx.x....]
 inbody01.dat: 4/4 (100%) [....]
 isindex.dat: 3/4 (75%) [.x..]
@@ -32,7 +32,7 @@ tables01.dat: 16/19 (84%) [...............xxx.]
 template.dat: 1/112 (1%) [xxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx]
 tests1.dat: 66/112 (59%) [....................x...xxx..xx..xx...xxxxxxxxxxx.x..x..x..x.x...............xxxxx.xx.xxxx.xxx....xx.x..x..xxxx.]
 tests2.dat: 41/63 (65%) [.x..xxxx.x..xx.x..x....x......x.....xxx.x.....xx.x....x.xx.....]
-tests3.dat: 15/24 (62%) [...........xxxxxxxx....x]
+tests3.dat: 17/24 (71%) [...........x..xxxxx....x]
 tests4.dat: 3/9 (33%) [..xxxx.xx]
 tests5.dat: 0/15 (0%) [xxxxxxxxxxxxxxxss] (2 skipped)
 tests6.dat: 36/52 (69%) [x.xx.x.x.x................x.x.......x.x.....x..xxxxx]

@@ -957,6 +957,10 @@ class TreeBuilder:
                         return None
                     self.frameset_ok = False
                     return None
+                if name == "head":
+                    # Ignore <head> in body mode (duplicate head)
+                    self._parse_error("Unexpected <head> in body")
+                    return None
                 if name in BLOCK_WITH_P_START:
                     if self._has_in_button_scope("p"):
                         self._close_p_element()
