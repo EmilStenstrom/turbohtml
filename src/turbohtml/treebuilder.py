@@ -750,6 +750,10 @@ class TreeBuilder:
                 self._create_root([])
                 self.mode = InsertionMode.BEFORE_HEAD
                 return ("reprocess", InsertionMode.BEFORE_HEAD, token)
+            if token.kind == Tag.END:
+                # Ignore other end tags
+                self._parse_error("Unexpected end tag in before html")
+                return None
         if isinstance(token, EOFToken):
             self._create_root([])
             self.mode = InsertionMode.BEFORE_HEAD
@@ -784,6 +788,10 @@ class TreeBuilder:
                 self.head_element = self._insert_phantom("head")
                 self.mode = InsertionMode.IN_HEAD
                 return ("reprocess", InsertionMode.IN_HEAD, token)
+            if token.kind == Tag.END:
+                # Ignore other end tags
+                self._parse_error("Unexpected end tag in before head")
+                return None
         if isinstance(token, EOFToken):
             self.head_element = self._insert_phantom("head")
             self.mode = InsertionMode.IN_HEAD
@@ -903,6 +911,10 @@ class TreeBuilder:
             if token.kind == Tag.END and token.name in {"html", "br"}:
                 self._insert_body_if_missing()
                 return ("reprocess", InsertionMode.IN_BODY, token)
+            if token.kind == Tag.END:
+                # Ignore other end tags
+                self._parse_error("Unexpected end tag in after head")
+                return None
         if isinstance(token, EOFToken):
             self._insert_body_if_missing()
             self.mode = InsertionMode.IN_BODY
@@ -1092,6 +1104,12 @@ class TreeBuilder:
                     self._insert_element(token, push=True)
                     self.frameset_ok = False
                     self.mode = InsertionMode.IN_TABLE
+                    return None
+                if name in {"plaintext", "xmp"}:
+                    # These elements implicitly close p
+                    if self._has_in_button_scope("p"):
+                        self._close_p_element()
+                    self._insert_element(token, push=True)
                     return None
                 self._insert_element(token, push=not token.self_closing)
                 return None
