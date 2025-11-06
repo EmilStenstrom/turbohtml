@@ -1164,7 +1164,25 @@ class TreeBuilder:
                             break
                     self._clear_active_formatting_up_to_marker()
                     return None
-                self._close_element_by_name(token.name)
+                # Block-level end tags (address, article, aside, blockquote, etc.)
+                if name in {
+                    "address", "article", "aside", "blockquote", "button", "center",
+                    "details", "dialog", "dir", "div", "dl", "fieldset", "figcaption",
+                    "figure", "footer", "header", "hgroup", "listing", "main", "menu",
+                    "nav", "ol", "pre", "search", "section", "summary", "table", "ul"
+                }:
+                    if not self._in_scope(name):
+                        self._parse_error(f"No matching <{name}> tag")
+                        return None
+                    # Generate implied end tags (cursory)
+                    self._generate_implied_end_tags()
+                    if self.open_elements and self.open_elements[-1].name != name:
+                        self._parse_error(f"Unexpected open element while closing {name}")
+                    # Pop until we find and pop the target element
+                    self._pop_until_any_inclusive({name})
+                    return None
+                # Any other end tag
+                self._any_other_end_tag(token.name)
                 return None
         if isinstance(token, EOFToken):
             self.mode = InsertionMode.AFTER_BODY
@@ -1693,10 +1711,36 @@ class TreeBuilder:
         return self._has_element_in_scope(name, DEFAULT_SCOPE_TERMINATORS)
 
     def _close_element_by_name(self, name):
+        # Simple element closing - pops from the named element onwards
+        # Used for explicit closing (e.g., when button start tag closes existing button)
         for index in range(len(self.open_elements) - 1, -1, -1):
             if self.open_elements[index].name == name:
                 del self.open_elements[index:]
                 return
+
+    def _any_other_end_tag(self, name):
+        # Spec: "Any other end tag" in IN_BODY mode
+        # Step 1: Initialize node to current node (last in stack)
+        # Step 2: Loop through stack backwards
+        for index in range(len(self.open_elements) - 1, -1, -1):
+            node = self.open_elements[index]
+            
+            # Step 2.1: If node's name matches the end tag name
+            if node.name == name:
+                # Step 2.2: Generate implied end tags (except for this name)
+                # Step 2.3: If current node is not this node, parse error
+                if index != len(self.open_elements) - 1:
+                    self._parse_error(f"Unexpected end tag </{name}>")
+                # Step 2.4: Pop all elements from this node onwards
+                del self.open_elements[index:]
+                return
+            
+            # Step 2.5: If node is a special element, parse error and ignore the tag
+            if self._is_special_element(node):
+                self._parse_error(f"Unexpected end tag </{name}>")
+                return  # Ignore the end tag
+            
+            # Step 2.6: Continue to next node (previous in stack)
 
     def _close_element_by_node(self, node):
         for index in range(len(self.open_elements) - 1, -1, -1):
@@ -2287,7 +2331,7 @@ class TreeBuilder:
         for _ in range(8):
             fmt_index = self._find_active_formatting_index(name)
             if fmt_index is None:
-                self._close_element_by_name(name)
+                self._any_other_end_tag(name)
                 return
 
             entry = self.active_formatting[fmt_index]
