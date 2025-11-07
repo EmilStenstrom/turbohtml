@@ -1557,7 +1557,7 @@ class TreeBuilder:
         if isinstance(token, Tag):
             name = token.name
             if token.kind == Tag.START:
-                if name in {"caption", "col", "colgroup", "tbody", "tfoot", "thead", "tr", "table"}:
+                if name in {"caption", "col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr", "table"}:
                     if self._close_table_cell():
                         return ("reprocess", self.mode, token)
                     return self._mode_in_table(token)
