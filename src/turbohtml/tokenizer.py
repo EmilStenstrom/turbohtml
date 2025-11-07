@@ -60,6 +60,10 @@ class Tokenizer:
 	CDATA_SECTION = 36
 	CDATA_SECTION_BRACKET = 37
 	CDATA_SECTION_END = 38
+	RAWTEXT = 39
+	RAWTEXT_LESS_THAN_SIGN = 40
+	RAWTEXT_END_TAG_OPEN = 41
+	RAWTEXT_END_TAG_NAME = 42
 
 	__slots__ = (
 		"sink",
@@ -85,6 +89,7 @@ class Tokenizer:
 		"current_doctype_system",
 		"current_doctype_force_quirks",
 		"last_start_tag_name",
+		"rawtext_tag_name",
 	)
 
 	def __init__(self, sink, opts=None):
@@ -114,6 +119,7 @@ class Tokenizer:
 		self.current_doctype_system = []
 		self.current_doctype_force_quirks = False
 		self.last_start_tag_name = None
+		self.rawtext_tag_name = None
 
 	def run(self, html):
 		if html and html[0] == "\ufeff" and self.opts.discard_bom:
@@ -138,6 +144,7 @@ class Tokenizer:
 		self.current_doctype_force_quirks = False
 		self.current_tag_self_closing = False
 		self.current_tag_kind = Tag.START
+		self.rawtext_tag_name = None
 		self.last_start_tag_name = None
 
 		initial_state = self.opts.initial_state
@@ -265,6 +272,18 @@ class Tokenizer:
 			elif state == self.CDATA_SECTION_END:
 				if self._state_cdata_section_end():
 					break
+			elif state == self.RAWTEXT:
+				if self._state_rawtext():
+					break
+			elif state == self.RAWTEXT_LESS_THAN_SIGN:
+				if self._state_rawtext_less_than_sign():
+					break
+			elif state == self.RAWTEXT_END_TAG_OPEN:
+				if self._state_rawtext_end_tag_open():
+					break
+			elif state == self.RAWTEXT_END_TAG_NAME:
+				if self._state_rawtext_end_tag_name():
+					break
 			else:
 				# Unknown state fallback to data.
 				self.state = self.DATA
@@ -372,8 +391,8 @@ class Tokenizer:
 				return False
 			if c == ">":
 				self._finish_attribute()
-				self._emit_current_tag()
-				self.state = self.DATA
+				if not self._emit_current_tag():
+					self.state = self.DATA
 				return False
 			if c == "\0":
 				self._emit_error("Null character in tag name")
@@ -399,8 +418,8 @@ class Tokenizer:
 				return False
 			if c == ">":
 				self._finish_attribute()
-				self._emit_current_tag()
-				self.state = self.DATA
+				if not self._emit_current_tag():
+					self.state = self.DATA
 				return False
 			if c == "=":
 				self._emit_error("Attribute name cannot start with '='")
@@ -436,8 +455,8 @@ class Tokenizer:
 				return False
 			if c == ">":
 				self._finish_attribute()
-				self._emit_current_tag()
-				self.state = self.DATA
+				if not self._emit_current_tag():
+					self.state = self.DATA
 				return False
 			if c == "\0":
 				self._emit_error("Null in attribute name")
@@ -469,8 +488,8 @@ class Tokenizer:
 				return False
 			if c == ">":
 				self._finish_attribute()
-				self._emit_current_tag()
-				self.state = self.DATA
+				if not self._emit_current_tag():
+					self.state = self.DATA
 				return False
 			self._finish_attribute()
 			self._start_attribute()
@@ -498,8 +517,8 @@ class Tokenizer:
 			if c == ">":
 				self._emit_error("Missing attribute value")
 				self._finish_attribute()
-				self._emit_current_tag()
-				self.state = self.DATA
+				if not self._emit_current_tag():
+					self.state = self.DATA
 				return False
 			self._reconsume_current()
 			self.state = self.ATTRIBUTE_VALUE_UNQUOTED
@@ -566,8 +585,8 @@ class Tokenizer:
 				return False
 			if c == ">":
 				self._finish_attribute()
-				self._emit_current_tag()
-				self.state = self.DATA
+				if not self._emit_current_tag():
+					self.state = self.DATA
 				return False
 			if c == "&":
 				self.current_attr_value.append("&")
@@ -1326,8 +1345,21 @@ class Tokenizer:
 		name = "".join(self.current_tag_name)
 		attrs = [Attribute(n, v) for (n, v) in self.current_tag_attrs]
 		tag = Tag(self.current_tag_kind, name, attrs, self.current_tag_self_closing)
+		switched_to_rawtext = False
 		if self.current_tag_kind == Tag.START:
 			self.last_start_tag_name = name
+			# Only switch to RAWTEXT for these elements in HTML context (not SVG/MathML).
+			# Check if we're in foreign content by looking at open_elements.
+			in_foreign = False
+			if self.sink.open_elements:
+				for elem in self.sink.open_elements:
+					if elem.namespace and elem.namespace != "html":
+						in_foreign = True
+						break
+			if not in_foreign and name in ("script", "style", "xmp", "iframe", "noembed", "noframes", "noscript", "textarea", "title"):
+				self.state = self.RAWTEXT
+				self.rawtext_tag_name = name
+				switched_to_rawtext = True
 		self._emit_token(tag)
 		self.current_tag_name.clear()
 		self.current_tag_attrs.clear()
@@ -1335,6 +1367,7 @@ class Tokenizer:
 		self.current_attr_value.clear()
 		self.current_tag_self_closing = False
 		self.current_tag_kind = Tag.START
+		return switched_to_rawtext
 
 	def _emit_comment(self):
 		data = "".join(self.current_comment)
@@ -1441,3 +1474,83 @@ class Tokenizer:
 		self._reconsume_current()
 		self.state = self.CDATA_SECTION
 		return False
+
+	def _state_rawtext(self):
+		# Consume characters until '<'
+		while True:
+			c = self._get_char()
+			if c is None:
+				self._flush_text()
+				self._emit_token(EOFToken())
+				return True
+			if c == "<":
+				self.state = self.RAWTEXT_LESS_THAN_SIGN
+				return False
+			self.text_buffer.append(c)
+
+	def _state_rawtext_less_than_sign(self):
+		c = self._get_char()
+		if c == "/":
+			self.current_tag_name.clear()
+			self.state = self.RAWTEXT_END_TAG_OPEN
+			return False
+		self.text_buffer.append("<")
+		self._reconsume_current()
+		self.state = self.RAWTEXT
+		return False
+
+	def _state_rawtext_end_tag_open(self):
+		c = self._get_char()
+		if c and c.isalpha():
+			self.current_tag_name.append(c.lower())
+			self.state = self.RAWTEXT_END_TAG_NAME
+			return False
+		self.text_buffer.append("<")
+		self.text_buffer.append("/")
+		self._reconsume_current()
+		self.state = self.RAWTEXT
+		return False
+
+	def _state_rawtext_end_tag_name(self):
+		# Check if this matches the opening tag name
+		while True:
+			c = self._get_char()
+			if c and c.isalpha():
+				self.current_tag_name.append(c.lower())
+				continue
+			# End of tag name - check if it matches
+			tag_name = "".join(self.current_tag_name)
+			if tag_name == self.rawtext_tag_name and c in (" ", "\t", "\n", "\r", "\f", "/", ">", None):
+				# Valid end tag - emit it
+				if c == ">":
+					attrs = []
+					tag = Tag(Tag.END, tag_name, attrs, False)
+					self._flush_text()
+					self._emit_token(tag)
+					self.state = self.DATA
+					self.rawtext_tag_name = None
+					return False
+				if c in (" ", "\t", "\n", "\r", "\f"):
+					# Whitespace after tag name - switch to BEFORE_ATTRIBUTE_NAME
+					self.current_tag_kind = Tag.END
+					self.current_tag_attrs.clear()
+					self.state = self.BEFORE_ATTRIBUTE_NAME
+					return False
+				if c == "/":
+					self.current_tag_kind = Tag.END
+					self.current_tag_attrs.clear()
+					self.state = self.SELF_CLOSING_START_TAG
+					return False
+				# EOF
+				self._flush_text()
+				self._emit_token(EOFToken())
+				return True
+			# Not a matching end tag - emit as text
+			self.text_buffer.append("<")
+			self.text_buffer.append("/")
+			for ch in self.current_tag_name:
+				self.text_buffer.append(ch)
+			self.current_tag_name.clear()
+			self._reconsume_current()
+			self.state = self.RAWTEXT
+			return False
