@@ -1125,6 +1125,21 @@ class TreeBuilder:
                         self._close_p_element()
                     self._insert_element(token, push=True)
                     return None
+                if name == "option":
+                    # Close any open option element before inserting new one
+                    if self.open_elements and self.open_elements[-1].name == "option":
+                        self.open_elements.pop()
+                    self._insert_element(token, push=not token.self_closing)
+                    return None
+                if name == "optgroup":
+                    # Close any open option element before inserting optgroup
+                    if self.open_elements and self.open_elements[-1].name == "option":
+                        self.open_elements.pop()
+                    # Also close any open optgroup
+                    if self.open_elements and self.open_elements[-1].name == "optgroup":
+                        self.open_elements.pop()
+                    self._insert_element(token, push=not token.self_closing)
+                    return None
                 self._insert_element(token, push=not token.self_closing)
                 return None
             else:

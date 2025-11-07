@@ -1,4 +1,4 @@
-Tests passed: 892/1740 (51.3%) (39 skipped)
+Tests passed: 897/1740 (51.6%) (39 skipped)
 
 adoption01.dat: 17/18 (94%) [..........x.......]
 adoption02.dat: 2/2 (100%) [..]
@@ -30,8 +30,8 @@ search-element.dat: 3/3 (100%) [...]
 svg.dat: 3/8 (38%) [xxxxx...]
 tables01.dat: 19/19 (100%) [...................]
 template.dat: 1/112 (1%) [xxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx]
-tests1.dat: 82/112 (73%) [..........................x..xx..xx......xx.x..x..x..x..x....................xxxxx.xx..xxx..x......x.x..x..xxxx.]
-tests2.dat: 42/63 (67%) [.x..xxxx.x..xx.x..x....x......x.....xxx.x.....xx......x.xx.....]
+tests1.dat: 83/112 (74%) [..........................x..xx..x.......xx.x..x..x..x..x....................xxxxx.xx..xxx..x......x.x..x..xxxx.]
+tests2.dat: 44/63 (70%) [.x..xxxx.x..xx.x..x....x......x......x..x.....xx......x.xx.....]
 tests3.dat: 17/24 (71%) [...........x..xxxxx....x]
 tests4.dat: 3/9 (33%) [..xxxx.xx]
 tests5.dat: 1/15 (7%) [xxxxxxxxxx.xxxxss] (2 skipped)
@@ -47,8 +47,8 @@ tests15.dat: 9/14 (64%) [xxx.......x.x.]
 tests16.dat: 26/185 (14%) [....xxxxxx........xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxssssssxxxxxxxxxx....xxxxxx........xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxssssssxxxxxxxx.x.] (12 skipped)
 tests17.dat: 6/13 (46%) [.....xxxxxxx.]
 tests18.dat: 6/35 (17%) [xxxxsxxxxxxxxxxxxxxxx.xxxxxxxx...x..] (1 skipped)
-tests19.dat: 41/103 (40%) [........x.xx.xxxxx..xx.x...x..xxxxx...x.xxx.xxxxxxxxxxxxxxx..xxxxxxxxxxxxxxxxxxxx.x....xx.x..xx........]
-tests20.dat: 61/64 (95%) [.........................................x.........x..........x.]
+tests19.dat: 42/103 (41%) [........x.xx.xxxxx..xx.x......xxxxx...x.xxx.xxxxxxxxxxxxxxx..xxxxxxxxxxxxxxxxxxxx.x....xx.x..xx........]
+tests20.dat: 62/64 (97%) [.........................................x....................x.]
 tests21.dat: 21/23 (91%) [......xx...............]
 tests22.dat: 5/5 (100%) [.....]
 tests23.dat: 5/5 (100%) [.....]
