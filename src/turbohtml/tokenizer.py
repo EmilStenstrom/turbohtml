@@ -57,6 +57,9 @@ class Tokenizer:
 	DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE_QUOTED = 33
 	DOCTYPE_SYSTEM_IDENTIFIER_SINGLE_QUOTED = 34
 	AFTER_DOCTYPE_SYSTEM_IDENTIFIER = 35
+	CDATA_SECTION = 36
+	CDATA_SECTION_BRACKET = 37
+	CDATA_SECTION_END = 38
 
 	__slots__ = (
 		"sink",
@@ -252,6 +255,15 @@ class Tokenizer:
 					break
 			elif state == self.BOGUS_DOCTYPE:
 				if self._state_bogus_doctype():
+					break
+			elif state == self.CDATA_SECTION:
+				if self._state_cdata_section():
+					break
+			elif state == self.CDATA_SECTION_BRACKET:
+				if self._state_cdata_section_bracket():
+					break
+			elif state == self.CDATA_SECTION_END:
+				if self._state_cdata_section_end():
 					break
 			else:
 				# Unknown state fallback to data.
@@ -599,12 +611,27 @@ class Tokenizer:
 			self.state = self.DOCTYPE
 			return False
 		if self._consume_if("[CDATA["):
-			# Treat CDATA as bogus comment in HTML context.
-			self._emit_error("CDATA section outside foreign content")
-			self.current_comment.clear()
-			self._reconsume_current()
-			self.state = self.BOGUS_COMMENT
-			return False
+			# CDATA sections are only valid in foreign content (SVG/MathML)
+			# Check if the adjusted current node is in a foreign namespace
+			is_foreign = False
+			if self.sink.open_elements:
+				current = self.sink.open_elements[-1]
+				if current.namespace not in {None, "html"}:
+					is_foreign = True
+			
+			if is_foreign:
+				# Proper CDATA section in foreign content
+				self.state = self.CDATA_SECTION
+				return False
+			else:
+				# Treat as bogus comment in HTML context, preserving "[CDATA[" prefix
+				self._emit_error("CDATA section outside foreign content")
+				self.current_comment.clear()
+				# Add the consumed "[CDATA[" text to the comment
+				for ch in "[CDATA[":
+					self.current_comment.append(ch)
+				self.state = self.BOGUS_COMMENT
+				return False
 		self._emit_error("Invalid markup declaration")
 		self.current_comment.clear()
 		self._reconsume_current()
@@ -1357,3 +1384,57 @@ class Tokenizer:
 			return False
 		self.pos = end
 		return True
+
+	def _state_cdata_section(self):
+		# CDATA section state - consume characters until we see ']'
+		while True:
+			c = self._get_char()
+			if c is None:
+				self._emit_error("eof-in-cdata")
+				self._flush_text()
+				self._emit_token(EOFToken())
+				return True
+			if c == "]":
+				self.state = self.CDATA_SECTION_BRACKET
+				return False
+			self.text_buffer.append(c)
+
+	def _state_cdata_section_bracket(self):
+		# Seen one ']', check for second ']'
+		c = self._get_char()
+		if c == "]":
+			self.state = self.CDATA_SECTION_END
+			return False
+		# False alarm, emit the ']' we saw and continue
+		self.text_buffer.append("]")
+		if c is None:
+			self._emit_error("eof-in-cdata")
+			self._flush_text()
+			self._emit_token(EOFToken())
+			return True
+		self._reconsume_current()
+		self.state = self.CDATA_SECTION
+		return False
+
+	def _state_cdata_section_end(self):
+		# Seen ']]', check for '>'
+		c = self._get_char()
+		if c == ">":
+			# End of CDATA section
+			self._flush_text()
+			self.state = self.DATA
+			return False
+		# Not the end - we saw ']]' but not '>'. Emit one ']' and check if the next char is another ']'
+		self.text_buffer.append("]")
+		if c is None:
+			self._emit_error("eof-in-cdata")
+			self._flush_text()
+			self._emit_token(EOFToken())
+			return True
+		if c == "]":
+			# Still might be ']]>' sequence, stay in CDATA_SECTION_END
+			return False
+		# Not a bracket, so reconsume and go back to CDATA_SECTION
+		self._reconsume_current()
+		self.state = self.CDATA_SECTION
+		return False
