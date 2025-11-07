@@ -1427,6 +1427,8 @@ class Tokenizer:
 		# Not the end - we saw ']]' but not '>'. Emit one ']' and check if the next char is another ']'
 		self.text_buffer.append("]")
 		if c is None:
+			# EOF after ']]' - emit the second ']' too
+			self.text_buffer.append("]")
 			self._emit_error("eof-in-cdata")
 			self._flush_text()
 			self._emit_token(EOFToken())
@@ -1434,7 +1436,8 @@ class Tokenizer:
 		if c == "]":
 			# Still might be ']]>' sequence, stay in CDATA_SECTION_END
 			return False
-		# Not a bracket, so reconsume and go back to CDATA_SECTION
+		# Not a bracket, so emit the second ']', reconsume current char and go back to CDATA_SECTION
+		self.text_buffer.append("]")
 		self._reconsume_current()
 		self.state = self.CDATA_SECTION
 		return False
