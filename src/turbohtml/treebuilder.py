@@ -527,7 +527,9 @@ class SimpleDomNode:
             return []
         formatted = []
         padding = " " * (indent + 2)
-        for attr in self.attrs:
+        # Sort attributes alphabetically by name for canonical test output
+        sorted_attrs = sorted(self.attrs, key=lambda a: a.name)
+        for attr in sorted_attrs:
             value = attr.value or ""
             formatted.append(f'| {padding}{attr.name}="{value}"')
         return formatted
@@ -635,12 +637,23 @@ class TreeBuilder:
             else:
                 if self.open_elements:
                     current = self.open_elements[-1]
+                    # Only pop foreign elements if we're NOT at an HTML/MathML integration point
+                    # and NOT about to insert a new foreign element (svg/math)
                     if current.namespace not in {None, "html"} and not isinstance(current_token, EOFToken):
-                        # Keep EOF in after-body handling even when the top element is foreign.
-                        # Pop foreign elements and reset mode before dispatch
-                        while self.open_elements and self.open_elements[-1].namespace not in {None, "html"}:
-                            self.open_elements.pop()
-                        self._reset_insertion_mode()
+                        should_pop = True
+                        # Don't pop at integration points
+                        if self._is_html_integration_point(current) or self._is_mathml_text_integration_point(current):
+                            should_pop = False
+                        # Don't pop when inserting new svg/math elements
+                        if isinstance(current_token, Tag) and current_token.kind == Tag.START:
+                            name_lower = self._lower_ascii(current_token.name)
+                            if name_lower in {"svg", "math"}:
+                                should_pop = False
+                        if should_pop:
+                            # Pop foreign elements and reset mode before dispatch
+                            while self.open_elements and self.open_elements[-1].namespace not in {None, "html"}:
+                                self.open_elements.pop()
+                            self._reset_insertion_mode()
                 result = self._dispatch(current_token)
             if result is None:
                 return TokenSinkResult.Continue
@@ -730,9 +743,10 @@ class TreeBuilder:
             self._append_comment_to_document(token.data)
             return None
         if isinstance(token, EOFToken):
-            self._create_root([])
-            self.mode = InsertionMode.AFTER_AFTER_BODY
-            return ("reprocess", InsertionMode.AFTER_AFTER_BODY, token)
+            if not self.opts.iframe_srcdoc:
+                self._set_quirks_mode("quirks")
+            self.mode = InsertionMode.BEFORE_HTML
+            return ("reprocess", InsertionMode.BEFORE_HTML, token)
         return ("reprocess", InsertionMode.BEFORE_HTML, token)
 
     def _mode_before_html(self, token):
@@ -2129,12 +2143,15 @@ class TreeBuilder:
     def _is_html_integration_point(self, node):
         if node is None:
             return False
+        # annotation-xml is an HTML integration point only with specific encoding values
         if node.namespace == "math" and node.name == "annotation-xml":
             encoding = self._node_attribute_value(node, "encoding")
             if encoding:
                 enc_lower = encoding.lower()
                 if enc_lower in {"text/html", "application/xhtml+xml"}:
                     return True
+            return False  # annotation-xml without proper encoding is NOT an integration point
+        # SVG foreignObject, desc, and title are always HTML integration points
         return (node.namespace, node.name) in HTML_INTEGRATION_POINT_SET
 
     def _is_mathml_text_integration_point(self, node):
