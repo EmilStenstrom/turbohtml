@@ -804,7 +804,11 @@ class TreeBuilder:
             return None
         if isinstance(token, Tag):
             if token.kind == Tag.START and token.name == "html":
-                return ("reprocess", InsertionMode.IN_BODY, token)
+                # Duplicate html tag - add attributes to existing html element
+                if self.open_elements:
+                    html = self.open_elements[0]
+                    self._add_missing_attributes(html, token.attrs)
+                return None
             if token.kind == Tag.START and token.name == "head":
                 head = self._insert_element(token, push=True)
                 self.head_element = head
@@ -929,7 +933,10 @@ class TreeBuilder:
                     self.head_element = self._insert_phantom("head")
                 self.open_elements.append(self.head_element)
                 result = self._mode_in_head(token)
-                self.open_elements.pop()
+                # Remove the head element from wherever it is in the stack
+                # (it might not be at the end if we inserted other elements like <title>)
+                if self.head_element in self.open_elements:
+                    self.open_elements.remove(self.head_element)
                 return result
             if token.kind == Tag.END and token.name == "body":
                 self._insert_body_if_missing()
