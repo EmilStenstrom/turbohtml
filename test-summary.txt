@@ -1,4 +1,4 @@
-Tests passed: 1270/1740 (73.0%) (39 skipped)
+Tests passed: 1281/1740 (73.6%) (39 skipped)
 
 adoption01.dat: 18/18 (100%) [..................]
 adoption02.dat: 2/2 (100%) [..]
@@ -31,22 +31,22 @@ svg.dat: 3/8 (38%) [xxxxx...]
 tables01.dat: 19/19 (100%) [...................]
 template.dat: 2/112 (2%) [xxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx]
 tests1.dat: 93/112 (83%) [.............................xx..x.......xx.x..x..x..x..x.....................x.x........x..x......x.x..x....xx.]
-tests2.dat: 53/63 (84%) [.........x..xx.x..x...........x......x................x.xx.....]
+tests2.dat: 54/63 (86%) [.........x..xx.x..x...........x.......................x.xx.....]
 tests3.dat: 24/24 (100%) [........................]
 tests4.dat: 3/9 (33%) [..xxxx.xx]
 tests5.dat: 12/15 (80%) [.x....xx.......ss] (2 skipped)
 tests6.dat: 41/52 (79%) [x....x....................x.........x.x.....x..xxxxx]
-tests7.dat: 27/34 (79%) [........x..xx...xx.........x....x.]
+tests7.dat: 29/34 (85%) [........x..xx..............x....x.]
 tests8.dat: 10/10 (100%) [..........]
-tests9.dat: 15/27 (56%) [.......xxxx.....xxxx...xxxx]
-tests10.dat: 44/54 (81%) [................x.x...xxxx....xx..xx..................]
+tests9.dat: 17/27 (63%) [.......xxxx.....x..x...xxxx]
+tests10.dat: 45/54 (83%) [..................x...xxxx....xx..xx..................]
 tests11.dat: 9/13 (69%) [..x.xxx......]
 tests12.dat: 1/2 (50%) [x.]
 tests14.dat: 7/7 (100%) [.......]
 tests15.dat: 9/14 (64%) [xxx.......x.x.]
 tests16.dat: 118/185 (64%) [....xxxxxx......x..........xx.......x.xxxxxxxxxx.........xxx...xxxxxxx.x...........ssssssxx............xxxxxx......x..........xx.......x.xxxxxxxxxx.......xxx...xxxxxxx.x...........ssssssxx.......x.] (12 skipped)
 tests17.dat: 12/13 (92%) [...........x.]
-tests18.dat: 16/35 (46%) [xxxxsxxxxxxxxxxxx..x..x.....x.......] (1 skipped)
+tests18.dat: 17/35 (49%) [xxxxsxxxxxxxxxxxx..x..x.............] (1 skipped)
 tests19.dat: 77/103 (75%) [........x.xx.xx.....xx.x......xxxxx..........x.x........................xxx.x.xx..x....xx.x...x........]
 tests20.dat: 63/64 (98%) [..............................................................x.]
 tests21.dat: 23/23 (100%) [.......................]
@@ -57,5 +57,5 @@ tests25.dat: 26/26 (100%) [..........................]
 tests26.dat: 15/20 (75%) [x........x....x..x.x]
 tests_innerHTML_1.dat: 56/81 (69%) [...x...x................xx..........xxxxxxx...x.x........xxxxxxxxx.......x....x.x]
 tricky01.dat: 2/9 (22%) [.xxx.xxxx]
-webkit01.dat: 38/52 (73%) [...x............xx.x......xx..xx..xx...x.....x..x.x.]
-webkit02.dat: 21/44 (48%) [.ss.x.xxx..........x.xxx..xxxx.xxxxxx...xx.xxx] (2 skipped)
+webkit01.dat: 39/52 (75%) [...x............xx.x......xx..x...xx...x.....x..x.x.]
+webkit02.dat: 24/44 (55%) [.ss.x.xxx..........x.xxx..xxxx.xxxxxx.......xx] (2 skipped)

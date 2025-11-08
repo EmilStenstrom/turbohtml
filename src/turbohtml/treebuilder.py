@@ -63,6 +63,7 @@ class InsertionMode(enum.IntEnum):
     IN_FRAMESET = 17
     AFTER_FRAMESET = 18
     AFTER_AFTER_FRAMESET = 19
+    IN_SELECT = 20
 
 
 def _is_all_whitespace(text):
@@ -729,6 +730,8 @@ class TreeBuilder:
             return self._mode_in_row(token)
         if self.mode == InsertionMode.IN_CELL:
             return self._mode_in_cell(token)
+        if self.mode == InsertionMode.IN_SELECT:
+            return self._mode_in_select(token)
         if self.mode == InsertionMode.AFTER_BODY:
             return self._mode_after_body(token)
         if self.mode == InsertionMode.AFTER_AFTER_BODY:
@@ -1161,6 +1164,12 @@ class TreeBuilder:
                     self._insert_element(token, push=True)
                     self.ignore_lf = True
                     self.frameset_ok = False
+                    return None
+                if name == "select":
+                    self._reconstruct_active_formatting_elements()
+                    self._insert_element(token, push=True)
+                    self.frameset_ok = False
+                    self._reset_insertion_mode()
                     return None
                 if name == "option":
                     # Close any open option element before inserting new one
@@ -1660,6 +1669,114 @@ class TreeBuilder:
                 return ("reprocess", self.mode, token)
             return self._mode_in_table(token)
         return None
+
+    def _mode_in_select(self, token):
+        if isinstance(token, CharacterTokens):
+            self._append_text(token.data)
+            return None
+        if isinstance(token, CommentToken):
+            self._append_comment(token.data)
+            return None
+        if isinstance(token, Tag):
+            name = token.name
+            if token.kind == Tag.START:
+                if name == "html":
+                    return ("reprocess", InsertionMode.IN_BODY, token)
+                if name == "option":
+                    if self.open_elements and self.open_elements[-1].name == "option":
+                        self.open_elements.pop()
+                    self._insert_element(token, push=True)
+                    return None
+                if name == "optgroup":
+                    if self.open_elements and self.open_elements[-1].name == "option":
+                        self.open_elements.pop()
+                    if self.open_elements and self.open_elements[-1].name == "optgroup":
+                        self.open_elements.pop()
+                    self._insert_element(token, push=True)
+                    return None
+                if name == "select":
+                    self._parse_error("Nested select")
+                    if self._in_scope("select"):
+                        self._pop_until_any_inclusive({"select"})
+                        self._reset_insertion_mode()
+                    return None
+                if name in {"input", "textarea"}:
+                    self._parse_error(f"Unexpected <{name}> in select")
+                    if self._in_scope("select"):
+                        self._pop_until_any_inclusive({"select"})
+                        self._reset_insertion_mode()
+                        return ("reprocess", self.mode, token)
+                    return None
+                if name == "keygen":
+                    self._insert_element(token, push=not token.self_closing)
+                    return None
+                if name in {"caption", "col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr", "table"}:
+                    self._parse_error(f"Unexpected <{name}> in select")
+                    if self._in_scope("select"):
+                        self._pop_until_any_inclusive({"select"})
+                        self._reset_insertion_mode()
+                        return ("reprocess", self.mode, token)
+                    return None
+                if name in {"script", "template"}:
+                    return self._mode_in_head(token)
+                if name in {"svg", "math"}:
+                    self._insert_element(token, push=True, namespace=name)
+                    return None
+                if name in {"hr", "menuitem"}:
+                    self._insert_element(token, push=not token.self_closing)
+                    return None
+                # Allow common HTML elements in select (newer spec)
+                if name in {"p", "div", "span", "a", "b", "strong", "em", "i", "u", "s", "small", "button", "datalist"}:
+                    self._insert_element(token, push=not token.self_closing)
+                    return None
+                if name in {"br", "img"}:
+                    self._insert_element(token, push=False)
+                    return None
+                self._parse_error(f"Unexpected <{name}> in select - ignored")
+                return None
+            else:
+                if name == "optgroup":
+                    if self.open_elements and self.open_elements[-1].name == "option":
+                        self.open_elements.pop()
+                    if self.open_elements and self.open_elements[-1].name == "optgroup":
+                        self.open_elements.pop()
+                    else:
+                        self._parse_error("Unexpected </optgroup>")
+                    return None
+                if name == "option":
+                    if self.open_elements and self.open_elements[-1].name == "option":
+                        self.open_elements.pop()
+                    else:
+                        self._parse_error("Unexpected </option>")
+                    return None
+                if name == "select":
+                    if not self._in_scope("select"):
+                        self._parse_error("Unexpected </select>")
+                        return None
+                    self._pop_until_any_inclusive({"select"})
+                    self._reset_insertion_mode()
+                    return None
+                # Handle end tags for allowed HTML elements in select
+                if name in {"p", "div", "span", "a", "b", "strong", "em", "i", "u", "s", "small", "button", "datalist"}:
+                    if self.open_elements and self.open_elements[-1].name == name:
+                        self.open_elements.pop()
+                    else:
+                        self._parse_error(f"Unexpected </{name}>")
+                    return None
+                if name == "template":
+                    return self._mode_in_head(token)
+                if name in {"caption", "col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr", "table"}:
+                    self._parse_error(f"Unexpected </{name}> in select")
+                    if self._in_scope("select"):
+                        self._pop_until_any_inclusive({"select"})
+                        self._reset_insertion_mode()
+                        return ("reprocess", self.mode, token)
+                    return None
+                return None
+        if isinstance(token, EOFToken):
+            return self._mode_in_body(token)
+        return None
+
     def _mode_after_body(self, token):
         if isinstance(token, CharacterTokens):
             if _is_all_whitespace(token.data):
@@ -2231,8 +2348,8 @@ class TreeBuilder:
         for node in reversed(self.open_elements):
             name = node.name
             if name == "select":
-                # Select insertion modes not yet implemented; treat as in body
-                break
+                self.mode = InsertionMode.IN_SELECT
+                return
             if name == "td" or name == "th":
                 self.mode = InsertionMode.IN_CELL
                 return
