@@ -1785,6 +1785,7 @@ class TreeBuilder:
         target = self._current_node_or_html()
         foster_parenting = self._should_foster_parenting(target, is_text=True)
         if foster_parenting:
+            self._reconstruct_active_formatting_elements()
             parent, position = self._appropriate_insertion_location(foster_parenting=True)
             if parent is None:
                 return
