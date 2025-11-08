@@ -1124,8 +1124,16 @@ class TreeBuilder:
                     self._insert_element(token, push=False)
                     self.frameset_ok = False
                     return None
+                # Elements that should be ignored in body mode (parse error) in full document parsing
+                # In fragment parsing, these may be valid depending on context
+                if name in {"colgroup", "frameset", "head", "tbody", "td", "tfoot", "th", "thead", "tr"}:
+                    self._parse_error(f"unexpected-start-tag-ignored")
+                    return None
+                if self.fragment_context is None and name in {"col", "frame"}:
+                    self._parse_error(f"unexpected-start-tag-ignored")
+                    return None
                 # Void/metadata elements that don't reconstruct active formatting
-                if name in {"area", "base", "basefont", "bgsound", "embed", "img", "input", "keygen", "link", "meta", "param", "source", "track", "wbr"}:
+                if name in {"area", "base", "basefont", "bgsound", "col", "embed", "frame", "img", "input", "keygen", "link", "meta", "param", "source", "track", "wbr"}:
                     self._insert_element(token, push=False)
                     return None
                 if name == "table":

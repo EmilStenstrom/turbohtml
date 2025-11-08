@@ -4,114 +4,21 @@ Implements HTML5 character reference (entity) decoding per WHATWG spec §13.2.5.
 Supports both named entities (&amp;, &nbsp;) and numeric references (&#60;, &#x3C;).
 """
 
-# Named entities from HTML5 spec
-# This is a subset - full list would be ~2000+ entries
-# For now, implementing most common entities to pass tests
-NAMED_ENTITIES = {
-    "gt": ">",
-    "lt": "<",
-    "amp": "&",
-    "quot": '"',
-    "apos": "'",
-    "nbsp": "\xa0",
-    "AElig": "\xc6",
-    "Aacute": "\xc1",
-    "Acirc": "\xc2",
-    "Agrave": "\xc0",
-    "Aring": "\xc5",
-    "Atilde": "\xc3",
-    "Auml": "\xc4",
-    "Ccedil": "\xc7",
-    "ETH": "\xd0",
-    "Eacute": "\xc9",
-    "Ecirc": "\xca",
-    "Egrave": "\xc8",
-    "Euml": "\xcb",
-    "Iacute": "\xcd",
-    "Icirc": "\xce",
-    "Igrave": "\xcc",
-    "Iuml": "\xcf",
-    "Ntilde": "\xd1",
-    "Oacute": "\xd3",
-    "Ocirc": "\xd4",
-    "Ograve": "\xd2",
-    "Oslash": "\xd8",
-    "Otilde": "\xd5",
-    "Ouml": "\xd6",
-    "THORN": "\xde",
-    "Uacute": "\xda",
-    "Ucirc": "\xdb",
-    "Ugrave": "\xd9",
-    "Uuml": "\xdc",
-    "Yacute": "\xdd",
-    "aacute": "\xe1",
-    "acirc": "\xe2",
-    "acute": "\xb4",
-    "aelig": "\xe6",
-    "agrave": "\xe0",
-    "aring": "\xe5",
-    "atilde": "\xe3",
-    "auml": "\xe4",
-    "brvbar": "\xa6",
-    "ccedil": "\xe7",
-    "cedil": "\xb8",
-    "cent": "\xa2",
-    "copy": "\xa9",
-    "curren": "\xa4",
-    "deg": "\xb0",
-    "divide": "\xf7",
-    "eacute": "\xe9",
-    "ecirc": "\xea",
-    "egrave": "\xe8",
-    "eth": "\xf0",
-    "euml": "\xeb",
-    "frac12": "\xbd",
-    "frac14": "\xbc",
-    "frac34": "\xbe",
-    "iacute": "\xed",
-    "icirc": "\xee",
-    "iexcl": "\xa1",
-    "igrave": "\xec",
-    "iquest": "\xbf",
-    "iuml": "\xef",
-    "laquo": "\xab",
-    "macr": "\xaf",
-    "micro": "\xb5",
-    "middot": "\xb7",
-    "not": "\xac",
-    "notin": "\u2209",
-    "ntilde": "\xf1",
-    "oacute": "\xf3",
-    "ocirc": "\xf4",
-    "ograve": "\xf2",
-    "ordf": "\xaa",
-    "ordm": "\xba",
-    "oslash": "\xf8",
-    "otilde": "\xf5",
-    "ouml": "\xf6",
-    "para": "\xb6",
-    "plusmn": "\xb1",
-    "pound": "\xa3",
-    "prod": "\u220f",
-    "raquo": "\xbb",
-    "reg": "\xae",
-    "sect": "\xa7",
-    "shy": "\xad",
-    "sup1": "\xb9",
-    "sup2": "\xb2",
-    "sup3": "\xb3",
-    "szlig": "\xdf",
-    "thorn": "\xfe",
-    "times": "\xd7",
-    "uacute": "\xfa",
-    "ucirc": "\xfb",
-    "ugrave": "\xf9",
-    "uml": "\xa8",
-    "uuml": "\xfc",
-    "yacute": "\xfd",
-    "yen": "\xa5",
-    "yuml": "\xff",
-}
+import html.entities
+
+# Use Python's complete HTML5 entity list (2231 entities)
+# Keys include the trailing semicolon (e.g., "amp;", "lang;")
+# We'll strip semicolons when looking up to match both forms
+_HTML5_ENTITIES = html.entities.html5
+
+# Build a normalized lookup without semicolons for easier access
+NAMED_ENTITIES = {}
+for key, value in _HTML5_ENTITIES.items():
+    # Remove trailing semicolon for lookup
+    if key.endswith(';'):
+        NAMED_ENTITIES[key[:-1]] = value
+    else:
+        NAMED_ENTITIES[key] = value
 
 # Legacy named character references that can be used without semicolons
 # Per HTML5 spec, these are primarily ISO-8859-1 (Latin-1) entities from HTML4
