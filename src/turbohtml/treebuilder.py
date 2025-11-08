@@ -1357,12 +1357,11 @@ class TreeBuilder:
                         return ("reprocess", self.mode, token)
                     return None
                 if name in {"style", "script", "template"}:
-                    head = self._ensure_head_element()
-                    if head is not None:
-                        self.open_elements.append(head)
-                        result = self._mode_in_head(token)
-                        self.open_elements.pop()
-                        return result
+                    # Per HTML5 spec: style and script are inserted directly into the table
+                    # (not processed as in-head which would move them)
+                    self._insert_element(token, push=True)
+                    self.original_mode = self.mode
+                    self.mode = InsertionMode.TEXT
                     return None
                 if name == "input":
                     input_type = None

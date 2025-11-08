@@ -1,4 +1,4 @@
-Tests passed: 1338/1740 (76.9%) (39 skipped)
+Tests passed: 1341/1740 (77.1%) (39 skipped)
 
 adoption01.dat: 18/18 (100%) [..................]
 adoption02.dat: 2/2 (100%) [..]
@@ -36,14 +36,14 @@ tests3.dat: 24/24 (100%) [........................]
 tests4.dat: 3/9 (33%) [..xxxx.xx]
 tests5.dat: 15/15 (100%) [...............ss] (2 skipped)
 tests6.dat: 41/52 (79%) [x....x....................x.........x.x.....x..xxxxx]
-tests7.dat: 29/34 (85%) [........x..xx..............x....x.]
+tests7.dat: 31/34 (91%) [........x..................x....x.]
 tests8.dat: 10/10 (100%) [..........]
 tests9.dat: 18/27 (67%) [.......xxxx.....x......xxxx]
 tests10.dat: 46/54 (85%) [......................xxxx....xx..xx..................]
 tests11.dat: 9/13 (69%) [..x.xxx......]
 tests12.dat: 1/2 (50%) [x.]
 tests14.dat: 7/7 (100%) [.......]
-tests15.dat: 10/14 (71%) [xx........x.x.]
+tests15.dat: 11/14 (79%) [xx..........x.]
 tests16.dat: 119/185 (64%) [....xxxxxx......x..........xx.......x.xxxxxxxxxx.........xxx...xxxxxxx.x...........ssssssxx............xxxxxx......x..........xx.......x.xxxxxxxxxx.......xxx...xxxxxxx.x...........ssssssxx.........] (12 skipped)
 tests17.dat: 12/13 (92%) [...........x.]
 tests18.dat: 31/35 (89%) [....s........xxx......x.............] (1 skipped)
