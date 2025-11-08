@@ -9,6 +9,7 @@ from .tokens import (
 	Tag,
 	TokenSinkResult,
 )
+from .entities import decode_entities_in_text
 
 
 class TokenizerOpts:
@@ -1297,7 +1298,9 @@ class Tokenizer:
 		data = "".join(self.text_buffer)
 		self.text_buffer.clear()
 		if data:
-			self._emit_token(CharacterTokens(data))
+			# Decode HTML entities in text content
+			decoded = decode_entities_in_text(data)
+			self._emit_token(CharacterTokens(decoded))
 
 	def _start_tag(self, kind):
 		self.current_tag_kind = kind
@@ -1328,6 +1331,8 @@ class Tokenizer:
 			return
 		name = "".join(self.current_attr_name)
 		value = "".join(self.current_attr_value)
+		# Decode HTML entities in attribute values (with stricter rules per spec)
+		value = decode_entities_in_text(value, in_attribute=True)
 		duplicate = False
 		for existing_name, _ in self.current_tag_attrs:
 			if existing_name == name:
