@@ -847,7 +847,10 @@ class TreeBuilder:
             return None
         if isinstance(token, Tag):
             if token.kind == Tag.START and token.name == "html":
-                return ("reprocess", InsertionMode.IN_BODY, token)
+                # Pop head and transition to AFTER_HEAD, then reprocess
+                self._pop_current()
+                self.mode = InsertionMode.AFTER_HEAD
+                return ("reprocess", InsertionMode.AFTER_HEAD, token)
             if token.kind == Tag.START and token.name in {"base", "basefont", "bgsound", "link", "meta"}:
                 self._insert_element(token, push=False)
                 return None
@@ -921,6 +924,7 @@ class TreeBuilder:
             return None
         if isinstance(token, Tag):
             if token.kind == Tag.START and token.name == "html":
+                self._insert_body_if_missing()
                 return ("reprocess", InsertionMode.IN_BODY, token)
             if token.kind == Tag.START and token.name == "body":
                 self._insert_element(token, push=True)
@@ -1808,12 +1812,20 @@ class TreeBuilder:
                 # Append to body element
                 self._append_text(token.data)
                 return None
+            # Non-whitespace character: parse error, reprocess in IN_BODY
+            self._parse_error("Unexpected character after </html>")
             return ("reprocess", InsertionMode.IN_BODY, token)
         if isinstance(token, CommentToken):
             self._append_comment_to_document(token.data)
             return None
-        if isinstance(token, Tag) and token.kind == Tag.START and token.name == "html":
+        if isinstance(token, Tag):
+            if token.kind == Tag.START and token.name == "html":
+                return ("reprocess", InsertionMode.IN_BODY, token)
+            # Any other tag: parse error, reprocess in IN_BODY
+            self._parse_error("Unexpected tag after </html>")
             return ("reprocess", InsertionMode.IN_BODY, token)
+        if isinstance(token, EOFToken):
+            return None
         return None
 
     def _mode_in_frameset(self, token):
