@@ -1998,13 +1998,13 @@ class TreeBuilder:
             break
 
     def _has_in_table_scope(self, name):
-        return self._has_element_in_scope(name, TABLE_SCOPE_TERMINATORS)
+        return self._has_element_in_scope(name, TABLE_SCOPE_TERMINATORS, check_integration_points=False)
 
     def _has_in_table_body_scope(self, name):
-        return self._has_element_in_scope(name, TABLE_BODY_SCOPE_TERMINATORS)
+        return self._has_element_in_scope(name, TABLE_BODY_SCOPE_TERMINATORS, check_integration_points=False)
 
     def _has_in_table_row_scope(self, name):
-        return self._has_element_in_scope(name, TABLE_ROW_SCOPE_TERMINATORS)
+        return self._has_element_in_scope(name, TABLE_ROW_SCOPE_TERMINATORS, check_integration_points=False)
 
     def _close_table_cell(self):
         if self._has_in_table_scope("td"):
@@ -2473,11 +2473,15 @@ class TreeBuilder:
     def _set_quirks_mode(self, mode):
         self.quirks_mode = mode
 
-    def _has_element_in_scope(self, name, terminators):
+    def _has_element_in_scope(self, name, terminators, check_integration_points=True):
         for node in reversed(self.open_elements):
             if node.name == name:
                 return True
             if node.namespace not in {None, "html"}:
+                # Foreign elements act as scope boundaries if they are HTML integration points
+                # (but only for non-table scopes - table scopes ignore integration points)
+                if check_integration_points and self._is_html_integration_point(node):
+                    return False
                 continue
             if node.name in terminators:
                 return False
