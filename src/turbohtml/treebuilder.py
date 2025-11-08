@@ -60,6 +60,9 @@ class InsertionMode(enum.IntEnum):
     IN_TABLE_BODY = 14
     IN_ROW = 15
     IN_CELL = 16
+    IN_FRAMESET = 17
+    AFTER_FRAMESET = 18
+    AFTER_AFTER_FRAMESET = 19
 
 
 def _is_all_whitespace(text):
@@ -730,6 +733,12 @@ class TreeBuilder:
             return self._mode_after_body(token)
         if self.mode == InsertionMode.AFTER_AFTER_BODY:
             return self._mode_after_after_body(token)
+        if self.mode == InsertionMode.IN_FRAMESET:
+            return self._mode_in_frameset(token)
+        if self.mode == InsertionMode.AFTER_FRAMESET:
+            return self._mode_after_frameset(token)
+        if self.mode == InsertionMode.AFTER_AFTER_FRAMESET:
+            return self._mode_after_after_frameset(token)
         return self._mode_in_body(token)
 
     def _mode_initial(self, token):
@@ -913,7 +922,7 @@ class TreeBuilder:
                 return None
             if token.kind == Tag.START and token.name == "frameset":
                 self._insert_element(token, push=True)
-                self.mode = InsertionMode.IN_BODY
+                self.mode = InsertionMode.IN_FRAMESET
                 return None
             if token.kind == Tag.START and token.name in {"base", "basefont", "bgsound", "link", "meta", "title", "style", "script", "noscript"}:
                 if self.head_element is None:
@@ -1659,6 +1668,98 @@ class TreeBuilder:
             return None
         if isinstance(token, Tag) and token.kind == Tag.START and token.name == "html":
             return ("reprocess", InsertionMode.IN_BODY, token)
+        return None
+
+    def _mode_in_frameset(self, token):
+        # Per HTML5 spec §13.2.6.4.16: In frameset insertion mode
+        if isinstance(token, CharacterTokens):
+            # Only whitespace characters allowed; ignore all others
+            whitespace = "".join(ch for ch in token.data if ch in "\t\n\f\r ")
+            if whitespace:
+                self._append_text(whitespace)
+            return None
+        if isinstance(token, CommentToken):
+            self._append_comment(token.data)
+            return None
+        if isinstance(token, Tag):
+            if token.kind == Tag.START and token.name == "html":
+                return ("reprocess", InsertionMode.IN_BODY, token)
+            if token.kind == Tag.START and token.name == "frameset":
+                self._insert_element(token, push=True)
+                return None
+            if token.kind == Tag.END and token.name == "frameset":
+                if self.open_elements and self.open_elements[-1].name == "html":
+                    # Root frameset, ignore end tag
+                    self._parse_error("Unexpected frameset end tag")
+                    return None
+                self.open_elements.pop()
+                if not self.opts.iframe_srcdoc and self.open_elements and self.open_elements[-1].name != "frameset":
+                    self.mode = InsertionMode.AFTER_FRAMESET
+                return None
+            if token.kind == Tag.START and token.name == "frame":
+                self._insert_element(token, push=True)
+                self.open_elements.pop()
+                return None
+            if token.kind == Tag.START and token.name == "noframes":
+                return ("reprocess", InsertionMode.IN_HEAD, token)
+        if isinstance(token, EOFToken):
+            if self.open_elements and self.open_elements[-1].name != "html":
+                self._parse_error("Unexpected EOF in frameset")
+            return None
+        self._parse_error("Unexpected token in frameset")
+        return None
+
+    def _mode_after_frameset(self, token):
+        # Per HTML5 spec §13.2.6.4.17: After frameset insertion mode
+        if isinstance(token, CharacterTokens):
+            # Only whitespace characters allowed; ignore all others
+            whitespace = "".join(ch for ch in token.data if ch in "\t\n\f\r ")
+            if whitespace:
+                self._append_text(whitespace)
+            return None
+        if isinstance(token, CommentToken):
+            self._append_comment(token.data)
+            return None
+        if isinstance(token, Tag):
+            if token.kind == Tag.START and token.name == "html":
+                return ("reprocess", InsertionMode.IN_BODY, token)
+            if token.kind == Tag.END and token.name == "html":
+                self.mode = InsertionMode.AFTER_AFTER_FRAMESET
+                return None
+            if token.kind == Tag.START and token.name == "noframes":
+                # Insert noframes element directly and switch to TEXT mode
+                self._insert_element(token, push=True)
+                self.original_mode = self.mode
+                self.mode = InsertionMode.TEXT
+                return None
+        if isinstance(token, EOFToken):
+            return None
+        self._parse_error("Unexpected token after frameset")
+        return None
+
+    def _mode_after_after_frameset(self, token):
+        # Per HTML5 spec §13.2.6.4.18: After after frameset insertion mode
+        if isinstance(token, CharacterTokens):
+            # Only whitespace characters allowed; ignore all others
+            whitespace = "".join(ch for ch in token.data if ch in "\t\n\f\r ")
+            if whitespace:
+                self._append_text(whitespace)
+            return None
+        if isinstance(token, CommentToken):
+            self._append_comment_to_document(token.data)
+            return None
+        if isinstance(token, Tag):
+            if token.kind == Tag.START and token.name == "html":
+                return ("reprocess", InsertionMode.IN_BODY, token)
+            if token.kind == Tag.START and token.name == "noframes":
+                # Insert noframes element directly and switch to TEXT mode
+                self._insert_element(token, push=True)
+                self.original_mode = self.mode
+                self.mode = InsertionMode.TEXT
+                return None
+        if isinstance(token, EOFToken):
+            return None
+        self._parse_error("Unexpected token after after frameset")
         return None
 
     # Helpers ----------------------------------------------------------------

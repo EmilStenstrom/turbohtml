@@ -279,6 +279,24 @@ def decode_entities_in_text(text, in_attribute=False):
                 i = j + 1
                 continue
             
+            # If we have a semicolon but exact match failed, try prefix matching
+            # This handles &notit; -> ¬it; (decode &not, leave it;)
+            if has_semicolon:
+                best_match = None
+                best_match_len = 0
+                for k in range(len(entity_name), 0, -1):
+                    prefix = entity_name[:k]
+                    if prefix in NAMED_ENTITIES:
+                        best_match = NAMED_ENTITIES[prefix]
+                        best_match_len = k
+                        break
+                
+                if best_match:
+                    result.append(best_match)
+                    # Continue after the matched prefix, not after semicolon
+                    i = i + 1 + best_match_len
+                    continue
+            
             # Try without semicolon for legacy compatibility
             if entity_name in NAMED_ENTITIES:
                 # Legacy entities without semicolon have strict rules:
