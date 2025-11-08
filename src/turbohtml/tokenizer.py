@@ -658,9 +658,7 @@ class Tokenizer:
 				return False
 		self._emit_error("Invalid markup declaration")
 		self.current_comment.clear()
-		# Only reconsume if we're not at EOF
-		if self.pos < self.length:
-			self._reconsume_current()
+		# Don't reconsume - bogus comment starts from current position
 		self.state = self.BOGUS_COMMENT
 		return False
 
