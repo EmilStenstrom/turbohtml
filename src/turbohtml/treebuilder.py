@@ -1125,6 +1125,11 @@ class TreeBuilder:
                         self._close_p_element()
                     self._insert_element(token, push=True)
                     return None
+                if name == "textarea":
+                    self._insert_element(token, push=True)
+                    self.ignore_lf = True
+                    self.frameset_ok = False
+                    return None
                 if name == "option":
                     # Close any open option element before inserting new one
                     if self.open_elements and self.open_elements[-1].name == "option":
