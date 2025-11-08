@@ -1804,6 +1804,9 @@ class TreeBuilder:
     def _mode_after_after_body(self, token):
         if isinstance(token, CharacterTokens):
             if _is_all_whitespace(token.data):
+                # Per spec: whitespace characters are inserted using the rules for the "in body" mode
+                # Append to body element
+                self._append_text(token.data)
                 return None
             return ("reprocess", InsertionMode.IN_BODY, token)
         if isinstance(token, CommentToken):
