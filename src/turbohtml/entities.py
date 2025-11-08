@@ -113,6 +113,33 @@ NAMED_ENTITIES = {
     "yuml": "\xff",
 }
 
+# Legacy named character references that can be used without semicolons
+# Per HTML5 spec, these are primarily ISO-8859-1 (Latin-1) entities from HTML4
+# Modern entities like "prod", "notin" etc. require semicolons
+LEGACY_ENTITIES = {
+    "gt", "lt", "amp", "quot", "apos", "nbsp",
+    "AElig", "Aacute", "Acirc", "Agrave", "Aring", "Atilde", "Auml",
+    "Ccedil", "ETH", "Eacute", "Ecirc", "Egrave", "Euml",
+    "Iacute", "Icirc", "Igrave", "Iuml",
+    "Ntilde", "Oacute", "Ocirc", "Ograve", "Oslash", "Otilde", "Ouml",
+    "THORN", "Uacute", "Ucirc", "Ugrave", "Uuml", "Yacute",
+    "aacute", "acirc", "acute", "aelig", "agrave", "aring", "atilde", "auml",
+    "brvbar", "ccedil", "cedil", "cent", "copy", "curren",
+    "deg", "divide",
+    "eacute", "ecirc", "egrave", "eth", "euml",
+    "frac12", "frac14", "frac34",
+    "iacute", "icirc", "iexcl", "igrave", "iquest", "iuml",
+    "laquo", "macr", "micro", "middot",
+    "not", "ntilde",
+    "oacute", "ocirc", "ograve", "ordf", "ordm", "oslash", "otilde", "ouml",
+    "para", "plusmn", "pound",
+    "raquo", "reg",
+    "sect", "shy", "sup1", "sup2", "sup3", "szlig",
+    "thorn", "times",
+    "uacute", "ucirc", "ugrave", "uml", "uuml",
+    "yacute", "yen", "yuml",
+}
+
 # HTML5 numeric character reference replacements (§13.2.5.73)
 NUMERIC_REPLACEMENTS = {
     0x00: "\ufffd",  # NULL
@@ -260,9 +287,8 @@ def decode_entities_in_text(text, in_attribute=False):
                 continue
             
             # Named entity
-            # Collect alphanumeric characters (entity names are case-sensitive)
-            # Note: Most entity names are lowercase, and mixed case indicates end of entity
-            while j < len(text) and (text[j].islower() or text[j].isdigit()):
+            # Collect alphanumeric characters (entity names are case-sensitive and can include uppercase)
+            while j < len(text) and (text[j].isalpha() or text[j].isdigit()):
                 j += 1
             
             entity_name = text[i+1:j]
@@ -298,19 +324,20 @@ def decode_entities_in_text(text, in_attribute=False):
                     continue
             
             # Try without semicolon for legacy compatibility
-            if entity_name in NAMED_ENTITIES:
+            # Only legacy entities can be used without semicolons
+            if entity_name in LEGACY_ENTITIES and entity_name in NAMED_ENTITIES:
                 # Legacy entities without semicolon have strict rules:
-                # In attributes: don't decode if followed by alphanumeric, '_', or '='
-                # In text: don't decode if followed by lowercase/digit, '_', or '='
+                # In attributes: don't decode if followed by alphanumeric or '='
+                # In text: don't decode if followed by lowercase/digit
                 # Per HTML5 spec §13.2.5.72
                 next_char = text[j] if j < len(text) else None
                 if in_attribute:
-                    if next_char and (next_char.isalnum() or next_char in "_="):
+                    if next_char and (next_char.isalnum() or next_char == "="):
                         result.append("&")
                         i += 1
                         continue
                 else:
-                    if next_char and (next_char.islower() or next_char.isdigit() or next_char in "_="):
+                    if next_char and (next_char.islower() or next_char.isdigit()):
                         result.append("&")
                         i += 1
                         continue
@@ -320,13 +347,13 @@ def decode_entities_in_text(text, in_attribute=False):
                 i = j
                 continue
             
-            # Try longest prefix match for entities without semicolon
+            # Try longest prefix match for legacy entities without semicolon
             # This handles cases like &notit where &not is valid but &notit is not
             best_match = None
             best_match_len = 0
             for k in range(len(entity_name), 0, -1):
                 prefix = entity_name[:k]
-                if prefix in NAMED_ENTITIES:
+                if prefix in LEGACY_ENTITIES and prefix in NAMED_ENTITIES:
                     best_match = NAMED_ENTITIES[prefix]
                     best_match_len = k
                     break
@@ -336,12 +363,12 @@ def decode_entities_in_text(text, in_attribute=False):
                 end_pos = i + 1 + best_match_len
                 next_char = text[end_pos] if end_pos < len(text) else None
                 if in_attribute:
-                    if next_char and (next_char.isalnum() or next_char in "_="):
+                    if next_char and (next_char.isalnum() or next_char == "="):
                         result.append("&")
                         i += 1
                         continue
                 else:
-                    if next_char and (next_char.islower() or next_char.isdigit() or next_char in "_="):
+                    if next_char and (next_char.islower() or next_char.isdigit()):
                         result.append("&")
                         i += 1
                         continue
