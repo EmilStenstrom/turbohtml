@@ -1189,6 +1189,11 @@ impl RustTokenizer {
                 }
             }
 
+            // PLAINTEXT: everything after is text (no end tag, no parsing)
+            if !is_end_tag && tag_name == "plaintext" {
+                self.state = STATE_PLAINTEXT;
+            }
+
             return Ok(Some(HTMLToken::new(
                 token_type.to_string(),
                 None,
