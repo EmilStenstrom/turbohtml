@@ -1783,6 +1783,12 @@ class TreeBuilder:
                 return None
             return ("reprocess", InsertionMode.IN_BODY, token)
         if isinstance(token, CommentToken):
+            # Append comment to the body element (first open element after html)
+            for node in self.open_elements:
+                if node.name == "body":
+                    comment = SimpleDomNode("#comment", data=token.data)
+                    node.append_child(comment)
+                    return None
             self._append_comment_to_document(token.data)
             return None
         if isinstance(token, Tag):

@@ -65,6 +65,7 @@ class Tokenizer:
 	RAWTEXT_LESS_THAN_SIGN = 40
 	RAWTEXT_END_TAG_OPEN = 41
 	RAWTEXT_END_TAG_NAME = 42
+	PLAINTEXT = 43
 
 	__slots__ = (
 		"sink",
@@ -284,6 +285,9 @@ class Tokenizer:
 					break
 			elif state == self.RAWTEXT_END_TAG_NAME:
 				if self._state_rawtext_end_tag_name():
+					break
+			elif state == self.PLAINTEXT:
+				if self._state_plaintext():
 					break
 			else:
 				# Unknown state fallback to data.
@@ -1365,6 +1369,10 @@ class Tokenizer:
 				self.state = self.RAWTEXT
 				self.rawtext_tag_name = name
 				switched_to_rawtext = True
+			# PLAINTEXT: everything after is text (no end tag, no parsing)
+			if not in_foreign and name == "plaintext":
+				self.state = self.PLAINTEXT
+				switched_to_rawtext = True
 		self._emit_token(tag)
 		self.current_tag_name.clear()
 		self.current_tag_attrs.clear()
@@ -1559,3 +1567,13 @@ class Tokenizer:
 			self._reconsume_current()
 			self.state = self.RAWTEXT
 			return False
+
+	def _state_plaintext(self):
+		# PLAINTEXT state - consume everything as text, no end tag
+		if self.pos < self.length:
+			remaining = self.buffer[self.pos:]
+			self.text_buffer.append(remaining)
+			self.pos = self.length
+		self._flush_text()
+		self._emit_token(EOFToken())
+		return True
