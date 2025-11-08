@@ -747,6 +747,9 @@ class TreeBuilder:
                 self._set_quirks_mode("quirks")
             self.mode = InsertionMode.BEFORE_HTML
             return ("reprocess", InsertionMode.BEFORE_HTML, token)
+        # Anything else (Tags, etc) - no DOCTYPE seen, so quirks mode
+        if not self.opts.iframe_srcdoc:
+            self._set_quirks_mode("quirks")
         return ("reprocess", InsertionMode.BEFORE_HTML, token)
 
     def _mode_before_html(self, token):
@@ -1113,7 +1116,8 @@ class TreeBuilder:
                     self.frameset_ok = False
                     return None
                 if name == "table":
-                    if self._has_in_button_scope("p"):
+                    # HTML5 spec: In standards mode (not quirks), close any open p element before table
+                    if self.quirks_mode != "quirks" and self._has_in_button_scope("p"):
                         self._close_p_element()
                     self._insert_element(token, push=True)
                     self.frameset_ok = False
