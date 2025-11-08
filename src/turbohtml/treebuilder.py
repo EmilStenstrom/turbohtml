@@ -1124,6 +1124,10 @@ class TreeBuilder:
                     self._insert_element(token, push=False)
                     self.frameset_ok = False
                     return None
+                # Void/metadata elements that don't reconstruct active formatting
+                if name in {"area", "base", "basefont", "bgsound", "embed", "img", "input", "keygen", "link", "meta", "param", "source", "track", "wbr"}:
+                    self._insert_element(token, push=False)
+                    return None
                 if name == "table":
                     # HTML5 spec: In standards mode (not quirks), close any open p element before table
                     if self.quirks_mode != "quirks" and self._has_in_button_scope("p"):
@@ -1174,6 +1178,8 @@ class TreeBuilder:
                         self._generate_implied_end_tags()
                     self._insert_element(token, push=not token.self_closing)
                     return None
+                # Any other start tag: reconstruct active formatting elements, then insert
+                self._reconstruct_active_formatting_elements()
                 self._insert_element(token, push=not token.self_closing)
                 return None
             else:
