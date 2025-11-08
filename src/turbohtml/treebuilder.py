@@ -1,13 +1,37 @@
 import enum
 
-from html5lib.constants import (
-    adjustForeignAttributes as FOREIGN_ATTRIBUTE_ADJUSTMENTS,
-    adjustMathMLAttributes as MATHML_ATTRIBUTE_ADJUSTMENTS,
-    adjustSVGAttributes as SVG_ATTRIBUTE_ADJUSTMENTS,
-    htmlIntegrationPointElements as HTML_INTEGRATION_POINT_ELEMENTS,
-    mathmlTextIntegrationPointElements as MATHML_TEXT_INTEGRATION_POINT_ELEMENTS,
+from .constants import (
+    BLOCK_WITH_P_START,
+    BUTTON_SCOPE_TERMINATORS,
+    DEFAULT_SCOPE_TERMINATORS,
+    DEFINITION_SCOPE_TERMINATORS,
+    FOREIGN_ATTRIBUTE_ADJUSTMENTS,
+    FOREIGN_BREAKOUT_ELEMENTS,
+    FORMAT_MARKER,
+    FORMATTING_ELEMENTS,
+    HEADING_ELEMENTS,
+    HTML4_PUBLIC_PREFIXES,
+    HTML_INTEGRATION_POINT_ELEMENTS,
+    HTML_INTEGRATION_POINT_SET,
+    IMPLIED_END_TAGS,
+    LIMITED_QUIRKY_PUBLIC_PREFIXES,
+    LIST_ITEM_SCOPE_TERMINATORS,
+    MATHML_ATTRIBUTE_ADJUSTMENTS,
+    MATHML_TEXT_INTEGRATION_POINT_ELEMENTS,
+    MATHML_TEXT_INTEGRATION_POINT_SET,
+    NAMESPACE_URL_TO_PREFIX,
+    QUIRKY_PUBLIC_MATCHES,
+    QUIRKY_PUBLIC_PREFIXES,
+    QUIRKY_SYSTEM_MATCHES,
+    SPECIAL_ELEMENTS,
+    SVG_ATTRIBUTE_ADJUSTMENTS,
+    SVG_TAG_NAME_ADJUSTMENTS,
+    TABLE_ALLOWED_CHILDREN,
+    TABLE_BODY_SCOPE_TERMINATORS,
+    TABLE_FOSTER_TARGETS,
+    TABLE_ROW_SCOPE_TERMINATORS,
+    TABLE_SCOPE_TERMINATORS,
 )
-
 from .tokens import (
     Attribute,
     CharacterTokens,
@@ -68,356 +92,6 @@ class InsertionMode(enum.IntEnum):
 
 def _is_all_whitespace(text):
     return all(ch in "\t\n\f\r " for ch in text)
-
-
-QUIRKY_PUBLIC_PREFIXES = (
-    "-//advasoft ltd//dtd html 3.0 aswedit + extensions//",
-    "-//as//dtd html 3.0 aswedit + extensions//",
-    "-//ietf//dtd html 2.0 level 1//",
-    "-//ietf//dtd html 2.0 level 2//",
-    "-//ietf//dtd html 2.0 strict level 1//",
-    "-//ietf//dtd html 2.0 strict level 2//",
-    "-//ietf//dtd html 2.0 strict//",
-    "-//ietf//dtd html 2.0//",
-    "-//ietf//dtd html 2.1e//",
-    "-//ietf//dtd html 3.0//",
-    "-//ietf//dtd html 3.2 final//",
-    "-//ietf//dtd html 3.2//",
-    "-//ietf//dtd html 3//",
-    "-//ietf//dtd html level 0//",
-    "-//ietf//dtd html level 1//",
-    "-//ietf//dtd html level 2//",
-    "-//ietf//dtd html level 3//",
-    "-//ietf//dtd html strict level 0//",
-    "-//ietf//dtd html strict level 1//",
-    "-//ietf//dtd html strict level 2//",
-    "-//ietf//dtd html strict level 3//",
-    "-//ietf//dtd html strict//",
-    "-//ietf//dtd html//",
-    "-//metrius//dtd metrius presentational//",
-    "-//microsoft//dtd internet explorer 2.0 html strict//",
-    "-//microsoft//dtd internet explorer 2.0 html//",
-    "-//microsoft//dtd internet explorer 2.0 tables//",
-    "-//microsoft//dtd internet explorer 3.0 html strict//",
-    "-//microsoft//dtd internet explorer 3.0 html//",
-    "-//microsoft//dtd internet explorer 3.0 tables//",
-    "-//netscape comm. corp.//dtd html//",
-    "-//netscape comm. corp.//dtd strict html//",
-    "-//o'reilly and associates//dtd html 2.0//",
-    "-//o'reilly and associates//dtd html extended 1.0//",
-    "-//o'reilly and associates//dtd html extended relaxed 1.0//",
-    "-//softquad software//dtd hotmetal pro 6.0::19990601::extensions to html 4.0//",
-    "-//softquad//dtd hotmetal pro 4.0::19971010::extensions to html 4.0//",
-    "-//spyglass//dtd html 2.0 extended//",
-    "-//sq//dtd html 2.0 hotmetal + extensions//",
-    "-//sun microsystems corp.//dtd hotjava html//",
-    "-//sun microsystems corp.//dtd hotjava strict html//",
-    "-//w3c//dtd html 3 1995-03-24//",
-    "-//w3c//dtd html 3.2 draft//",
-    "-//w3c//dtd html 3.2 final//",
-    "-//w3c//dtd html 3.2//",
-    "-//w3c//dtd html 3.2s draft//",
-    "-//w3c//dtd html 4.0 frameset//",
-    "-//w3c//dtd html 4.0 transitional//",
-    "-//w3c//dtd html experimental 19960712//",
-    "-//w3c//dtd html experimental 970421//",
-    "-//w3c//dtd w3 html//",
-    "-//w3o//dtd w3 html 3.0//",
-    "-//webtechs//dtd mozilla html 2.0//",
-    "-//webtechs//dtd mozilla html//",
-)
-
-QUIRKY_PUBLIC_MATCHES = (
-    "-//w3o//dtd w3 html strict 3.0//en//",
-    "-/w3c/dtd html 4.0 transitional/en",
-    "html",
-)
-
-QUIRKY_SYSTEM_MATCHES = (
-    "http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd",
-)
-
-LIMITED_QUIRKY_PUBLIC_PREFIXES = (
-    "-//w3c//dtd xhtml 1.0 frameset//",
-    "-//w3c//dtd xhtml 1.0 transitional//",
-)
-
-HTML4_PUBLIC_PREFIXES = (
-    "-//w3c//dtd html 4.01 frameset//",
-    "-//w3c//dtd html 4.01 transitional//",
-)
-
-HEADING_ELEMENTS = {"h1", "h2", "h3", "h4", "h5", "h6"}
-
-FORMATTING_ELEMENTS = {
-    "a",
-    "b",
-    "big",
-    "code",
-    "em",
-    "font",
-    "i",
-    "nobr",
-    "s",
-    "small",
-    "strike",
-    "strong",
-    "tt",
-    "u",
-}
-
-SPECIAL_ELEMENTS = {
-    "address",
-    "applet",
-    "area",
-    "article",
-    "aside",
-    "base",
-    "basefont",
-    "bgsound",
-    "blockquote",
-    "body",
-    "br",
-    "button",
-    "caption",
-    "center",
-    "col",
-    "colgroup",
-    "dd",
-    "details",
-    "dialog",
-    "dir",
-    "div",
-    "dl",
-    "dt",
-    "embed",
-    "fieldset",
-    "figcaption",
-    "figure",
-    "footer",
-    "form",
-    "frame",
-    "frameset",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "head",
-    "header",
-    "hgroup",
-    "hr",
-    "html",
-    "iframe",
-    "img",
-    "input",
-    "keygen",
-    "li",
-    "link",
-    "listing",
-    "main",
-    "marquee",
-    "menu",
-    "menuitem",
-    "meta",
-    "nav",
-    "noembed",
-    "noframes",
-    "noscript",
-    "object",
-    "ol",
-    "p",
-    "param",
-    "plaintext",
-    "pre",
-    "script",
-    "search",
-    "section",
-    "select",
-    "source",
-    "style",
-    "summary",
-    "table",
-    "tbody",
-    "td",
-    "template",
-    "textarea",
-    "tfoot",
-    "th",
-    "thead",
-    "title",
-    "tr",
-    "track",
-    "ul",
-    "wbr",
-}
-
-FORMAT_MARKER = object()
-DEFAULT_SCOPE_TERMINATORS = {
-    "applet",
-    "caption",
-    "html",
-    "table",
-    "td",
-    "th",
-    "marquee",
-    "object",
-    "template",
-}
-
-BUTTON_SCOPE_TERMINATORS = DEFAULT_SCOPE_TERMINATORS | {"button"}
-LIST_ITEM_SCOPE_TERMINATORS = DEFAULT_SCOPE_TERMINATORS | {"ol", "ul"}
-DEFINITION_SCOPE_TERMINATORS = DEFAULT_SCOPE_TERMINATORS | {"dl"}
-
-BLOCK_WITH_P_START = {
-    "address",
-    "article",
-    "aside",
-    "blockquote",
-    "center",
-    "details",
-    "dialog",
-    "dir",
-    "div",
-    "dl",
-    "fieldset",
-    "figcaption",
-    "figure",
-    "footer",
-    "header",
-    "hgroup",
-    "main",
-    "menu",
-    "nav",
-    "search",
-    "ol",
-    "section",
-    "summary",
-    "ul",
-}
-
-
-TABLE_FOSTER_TARGETS = {"table", "tbody", "tfoot", "thead", "tr"}
-SVG_TAG_NAME_ADJUSTMENTS = {
-    "altglyph": "altGlyph",
-    "altglyphdef": "altGlyphDef",
-    "altglyphitem": "altGlyphItem",
-    "animatecolor": "animateColor",
-    "animatemotion": "animateMotion",
-    "animatetransform": "animateTransform",
-    "clippath": "clipPath",
-    "feblend": "feBlend",
-    "fecolormatrix": "feColorMatrix",
-    "fecomponenttransfer": "feComponentTransfer",
-    "fecomposite": "feComposite",
-    "feconvolvematrix": "feConvolveMatrix",
-    "fediffuselighting": "feDiffuseLighting",
-    "fedisplacementmap": "feDisplacementMap",
-    "fedistantlight": "feDistantLight",
-    "feflood": "feFlood",
-    "fefunca": "feFuncA",
-    "fefuncb": "feFuncB",
-    "fefuncg": "feFuncG",
-    "fefuncr": "feFuncR",
-    "fegaussianblur": "feGaussianBlur",
-    "feimage": "feImage",
-    "femerge": "feMerge",
-    "femergenode": "feMergeNode",
-    "femorphology": "feMorphology",
-    "feoffset": "feOffset",
-    "fepointlight": "fePointLight",
-    "fespecularlighting": "feSpecularLighting",
-    "fespotlight": "feSpotLight",
-    "fetile": "feTile",
-    "feturbulence": "feTurbulence",
-    "foreignobject": "foreignObject",
-    "glyphref": "glyphRef",
-    "lineargradient": "linearGradient",
-    "radialgradient": "radialGradient",
-    "textpath": "textPath",
-}
-
-FOREIGN_BREAKOUT_ELEMENTS = {
-    "b",
-    "big",
-    "blockquote",
-    "body",
-    "br",
-    "center",
-    "code",
-    "dd",
-    "div",
-    "dl",
-    "dt",
-    "em",
-    "embed",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "head",
-    "hr",
-    "i",
-    "img",
-    "li",
-    "listing",
-    "menu",
-    "meta",
-    "nobr",
-    "ol",
-    "p",
-    "pre",
-    "ruby",
-    "s",
-    "small",
-    "span",
-    "strong",
-    "strike",
-    "sub",
-    "sup",
-    "table",
-    "tt",
-    "u",
-    "ul",
-    "var",
-}
-
-NAMESPACE_URL_TO_PREFIX = {
-    "http://www.w3.org/1999/xhtml": "html",
-    "http://www.w3.org/1998/Math/MathML": "math",
-    "http://www.w3.org/2000/svg": "svg",
-}
-
-HTML_INTEGRATION_POINT_SET = {
-    (NAMESPACE_URL_TO_PREFIX.get(ns, ns), name) for ns, name in HTML_INTEGRATION_POINT_ELEMENTS
-}
-
-MATHML_TEXT_INTEGRATION_POINT_SET = {
-    (NAMESPACE_URL_TO_PREFIX.get(ns, ns), name) for ns, name in MATHML_TEXT_INTEGRATION_POINT_ELEMENTS
-}
-
-
-TABLE_ALLOWED_CHILDREN = {
-    "caption",
-    "colgroup",
-    "tbody",
-    "tfoot",
-    "thead",
-    "tr",
-    "td",
-    "th",
-    "script",
-    "template",
-    "style",
-}
-
-TABLE_SCOPE_TERMINATORS = {"html", "table", "template"}
-TABLE_BODY_SCOPE_TERMINATORS = TABLE_SCOPE_TERMINATORS | {"tbody", "tfoot", "thead"}
-TABLE_ROW_SCOPE_TERMINATORS = TABLE_SCOPE_TERMINATORS | {"tr"}
-IMPLIED_END_TAGS = {"dd", "dt", "li", "option", "optgroup", "p", "rb", "rp", "rt", "rtc"}
 
 
 def _doctype_error_and_quirks(doctype, iframe_srcdoc):
@@ -535,7 +209,11 @@ class SimpleDomNode:
         sorted_attrs = sorted(self.attrs, key=lambda a: a.name)
         for attr in sorted_attrs:
             value = attr.value or ""
-            formatted.append(f'| {padding}{attr.name}="{value}"')
+            attr_name = attr.name
+            # In foreign content (SVG/MathML), namespaced attributes use space separator
+            if self.namespace and self.namespace not in {None, "html"}:
+                attr_name = attr_name.replace(":", " ")
+            formatted.append(f'| {padding}{attr_name}="{value}"')
         return formatted
 
     def _format_doctype(self):
