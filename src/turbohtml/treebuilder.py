@@ -1002,6 +1002,10 @@ class TreeBuilder:
                 if name == "body":
                     if len(self.open_elements) > 1:
                         self._parse_error("Unexpected <body> inside body")
+                        # Merge attributes onto existing body element
+                        body = self.open_elements[1] if len(self.open_elements) > 1 else None
+                        if body and body.name == "body":
+                            self._add_missing_attributes(body, token.attrs)
                         return None
                     self.frameset_ok = False
                     return None

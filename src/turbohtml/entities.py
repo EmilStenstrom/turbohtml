@@ -24,7 +24,7 @@ for key, value in _HTML5_ENTITIES.items():
 # Per HTML5 spec, these are primarily ISO-8859-1 (Latin-1) entities from HTML4
 # Modern entities like "prod", "notin" etc. require semicolons
 LEGACY_ENTITIES = {
-    "gt", "lt", "amp", "quot", "apos", "nbsp",
+    "gt", "lt", "amp", "quot", "apos", "nbsp", "AMP",
     "AElig", "Aacute", "Acirc", "Agrave", "Aring", "Atilde", "Auml",
     "Ccedil", "ETH", "Eacute", "Ecirc", "Egrave", "Euml",
     "Iacute", "Icirc", "Igrave", "Iuml",
