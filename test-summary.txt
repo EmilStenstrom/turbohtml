@@ -1,4 +1,4 @@
-Tests passed: 1298/1740 (74.6%) (39 skipped)
+Tests passed: 1303/1740 (74.9%) (39 skipped)
 
 adoption01.dat: 18/18 (100%) [..................]
 adoption02.dat: 2/2 (100%) [..]
@@ -30,8 +30,8 @@ search-element.dat: 3/3 (100%) [...]
 svg.dat: 3/8 (38%) [xxxxx...]
 tables01.dat: 19/19 (100%) [...................]
 template.dat: 2/112 (2%) [xxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx]
-tests1.dat: 93/112 (83%) [.............................xx..x.......xx.x..x..x..x..x.....................x.x........x..x......x.x..x....xx.]
-tests2.dat: 56/63 (89%) [.........x.....x..x...........x.......................x.xx.....]
+tests1.dat: 95/112 (85%) [.............................xx..x........x.x..x..x..x........................x.x........x..x......x.x..x....xx.]
+tests2.dat: 57/63 (90%) [...............x..x...........x.......................x.xx.....]
 tests3.dat: 24/24 (100%) [........................]
 tests4.dat: 3/9 (33%) [..xxxx.xx]
 tests5.dat: 12/15 (80%) [.x....xx.......ss] (2 skipped)
@@ -44,7 +44,7 @@ tests11.dat: 9/13 (69%) [..x.xxx......]
 tests12.dat: 1/2 (50%) [x.]
 tests14.dat: 7/7 (100%) [.......]
 tests15.dat: 9/14 (64%) [xxx.......x.x.]
-tests16.dat: 118/185 (64%) [....xxxxxx......x..........xx.......x.xxxxxxxxxx.........xxx...xxxxxxx.x...........ssssssxx............xxxxxx......x..........xx.......x.xxxxxxxxxx.......xxx...xxxxxxx.x...........ssssssxx.......x.] (12 skipped)
+tests16.dat: 119/185 (64%) [....xxxxxx......x..........xx.......x.xxxxxxxxxx.........xxx...xxxxxxx.x...........ssssssxx............xxxxxx......x..........xx.......x.xxxxxxxxxx.......xxx...xxxxxxx.x...........ssssssxx.........] (12 skipped)
 tests17.dat: 12/13 (92%) [...........x.]
 tests18.dat: 30/35 (86%) [....s........xxx...x..x.............] (1 skipped)
 tests19.dat: 77/103 (75%) [........x.xx.xx.....xx.x......xxxxx..........x.x........................xxx.x.xx..x....xx.x...x........]
@@ -57,5 +57,5 @@ tests25.dat: 26/26 (100%) [..........................]
 tests26.dat: 15/20 (75%) [x........x....x..x.x]
 tests_innerHTML_1.dat: 56/81 (69%) [...x...x................xx..........xxxxxxx...x.x........xxxxxxxxx.......x....x.x]
 tricky01.dat: 2/9 (22%) [.xxx.xxxx]
-webkit01.dat: 39/52 (75%) [...x............xx.x......xx..x...xx...x.....x..x.x.]
+webkit01.dat: 40/52 (77%) [...x............xx.x......xx..x...xx.........x..x.x.]
 webkit02.dat: 25/44 (57%) [.ss.x.xxx..........x..xx..xxxx.xxxxxx.......xx] (2 skipped)

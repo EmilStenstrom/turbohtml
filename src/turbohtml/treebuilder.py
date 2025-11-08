@@ -1102,8 +1102,7 @@ class TreeBuilder:
                     self._append_active_formatting_entry(name, token.attrs, node)
                     return None
                 is_formatting = name in FORMATTING_ELEMENTS
-                if name == "font" and not self._tag_has_any_attrs(token, {"color", "face", "size"}):
-                    is_formatting = False
+                # Note: font is formatting regardless of attributes per html5lib tests
                 if is_formatting:
                     if name == "nobr" and self._in_scope("nobr"):
                         self._adoption_agency("nobr")
