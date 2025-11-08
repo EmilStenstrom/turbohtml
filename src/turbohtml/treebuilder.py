@@ -1187,17 +1187,13 @@ class TreeBuilder:
                     return None
                 # Ruby elements auto-close previous ruby elements
                 if name in {"rp", "rt"}:
-                    # Close rp or rt elements before inserting new one
-                    if self.open_elements and self.open_elements[-1].name in {"rp", "rt"}:
-                        self._generate_implied_end_tags()
+                    # Generate implied end tags but exclude rtc (rp/rt can appear inside rtc)
+                    self._generate_implied_end_tags(exclude="rtc")
                     self._insert_element(token, push=not token.self_closing)
                     return None
                 if name in {"rb", "rtc"}:
-                    # Close rb, rp, or rt elements before inserting rb/rtc
-                    if self.open_elements and self.open_elements[-1].name in {"rb", "rp", "rt"}:
-                        self._generate_implied_end_tags()
-                    # For rtc, also close any open rtc
-                    if name == "rtc" and self.open_elements and self.open_elements[-1].name == "rtc":
+                    # Close rb, rp, rt, or rtc elements before inserting rb/rtc
+                    if self.open_elements and self.open_elements[-1].name in {"rb", "rp", "rt", "rtc"}:
                         self._generate_implied_end_tags()
                     self._insert_element(token, push=not token.self_closing)
                     return None
