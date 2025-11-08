@@ -1778,9 +1778,9 @@ class TreeBuilder:
                 return None
             return ("reprocess", InsertionMode.IN_BODY, token)
         if isinstance(token, CommentToken):
-            # Append comment to the body element (first open element after html)
+            # Append comment to the html element (root of open_elements stack)
             for node in self.open_elements:
-                if node.name == "body":
+                if node.name == "html":
                     comment = SimpleDomNode("#comment", data=token.data)
                     node.append_child(comment)
                     return None
