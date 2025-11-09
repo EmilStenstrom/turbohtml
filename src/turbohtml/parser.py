@@ -26,8 +26,10 @@ class TurboHTML:
             rawtext_elements = {"textarea", "title", "style"}
             tag_name = fragment_context.tag_name.lower()
             if tag_name in rawtext_elements:
-                opts.initial_state = 39  # RAWTEXT state
+                opts.initial_state = Tokenizer.RAWTEXT
                 opts.initial_rawtext_tag = tag_name
+            elif tag_name in ("plaintext", "script"):
+                opts.initial_state = Tokenizer.PLAINTEXT
         
         self.tokenizer = Tokenizer(self.tree_builder, opts)
         self.tokenizer.run(html or "")

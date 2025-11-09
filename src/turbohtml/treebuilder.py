@@ -309,7 +309,16 @@ class TreeBuilder:
             self.open_elements.append(root)
             # Set mode based on context element name
             name = fragment_context.tag_name.lower()
-            if name in {"tbody", "thead", "tfoot"}:
+            
+            # For html context, create head and body elements
+            if name == "html":
+                head = self._create_element("head", None, [])
+                root.append_child(head)
+                body = self._create_element("body", None, [])
+                root.append_child(body)
+                self.open_elements.append(body)
+                self.mode = InsertionMode.IN_BODY
+            elif name in {"tbody", "thead", "tfoot"}:
                 self.mode = InsertionMode.IN_TABLE_BODY
             elif name == "tr":
                 self.mode = InsertionMode.IN_ROW

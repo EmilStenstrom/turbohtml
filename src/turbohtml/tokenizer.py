@@ -1307,9 +1307,23 @@ class Tokenizer:
 		data = "".join(self.text_buffer)
 		self.text_buffer.clear()
 		if data:
-			# Decode HTML entities in text content
-			decoded = decode_entities_in_text(data)
-			self._emit_token(CharacterTokens(decoded))
+			# Per HTML5 spec:
+			# - RCDATA elements (title, textarea) decode character references
+			# - RAWTEXT elements (style, script, etc) do NOT decode
+			# - PLAINTEXT state does NOT decode
+			# Our tokenizer uses RAWTEXT state for both RCDATA and RAWTEXT elements
+			# so we check the tag name to determine the correct behavior
+			rcdata_elements = {"title", "textarea"}
+			if self.state >= self.PLAINTEXT:
+				# PLAINTEXT state - emit literal text without decoding
+				self._emit_token(CharacterTokens(data))
+			elif self.state >= self.RAWTEXT and self.rawtext_tag_name not in rcdata_elements:
+				# RAWTEXT state for actual RAWTEXT elements - emit literal text
+				self._emit_token(CharacterTokens(data))
+			else:
+				# DATA state or RCDATA elements - decode entities
+				decoded = decode_entities_in_text(data)
+				self._emit_token(CharacterTokens(decoded))
 
 	def _start_tag(self, kind):
 		self.current_tag_kind = kind
