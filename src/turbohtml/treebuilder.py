@@ -1026,6 +1026,23 @@ class TreeBuilder:
                             break
                     self._clear_active_formatting_up_to_marker()
                     return None
+                # Heading end tags: h1, h2, h3, h4, h5, h6
+                if name in HEADING_ELEMENTS:
+                    # If no heading element in scope, parse error and ignore
+                    if not self._has_any_in_scope(HEADING_ELEMENTS):
+                        self._parse_error(f"Unexpected </{name}>")
+                        return None
+                    # Generate implied end tags
+                    self._generate_implied_end_tags()
+                    # If current node is not this heading type, parse error
+                    if self.open_elements and self.open_elements[-1].name != name:
+                        self._parse_error(f"Mismatched heading end tag </{name}>")
+                    # Pop until we pop a heading element (any heading, not necessarily matching)
+                    while self.open_elements:
+                        popped = self.open_elements.pop()
+                        if popped.name in HEADING_ELEMENTS:
+                            break
+                    return None
                 # Block-level end tags (address, article, aside, blockquote, etc.)
                 if name in {
                     "address", "article", "aside", "blockquote", "button", "center",
@@ -2593,6 +2610,18 @@ class TreeBuilder:
 
     def _has_in_definition_scope(self, name):
         return self._has_element_in_scope(name, DEFINITION_SCOPE_TERMINATORS)
+
+    def _has_any_in_scope(self, names):
+        """Check if any element from the given set is in scope."""
+        terminators = DEFAULT_SCOPE_TERMINATORS
+        for node in reversed(self.open_elements):
+            if node.name in names:
+                return True
+            if node.namespace in {None, "html"} and node.name in terminators:
+                return False
+            if node.namespace not in {None, "html"}:
+                return False
+        return False
 
     def _close_p_element(self):
         if not self._has_in_button_scope("p"):
