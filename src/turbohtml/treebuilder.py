@@ -309,6 +309,7 @@ class TreeBuilder:
             self.open_elements.append(root)
             # Set mode based on context element name
             name = fragment_context.tag_name.lower()
+            namespace = fragment_context.namespace
             
             # For html context, create head and body elements
             if name == "html":
@@ -319,13 +320,13 @@ class TreeBuilder:
                 self.open_elements.append(body)
                 self.mode = InsertionMode.IN_BODY
             # Table modes only apply to HTML namespace fragments (namespace is None or "html")
-            elif fragment_context.namespace in {None, "html"} and name in {"tbody", "thead", "tfoot"}:
+            elif namespace in {None, "html"} and name in {"tbody", "thead", "tfoot"}:
                 self.mode = InsertionMode.IN_TABLE_BODY
-            elif fragment_context.namespace in {None, "html"} and name == "tr":
+            elif namespace in {None, "html"} and name == "tr":
                 self.mode = InsertionMode.IN_ROW
-            elif fragment_context.namespace in {None, "html"} and name in {"td", "th"}:
+            elif namespace in {None, "html"} and name in {"td", "th"}:
                 self.mode = InsertionMode.IN_CELL
-            elif fragment_context.namespace in {None, "html"} and name == "table":
+            elif namespace in {None, "html"} and name == "table":
                 self.mode = InsertionMode.IN_TABLE
             else:
                 self.mode = InsertionMode.IN_BODY
@@ -432,7 +433,7 @@ class TreeBuilder:
 
     def finish(self):
         if self.fragment_context is not None:
-            # For fragments, just remove the root html element wrapper
+            # For fragments, remove the html wrapper and promote its children
             if self.document.children and self.document.children[0].name == "html":
                 root = self.document.children[0]
                 self._reparent_children(root, self.document)
