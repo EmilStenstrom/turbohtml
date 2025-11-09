@@ -312,9 +312,14 @@ class TreeBuilder:
 
         reprocess = True
         current_token = token
+        force_html_mode = False
         while reprocess:
             reprocess = False
-            if self._should_use_foreign_content(current_token):
+            if force_html_mode:
+                # Force processing in HTML mode, bypassing foreign content check
+                force_html_mode = False
+                result = self._dispatch(current_token)
+            elif self._should_use_foreign_content(current_token):
                 result = self._process_foreign_content(current_token)
             else:
                 if self.open_elements:
@@ -362,7 +367,13 @@ class TreeBuilder:
                     result = self._dispatch(current_token)
             if result is None:
                 return TokenSinkResult.Continue
-            instruction, mode, token_override = result
+            # Result can be (instruction, mode, token) or (instruction, mode, token, force_html)
+            if isinstance(result, tuple) and len(result) >= 3:
+                instruction, mode, token_override = result[0], result[1], result[2]
+                if len(result) == 4:
+                    force_html_mode = result[3]
+            else:
+                instruction, mode, token_override = result
             if instruction == "reprocess":
                 self.mode = mode
                 current_token = token_override
@@ -918,6 +929,10 @@ class TreeBuilder:
                     if self.open_elements and self.open_elements[-1].name in {"rb", "rp", "rt", "rtc"}:
                         self._generate_implied_end_tags()
                     self._insert_element(token, push=not token.self_closing)
+                    return None
+                # Table elements that appear outside table context are parse errors and ignored
+                if name in {"caption", "col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr"}:
+                    self._parse_error(f"Unexpected <{name}> in body")
                     return None
                 # Any other start tag: reconstruct active formatting elements, then insert
                 self._reconstruct_active_formatting_elements()
@@ -2264,33 +2279,45 @@ class TreeBuilder:
                 return None
 
             if token.kind == Tag.END:
+                name_lower = self._lower_ascii(token.name)
                 idx = len(self.open_elements) - 1
                 first = True
-                crossed_integration_point = False
+                found_match = False
+                while idx >= 0:
+                    if idx == 0:
+                        break
+                    node = self.open_elements[idx]
+                    name_eq = self._lower_ascii(node.name) == name_lower
+                    if name_eq:
+                        found_match = True
+                        break
+                    idx -= 1
+                
+                # Now do the actual processing
+                idx = len(self.open_elements) - 1
+                first = True
                 while idx >= 0:
                     if idx == 0:
                         return None
 
                     node = self.open_elements[idx]
-                    
-                    # Check if we've crossed an HTML integration point boundary
-                    if not crossed_integration_point and self._is_html_integration_point(node):
-                        crossed_integration_point = True
-                    
                     is_html = node.namespace in {None, "html"}
+                    name_eq = self._lower_ascii(node.name) == name_lower
+                    
+                    # If we hit an HTML element (not the first node), exit foreign content and reprocess
                     if not first and is_html:
-                        # If we crossed an integration point, ignore the end tag
-                        if crossed_integration_point:
-                            return None
-                        # Pop foreign elements above the HTML node, then reprocess
-                        del self.open_elements[idx + 1:]
-                        self._reset_insertion_mode()
-                        return ("reprocess", self.mode, token)
-
-                    if self._lower_ascii(node.name) == name_lower:
+                        # If the end tag doesn't match anything in the stack, pop foreign elements
+                        # before reprocessing so HTML mode insertions go in the right place
+                        if not found_match:
+                            del self.open_elements[idx + 1:]
+                        return ("reprocess", self.mode, token, True)  # Fourth param: force_html_mode
+                    
+                    # Check if this node matches the end tag (case-insensitive)
+                    if name_eq:
                         del self.open_elements[idx:]
                         return None
-
+                    
+                    # Per HTML5 spec: if first node doesn't match, it's a parse error
                     if first:
                         self._parse_error("unexpected-end-tag-in-foreign-content")
                         first = False
