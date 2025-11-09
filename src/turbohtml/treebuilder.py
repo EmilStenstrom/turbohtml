@@ -804,7 +804,7 @@ class TreeBuilder:
                     return None
                 # Non-template head-related tags: delegate to IN_HEAD
                 if name in {"base", "basefont", "bgsound", "link", "meta", "noframes", 
-                           "script", "style", "title"}:
+                           "script", "style", "template", "title"}:
                     return self._mode_in_head(token)
                 if name in BLOCK_WITH_P_START:
                     if self._has_in_button_scope("p"):
