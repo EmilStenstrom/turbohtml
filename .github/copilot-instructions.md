@@ -57,6 +57,7 @@ No heuristics allowed, and if found remove and replace with spec-compliant code 
    ```
    python -c 'from turbohtml import TurboHTML; print(TurboHTML("<html>", debug=True).root.to_test_format())'
    ```
+6. Always use single quotes to avoid "bash: !doctype: event not found"
 
 ### Logging & Comments
 - Comments: current behavior + spec rationale (cite concept/step).
