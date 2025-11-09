@@ -739,6 +739,15 @@ class TreeBuilder:
                 if self.head_element in self.open_elements:
                     self.open_elements.remove(self.head_element)
                 return result
+            if token.kind == Tag.START and token.name == "template":
+                # Template in after-head needs special handling:
+                # Process in IN_HEAD mode, which will switch to IN_TEMPLATE
+                # Don't remove head from stack - let normal processing continue
+                if self.head_element is None:
+                    self.head_element = self._insert_phantom("head")
+                self.open_elements.append(self.head_element)
+                self.mode = InsertionMode.IN_HEAD
+                return ("reprocess", InsertionMode.IN_HEAD, token)
             if token.kind == Tag.END and token.name == "template":
                 return self._mode_in_head(token)
             if token.kind == Tag.END and token.name == "body":
@@ -1762,8 +1771,9 @@ class TreeBuilder:
                              "script", "style", "template", "title"}:
                 return self._mode_in_head(token)
         if isinstance(token, EOFToken):
-            # Check if template is in scope
-            if not self._in_scope("template"):
+            # Check if template is on the stack (don't use _in_scope as table blocks it)
+            has_template = any(node.name == "template" for node in self.open_elements)
+            if not has_template:
                 return None
             # Pop until template, then handle EOF in reset mode
             self._pop_until_inclusive("template")
