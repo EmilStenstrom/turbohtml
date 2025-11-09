@@ -1271,6 +1271,9 @@ class TreeBuilder:
                 finally:
                     self.insert_from_table = previous
         if isinstance(token, EOFToken):
+            # If we're in a template, handle EOF in template mode first
+            if self.template_modes:
+                return self._mode_in_template(token)
             if self._has_in_table_scope("table"):
                 self._parse_error("eof-in-table")
             return None
