@@ -706,8 +706,10 @@ class Tokenizer:
 			return False
 		if c == "\0":
 			self._emit_error("Null in comment")
+			self.current_comment.append("-")
 			self.current_comment.append(replacement)
 		else:
+			self.current_comment.append("-")
 			self.current_comment.append(c)
 		self.state = self.COMMENT
 		return False
