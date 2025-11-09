@@ -92,6 +92,7 @@ class Tokenizer:
 		"current_doctype_force_quirks",
 		"last_start_tag_name",
 		"rawtext_tag_name",
+		"original_tag_name",
 	)
 
 	def __init__(self, sink, opts=None):
@@ -122,6 +123,7 @@ class Tokenizer:
 		self.current_doctype_force_quirks = False
 		self.last_start_tag_name = None
 		self.rawtext_tag_name = None
+		self.original_tag_name = []
 
 	def run(self, html):
 		if html and html[0] == "\ufeff" and self.opts.discard_bom:
@@ -1516,6 +1518,7 @@ class Tokenizer:
 		c = self._get_char()
 		if c and c.isalpha():
 			self.current_tag_name.append(c.lower())
+			self.original_tag_name.append(c)
 			self.state = self.RAWTEXT_END_TAG_NAME
 			return False
 		self.text_buffer.append("<")
@@ -1530,10 +1533,11 @@ class Tokenizer:
 			c = self._get_char()
 			if c and c.isalpha():
 				self.current_tag_name.append(c.lower())
+				self.original_tag_name.append(c)
 				continue
 			# End of tag name - check if it matches
 			tag_name = "".join(self.current_tag_name)
-			if tag_name == self.rawtext_tag_name and c in (" ", "\t", "\n", "\r", "\f", "/", ">", None):
+			if tag_name == self.rawtext_tag_name and c in (" ", "\t", "\n", "\r", "\f", "/", ">"):
 				# Valid end tag - emit it
 				if c == ">":
 					attrs = []
@@ -1542,6 +1546,7 @@ class Tokenizer:
 					self._emit_token(tag)
 					self.state = self.DATA
 					self.rawtext_tag_name = None
+					self.original_tag_name.clear()
 					return False
 				if c in (" ", "\t", "\n", "\r", "\f"):
 					# Whitespace after tag name - switch to BEFORE_ATTRIBUTE_NAME
@@ -1554,16 +1559,25 @@ class Tokenizer:
 					self.current_tag_attrs.clear()
 					self.state = self.SELF_CLOSING_START_TAG
 					return False
-				# EOF
+			# If we hit EOF or tag doesn't match, emit as text
+			if c is None:
+				# EOF - emit incomplete tag as text (preserve original case) then EOF
+				self.text_buffer.append("<")
+				self.text_buffer.append("/")
+				for ch in self.original_tag_name:
+					self.text_buffer.append(ch)
+				self.current_tag_name.clear()
+				self.original_tag_name.clear()
 				self._flush_text()
 				self._emit_token(EOFToken())
 				return True
-			# Not a matching end tag - emit as text
+			# Not a matching end tag - emit as text (preserve original case)
 			self.text_buffer.append("<")
 			self.text_buffer.append("/")
-			for ch in self.current_tag_name:
+			for ch in self.original_tag_name:
 				self.text_buffer.append(ch)
 			self.current_tag_name.clear()
+			self.original_tag_name.clear()
 			self._reconsume_current()
 			self.state = self.RAWTEXT
 			return False
