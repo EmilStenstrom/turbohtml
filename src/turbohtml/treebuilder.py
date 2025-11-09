@@ -613,11 +613,15 @@ class TreeBuilder:
 
         if isinstance(token, CharacterTokens):
             if _is_all_whitespace(token.data):
-                self._append_text(token.data)
+                # Whitespace is processed using InHead rules
+                # but we stay in InHeadNoscript mode
+                self._mode_in_head(token)
                 return None
             return anything_else()
         if isinstance(token, CommentToken):
-            self._append_comment(token.data)
+            # Comment is processed using InHead rules
+            # but we stay in InHeadNoscript mode
+            self._mode_in_head(token)
             return None
         if isinstance(token, Tag):
             if token.kind == Tag.START and token.name == "html":
@@ -1548,8 +1552,8 @@ class TreeBuilder:
         if isinstance(token, CharacterTokens):
             if _is_all_whitespace(token.data):
                 # Per spec: whitespace characters are inserted using the rules for the "in body" mode
-                # Append to body element
-                self._append_text(token.data)
+                # Process with InBody rules but stay in AfterAfterBody mode
+                self._mode_in_body(token)
                 return None
             # Non-whitespace character: parse error, reprocess in IN_BODY
             self._parse_error("Unexpected character after </html>")
@@ -1637,10 +1641,12 @@ class TreeBuilder:
     def _mode_after_after_frameset(self, token):
         # Per HTML5 spec §13.2.6.4.18: After after frameset insertion mode
         if isinstance(token, CharacterTokens):
-            # Only whitespace characters allowed; ignore all others
-            whitespace = "".join(ch for ch in token.data if ch in "\t\n\f\r ")
-            if whitespace:
-                self._append_text(whitespace)
+            # Whitespace is processed using InBody rules
+            # but we stay in AfterAfterFrameset mode
+            if _is_all_whitespace(token.data):
+                self._mode_in_body(token)
+                return None
+            # Non-whitespace is ignored (filtered out)
             return None
         if isinstance(token, CommentToken):
             self._append_comment_to_document(token.data)
