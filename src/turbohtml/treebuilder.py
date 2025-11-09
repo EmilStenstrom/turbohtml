@@ -1154,6 +1154,9 @@ class TreeBuilder:
                 self._any_other_end_tag(token.name)
                 return None
         if isinstance(token, EOFToken):
+            # If we're in a template, handle EOF in template mode first
+            if self.template_modes:
+                return self._mode_in_template(token)
             self.mode = InsertionMode.AFTER_BODY
             return ("reprocess", InsertionMode.AFTER_BODY, token)
         return None
