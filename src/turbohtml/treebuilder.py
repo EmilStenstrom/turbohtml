@@ -794,7 +794,11 @@ class TreeBuilder:
                     self.frameset_ok = False
                     return None
                 if name == "button":
-                    if self._has_in_button_scope("button"):
+                    # Check for nested button in default scope (not button_scope).
+                    # Button is a terminator in button_scope, so we'd never find it.
+                    # Per spec/html5ever: check if button exists in default scope,
+                    # meaning "is there a button between here and html/table/etc?"
+                    if self._has_in_scope("button"):
                         self._parse_error("Nested button")
                         self._close_element_by_name("button")
                     self._insert_element(token, push=True)
@@ -882,6 +886,8 @@ class TreeBuilder:
                 if name == "br":
                     if self._has_in_button_scope("p"):
                         self._close_p_element()
+                    # Per html5ever rules.rs:758-774, br reconstructs formatting elements
+                    self._reconstruct_active_formatting_elements()
                     self._insert_element(token, push=False)
                     self.frameset_ok = False
                     return None
@@ -893,8 +899,19 @@ class TreeBuilder:
                 if self.fragment_context is None and name in {"col", "frame"}:
                     self._parse_error(f"unexpected-start-tag-ignored")
                     return None
-                # Void/metadata elements that don't reconstruct active formatting
-                if name in {"area", "base", "basefont", "bgsound", "col", "embed", "frame", "img", "keygen", "link", "meta", "param", "source", "track", "wbr"}:
+                # Metadata void elements (InHead mode elements) - NO formatting reconstruction
+                # Per html5ever rules.rs:190, these just insert_and_pop without reconstruct.
+                if name in {"base", "basefont", "bgsound", "link", "meta"}:
+                    self._insert_element(token, push=False)
+                    return None
+                # Content void elements - reconstruct formatting per html5ever rules.rs:758-774
+                # These DO reconstruct active formatting elements before insertion.
+                if name in {"area", "br", "embed", "img", "keygen", "wbr"}:
+                    self._reconstruct_active_formatting_elements()
+                    self._insert_element(token, push=False)
+                    return None
+                # Other void elements (col, frame, param, source, track) - no reconstruct
+                if name in {"col", "frame", "param", "source", "track"}:
                     self._insert_element(token, push=False)
                     return None
                 if name == "input":
@@ -934,18 +951,22 @@ class TreeBuilder:
                     self._reset_insertion_mode()
                     return None
                 if name == "option":
-                    # Close any open option element before inserting new one
+                    # Close any open option element, reconstruct formatting, then insert.
+                    # Matches html5ever step() InBody optgroup/option handling.
                     if self.open_elements and self.open_elements[-1].name == "option":
                         self.open_elements.pop()
+                    self._reconstruct_active_formatting_elements()
                     self._insert_element(token, push=not token.self_closing)
                     return None
                 if name == "optgroup":
-                    # Close any open option element before inserting optgroup
+                    # Close open option, close open optgroup, reconstruct, insert.
+                    # Matches html5ever step() InBody optgroup/option handling.
                     if self.open_elements and self.open_elements[-1].name == "option":
                         self.open_elements.pop()
                     # Also close any open optgroup
                     if self.open_elements and self.open_elements[-1].name == "optgroup":
                         self.open_elements.pop()
+                    self._reconstruct_active_formatting_elements()
                     self._insert_element(token, push=not token.self_closing)
                     return None
                 # Ruby elements auto-close previous ruby elements
@@ -2601,6 +2622,10 @@ class TreeBuilder:
             if node.name in terminators:
                 return False
         return False
+
+    def _has_in_scope(self, name):
+        """Check if element is in default scope (html5ever: default_scope)."""
+        return self._has_element_in_scope(name, DEFAULT_SCOPE_TERMINATORS)
 
     def _has_in_button_scope(self, name):
         return self._has_element_in_scope(name, BUTTON_SCOPE_TERMINATORS)
