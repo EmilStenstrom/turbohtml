@@ -1520,7 +1520,9 @@ class TreeBuilder:
         if isinstance(token, CharacterTokens):
             if _is_all_whitespace(token.data):
                 # Whitespace is processed using InBody rules (appended to body)
-                return ("reprocess", InsertionMode.IN_BODY, token)
+                # but we stay in AfterBody mode
+                self._mode_in_body(token)
+                return None
             return ("reprocess", InsertionMode.IN_BODY, token)
         if isinstance(token, CommentToken):
             # Append comment to the html element (root of open_elements stack)
