@@ -641,6 +641,7 @@ class TreeBuilder:
     def _mode_after_head(self, token):
         if isinstance(token, CharacterTokens):
             if _is_all_whitespace(token.data):
+                self._append_text(token.data)
                 return None
             self._insert_body_if_missing()
             return ("reprocess", InsertionMode.IN_BODY, token)
