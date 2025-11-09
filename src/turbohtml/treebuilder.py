@@ -323,7 +323,7 @@ class TreeBuilder:
                     # and NOT about to insert a new foreign element (svg/math)
                     if current.namespace not in {None, "html"} and not isinstance(current_token, EOFToken):
                         should_pop = True
-                        # Don't pop at integration points
+                        # Don't pop at integration points - they stay on stack to receive content
                         if self._is_html_integration_point(current) or self._is_mathml_text_integration_point(current):
                             should_pop = False
                         # Don't pop when inserting new svg/math elements
@@ -332,11 +332,34 @@ class TreeBuilder:
                             if name_lower in {"svg", "math"}:
                                 should_pop = False
                         if should_pop:
-                            # Pop foreign elements and reset mode before dispatch
+                            # Pop foreign elements above integration points, but not the integration point itself
                             while self.open_elements and self.open_elements[-1].namespace not in {None, "html"}:
+                                node = self.open_elements[-1]
+                                # Stop if we reach an integration point - don't pop it
+                                if self._is_html_integration_point(node) or self._is_mathml_text_integration_point(node):
+                                    break
                                 self.open_elements.pop()
                             self._reset_insertion_mode()
-                result = self._dispatch(current_token)
+                    # Special handling: text at integration points inserts directly, bypassing mode dispatch
+                    if isinstance(current_token, CharacterTokens) and current.namespace not in {None, "html"}:
+                        if self._is_mathml_text_integration_point(current):
+                            data = current_token.data or ""
+                            if data:
+                                if "\x00" in data:
+                                    self._parse_error("unexpected-null-character")
+                                    data = data.replace("\x00", "\uFFFD")
+                                # Reconstruct active formatting elements for non-whitespace text
+                                if not _is_all_whitespace(data):
+                                    self._reconstruct_active_formatting_elements()
+                                    self.frameset_ok = False
+                                self._append_text(data)
+                            result = None
+                        else:
+                            result = self._dispatch(current_token)
+                    else:
+                        result = self._dispatch(current_token)
+                else:
+                    result = self._dispatch(current_token)
             if result is None:
                 return TokenSinkResult.Continue
             instruction, mode, token_override = result
