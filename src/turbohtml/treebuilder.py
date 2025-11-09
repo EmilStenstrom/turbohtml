@@ -1349,6 +1349,9 @@ class TreeBuilder:
                     if self.open_elements and self.open_elements[-1] is node:
                         self.open_elements.pop()
                     return None
+                if name == "template":
+                    # Template is handled by delegating to IN_HEAD
+                    return self._mode_in_head(token)
                 if name == "colgroup":
                     self._parse_error("unexpected-start-tag-implies-end-tag")
                     if current and current.name != "html":
