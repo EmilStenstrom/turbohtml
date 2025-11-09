@@ -13,12 +13,13 @@ from .entities import decode_entities_in_text
 
 
 class TokenizerOpts:
-	__slots__ = ("exact_errors", "discard_bom", "initial_state")
+	__slots__ = ("exact_errors", "discard_bom", "initial_state", "initial_rawtext_tag")
 
-	def __init__(self, exact_errors=False, discard_bom=True, initial_state=None):
+	def __init__(self, exact_errors=False, discard_bom=True, initial_state=None, initial_rawtext_tag=None):
 		self.exact_errors = bool(exact_errors)
 		self.discard_bom = bool(discard_bom)
 		self.initial_state = initial_state
+		self.initial_rawtext_tag = initial_rawtext_tag
 
 
 class Tokenizer:
@@ -148,7 +149,7 @@ class Tokenizer:
 		self.current_doctype_force_quirks = False
 		self.current_tag_self_closing = False
 		self.current_tag_kind = Tag.START
-		self.rawtext_tag_name = None
+		self.rawtext_tag_name = self.opts.initial_rawtext_tag
 		self.last_start_tag_name = None
 
 		initial_state = self.opts.initial_state

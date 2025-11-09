@@ -20,6 +20,15 @@ class TurboHTML:
         self.fragment_context = fragment_context
         self.tree_builder = tree_builder or TreeBuilder(fragment_context=fragment_context)
         opts = tokenizer_opts or TokenizerOpts()
+        
+        # For RAWTEXT fragment contexts, set initial tokenizer state and rawtext tag
+        if fragment_context and not fragment_context.namespace:
+            rawtext_elements = {"textarea", "title", "style"}
+            tag_name = fragment_context.tag_name.lower()
+            if tag_name in rawtext_elements:
+                opts.initial_state = 39  # RAWTEXT state
+                opts.initial_rawtext_tag = tag_name
+        
         self.tokenizer = Tokenizer(self.tree_builder, opts)
         self.tokenizer.run(html or "")
         self.root = self.tree_builder.finish()
