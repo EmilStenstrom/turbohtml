@@ -2243,13 +2243,22 @@ class TreeBuilder:
             if token.kind == Tag.END:
                 idx = len(self.open_elements) - 1
                 first = True
+                crossed_integration_point = False
                 while idx >= 0:
                     if idx == 0:
                         return None
 
                     node = self.open_elements[idx]
+                    
+                    # Check if we've crossed an HTML integration point boundary
+                    if not crossed_integration_point and self._is_html_integration_point(node):
+                        crossed_integration_point = True
+                    
                     is_html = node.namespace in {None, "html"}
                     if not first and is_html:
+                        # If we crossed an integration point, ignore the end tag
+                        if crossed_integration_point:
+                            return None
                         # Pop foreign elements above the HTML node, then reprocess
                         del self.open_elements[idx + 1:]
                         self._reset_insertion_mode()
