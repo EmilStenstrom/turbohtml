@@ -2296,40 +2296,27 @@ class TreeBuilder:
                     self._reset_insertion_mode()
                     return ("reprocess", self.mode, token)
                 
-                idx = len(self.open_elements) - 1
-                first = True
-                found_match = False
-                while idx >= 0:
-                    if idx == 0:
-                        break
-                    node = self.open_elements[idx]
-                    name_eq = self._lower_ascii(node.name) == name_lower
-                    if name_eq:
-                        found_match = True
-                        break
-                    idx -= 1
-                
-                # Now do the actual processing
+                # Process foreign end tag per spec: walk stack backwards looking for match
                 idx = len(self.open_elements) - 1
                 first = True
                 while idx >= 0:
+                    # Never pop html/body/head (handle at idx=0)
                     if idx == 0:
+                        # No match found at all - ignore the end tag with parse error
+                        if first:
+                            self._parse_error("unexpected-end-tag-in-foreign-content")
                         return None
 
                     node = self.open_elements[idx]
                     is_html = node.namespace in {None, "html"}
                     name_eq = self._lower_ascii(node.name) == name_lower
                     
-                    # If we hit an HTML element (not the first node), exit foreign content and reprocess
-                    if not first and is_html:
-                        # If the end tag doesn't match anything in the stack, pop foreign elements
-                        # before reprocessing so HTML mode insertions go in the right place
-                        if not found_match:
-                            del self.open_elements[idx + 1:]
-                        return ("reprocess", self.mode, token, True)  # Fourth param: force_html_mode
-                    
                     # Check if this node matches the end tag (case-insensitive)
                     if name_eq:
+                        # If matched element is HTML namespace, break out to HTML mode
+                        if is_html:
+                            return ("reprocess", self.mode, token, True)
+                        # Otherwise it's a foreign element - pop everything from this point up
                         del self.open_elements[idx:]
                         return None
                     
@@ -2339,6 +2326,8 @@ class TreeBuilder:
                         first = False
 
                     idx -= 1
+                
+                # Reached here means we scanned entire stack without match - ignore tag
                 return None
 
         if isinstance(token, EOFToken):
