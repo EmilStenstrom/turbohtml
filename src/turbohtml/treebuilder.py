@@ -609,7 +609,9 @@ class TreeBuilder:
                 self.template_modes.append(InsertionMode.IN_TEMPLATE)
                 return None
             if token.kind == Tag.END and token.name == "template":
-                if not self._in_scope("template"):
+                # Check if template is on the stack (don't use scope check as table blocks it)
+                has_template = any(node.name == "template" for node in self.open_elements)
+                if not has_template:
                     return None
                 self._generate_implied_end_tags()
                 self._pop_until_inclusive("template")
@@ -1128,7 +1130,9 @@ class TreeBuilder:
                     return None
                 # Template end tag: handle inline (don't delegate to avoid mode corruption)
                 if name == "template":
-                    if not self._in_scope("template"):
+                    # Check if template is on the stack (don't use scope check as table blocks it)
+                    has_template = any(node.name == "template" for node in self.open_elements)
+                    if not has_template:
                         return None
                     self._generate_implied_end_tags()
                     self._pop_until_inclusive("template")
