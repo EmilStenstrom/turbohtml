@@ -940,6 +940,13 @@ class TreeBuilder:
                 return None
             else:
                 name = token.name
+                
+                # Special case: </br> end tag is treated as <br> start tag
+                if name == "br":
+                    self._parse_error("Unexpected </br>")
+                    br_tag = Tag(Tag.START, "br", [], False)
+                    return self._mode_in_body(br_tag)
+                
                 if name in FORMATTING_ELEMENTS:
                     self._adoption_agency(name)
                     return None
@@ -2280,6 +2287,14 @@ class TreeBuilder:
 
             if token.kind == Tag.END:
                 name_lower = self._lower_ascii(token.name)
+                
+                # Special case: </br> and </p> end tags trigger breakout from foreign content
+                if name_lower in {"br", "p"}:
+                    self._parse_error("Unexpected HTML end tag in foreign content")
+                    self._pop_until_html_or_integration_point()
+                    self._reset_insertion_mode()
+                    return ("reprocess", self.mode, token)
+                
                 idx = len(self.open_elements) - 1
                 first = True
                 found_match = False
