@@ -1527,6 +1527,10 @@ class TreeBuilder:
                     self._end_table_cell(name)
                     return None
                 if name in {"table", "tbody", "tfoot", "thead", "tr"}:
+                    # For tr end tag, only close cell if tr actually exists in scope
+                    if name == "tr" and not self._has_in_table_scope("tr"):
+                        self._parse_error("unexpected-end-tag")
+                        return None
                     if self._close_table_cell():
                         return ("reprocess", self.mode, token)
                     self._parse_error("unexpected-end-tag")
