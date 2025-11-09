@@ -1204,13 +1204,16 @@ class TreeBuilder:
                     if closed:
                         return ("reprocess", self.mode, token)
                     return None
-                if name in {"style", "script", "template"}:
+                if name in {"style", "script"}:
                     # Per HTML5 spec: style and script are inserted directly into the table
                     # (not processed as in-head which would move them)
                     self._insert_element(token, push=True)
                     self.original_mode = self.mode
                     self.mode = InsertionMode.TEXT
                     return None
+                if name == "template":
+                    # Template is handled by delegating to IN_HEAD
+                    return self._mode_in_head(token)
                 if name == "input":
                     input_type = None
                     for attr in token.attrs:
