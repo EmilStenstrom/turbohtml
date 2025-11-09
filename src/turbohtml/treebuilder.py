@@ -318,13 +318,14 @@ class TreeBuilder:
                 root.append_child(body)
                 self.open_elements.append(body)
                 self.mode = InsertionMode.IN_BODY
-            elif name in {"tbody", "thead", "tfoot"}:
+            # Table modes only apply to HTML namespace fragments (namespace is None or "html")
+            elif fragment_context.namespace in {None, "html"} and name in {"tbody", "thead", "tfoot"}:
                 self.mode = InsertionMode.IN_TABLE_BODY
-            elif name == "tr":
+            elif fragment_context.namespace in {None, "html"} and name == "tr":
                 self.mode = InsertionMode.IN_ROW
-            elif name in {"td", "th"}:
+            elif fragment_context.namespace in {None, "html"} and name in {"td", "th"}:
                 self.mode = InsertionMode.IN_CELL
-            elif name == "table":
+            elif fragment_context.namespace in {None, "html"} and name == "table":
                 self.mode = InsertionMode.IN_TABLE
             else:
                 self.mode = InsertionMode.IN_BODY
@@ -1585,7 +1586,8 @@ class TreeBuilder:
                 if name in {"caption", "col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr", "table"}:
                     if self._close_table_cell():
                         return ("reprocess", self.mode, token)
-                    return self._mode_in_table(token)
+                    # If no cell to close, we're not actually in a table - delegate to IN_BODY
+                    return self._mode_in_body(token)
                 previous = self.insert_from_table
                 self.insert_from_table = False
                 try:
