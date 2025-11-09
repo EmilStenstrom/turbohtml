@@ -1849,6 +1849,9 @@ class TreeBuilder:
             if token.kind == Tag.START and token.name == "noframes":
                 return ("reprocess", InsertionMode.IN_HEAD, token)
         if isinstance(token, EOFToken):
+            # If we're in a template, handle EOF in template mode first
+            if self.template_modes:
+                return self._mode_in_template(token)
             if self.open_elements and self.open_elements[-1].name != "html":
                 self._parse_error("Unexpected EOF in frameset")
             return None
@@ -1879,6 +1882,9 @@ class TreeBuilder:
                 self.mode = InsertionMode.TEXT
                 return None
         if isinstance(token, EOFToken):
+            # If we're in a template, handle EOF in template mode first
+            if self.template_modes:
+                return self._mode_in_template(token)
             return None
         self._parse_error("Unexpected token after frameset")
         return None
@@ -1906,6 +1912,9 @@ class TreeBuilder:
                 self.mode = InsertionMode.TEXT
                 return None
         if isinstance(token, EOFToken):
+            # If we're in a template, handle EOF in template mode first
+            if self.template_modes:
+                return self._mode_in_template(token)
             return None
         self._parse_error("Unexpected token after after frameset")
         return None
