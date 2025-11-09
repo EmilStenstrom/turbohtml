@@ -1344,6 +1344,10 @@ class TreeBuilder:
                 return None
             if current and current.name == "html":
                 return ("reprocess", InsertionMode.IN_TABLE, token)
+            # In a template, non-whitespace characters are parse errors - ignore them
+            if current and current.name == "template":
+                self._parse_error("unexpected-characters-in-template-column-group")
+                return None
             self._parse_error("unexpected-characters-in-column-group")
             self._pop_current()
             self.mode = InsertionMode.IN_TABLE
@@ -1380,17 +1384,15 @@ class TreeBuilder:
                         return ("reprocess", InsertionMode.IN_TABLE, token)
                     return None
                 # Anything else: if we're in a colgroup, pop it and switch to IN_TABLE
-                # But if we're in a template, switch to IN_BODY (default template behavior)
+                # But if we're in a template, just ignore non-column content
                 if current and current.name == "colgroup":
                     self._pop_current()
                     self.mode = InsertionMode.IN_TABLE
                     return ("reprocess", InsertionMode.IN_TABLE, token)
                 elif current and current.name == "template":
-                    # In template with no actual colgroup, switch to IN_BODY to handle content
-                    self.template_modes.pop()
-                    self.template_modes.append(InsertionMode.IN_BODY)
-                    self.mode = InsertionMode.IN_BODY
-                    return ("reprocess", self.mode, token)
+                    # In template column group context, non-column content is ignored
+                    self._parse_error("unexpected-start-tag-in-template-column-group")
+                    return None
                 elif current and current.name != "html":
                     self._pop_current()
                     self.mode = InsertionMode.IN_TABLE
@@ -1416,6 +1418,10 @@ class TreeBuilder:
             if current and current.name == "colgroup":
                 self._pop_current()
                 self.mode = InsertionMode.IN_TABLE
+                return ("reprocess", InsertionMode.IN_TABLE, token)
+            elif current and current.name == "template":
+                # In template, delegate EOF handling to IN_TEMPLATE
+                return self._mode_in_template(token)
             return None
         return None
 
