@@ -786,11 +786,19 @@ class TreeBuilder:
             if token.kind == Tag.START:
                 name = token.name
                 if name == "html":
+                    # In a template, html tags are parse errors and ignored
+                    if self.template_modes:
+                        self._parse_error("Unexpected <html> in template")
+                        return None
                     if self.open_elements:
                         html = self.open_elements[0]
                         self._add_missing_attributes(html, token.attrs)
                     return None
                 if name == "body":
+                    # In a template, body tags are parse errors and ignored
+                    if self.template_modes:
+                        self._parse_error("Unexpected <body> in template")
+                        return None
                     if len(self.open_elements) > 1:
                         self._parse_error("Unexpected <body> inside body")
                         # Merge attributes onto existing body element
@@ -1358,12 +1366,32 @@ class TreeBuilder:
                     return self._mode_in_head(token)
                 if name == "colgroup":
                     self._parse_error("unexpected-start-tag-implies-end-tag")
-                    if current and current.name != "html":
+                    # Don't pop template element - only pop actual colgroup
+                    if current and current.name == "colgroup":
+                        self._pop_current()
+                        self.mode = InsertionMode.IN_TABLE
+                        return ("reprocess", InsertionMode.IN_TABLE, token)
+                    elif current and current.name == "template":
+                        # In template, reject duplicate colgroup
+                        return None
+                    elif current and current.name != "html":
                         self._pop_current()
                         self.mode = InsertionMode.IN_TABLE
                         return ("reprocess", InsertionMode.IN_TABLE, token)
                     return None
-                if current and current.name != "html":
+                # Anything else: if we're in a colgroup, pop it and switch to IN_TABLE
+                # But if we're in a template, switch to IN_BODY (default template behavior)
+                if current and current.name == "colgroup":
+                    self._pop_current()
+                    self.mode = InsertionMode.IN_TABLE
+                    return ("reprocess", InsertionMode.IN_TABLE, token)
+                elif current and current.name == "template":
+                    # In template with no actual colgroup, switch to IN_BODY to handle content
+                    self.template_modes.pop()
+                    self.template_modes.append(InsertionMode.IN_BODY)
+                    self.mode = InsertionMode.IN_BODY
+                    return ("reprocess", self.mode, token)
+                elif current and current.name != "html":
                     self._pop_current()
                     self.mode = InsertionMode.IN_TABLE
                     return ("reprocess", InsertionMode.IN_TABLE, token)
@@ -1875,6 +1903,9 @@ class TreeBuilder:
 
     def _append_comment(self, text):
         parent = self._current_node_or_html()
+        # If parent is a template, insert into its content fragment
+        if parent.name == "template" and parent.template_content:
+            parent = parent.template_content
         node = SimpleDomNode("#comment", data=text)
         parent.append_child(node)
 
