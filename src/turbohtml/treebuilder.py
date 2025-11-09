@@ -1409,6 +1409,9 @@ class TreeBuilder:
                 if name == "col":
                     self._parse_error("unexpected-end-tag")
                     return None
+                if name == "template":
+                    # Template end tag needs proper handling
+                    return self._mode_in_head(token)
                 if current and current.name != "html":
                     self._pop_current()
                     self.mode = InsertionMode.IN_TABLE
