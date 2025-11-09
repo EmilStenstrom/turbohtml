@@ -2844,10 +2844,13 @@ class TreeBuilder:
             if node.name == name:
                 return True
             if node.namespace not in {None, "html"}:
-                # Foreign elements act as scope boundaries if they are HTML integration points
+                # Foreign elements act as scope boundaries if they are integration points
                 # (but only for non-table scopes - table scopes ignore integration points)
-                if check_integration_points and self._is_html_integration_point(node):
-                    return False
+                if check_integration_points:
+                    if self._is_html_integration_point(node):
+                        return False
+                    if self._is_mathml_text_integration_point(node):
+                        return False
                 continue
             if node.name in terminators:
                 return False
