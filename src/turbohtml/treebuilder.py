@@ -665,6 +665,20 @@ class TreeBuilder:
                 self._insert_element(token, push=True)
                 self.mode = InsertionMode.IN_FRAMESET
                 return None
+            # Special handling: input type="hidden" doesn't create body or affect frameset_ok
+            if token.kind == Tag.START and token.name == "input":
+                input_type = None
+                for attr in token.attrs:
+                    if attr.name == "type":
+                        input_type = (attr.value or "").lower()
+                        break
+                if input_type == "hidden":
+                    # Parse error but ignore - don't create body, don't insert element
+                    self._parse_error("unexpected-hidden-input-after-head")
+                    return None
+                # Non-hidden input creates body
+                self._insert_body_if_missing()
+                return ("reprocess", InsertionMode.IN_BODY, token)
             if token.kind == Tag.START and token.name in {"base", "basefont", "bgsound", "link", "meta", "title", "style", "script", "noscript"}:
                 if self.head_element is None:
                     self.head_element = self._insert_phantom("head")
@@ -880,8 +894,19 @@ class TreeBuilder:
                     self._parse_error(f"unexpected-start-tag-ignored")
                     return None
                 # Void/metadata elements that don't reconstruct active formatting
-                if name in {"area", "base", "basefont", "bgsound", "col", "embed", "frame", "img", "input", "keygen", "link", "meta", "param", "source", "track", "wbr"}:
+                if name in {"area", "base", "basefont", "bgsound", "col", "embed", "frame", "img", "keygen", "link", "meta", "param", "source", "track", "wbr"}:
                     self._insert_element(token, push=False)
+                    return None
+                if name == "input":
+                    # Special handling: input type="hidden" does NOT set frameset_ok to false
+                    input_type = None
+                    for attr in token.attrs:
+                        if attr.name == "type":
+                            input_type = (attr.value or "").lower()
+                            break
+                    self._insert_element(token, push=False)
+                    if input_type != "hidden":
+                        self.frameset_ok = False
                     return None
                 if name == "table":
                     # HTML5 spec: In standards mode (not quirks), close any open p element before table
