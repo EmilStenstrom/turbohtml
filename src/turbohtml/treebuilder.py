@@ -1413,6 +1413,10 @@ class TreeBuilder:
                     current = self.open_elements[-1] if self.open_elements else None
                     if current and current.name in {"tbody", "tfoot", "thead"}:
                         self.open_elements.pop()
+                    # When in a template, these tags create invalid structure - treat as "anything else"
+                    elif current and current.name == "template":
+                        self._parse_error("unexpected-start-tag-in-template-table-context")
+                        return None
                     self.mode = InsertionMode.IN_TABLE
                     return ("reprocess", InsertionMode.IN_TABLE, token)
                 return self._mode_in_table(token)
@@ -1427,6 +1431,10 @@ class TreeBuilder:
                     return None
                 if name == "table":
                     current = self.open_elements[-1] if self.open_elements else None
+                    # In a template, reject </table> as there's no table element
+                    if current and current.name == "template":
+                        self._parse_error("unexpected-end-tag")
+                        return None
                     if current and current.name in {"tbody", "tfoot", "thead"}:
                         self.open_elements.pop()
                     self.mode = InsertionMode.IN_TABLE
@@ -1493,7 +1501,11 @@ class TreeBuilder:
         self._clear_stack_to_table_row_context()
         if self.open_elements and self.open_elements[-1].name == "tr":
             self.open_elements.pop()
-        self.mode = InsertionMode.IN_TABLE_BODY
+        # When in a template, restore template mode; otherwise use IN_TABLE_BODY
+        if self.template_modes:
+            self.mode = self.template_modes[-1]
+        else:
+            self.mode = InsertionMode.IN_TABLE_BODY
 
     def _mode_in_cell(self, token):
         if isinstance(token, CharacterTokens):
