@@ -88,6 +88,7 @@ class InsertionMode(enum.IntEnum):
     AFTER_FRAMESET = 18
     AFTER_AFTER_FRAMESET = 19
     IN_SELECT = 20
+    IN_TEMPLATE = 21
 
 
 def _is_all_whitespace(text):
@@ -142,7 +143,7 @@ def _doctype_error_and_quirks(doctype, iframe_srcdoc):
 
 
 class SimpleDomNode:
-    __slots__ = ("name", "attrs", "children", "parent", "data", "namespace")
+    __slots__ = ("name", "attrs", "children", "parent", "data", "namespace", "template_content")
 
     def __init__(self, name, attrs=None, data=None, namespace=None):
         self.name = name
@@ -154,6 +155,11 @@ class SimpleDomNode:
             self.namespace = namespace
         else:
             self.namespace = namespace or "html"
+        # Template elements have a special document fragment for their content
+        if name == "template":
+            self.template_content = SimpleDomNode("#document-fragment")
+        else:
+            self.template_content = None
 
     def append_child(self, node):
         self.children.append(node)
@@ -187,6 +193,18 @@ class SimpleDomNode:
 
         line = f"| {' ' * indent}<{self._qualified_name()}>"
         attribute_lines = self._format_attributes(indent)
+        
+        # Template elements output their content document fragment
+        if self.name == "template" and self.template_content:
+            content_line = f"| {' ' * (indent + 2)}content"
+            content_child_lines = [child.to_test_format(indent + 4) for child in self.template_content.children]
+            sections = [line]
+            if attribute_lines:
+                sections.extend(attribute_lines)
+            sections.append(content_line)
+            sections.extend(child for child in content_child_lines if child)
+            return "\n".join(sections)
+        
         child_lines = [child.to_test_format(indent + 2) for child in self.children]
 
         sections = [line]
@@ -259,6 +277,7 @@ class TreeBuilder:
         "active_formatting",
         "insert_from_table",
         "pending_table_text",
+        "template_modes",
     )
 
     def __init__(self, fragment_context=None, opts=None):
@@ -281,6 +300,7 @@ class TreeBuilder:
         self.active_formatting = []
         self.insert_from_table = False
         self.pending_table_text = []
+        self.template_modes = []
 
         if fragment_context is not None:
             # Fragment parsing per HTML5 spec
@@ -444,6 +464,8 @@ class TreeBuilder:
             return self._mode_in_cell(token)
         if self.mode == InsertionMode.IN_SELECT:
             return self._mode_in_select(token)
+        if self.mode == InsertionMode.IN_TEMPLATE:
+            return self._mode_in_template(token)
         if self.mode == InsertionMode.AFTER_BODY:
             return self._mode_after_body(token)
         if self.mode == InsertionMode.AFTER_AFTER_BODY:
@@ -578,6 +600,19 @@ class TreeBuilder:
                 return ("reprocess", InsertionMode.AFTER_HEAD, token)
             if token.kind == Tag.START and token.name in {"base", "basefont", "bgsound", "link", "meta"}:
                 self._insert_element(token, push=False)
+                return None
+            if token.kind == Tag.START and token.name == "template":
+                self._insert_element(token, push=True)
+                self.template_modes.append(self.mode)
+                self.mode = InsertionMode.IN_TEMPLATE
+                return None
+            if token.kind == Tag.END and token.name == "template":
+                if not self._in_scope("template"):
+                    return None
+                self._generate_implied_end_tags()
+                self._pop_until_inclusive("template")
+                if self.template_modes:
+                    self.mode = self.template_modes.pop()
                 return None
             if token.kind == Tag.START and token.name in {"title", "style", "script", "noscript"}:
                 if token.name == "noscript" and not self.opts.scripting_enabled:
@@ -1583,6 +1618,21 @@ class TreeBuilder:
             return self._mode_in_body(token)
         return None
 
+    def _mode_in_template(self, token):
+        # Template mode - most tokens delegate to IN_BODY
+        if isinstance(token, CharacterTokens):
+            return self._mode_in_body(token)
+        if isinstance(token, CommentToken):
+            return self._mode_in_body(token)
+        if isinstance(token, Tag):
+            if token.kind == Tag.END and token.name == "template":
+                return self._mode_in_head(token)
+            # Most other tags delegate to IN_BODY
+            return self._mode_in_body(token)
+        if isinstance(token, EOFToken):
+            return self._mode_in_body(token)
+        return None
+
     def _mode_after_body(self, token):
         if isinstance(token, CharacterTokens):
             if _is_all_whitespace(token.data):
@@ -1750,26 +1800,27 @@ class TreeBuilder:
                     return
         target = self._current_node_or_html()
         foster_parenting = self._should_foster_parenting(target, is_text=True)
+        
+        # Reconstruct active formatting BEFORE getting insertion location when foster parenting
         if foster_parenting:
             self._reconstruct_active_formatting_elements()
-            parent, position = self._appropriate_insertion_location(foster_parenting=True)
-            if parent is None:
-                return
-            if position > 0 and parent.children[position - 1].name == "#text":
-                parent.children[position - 1].data = (parent.children[position - 1].data or "") + text
-                return
-            if position < len(parent.children) and parent.children[position].name == "#text":
-                parent.children[position].data = text + (parent.children[position].data or "")
-                return
-            node = SimpleDomNode("#text", data=text)
-            parent.children.insert(position, node)
-            node.parent = parent
+        
+        # Always use appropriate insertion location to handle templates
+        parent, position = self._appropriate_insertion_location(foster_parenting=foster_parenting)
+        if parent is None:
             return
-        if target.children and target.children[-1].name == "#text":
-            target.children[-1].data = (target.children[-1].data or "") + text
+        
+        # Coalesce with adjacent text node if possible
+        if position > 0 and parent.children[position - 1].name == "#text":
+            parent.children[position - 1].data = (parent.children[position - 1].data or "") + text
             return
+        if position < len(parent.children) and parent.children[position].name == "#text":
+            parent.children[position].data = text + (parent.children[position].data or "")
+            return
+        
         node = SimpleDomNode("#text", data=text)
-        target.append_child(node)
+        parent.children.insert(position, node)
+        node.parent = parent
 
     def _current_node_or_html(self):
         if self.open_elements:
@@ -2423,6 +2474,9 @@ class TreeBuilder:
             if last_template is not None and (
                 last_table is None or self.open_elements.index(last_template) > self.open_elements.index(last_table)
             ):
+                # Insert into template's content document fragment
+                if last_template.template_content:
+                    return last_template.template_content, len(last_template.template_content.children)
                 return last_template, len(last_template.children)
             if last_table is None:
                 if self.open_elements:
@@ -2440,6 +2494,10 @@ class TreeBuilder:
                 parent = self.open_elements[table_index - 1]
                 return parent, len(parent.children)
             return self.document, len(self.document.children)
+
+        # If target is a template element, insert into its content document fragment
+        if target.name == "template" and target.template_content:
+            return target.template_content, len(target.template_content.children)
 
         return target, len(target.children)
 
@@ -2661,5 +2719,12 @@ class TreeBuilder:
         while self.open_elements:
             node = self.open_elements.pop()
             if node.name in target:
+                return True
+        return False
+
+    def _pop_until_inclusive(self, name):
+        while self.open_elements:
+            node = self.open_elements.pop()
+            if node.name == name:
                 return True
         return False
