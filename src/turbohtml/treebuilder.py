@@ -603,18 +603,22 @@ class TreeBuilder:
                 return None
             if token.kind == Tag.START and token.name == "template":
                 self._insert_element(token, push=True)
-                self.template_modes.append(self.mode)
+                self._push_formatting_marker()
+                self.frameset_ok = False
                 self.mode = InsertionMode.IN_TEMPLATE
+                self.template_modes.append(InsertionMode.IN_TEMPLATE)
                 return None
             if token.kind == Tag.END and token.name == "template":
                 if not self._in_scope("template"):
                     return None
                 self._generate_implied_end_tags()
                 self._pop_until_inclusive("template")
+                self._clear_active_formatting_up_to_marker()
                 if self.template_modes:
-                    self.mode = self.template_modes.pop()
+                    self.template_modes.pop()
+                self._reset_insertion_mode()
                 return None
-            if token.kind == Tag.START and token.name in {"title", "style", "script", "noscript"}:
+            if token.kind == Tag.START and token.name in {"title", "style", "script", "noscript", "noframes"}:
                 if token.name == "noscript" and not self.opts.scripting_enabled:
                     self._insert_element(token, push=True)
                     self.mode = InsertionMode.IN_HEAD_NOSCRIPT
@@ -724,6 +728,8 @@ class TreeBuilder:
                 if self.head_element in self.open_elements:
                     self.open_elements.remove(self.head_element)
                 return result
+            if token.kind == Tag.END and token.name == "template":
+                return self._mode_in_head(token)
             if token.kind == Tag.END and token.name == "body":
                 self._insert_body_if_missing()
                 return ("reprocess", InsertionMode.IN_BODY, token)
@@ -796,6 +802,10 @@ class TreeBuilder:
                     # Ignore <head> in body mode (duplicate head)
                     self._parse_error("Unexpected <head> in body")
                     return None
+                # Non-template head-related tags: delegate to IN_HEAD
+                if name in {"base", "basefont", "bgsound", "link", "meta", "noframes", 
+                           "script", "style", "title"}:
+                    return self._mode_in_head(token)
                 if name in BLOCK_WITH_P_START:
                     if self._has_in_button_scope("p"):
                         self._close_p_element()
@@ -1115,6 +1125,18 @@ class TreeBuilder:
                         self._parse_error(f"Unexpected open element while closing {name}")
                     # Pop until we find and pop the target element
                     self._pop_until_any_inclusive({name})
+                    return None
+                # Template end tag: handle inline (don't delegate to avoid mode corruption)
+                if name == "template":
+                    if not self._in_scope("template"):
+                        return None
+                    self._generate_implied_end_tags()
+                    self._pop_until_inclusive("template")
+                    self._clear_active_formatting_up_to_marker()
+                    if self.template_modes:
+                        self.template_modes.pop()
+                    # Reset insertion mode to determine correct mode after template
+                    self._reset_insertion_mode()
                     return None
                 # Any other end tag
                 self._any_other_end_tag(token.name)
@@ -1619,18 +1641,59 @@ class TreeBuilder:
         return None
 
     def _mode_in_template(self, token):
-        # Template mode - most tokens delegate to IN_BODY
+        # § The "in template" insertion mode
+        # https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intemplate
         if isinstance(token, CharacterTokens):
             return self._mode_in_body(token)
         if isinstance(token, CommentToken):
             return self._mode_in_body(token)
         if isinstance(token, Tag):
+            if token.kind == Tag.START:
+                # Table-related tags switch template mode
+                if token.name in {"caption", "colgroup", "tbody", "tfoot", "thead"}:
+                    self.template_modes.pop()
+                    self.template_modes.append(InsertionMode.IN_TABLE)
+                    self.mode = InsertionMode.IN_TABLE
+                    return ("reprocess", InsertionMode.IN_TABLE, token)
+                if token.name == "col":
+                    self.template_modes.pop()
+                    self.template_modes.append(InsertionMode.IN_COLUMN_GROUP)
+                    self.mode = InsertionMode.IN_COLUMN_GROUP
+                    return ("reprocess", InsertionMode.IN_COLUMN_GROUP, token)
+                if token.name == "tr":
+                    self.template_modes.pop()
+                    self.template_modes.append(InsertionMode.IN_TABLE_BODY)
+                    self.mode = InsertionMode.IN_TABLE_BODY
+                    return ("reprocess", InsertionMode.IN_TABLE_BODY, token)
+                if token.name in {"td", "th"}:
+                    self.template_modes.pop()
+                    self.template_modes.append(InsertionMode.IN_ROW)
+                    self.mode = InsertionMode.IN_ROW
+                    return ("reprocess", InsertionMode.IN_ROW, token)
+                # Default: pop template mode and push IN_BODY
+                if token.name not in {"base", "basefont", "bgsound", "link", "meta", "noframes", 
+                                      "script", "style", "template", "title"}:
+                    self.template_modes.pop()
+                    self.template_modes.append(InsertionMode.IN_BODY)
+                    self.mode = InsertionMode.IN_BODY
+                    return ("reprocess", InsertionMode.IN_BODY, token)
             if token.kind == Tag.END and token.name == "template":
                 return self._mode_in_head(token)
-            # Most other tags delegate to IN_BODY
-            return self._mode_in_body(token)
+            # Head-related tags process in InHead
+            if token.name in {"base", "basefont", "bgsound", "link", "meta", "noframes", 
+                             "script", "style", "template", "title"}:
+                return self._mode_in_head(token)
         if isinstance(token, EOFToken):
-            return self._mode_in_body(token)
+            # Check if template is in scope
+            if not self._in_scope("template"):
+                return None
+            # Pop until template, then handle EOF in reset mode
+            self._pop_until_inclusive("template")
+            self._clear_active_formatting_up_to_marker()
+            if self.template_modes:
+                self.template_modes.pop()
+            self._reset_insertion_mode()
+            return ("reprocess", self.mode, token)
         return None
 
     def _mode_after_body(self, token):
@@ -2243,6 +2306,15 @@ class TreeBuilder:
                 return
             if name == "table":
                 self.mode = InsertionMode.IN_TABLE
+                return
+            if name == "template":
+                # Return the last template mode from the stack
+                if self.template_modes:
+                    self.mode = self.template_modes[-1]
+                    return
+            if name == "head":
+                # If we're resetting and head is on stack, stay in IN_HEAD
+                self.mode = InsertionMode.IN_HEAD
                 return
             if name == "html":
                 break

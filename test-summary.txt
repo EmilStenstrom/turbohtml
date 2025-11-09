@@ -1,4 +1,4 @@
-Tests passed: 1445/1740 (83.0%) (39 skipped)
+Tests passed: 1456/1740 (83.7%) (39 skipped)
 
 adoption01.dat: 18/18 (100%) [..................]
 adoption02.dat: 2/2 (100%) [..]
@@ -29,7 +29,7 @@ scripted/webkit01.dat: 0/0 (N/A) [ss] (2 skipped)
 search-element.dat: 3/3 (100%) [...]
 svg.dat: 3/8 (38%) [xxxxx...]
 tables01.dat: 19/19 (100%) [...................]
-template.dat: 38/112 (34%) [.....x....................xxxxxx.xxxxxx....xxxxxxxxxxxxx..xxxxxxxxxxxxxxxxxx..xxxxxxxxxxxxxxxxxxxxxx...xxxxx.xxx]
+template.dat: 45/112 (40%) [..........................xxxxxx.xxxxxx....xxxxxxxxxxxxx..xxxxxxxxxxx.xxxxxx..xx.xxxxxxxxxxxx..xxxxx...xxxxx..x.]
 tests1.dat: 103/112 (92%) [.............................xx......................x........................x.x........x.........x.x..x.......]
 tests2.dat: 63/63 (100%) [...............................................................]
 tests3.dat: 24/24 (100%) [........................]
@@ -44,7 +44,7 @@ tests11.dat: 13/13 (100%) [.............]
 tests12.dat: 2/2 (100%) [..]
 tests14.dat: 7/7 (100%) [.......]
 tests15.dat: 11/14 (79%) [xx..........x.]
-tests16.dat: 139/185 (75%) [............................x.........xxxxxxxxxx..........xx...xxxxxxx.x...........ssssssxx....................................x.........xxxxxxxxxx........xx...xxxxxxx.x...........ssssssxx.........] (12 skipped)
+tests16.dat: 143/185 (77%) [............................x.........xxxxxxxxxx..........xx...xxxxxxx.x...........ssssss......................................x.........xxxxxxxxxx........xx...xxxxxxx.x...........ssssss...........] (12 skipped)
 tests17.dat: 13/13 (100%) [.............]
 tests18.dat: 31/35 (89%) [....s........xxx......x.............] (1 skipped)
 tests19.dat: 86/103 (83%) [..............................xxxxx..........x.x........................xxx.x.xx..x.....x.x...x........]
