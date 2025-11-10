@@ -999,6 +999,15 @@ class TreeBuilder:
                 if name in {"base", "basefont", "bgsound", "link", "meta"}:
                     self._insert_element(token, push=False)
                     return None
+                # Legacy element: <image> is treated as <img>
+                if name == "image":
+                    self._parse_error("image-start-tag")
+                    # Create new token with img name but same attributes
+                    img_token = Tag(Tag.START, "img", token.attrs, token.self_closing)
+                    self._reconstruct_active_formatting_elements()
+                    self._insert_element(img_token, push=False)
+                    self.frameset_ok = False
+                    return None
                 # Content void elements - reconstruct formatting per html5ever rules.rs:758-774
                 # These DO reconstruct active formatting elements before insertion.
                 if name in {"area", "br", "embed", "img", "keygen", "wbr"}:
