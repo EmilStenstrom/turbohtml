@@ -388,13 +388,13 @@ class TestReporter:
         # If no file breakdown collected, just output header (and write header)
         if not file_results:
             if full_run:
-                Path(summary_file).write_text(header)
+                Path(summary_file).write_text(header + "\n")
             # No leading newline needed; progress indicators are disabled.
             return
         detailed = self._generate_detailed_summary(header, file_results)
         # Persist only for full runs
         if full_run:
-            Path(summary_file).write_text(detailed)
+            Path(summary_file).write_text(detailed + "\n")
         if self.config.get("quiet"):
             # Quiet: only header to stdout (no leading blank line)
             print(header)
