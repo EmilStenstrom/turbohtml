@@ -223,14 +223,24 @@ class SimpleDomNode:
             return []
         formatted = []
         padding = " " * (indent + 2)
-        # Sort attributes alphabetically by name for canonical test output
-        sorted_attrs = sorted(self.attrs, key=lambda a: a.name)
-        for attr in sorted_attrs:
-            value = attr.value or ""
+        
+        # Prepare display names for sorting
+        display_attrs = []
+        for attr in self.attrs:
             attr_name = attr.name
-            # In foreign content (SVG/MathML), namespaced attributes use space separator
+            # In foreign content (SVG/MathML), only adjusted attributes use space separator
+            # Unknown attributes with colons (e.g., xml:foo) keep their colons
             if self.namespace and self.namespace not in {None, "html"}:
-                attr_name = attr_name.replace(":", " ")
+                lower_name = attr_name.lower()
+                if lower_name in FOREIGN_ATTRIBUTE_ADJUSTMENTS:
+                    attr_name = attr_name.replace(":", " ")
+            display_attrs.append((attr_name, attr))
+        
+        # Sort by display name for canonical test output
+        display_attrs.sort(key=lambda x: x[0])
+        
+        for attr_name, attr in display_attrs:
+            value = attr.value or ""
             formatted.append(f'| {padding}{attr_name}="{value}"')
         return formatted
 
