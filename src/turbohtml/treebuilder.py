@@ -1247,7 +1247,7 @@ class TreeBuilder:
                 data = data.replace("\x00", "\uFFFD")
                 token = CharacterTokens(data)
             self.pending_table_text = []
-            self.table_text_original_mode = InsertionMode.IN_TABLE
+            self.table_text_original_mode = self.mode
             self.mode = InsertionMode.IN_TABLE_TEXT
             return ("reprocess", InsertionMode.IN_TABLE_TEXT, token)
         if isinstance(token, CommentToken):
