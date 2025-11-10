@@ -801,6 +801,7 @@ class TreeBuilder:
                 self._parse_error("Unexpected null character")
                 data = data.replace("\x00", "\uFFFD")
             if _is_all_whitespace(data):
+                self._reconstruct_active_formatting_elements()
                 self._append_text(data)
                 return None
             self._reconstruct_active_formatting_elements()
