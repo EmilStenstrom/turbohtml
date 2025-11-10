@@ -1741,6 +1741,10 @@ class TreeBuilder:
                 if name in {"br", "img"}:
                     self._insert_element(token, push=False)
                     return None
+                if name == "plaintext":
+                    # Per spec: plaintext element is inserted in select (consumes all remaining text)
+                    self._insert_element(token, push=True)
+                    return None
                 self._parse_error(f"Unexpected <{name}> in select - ignored")
                 return None
             else:
