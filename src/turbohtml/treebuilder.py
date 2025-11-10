@@ -1724,6 +1724,11 @@ class TreeBuilder:
                     self._insert_element(token, push=not token.self_closing, namespace=name)
                     return None
                 if name == "hr":
+                    # Per spec: pop option and optgroup before inserting hr (makes hr sibling, not child)
+                    if self.open_elements and self.open_elements[-1].name == "option":
+                        self.open_elements.pop()
+                    if self.open_elements and self.open_elements[-1].name == "optgroup":
+                        self.open_elements.pop()
                     self._insert_element(token, push=False)
                     return None
                 if name == "menuitem":
