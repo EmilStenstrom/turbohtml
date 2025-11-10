@@ -883,7 +883,6 @@ class TreeBuilder:
                     if self._has_in_button_scope("p"):
                         self._close_p_element()
                     self._insert_element(token, push=True)
-                    self.frameset_ok = False
                     return None
                 if name == "math":
                     self._reconstruct_active_formatting_elements()
@@ -966,9 +965,32 @@ class TreeBuilder:
                     self._insert_element(token, push=False)
                     self.frameset_ok = False
                     return None
+                # Special case: frameset in body mode with frameset_ok flag still true
+                if name == "frameset":
+                    if not self.frameset_ok:
+                        self._parse_error("unexpected-start-tag-ignored")
+                        return None
+                    # Remove body from open_elements and the tree
+                    # Find body element index
+                    body_index = None
+                    for i, elem in enumerate(self.open_elements):
+                        if elem.name == "body":
+                            body_index = i
+                            break
+                    if body_index is not None:
+                        # Remove body and all descendants from open_elements
+                        body_elem = self.open_elements[body_index]
+                        if body_elem.parent:
+                            body_elem.parent.remove_child(body_elem)
+                        # Remove body and everything after it from the stack
+                        self.open_elements = self.open_elements[:body_index]
+                    # Insert frameset and switch mode
+                    self._insert_element(token, push=True)
+                    self.mode = InsertionMode.IN_FRAMESET
+                    return None
                 # Elements that should be ignored in body mode (parse error) in full document parsing
                 # In fragment parsing, these may be valid depending on context
-                if name in {"colgroup", "frameset", "head", "tbody", "td", "tfoot", "th", "thead", "tr"}:
+                if name in {"colgroup", "head", "tbody", "td", "tfoot", "th", "thead", "tr"}:
                     self._parse_error(f"unexpected-start-tag-ignored")
                     return None
                 if self.fragment_context is None and name in {"col", "frame"}:
@@ -984,6 +1006,7 @@ class TreeBuilder:
                 if name in {"area", "br", "embed", "img", "keygen", "wbr"}:
                     self._reconstruct_active_formatting_elements()
                     self._insert_element(token, push=False)
+                    self.frameset_ok = False
                     return None
                 # Other void elements (col, frame, param, source, track) - no reconstruct
                 if name in {"col", "frame", "param", "source", "track"}:
@@ -1013,6 +1036,7 @@ class TreeBuilder:
                     if self._has_in_button_scope("p"):
                         self._close_p_element()
                     self._insert_element(token, push=True)
+                    self.frameset_ok = False
                     return None
                 if name == "textarea":
                     self._insert_element(token, push=True)
@@ -1063,6 +1087,17 @@ class TreeBuilder:
                 # Any other start tag: reconstruct active formatting elements, then insert
                 self._reconstruct_active_formatting_elements()
                 self._insert_element(token, push=not token.self_closing)
+                # Most elements set frameset_ok to false, except certain whitelisted ones
+                # Per HTML5 spec, these DON'T set frameset_ok to false:
+                # - Formatting elements, paragraph-like block elements, table structure elements
+                # - Head metadata elements (already handled above)
+                if name not in {"address", "article", "aside", "blockquote", "center", "details", 
+                               "dialog", "dir", "div", "dl", "fieldset", "figcaption", "figure", 
+                               "footer", "header", "hgroup", "main", "menu", "nav", "ol", "p", 
+                               "section", "summary", "ul", "caption", "col", "colgroup", "hr",
+                               "pre", "listing"}:
+                    if name not in FORMATTING_ELEMENTS:
+                        self.frameset_ok = False
                 return None
             else:
                 name = token.name
