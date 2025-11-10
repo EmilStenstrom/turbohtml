@@ -311,14 +311,10 @@ class TreeBuilder:
             name = fragment_context.tag_name.lower()
             namespace = fragment_context.namespace
             
-            # For html context, create head and body elements
+            # For html context, don't pre-create head/body - start in BEFORE_HEAD mode
+            # This allows frameset and other elements to be inserted properly
             if name == "html":
-                head = self._create_element("head", None, [])
-                root.append_child(head)
-                body = self._create_element("body", None, [])
-                root.append_child(body)
-                self.open_elements.append(body)
-                self.mode = InsertionMode.IN_BODY
+                self.mode = InsertionMode.BEFORE_HEAD
             # Table modes only apply to HTML namespace fragments (namespace is None or "html")
             elif namespace in {None, "html"} and name in {"tbody", "thead", "tfoot"}:
                 self.mode = InsertionMode.IN_TABLE_BODY
@@ -330,6 +326,8 @@ class TreeBuilder:
                 self.mode = InsertionMode.IN_TABLE
             else:
                 self.mode = InsertionMode.IN_BODY
+            # For fragments, frameset_ok starts as False per HTML5 spec
+            # This prevents frameset from being inserted in fragment contexts
             self.frameset_ok = False
 
     def process_token(self, token):
@@ -1644,8 +1642,9 @@ class TreeBuilder:
                     self._end_table_cell(name)
                     return None
                 if name in {"table", "tbody", "tfoot", "thead", "tr"}:
-                    # For tr end tag, only close cell if tr actually exists in scope
-                    if name == "tr" and not self._has_in_table_scope("tr"):
+                    # Per HTML5 spec: only close cell if the element is actually in scope
+                    # Otherwise it's a parse error and we ignore the token
+                    if not self._has_in_table_scope(name):
                         self._parse_error("unexpected-end-tag")
                         return None
                     if self._close_table_cell():

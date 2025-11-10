@@ -533,9 +533,9 @@ class Tokenizer:
 		while True:
 			c = self._get_char()
 			if c is None:
+				# Per HTML5 spec: EOF in attribute value is a parse error
+				# The incomplete tag is discarded (not emitted)
 				self._emit_error("EOF in attribute value")
-				self._finish_attribute()
-				self._emit_current_tag()
 				self._emit_token(EOFToken())
 				return True
 			if c == '"':
@@ -556,9 +556,9 @@ class Tokenizer:
 		while True:
 			c = self._get_char()
 			if c is None:
+				# Per HTML5 spec: EOF in attribute value is a parse error
+				# The incomplete tag is discarded (not emitted)
 				self._emit_error("EOF in attribute value")
-				self._finish_attribute()
-				self._emit_current_tag()
 				self._emit_token(EOFToken())
 				return True
 			if c == "'":
@@ -578,9 +578,9 @@ class Tokenizer:
 		while True:
 			c = self._get_char()
 			if c is None:
+				# Per HTML5 spec: EOF in attribute value is a parse error
+				# The incomplete tag is discarded (not emitted)
 				self._emit_error("EOF in attribute value")
-				self._finish_attribute()
-				self._emit_current_tag()
 				self._emit_token(EOFToken())
 				return True
 			if c in ("\t", "\n", "\f", " "):
@@ -1514,7 +1514,11 @@ class Tokenizer:
 			if c == "<":
 				self.state = self.RAWTEXT_LESS_THAN_SIGN
 				return False
-			self.text_buffer.append(c)
+			if c == "\0":
+				self._emit_error("Null character in rawtext")
+				self.text_buffer.append("\ufffd")
+			else:
+				self.text_buffer.append(c)
 
 	def _state_rawtext_less_than_sign(self):
 		c = self._get_char()
@@ -1599,6 +1603,10 @@ class Tokenizer:
 		# PLAINTEXT state - consume everything as text, no end tag
 		if self.pos < self.length:
 			remaining = self.buffer[self.pos:]
+			# Replace null bytes with replacement character
+			if "\0" in remaining:
+				remaining = remaining.replace("\0", "\ufffd")
+				self._emit_error("Null character in plaintext")
 			self.text_buffer.append(remaining)
 			self.pos = self.length
 		self._flush_text()
