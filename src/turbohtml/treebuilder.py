@@ -889,7 +889,8 @@ class TreeBuilder:
                     self.frameset_ok = False
                     attrs = self._prepare_foreign_attributes("math", token.attrs)
                     new_tag = Tag(Tag.START, token.name, attrs, token.self_closing)
-                    self._insert_element(new_tag, push=True, namespace="math")
+                    # For foreign elements, honor the self-closing flag
+                    self._insert_element(new_tag, push=not token.self_closing, namespace="math")
                     return None
                 if name == "svg":
                     self._reconstruct_active_formatting_elements()
@@ -897,7 +898,8 @@ class TreeBuilder:
                     adjusted_name = self._adjust_svg_tag_name(token.name)
                     attrs = self._prepare_foreign_attributes("svg", token.attrs)
                     new_tag = Tag(Tag.START, adjusted_name, attrs, token.self_closing)
-                    self._insert_element(new_tag, push=True, namespace="svg")
+                    # For foreign elements, honor the self-closing flag
+                    self._insert_element(new_tag, push=not token.self_closing, namespace="svg")
                     return None
                 if name == "li":
                     self.frameset_ok = False
@@ -1055,7 +1057,7 @@ class TreeBuilder:
                     if self.open_elements and self.open_elements[-1].name == "option":
                         self.open_elements.pop()
                     self._reconstruct_active_formatting_elements()
-                    self._insert_element(token, push=not token.self_closing)
+                    self._insert_element(token, push=True)
                     return None
                 if name == "optgroup":
                     # Close open option, close open optgroup, reconstruct, insert.
@@ -1066,19 +1068,19 @@ class TreeBuilder:
                     if self.open_elements and self.open_elements[-1].name == "optgroup":
                         self.open_elements.pop()
                     self._reconstruct_active_formatting_elements()
-                    self._insert_element(token, push=not token.self_closing)
+                    self._insert_element(token, push=True)
                     return None
                 # Ruby elements auto-close previous ruby elements
                 if name in {"rp", "rt"}:
                     # Generate implied end tags but exclude rtc (rp/rt can appear inside rtc)
                     self._generate_implied_end_tags(exclude="rtc")
-                    self._insert_element(token, push=not token.self_closing)
+                    self._insert_element(token, push=True)
                     return None
                 if name in {"rb", "rtc"}:
                     # Close rb, rp, rt, or rtc elements before inserting rb/rtc
                     if self.open_elements and self.open_elements[-1].name in {"rb", "rp", "rt", "rtc"}:
                         self._generate_implied_end_tags()
-                    self._insert_element(token, push=not token.self_closing)
+                    self._insert_element(token, push=True)
                     return None
                 # Table elements that appear outside table context are parse errors and ignored
                 if name in {"caption", "col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr"}:
@@ -1086,7 +1088,11 @@ class TreeBuilder:
                     return None
                 # Any other start tag: reconstruct active formatting elements, then insert
                 self._reconstruct_active_formatting_elements()
-                self._insert_element(token, push=not token.self_closing)
+                # Per HTML5 spec: self-closing flag should be ignored for non-void HTML elements
+                # Only void elements and foreign elements can be self-closing
+                self._insert_element(token, push=True)
+                if token.self_closing:
+                    self._parse_error("non-void-html-element-start-tag-with-trailing-solidus")
                 # Most elements set frameset_ok to false, except certain whitelisted ones
                 # Per HTML5 spec, these DON'T set frameset_ok to false:
                 # - Formatting elements, paragraph-like block elements, table structure elements
@@ -1696,7 +1702,7 @@ class TreeBuilder:
                         return ("reprocess", self.mode, token)
                     return None
                 if name == "keygen":
-                    self._insert_element(token, push=not token.self_closing)
+                    self._insert_element(token, push=False)
                     return None
                 if name in {"caption", "col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr", "table"}:
                     self._parse_error(f"Unexpected <{name}> in select")
@@ -1708,10 +1714,14 @@ class TreeBuilder:
                 if name in {"script", "template"}:
                     return self._mode_in_head(token)
                 if name in {"svg", "math"}:
-                    self._insert_element(token, push=True, namespace=name)
+                    # For foreign elements, honor the self-closing flag
+                    self._insert_element(token, push=not token.self_closing, namespace=name)
                     return None
-                if name in {"hr", "menuitem"}:
-                    self._insert_element(token, push=not token.self_closing)
+                if name == "hr":
+                    self._insert_element(token, push=False)
+                    return None
+                if name == "menuitem":
+                    self._insert_element(token, push=True)
                     return None
                 # Allow common HTML elements in select (newer spec)
                 if name in {"p", "div", "span", "a", "b", "strong", "em", "i", "u", "s", "small", "button", "datalist"}:
@@ -2049,7 +2059,7 @@ class TreeBuilder:
         foster_parenting = self._should_foster_parenting(target, for_tag=tag.name)
         parent, position = self._appropriate_insertion_location(foster_parenting=foster_parenting)
         self._insert_node_at(parent, position, node)
-        if push and not tag.self_closing:
+        if push:
             self.open_elements.append(node)
         return node
 
@@ -2614,9 +2624,8 @@ class TreeBuilder:
                     adjusted_name = self._adjust_svg_tag_name(token.name)
                 attrs = self._prepare_foreign_attributes(namespace, token.attrs)
                 new_tag = Tag(Tag.START, adjusted_name, attrs, token.self_closing)
-                self._insert_element(new_tag, push=True, namespace=namespace)
-                if token.self_closing:
-                    return None
+                # For foreign elements, honor the self-closing flag
+                self._insert_element(new_tag, push=not token.self_closing, namespace=namespace)
                 return None
 
             if token.kind == Tag.END:

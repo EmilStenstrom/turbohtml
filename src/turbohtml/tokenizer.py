@@ -381,12 +381,8 @@ class Tokenizer:
 			c = self._get_char()
 			if c is None:
 				self._emit_error("EOF in tag name")
-				self.text_buffer.append("<")
-				if self.current_tag_kind == Tag.END:
-					self.text_buffer.append("/")
-				if self.current_tag_name:
-					self.text_buffer.extend(self.current_tag_name)
-				self._flush_text()
+				# Per HTML5 spec: EOF in tag name is a parse error, emit EOF token only
+				# The incomplete tag is discarded (not emitted as text)
 				self._emit_token(EOFToken())
 				return True
 			if c in ("\t", "\n", "\f", " "):
