@@ -1929,7 +1929,11 @@ class TreeBuilder:
                 self.open_elements.pop()
                 return None
             if token.kind == Tag.START and token.name == "noframes":
-                return ("reprocess", InsertionMode.IN_HEAD, token)
+                # Per spec: use IN_HEAD rules but preserve current mode for TEXT restoration
+                self._insert_element(token, push=True)
+                self.original_mode = self.mode
+                self.mode = InsertionMode.TEXT
+                return None
         if isinstance(token, EOFToken):
             # If we're in a template, handle EOF in template mode first
             if self.template_modes:
