@@ -155,8 +155,8 @@ class SimpleDomNode:
             self.namespace = namespace
         else:
             self.namespace = namespace or "html"
-        # Template elements have a special document fragment for their content
-        if name == "template":
+        # Only HTML template elements have a document fragment for their content
+        if name == "template" and self.namespace == "html":
             self.template_content = SimpleDomNode("#document-fragment")
         else:
             self.template_content = None
@@ -332,6 +332,10 @@ class TreeBuilder:
                 self.mode = InsertionMode.IN_ROW
             elif namespace in {None, "html"} and name in {"td", "th"}:
                 self.mode = InsertionMode.IN_CELL
+            elif namespace in {None, "html"} and name == "caption":
+                self.mode = InsertionMode.IN_CAPTION
+            elif namespace in {None, "html"} and name == "colgroup":
+                self.mode = InsertionMode.IN_COLUMN_GROUP
             elif namespace in {None, "html"} and name == "table":
                 self.mode = InsertionMode.IN_TABLE
             else:
@@ -1384,7 +1388,8 @@ class TreeBuilder:
                     self._parse_error("unexpected-start-tag-implies-end-tag")
                     if self._close_caption_element():
                         return ("reprocess", InsertionMode.IN_TABLE, token)
-                    return None
+                    # In fragment parsing, if there's no caption to close, process in IN_BODY mode
+                    return self._mode_in_body(token)
                 return self._mode_in_body(token)
             else:
                 if name == "caption":
