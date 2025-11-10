@@ -1640,7 +1640,7 @@ class TreeBuilder:
         if isinstance(token, Tag):
             name = token.name
             if token.kind == Tag.START:
-                if name in {"caption", "col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr", "table"}:
+                if name in {"caption", "col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr"}:
                     if self._close_table_cell():
                         return ("reprocess", self.mode, token)
                     # If no cell to close, we're not actually in a table - delegate to IN_BODY
