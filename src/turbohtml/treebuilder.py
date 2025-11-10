@@ -884,7 +884,6 @@ class TreeBuilder:
                     return None
                 if name == "math":
                     self._reconstruct_active_formatting_elements()
-                    self.frameset_ok = False
                     attrs = self._prepare_foreign_attributes("math", token.attrs)
                     new_tag = Tag(Tag.START, token.name, attrs, token.self_closing)
                     # For foreign elements, honor the self-closing flag
@@ -892,7 +891,6 @@ class TreeBuilder:
                     return None
                 if name == "svg":
                     self._reconstruct_active_formatting_elements()
-                    self.frameset_ok = False
                     adjusted_name = self._adjust_svg_tag_name(token.name)
                     attrs = self._prepare_foreign_attributes("svg", token.attrs)
                     new_tag = Tag(Tag.START, adjusted_name, attrs, token.self_closing)
