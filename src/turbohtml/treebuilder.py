@@ -288,6 +288,7 @@ class TreeBuilder:
         "insert_from_table",
         "pending_table_text",
         "template_modes",
+        "tokenizer_state_override",
     )
 
     def __init__(self, fragment_context=None, opts=None):
@@ -311,6 +312,7 @@ class TreeBuilder:
         self.insert_from_table = False
         self.pending_table_text = []
         self.template_modes = []
+        self.tokenizer_state_override = None
 
         if fragment_context is not None:
             # Fragment parsing per HTML5 spec
@@ -416,7 +418,9 @@ class TreeBuilder:
                 else:
                     result = self._dispatch(current_token)
             if result is None:
-                return TokenSinkResult.Continue
+                result_to_return = self.tokenizer_state_override or TokenSinkResult.Continue
+                self.tokenizer_state_override = None
+                return result_to_return
             # Result can be (instruction, mode, token) or (instruction, mode, token, force_html)
             if isinstance(result, tuple) and len(result) >= 3:
                 instruction, mode, token_override = result[0], result[1], result[2]
@@ -429,7 +433,9 @@ class TreeBuilder:
                 current_token = token_override
                 reprocess = True
 
-        return TokenSinkResult.Continue
+        result = self.tokenizer_state_override or TokenSinkResult.Continue
+        self.tokenizer_state_override = None
+        return result
 
     def _handle_doctype(self, token):
         if self.mode != InsertionMode.INITIAL:
@@ -1079,6 +1085,9 @@ class TreeBuilder:
                         self._close_p_element()
                     self._insert_element(token, push=True)
                     self.frameset_ok = False
+                    # Signal tokenizer to switch to PLAINTEXT mode (plaintext consumes all remaining input)
+                    if name == "plaintext":
+                        self.tokenizer_state_override = TokenSinkResult.Plaintext
                     return None
                 if name == "textarea":
                     self._insert_element(token, push=True)

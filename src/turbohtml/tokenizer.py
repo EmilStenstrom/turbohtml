@@ -1388,7 +1388,12 @@ class Tokenizer:
 			if not in_foreign and name == "plaintext":
 				self.state = self.PLAINTEXT
 				switched_to_rawtext = True
+		# Remember current state before emitting
+		state_before_emit = self.state
 		self._emit_token(tag)
+		# Check if tree builder changed the state (e.g., for plaintext in HTML integration points)
+		if self.state != state_before_emit:
+			switched_to_rawtext = True
 		self.current_tag_name.clear()
 		self.current_tag_attrs.clear()
 		self.current_attr_name.clear()
@@ -1416,7 +1421,7 @@ class Tokenizer:
 	def _emit_token(self, token):
 		result = self.sink.process_token(token)
 		if result == TokenSinkResult.Plaintext:
-			self.state = self.DATA
+			self.state = self.PLAINTEXT
 		elif result == TokenSinkResult.RawData:
 			self.state = self.DATA
 		elif result == TokenSinkResult.Script:
