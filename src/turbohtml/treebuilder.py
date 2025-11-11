@@ -1566,6 +1566,11 @@ class TreeBuilder:
                     elif current and current.name == "template":
                         self._parse_error("unexpected-start-tag-in-template-table-context")
                         return None
+                    # In fragment parsing with tbody/tfoot/thead context and no tbody on stack, ignore these tags
+                    elif (self.fragment_context and current and current.name == "html" and
+                          self.fragment_context.tag_name.lower() in {"tbody", "tfoot", "thead"}):
+                        self._parse_error("unexpected-start-tag")
+                        return None
                     self.mode = InsertionMode.IN_TABLE
                     return ("reprocess", InsertionMode.IN_TABLE, token)
                 return self._mode_in_table(token)
@@ -1582,6 +1587,11 @@ class TreeBuilder:
                     current = self.open_elements[-1] if self.open_elements else None
                     # In a template, reject </table> as there's no table element
                     if current and current.name == "template":
+                        self._parse_error("unexpected-end-tag")
+                        return None
+                    # In fragment parsing with tbody/tfoot/thead context and no tbody on stack, ignore </table>
+                    if (self.fragment_context and current and current.name == "html" and
+                        self.fragment_context.tag_name.lower() in {"tbody", "tfoot", "thead"}):
                         self._parse_error("unexpected-end-tag")
                         return None
                     if current and current.name in {"tbody", "tfoot", "thead"}:
