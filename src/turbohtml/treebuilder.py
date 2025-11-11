@@ -1451,6 +1451,10 @@ class TreeBuilder:
             if _is_all_whitespace(token.data or ""):
                 return None
             if current and current.name == "html":
+                # In fragment parsing with colgroup context, drop non-whitespace characters
+                if self.fragment_context and self.fragment_context.tag_name.lower() == "colgroup":
+                    self._parse_error("unexpected-characters-in-column-group")
+                    return None
                 return ("reprocess", InsertionMode.IN_TABLE, token)
             # In a template, non-whitespace characters are parse errors - ignore them
             if current and current.name == "template":
