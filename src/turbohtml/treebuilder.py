@@ -476,6 +476,10 @@ class TreeBuilder:
                     root.remove_child(context_elem)
                 self._reparent_children(root, self.document)
                 self.document.remove_child(root)
+        
+        # Populate selectedcontent elements per HTML5 spec
+        self._populate_selectedcontent(self.document)
+        
         return self.document
 
     # Insertion mode dispatch ------------------------------------------------
@@ -1751,11 +1755,17 @@ class TreeBuilder:
                 if name == "html":
                     return ("reprocess", InsertionMode.IN_BODY, token)
                 if name == "option":
+                    # Close any open selectedcontent element (spec behavior for selectedcontent)
+                    if self.open_elements and self.open_elements[-1].name == "selectedcontent":
+                        self.open_elements.pop()
                     if self.open_elements and self.open_elements[-1].name == "option":
                         self.open_elements.pop()
                     self._insert_element(token, push=True)
                     return None
                 if name == "optgroup":
+                    # Close any open selectedcontent element (spec behavior for selectedcontent)
+                    if self.open_elements and self.open_elements[-1].name == "selectedcontent":
+                        self.open_elements.pop()
                     if self.open_elements and self.open_elements[-1].name == "option":
                         self.open_elements.pop()
                     if self.open_elements and self.open_elements[-1].name == "optgroup":
@@ -1803,7 +1813,7 @@ class TreeBuilder:
                     self._insert_element(token, push=True)
                     return None
                 # Allow common HTML elements in select (newer spec)
-                if name in {"p", "div", "span", "a", "b", "strong", "em", "i", "u", "s", "small", "button", "datalist"}:
+                if name in {"p", "div", "span", "a", "b", "strong", "em", "i", "u", "s", "small", "button", "datalist", "selectedcontent"}:
                     self._insert_element(token, push=not token.self_closing)
                     return None
                 if name in {"br", "img"}:
@@ -1838,9 +1848,19 @@ class TreeBuilder:
                     self._reset_insertion_mode()
                     return None
                 # Handle end tags for allowed HTML elements in select
-                if name in {"p", "div", "span", "a", "b", "strong", "em", "i", "u", "s", "small", "button", "datalist"}:
-                    if self.open_elements and self.open_elements[-1].name == name:
-                        self.open_elements.pop()
+                if name in {"p", "div", "span", "a", "b", "strong", "em", "i", "u", "s", "small", "button", "datalist", "selectedcontent"}:
+                    # Pop elements until we find the matching element (or give up)
+                    found = False
+                    for node in reversed(self.open_elements):
+                        if node.name == name:
+                            found = True
+                            break
+                    if found:
+                        # Pop elements until we've popped the target
+                        while self.open_elements:
+                            popped = self.open_elements.pop()
+                            if popped.name == name:
+                                break
                     else:
                         self._parse_error(f"Unexpected </{name}>")
                     return None
@@ -3058,3 +3078,82 @@ class TreeBuilder:
             if node.name == name:
                 return True
         return False
+
+    def _populate_selectedcontent(self, root):
+        """Populate selectedcontent elements with content from selected option.
+        
+        Per HTML5 spec: selectedcontent mirrors the content of the selected option,
+        or the first option if none is selected.
+        """
+        # Find all select elements
+        selects = []
+        self._find_elements(root, 'select', selects)
+        
+        for select in selects:
+            # Find selectedcontent element in this select
+            selectedcontent = self._find_element(select, 'selectedcontent')
+            if not selectedcontent:
+                continue
+            
+            # Find all option elements
+            options = []
+            self._find_elements(select, 'option', options)
+            if not options:
+                continue
+            
+            # Find selected option or use first one
+            selected_option = None
+            for opt in options:
+                if opt.attrs:
+                    for attr in opt.attrs:
+                        if attr.name == 'selected':
+                            selected_option = opt
+                            break
+                if selected_option:
+                    break
+            
+            if not selected_option:
+                selected_option = options[0]
+            
+            # Clone content from selected option to selectedcontent
+            self._clone_children(selected_option, selectedcontent)
+    
+    def _find_elements(self, node, name, result):
+        """Recursively find all elements with given name."""
+        if hasattr(node, 'name') and node.name == name:
+            result.append(node)
+        if hasattr(node, 'children'):
+            for child in node.children:
+                self._find_elements(child, name, result)
+    
+    def _find_element(self, node, name):
+        """Find first element with given name."""
+        if hasattr(node, 'name') and node.name == name:
+            return node
+        if hasattr(node, 'children'):
+            for child in node.children:
+                result = self._find_element(child, name)
+                if result:
+                    return result
+        return None
+    
+    def _clone_children(self, source, target):
+        """Deep clone all children from source to target."""
+        if not hasattr(source, 'children'):
+            return
+        for child in source.children:
+            if hasattr(child, 'name') and child.name == '#text':
+                # Text node
+                cloned = SimpleDomNode('#text', data=child.data)
+                target.children.append(cloned)
+                cloned.parent = target
+            elif hasattr(child, 'name'):
+                # Element node
+                cloned = SimpleDomNode(
+                    child.name,
+                    attrs=[Attribute(a.name, a.value) for a in (child.attrs or [])],
+                    namespace=getattr(child, 'namespace', None)
+                )
+                self._clone_children(child, cloned)
+                target.children.append(cloned)
+                cloned.parent = target
