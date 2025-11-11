@@ -2625,11 +2625,32 @@ class TreeBuilder:
             return False
         return (node.namespace, node.name) in MATHML_TEXT_INTEGRATION_POINT_SET
 
+    def _adjusted_current_node(self):
+        # Per HTML5 spec: for fragment parsing, if stack has only html element,
+        # use the fragment context element instead
+        if not self.open_elements:
+            return None
+        if (self.fragment_context and 
+            len(self.open_elements) == 1 and 
+            self.open_elements[0].name == "html"):
+            # Return a pseudo-node representing the fragment context
+            # We need something with .namespace, .name, and .attrs attributes
+            class PseudoNode:
+                def __init__(self, name, namespace):
+                    self.name = name
+                    self.namespace = namespace
+                    self.attrs = []  # Fragment context has no attributes
+            return PseudoNode(
+                self.fragment_context.tag_name.lower(),
+                self.fragment_context.namespace
+            )
+        return self.open_elements[-1]
+
     def _should_use_foreign_content(self, token):
         if not self.open_elements:
             return False
-        current = self.open_elements[-1]
-        if current.namespace in {None, "html"}:
+        current = self._adjusted_current_node()
+        if current is None or current.namespace in {None, "html"}:
             return False
 
         if isinstance(token, EOFToken):
@@ -2674,7 +2695,7 @@ class TreeBuilder:
             self.open_elements.pop()
 
     def _process_foreign_content(self, token):
-        current = self.open_elements[-1]
+        current = self._adjusted_current_node()
 
         if isinstance(token, CharacterTokens):
             data = token.data or ""
@@ -2703,7 +2724,7 @@ class TreeBuilder:
                     self._parse_error("Unexpected HTML element in foreign content")
                     self._pop_until_html_or_integration_point()
                     self._reset_insertion_mode()
-                    return ("reprocess", self.mode, token)
+                    return ("reprocess", self.mode, token, True)
 
                 namespace = current.namespace
                 adjusted_name = token.name
@@ -2723,7 +2744,7 @@ class TreeBuilder:
                     self._parse_error("Unexpected HTML end tag in foreign content")
                     self._pop_until_html_or_integration_point()
                     self._reset_insertion_mode()
-                    return ("reprocess", self.mode, token)
+                    return ("reprocess", self.mode, token, True)
                 
                 # Process foreign end tag per spec: walk stack backwards looking for match
                 idx = len(self.open_elements) - 1
