@@ -1404,7 +1404,16 @@ class TreeBuilder:
         if isinstance(token, Tag):
             name = token.name
             if token.kind == Tag.START:
-                if name in {"caption", "table", "tbody", "tfoot", "thead", "tr", "td", "th", "col", "colgroup"}:
+                if name in {"caption", "col", "colgroup", "tbody", "tfoot", "thead", "tr", "td", "th"}:
+                    self._parse_error("unexpected-start-tag-implies-end-tag")
+                    if self._close_caption_element():
+                        return ("reprocess", InsertionMode.IN_TABLE, token)
+                    # In fragment parsing with caption context, ignore table structure elements (but not table itself)
+                    if self.fragment_context and self.fragment_context.tag_name.lower() == "caption":
+                        return None
+                    # In fragment parsing, if there's no caption to close, process in IN_BODY mode
+                    return self._mode_in_body(token)
+                if name == "table":
                     self._parse_error("unexpected-start-tag-implies-end-tag")
                     if self._close_caption_element():
                         return ("reprocess", InsertionMode.IN_TABLE, token)
