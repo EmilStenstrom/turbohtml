@@ -321,6 +321,13 @@ class TreeBuilder:
             name = fragment_context.tag_name.lower()
             namespace = fragment_context.namespace
             
+            # Create a fake context element to establish foreign content context
+            # Per spec: "Create an element for the token in the given namespace"
+            if namespace and namespace not in {None, "html"}:
+                context_element = self._create_element(name, namespace, [])
+                root.append_child(context_element)
+                self.open_elements.append(context_element)
+            
             # For html context, don't pre-create head/body - start in BEFORE_HEAD mode
             # This allows frameset and other elements to be inserted properly
             if name == "html":
@@ -448,6 +455,19 @@ class TreeBuilder:
             # For fragments, remove the html wrapper and promote its children
             if self.document.children and self.document.children[0].name == "html":
                 root = self.document.children[0]
+                # If we have a foreign content context element, remove it but keep its children
+                if (self.fragment_context.namespace and 
+                    self.fragment_context.namespace not in {None, "html"} and
+                    root.children and 
+                    root.children[0].name == self.fragment_context.tag_name.lower() and
+                    root.children[0].namespace == self.fragment_context.namespace):
+                    context_elem = root.children[0]
+                    # Promote context element's children to be siblings
+                    for child in list(context_elem.children):
+                        context_elem.remove_child(child)
+                        root.append_child(child)
+                    # Remove the context element itself
+                    root.remove_child(context_elem)
                 self._reparent_children(root, self.document)
                 self.document.remove_child(root)
         return self.document
