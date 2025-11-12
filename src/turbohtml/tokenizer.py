@@ -67,6 +67,18 @@ class Tokenizer:
 	RAWTEXT_END_TAG_OPEN = 41
 	RAWTEXT_END_TAG_NAME = 42
 	PLAINTEXT = 43
+	SCRIPT_DATA_ESCAPED = 44
+	SCRIPT_DATA_ESCAPED_DASH = 45
+	SCRIPT_DATA_ESCAPED_DASH_DASH = 46
+	SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN = 47
+	SCRIPT_DATA_ESCAPED_END_TAG_OPEN = 48
+	SCRIPT_DATA_ESCAPED_END_TAG_NAME = 49
+	SCRIPT_DATA_DOUBLE_ESCAPE_START = 50
+	SCRIPT_DATA_DOUBLE_ESCAPED = 51
+	SCRIPT_DATA_DOUBLE_ESCAPED_DASH = 52
+	SCRIPT_DATA_DOUBLE_ESCAPED_DASH_DASH = 53
+	SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN = 54
+	SCRIPT_DATA_DOUBLE_ESCAPE_END = 55
 
 	__slots__ = (
 		"sink",
@@ -94,6 +106,7 @@ class Tokenizer:
 		"last_start_tag_name",
 		"rawtext_tag_name",
 		"original_tag_name",
+		"temp_buffer",
 	)
 
 	def __init__(self, sink, opts=None):
@@ -125,6 +138,7 @@ class Tokenizer:
 		self.last_start_tag_name = None
 		self.rawtext_tag_name = None
 		self.original_tag_name = []
+		self.temp_buffer = []
 
 	def run(self, html):
 		if html and html[0] == "\ufeff" and self.opts.discard_bom:
@@ -150,6 +164,7 @@ class Tokenizer:
 		self.current_tag_self_closing = False
 		self.current_tag_kind = Tag.START
 		self.rawtext_tag_name = self.opts.initial_rawtext_tag
+		self.temp_buffer.clear()
 		self.last_start_tag_name = None
 
 		initial_state = self.opts.initial_state
@@ -292,9 +307,56 @@ class Tokenizer:
 			elif state == self.PLAINTEXT:
 				if self._state_plaintext():
 					break
+			elif state == self.SCRIPT_DATA_ESCAPED:
+				if self._state_script_data_escaped():
+					break
+			elif state == self.SCRIPT_DATA_ESCAPED_DASH:
+				if self._state_script_data_escaped_dash():
+					break
+			elif state == self.SCRIPT_DATA_ESCAPED_DASH_DASH:
+				if self._state_script_data_escaped_dash_dash():
+					break
+			elif state == self.SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN:
+				if self._state_script_data_escaped_less_than_sign():
+					break
+			elif state == self.SCRIPT_DATA_ESCAPED_END_TAG_OPEN:
+				if self._state_script_data_escaped_end_tag_open():
+					break
+			elif state == self.SCRIPT_DATA_ESCAPED_END_TAG_NAME:
+				if self._state_script_data_escaped_end_tag_name():
+					break
+			elif state == self.SCRIPT_DATA_DOUBLE_ESCAPE_START:
+				if self._state_script_data_double_escape_start():
+					break
+			elif state == self.SCRIPT_DATA_DOUBLE_ESCAPED:
+				if self._state_script_data_double_escaped():
+					break
+			elif state == self.SCRIPT_DATA_DOUBLE_ESCAPED_DASH:
+				if self._state_script_data_double_escaped_dash():
+					break
+			elif state == self.SCRIPT_DATA_DOUBLE_ESCAPED_DASH_DASH:
+				if self._state_script_data_double_escaped_dash_dash():
+					break
+			elif state == self.SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN:
+				if self._state_script_data_double_escaped_less_than_sign():
+					break
+			elif state == self.SCRIPT_DATA_DOUBLE_ESCAPE_END:
+				if self._state_script_data_double_escape_end():
+					break
 			else:
 				# Unknown state fallback to data.
 				self.state = self.DATA
+
+	# ---------------------
+	# Helper methods
+	# ---------------------
+
+	def _peek_char(self, offset):
+		"""Peek ahead at character at current position + offset without consuming"""
+		peek_pos = self.pos + offset
+		if peek_pos < self.length:
+			return self.buffer[peek_pos]
+		return None
 
 	# ---------------------
 	# State handlers
@@ -1516,6 +1578,7 @@ class Tokenizer:
 
 	def _state_rawtext(self):
 		# Consume characters until '<'
+		# Special case: for script tags, check for <!-- to enter escaped mode
 		while True:
 			c = self._get_char()
 			if c is None:
@@ -1523,6 +1586,24 @@ class Tokenizer:
 				self._emit_token(EOFToken())
 				return True
 			if c == "<":
+				# Check if we're in a script tag and might be entering escaped mode
+				if self.rawtext_tag_name == "script":
+					# Look ahead for !--
+					next1 = self._peek_char(0)
+					next2 = self._peek_char(1)
+					next3 = self._peek_char(2)
+					if next1 == "!" and next2 == "-" and next3 == "-":
+						# Entering script data escaped mode
+						self.text_buffer.append("<")
+						self.text_buffer.append("!")
+						self.text_buffer.append("-")
+						self.text_buffer.append("-")
+						# Consume the !--
+						self._get_char()  # !
+						self._get_char()  # -
+						self._get_char()  # -
+						self.state = self.SCRIPT_DATA_ESCAPED
+						return False
 				self.state = self.RAWTEXT_LESS_THAN_SIGN
 				return False
 			if c == "\0":
@@ -1623,3 +1704,260 @@ class Tokenizer:
 		self._flush_text()
 		self._emit_token(EOFToken())
 		return True
+
+	def _state_script_data_escaped(self):
+		c = self._get_char()
+		if c is None:
+			self._flush_text()
+			self._emit_token(EOFToken())
+			return True
+		if c == "-":
+			self.text_buffer.append("-")
+			self.state = self.SCRIPT_DATA_ESCAPED_DASH
+			return False
+		if c == "<":
+			self.state = self.SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN
+			return False
+		if c == "\0":
+			self._emit_error("unexpected-null-character")
+			self.text_buffer.append("\ufffd")
+			return False
+		self.text_buffer.append(c)
+		return False
+
+	def _state_script_data_escaped_dash(self):
+		c = self._get_char()
+		if c is None:
+			self._flush_text()
+			self._emit_token(EOFToken())
+			return True
+		if c == "-":
+			self.text_buffer.append("-")
+			self.state = self.SCRIPT_DATA_ESCAPED_DASH_DASH
+			return False
+		if c == "<":
+			self.state = self.SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN
+			return False
+		if c == "\0":
+			self._emit_error("unexpected-null-character")
+			self.text_buffer.append("\ufffd")
+			self.state = self.SCRIPT_DATA_ESCAPED
+			return False
+		self.text_buffer.append(c)
+		self.state = self.SCRIPT_DATA_ESCAPED
+		return False
+
+	def _state_script_data_escaped_dash_dash(self):
+		c = self._get_char()
+		if c is None:
+			self._flush_text()
+			self._emit_token(EOFToken())
+			return True
+		if c == "-":
+			self.text_buffer.append("-")
+			return False
+		if c == "<":
+			self.state = self.SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN
+			return False
+		if c == ">":
+			self.text_buffer.append(">")
+			self.state = self.RAWTEXT
+			return False
+		if c == "\0":
+			self._emit_error("unexpected-null-character")
+			self.text_buffer.append("\ufffd")
+			self.state = self.SCRIPT_DATA_ESCAPED
+			return False
+		self.text_buffer.append(c)
+		self.state = self.SCRIPT_DATA_ESCAPED
+		return False
+
+	def _state_script_data_escaped_less_than_sign(self):
+		c = self._get_char()
+		if c == "/":
+			self.temp_buffer.clear()
+			self.state = self.SCRIPT_DATA_ESCAPED_END_TAG_OPEN
+			return False
+		if c and c.isalpha():
+			self.temp_buffer.clear()
+			self.text_buffer.append("<")
+			self._reconsume_current()
+			self.state = self.SCRIPT_DATA_DOUBLE_ESCAPE_START
+			return False
+		self.text_buffer.append("<")
+		self._reconsume_current()
+		self.state = self.SCRIPT_DATA_ESCAPED
+		return False
+
+	def _state_script_data_escaped_end_tag_open(self):
+		c = self._get_char()
+		if c and c.isalpha():
+			self.current_tag_name.clear()
+			self.original_tag_name.clear()
+			self._reconsume_current()
+			self.state = self.SCRIPT_DATA_ESCAPED_END_TAG_NAME
+			return False
+		self.text_buffer.append("<")
+		self.text_buffer.append("/")
+		self._reconsume_current()
+		self.state = self.SCRIPT_DATA_ESCAPED
+		return False
+
+	def _state_script_data_escaped_end_tag_name(self):
+		c = self._get_char()
+		if c and c.isalpha():
+			self.current_tag_name.append(c.lower())
+			self.original_tag_name.append(c)
+			self.temp_buffer.append(c)
+			return False
+		# Check if this is an appropriate end tag
+		tag_name = "".join(self.current_tag_name)
+		is_appropriate = (tag_name == self.rawtext_tag_name)
+		
+		if is_appropriate and c in (" ", "\t", "\n", "\r", "\f"):
+			self.current_tag_kind = Tag.END
+			self.current_tag_attrs.clear()
+			self.state = self.BEFORE_ATTRIBUTE_NAME
+			return False
+		if is_appropriate and c == "/":
+			self.current_tag_kind = Tag.END
+			self.current_tag_attrs.clear()
+			self.state = self.SELF_CLOSING_START_TAG
+			return False
+		if is_appropriate and c == ">":
+			self._flush_text()
+			attrs = []
+			tag = Tag(Tag.END, tag_name, attrs, False)
+			self._emit_token(tag)
+			self.state = self.DATA
+			self.rawtext_tag_name = None
+			self.current_tag_name.clear()
+			self.original_tag_name.clear()
+			return False
+		# Not an appropriate end tag
+		self.text_buffer.append("<")
+		self.text_buffer.append("/")
+		for ch in self.temp_buffer:
+			self.text_buffer.append(ch)
+		self._reconsume_current()
+		self.state = self.SCRIPT_DATA_ESCAPED
+		return False
+
+	def _state_script_data_double_escape_start(self):
+		c = self._get_char()
+		if c in (" ", "\t", "\n", "\r", "\f", "/", ">"):
+			# Check if temp_buffer contains "script"
+			temp = "".join(self.temp_buffer).lower()
+			if temp == "script":
+				self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
+			else:
+				self.state = self.SCRIPT_DATA_ESCAPED
+			self.text_buffer.append(c)
+			return False
+		if c and c.isalpha():
+			self.temp_buffer.append(c)
+			self.text_buffer.append(c)
+			return False
+		self._reconsume_current()
+		self.state = self.SCRIPT_DATA_ESCAPED
+		return False
+
+	def _state_script_data_double_escaped(self):
+		c = self._get_char()
+		if c is None:
+			self._flush_text()
+			self._emit_token(EOFToken())
+			return True
+		if c == "-":
+			self.text_buffer.append("-")
+			self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED_DASH
+			return False
+		if c == "<":
+			self.text_buffer.append("<")
+			self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN
+			return False
+		if c == "\0":
+			self._emit_error("unexpected-null-character")
+			self.text_buffer.append("\ufffd")
+			return False
+		self.text_buffer.append(c)
+		return False
+
+	def _state_script_data_double_escaped_dash(self):
+		c = self._get_char()
+		if c is None:
+			self._flush_text()
+			self._emit_token(EOFToken())
+			return True
+		if c == "-":
+			self.text_buffer.append("-")
+			self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED_DASH_DASH
+			return False
+		if c == "<":
+			self.text_buffer.append("<")
+			self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN
+			return False
+		if c == "\0":
+			self._emit_error("unexpected-null-character")
+			self.text_buffer.append("\ufffd")
+			self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
+			return False
+		self.text_buffer.append(c)
+		self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
+		return False
+
+	def _state_script_data_double_escaped_dash_dash(self):
+		c = self._get_char()
+		if c is None:
+			self._flush_text()
+			self._emit_token(EOFToken())
+			return True
+		if c == "-":
+			self.text_buffer.append("-")
+			return False
+		if c == "<":
+			self.text_buffer.append("<")
+			self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN
+			return False
+		if c == ">":
+			self.text_buffer.append(">")
+			self.state = self.RAWTEXT
+			return False
+		if c == "\0":
+			self._emit_error("unexpected-null-character")
+			self.text_buffer.append("\ufffd")
+			self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
+			return False
+		self.text_buffer.append(c)
+		self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
+		return False
+
+	def _state_script_data_double_escaped_less_than_sign(self):
+		c = self._get_char()
+		if c == "/":
+			self.temp_buffer.clear()
+			self.text_buffer.append("/")
+			self.state = self.SCRIPT_DATA_DOUBLE_ESCAPE_END
+			return False
+		self._reconsume_current()
+		self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
+		return False
+
+	def _state_script_data_double_escape_end(self):
+		c = self._get_char()
+		if c in (" ", "\t", "\n", "\r", "\f", "/", ">"):
+			# Check if temp_buffer contains "script"
+			temp = "".join(self.temp_buffer).lower()
+			if temp == "script":
+				self.state = self.SCRIPT_DATA_ESCAPED
+			else:
+				self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
+			self.text_buffer.append(c)
+			return False
+		if c and c.isalpha():
+			self.temp_buffer.append(c)
+			self.text_buffer.append(c)
+			return False
+		self._reconsume_current()
+		self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
+		return False
