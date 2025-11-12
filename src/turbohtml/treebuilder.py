@@ -764,11 +764,19 @@ class TreeBuilder:
 
     def _mode_after_head(self, token):
         if isinstance(token, CharacterTokens):
-            if _is_all_whitespace(token.data):
-                self._append_text(token.data)
+            data = token.data or ""
+            if "\x00" in data:
+                self._parse_error("invalid-codepoint-in-body")
+                data = data.replace("\x00", "")
+            if "\x0c" in data:
+                self._parse_error("invalid-codepoint-in-body")
+                data = data.replace("\x0c", "")
+            if not data or _is_all_whitespace(data):
+                if data:
+                    self._append_text(data)
                 return None
             self._insert_body_if_missing()
-            return ("reprocess", InsertionMode.IN_BODY, token)
+            return ("reprocess", InsertionMode.IN_BODY, CharacterTokens(data))
         if isinstance(token, CommentToken):
             self._append_comment(token.data)
             return None
@@ -858,8 +866,13 @@ class TreeBuilder:
             if not data:
                 return None
             if "\x00" in data:
-                self._parse_error("Unexpected null character")
-                data = data.replace("\x00", "\uFFFD")
+                self._parse_error("invalid-codepoint")
+                data = data.replace("\x00", "")
+            if "\x0c" in data:
+                self._parse_error("invalid-codepoint")
+                data = data.replace("\x0c", "")
+            if not data:
+                return None
             if _is_all_whitespace(data):
                 self._reconstruct_active_formatting_elements()
                 self._append_text(data)
@@ -1424,7 +1437,12 @@ class TreeBuilder:
             data = token.data or ""
             if not data:
                 return None
-            data = data.replace("\x00", "\uFFFD")
+            if "\x00" in data:
+                self._parse_error("invalid-codepoint")
+                data = data.replace("\x00", "")
+            if "\x0c" in data:
+                self._parse_error("invalid-codepoint-in-table-text")
+                data = data.replace("\x0c", "")
             if data:
                 self.pending_table_text.append(data)
             return None
@@ -1782,7 +1800,15 @@ class TreeBuilder:
 
     def _mode_in_select(self, token):
         if isinstance(token, CharacterTokens):
-            self._append_text(token.data)
+            data = token.data or ""
+            if "\x00" in data:
+                self._parse_error("invalid-codepoint-in-select")
+                data = data.replace("\x00", "")
+            if "\x0c" in data:
+                self._parse_error("invalid-codepoint-in-select")
+                data = data.replace("\x0c", "")
+            if data:
+                self._append_text(data)
             return None
         if isinstance(token, CommentToken):
             self._append_comment(token.data)

@@ -363,7 +363,6 @@ class Tokenizer:
 	# ---------------------
 
 	def _state_data(self):
-		replacement = "\ufffd"
 		while True:
 			c = self._get_char()
 			if c is None:
@@ -376,7 +375,8 @@ class Tokenizer:
 				return False
 			if c == "\0":
 				self._emit_error("Null character in data state")
-				self.text_buffer.append(replacement)
+				# Pass through null - let tree builder decide what to do
+				self.text_buffer.append(c)
 			else:
 				self.text_buffer.append(c)
 
