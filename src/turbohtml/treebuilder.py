@@ -1496,14 +1496,26 @@ class TreeBuilder:
     def _mode_in_column_group(self, token):
         current = self.open_elements[-1] if self.open_elements else None
         if isinstance(token, CharacterTokens):
-            if _is_all_whitespace(token.data or ""):
+            data = token.data or ""
+            # Find first non-whitespace character
+            stripped = data.lstrip(" \t\n\r\f")
+            
+            if len(stripped) < len(data):
+                # Has leading whitespace - insert it
+                ws = data[:len(data) - len(stripped)]
+                self._append_text(ws)
+            
+            if not stripped:
                 return None
+            
+            # Continue processing non-whitespace with a new token
+            non_ws_token = CharacterTokens(stripped)
             if current and current.name == "html":
                 # In fragment parsing with colgroup context, drop non-whitespace characters
                 if self.fragment_context and self.fragment_context.tag_name.lower() == "colgroup":
                     self._parse_error("unexpected-characters-in-column-group")
                     return None
-                return ("reprocess", InsertionMode.IN_TABLE, token)
+                return ("reprocess", InsertionMode.IN_TABLE, non_ws_token)
             # In a template, non-whitespace characters are parse errors - ignore them
             if current and current.name == "template":
                 self._parse_error("unexpected-characters-in-template-column-group")
@@ -1511,7 +1523,7 @@ class TreeBuilder:
             self._parse_error("unexpected-characters-in-column-group")
             self._pop_current()
             self.mode = InsertionMode.IN_TABLE
-            return ("reprocess", InsertionMode.IN_TABLE, token)
+            return ("reprocess", InsertionMode.IN_TABLE, non_ws_token)
         if isinstance(token, CommentToken):
             self._append_comment(token.data)
             return None
