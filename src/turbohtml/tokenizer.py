@@ -1664,6 +1664,7 @@ class Tokenizer:
 					self.state = self.BEFORE_ATTRIBUTE_NAME
 					return False
 				if c == "/":
+					self._flush_text()
 					self.current_tag_kind = Tag.END
 					self.current_tag_attrs.clear()
 					self.state = self.SELF_CLOSING_START_TAG
@@ -1820,6 +1821,7 @@ class Tokenizer:
 			self.state = self.BEFORE_ATTRIBUTE_NAME
 			return False
 		if is_appropriate and c == "/":
+			self._flush_text()
 			self.current_tag_kind = Tag.END
 			self.current_tag_attrs.clear()
 			self.state = self.SELF_CLOSING_START_TAG
