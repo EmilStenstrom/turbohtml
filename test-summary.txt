@@ -1,4 +1,4 @@
-Tests passed: 1637/1743 (93.9%) (39 skipped)
+Tests passed: 1647/1743 (94.5%) (39 skipped)
 
 adoption01.dat: 18/18 (100%) [..................]
 adoption02.dat: 2/2 (100%) [..]
@@ -13,7 +13,7 @@ html5test-com.dat: 24/24 (100%) [........................]
 inbody01.dat: 4/4 (100%) [....]
 isindex.dat: 4/4 (100%) [....]
 main-element.dat: 3/3 (100%) [...]
-math.dat: 3/8 (38%) [xxxxx...]
+math.dat: 8/8 (100%) [........]
 menuitem-element.dat: 20/20 (100%) [....................]
 namespace-sensitivity.dat: 0/1 (0%) [x]
 noscript01.dat: 0/0 (N/A) [ssssssssssssssssss] (18 skipped)
@@ -27,7 +27,7 @@ scripted/adoption01.dat: 0/0 (N/A) [s] (1 skipped)
 scripted/ark.dat: 0/0 (N/A) [s] (1 skipped)
 scripted/webkit01.dat: 0/0 (N/A) [ss] (2 skipped)
 search-element.dat: 3/3 (100%) [...]
-svg.dat: 3/8 (38%) [xxxxx...]
+svg.dat: 8/8 (100%) [........]
 tables01.dat: 19/19 (100%) [...................]
 template.dat: 110/112 (98%) [..................................................................................................xx............]
 tests1.dat: 107/112 (96%) [.............................x.......................x........................x.x..................x............]

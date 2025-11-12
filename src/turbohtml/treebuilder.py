@@ -414,7 +414,33 @@ class TreeBuilder:
                         else:
                             result = self._dispatch(current_token)
                     else:
-                        result = self._dispatch(current_token)
+                        # At integration points inside foreign content, check if table tags make sense.
+                        # If we're in a table mode but NOT inside an actual HTML table element,
+                        # use IN_BODY mode to ignore inappropriate table tags.
+                        if (current.namespace not in {None, "html"} and
+                            (self._is_mathml_text_integration_point(current) or self._is_html_integration_point(current)) and
+                            isinstance(current_token, Tag) and current_token.kind == Tag.START and
+                            self.mode not in {InsertionMode.IN_BODY}):
+                            # Check if we're in a table mode but without an actual table in scope
+                            # If so, table tags should be ignored (use IN_BODY mode)
+                            is_table_mode = self.mode in {
+                                InsertionMode.IN_TABLE, InsertionMode.IN_TABLE_BODY,
+                                InsertionMode.IN_ROW, InsertionMode.IN_CELL,
+                                InsertionMode.IN_CAPTION, InsertionMode.IN_COLUMN_GROUP
+                            }
+                            has_table_in_scope = self._has_in_table_scope("table")
+                            if is_table_mode and not has_table_in_scope:
+                                # Temporarily use IN_BODY mode for this tag
+                                saved_mode = self.mode
+                                self.mode = InsertionMode.IN_BODY
+                                result = self._dispatch(current_token)
+                                # Restore mode if no mode change was requested
+                                if self.mode == InsertionMode.IN_BODY:
+                                    self.mode = saved_mode
+                            else:
+                                result = self._dispatch(current_token)
+                        else:
+                            result = self._dispatch(current_token)
                 else:
                     result = self._dispatch(current_token)
             if result is None:
@@ -2745,6 +2771,19 @@ class TreeBuilder:
                     self._pop_until_html_or_integration_point()
                     self._reset_insertion_mode()
                     return ("reprocess", self.mode, token, True)
+                
+                # In MathML/SVG, table structure elements can only be children of:
+                # 1. The root foreign element (math/svg), OR
+                # 2. Other table structure elements (but not the same element type)
+                # If the current element is a non-table foreign element, block the table tag
+                table_structure_elements = {"tr", "td", "th", "thead", "tbody", "tfoot", "caption", "col", "colgroup", "table"}
+                if current.namespace in {"math", "svg"} and name_lower in table_structure_elements:
+                    # Check if current element is a table structure element or root foreign
+                    current_name = self._lower_ascii(current.name)
+                    # Block if: 1) current is not a table/root element, OR 2) same element type (tr in tr, td in td, etc.)
+                    if (current_name not in table_structure_elements and current_name not in {"math", "svg"}) or current_name == name_lower:
+                        self._parse_error(f"Unexpected {name_lower} in foreign content")
+                        return None
 
                 namespace = current.namespace
                 adjusted_name = token.name
