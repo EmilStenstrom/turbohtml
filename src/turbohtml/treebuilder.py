@@ -283,6 +283,7 @@ class TreeBuilder:
         "errors",
         "quirks_mode",
         "fragment_context",
+        "fragment_context_element",
         "ignore_lf",
         "active_formatting",
         "insert_from_table",
@@ -294,6 +295,7 @@ class TreeBuilder:
     def __init__(self, fragment_context=None, opts=None):
         self.opts = opts or TreeBuilderOpts()
         self.fragment_context = fragment_context
+        self.fragment_context_element = None
         if fragment_context is not None:
             self.document = SimpleDomNode("#document-fragment")
         else:
@@ -320,16 +322,21 @@ class TreeBuilder:
             self.document.append_child(root)
             self.open_elements.append(root)
             # Set mode based on context element name
-            name = fragment_context.tag_name.lower()
             namespace = fragment_context.namespace
-            
+            context_name = fragment_context.tag_name or ""
+            name = context_name.lower()
+
             # Create a fake context element to establish foreign content context
             # Per spec: "Create an element for the token in the given namespace"
             if namespace and namespace not in {None, "html"}:
-                context_element = self._create_element(name, namespace, [])
+                adjusted_name = context_name
+                if namespace == "svg":
+                    adjusted_name = self._adjust_svg_tag_name(context_name)
+                context_element = self._create_element(adjusted_name, namespace, [])
                 root.append_child(context_element)
                 self.open_elements.append(context_element)
-            
+                self.fragment_context_element = context_element
+
             # For html context, don't pre-create head/body - start in BEFORE_HEAD mode
             # This allows frameset and other elements to be inserted properly
             if name == "html":
@@ -497,18 +504,14 @@ class TreeBuilder:
             # For fragments, remove the html wrapper and promote its children
             if self.document.children and self.document.children[0].name == "html":
                 root = self.document.children[0]
-                # If we have a foreign content context element, remove it but keep its children
-                if (self.fragment_context.namespace and 
-                    self.fragment_context.namespace not in {None, "html"} and
-                    root.children and 
-                    root.children[0].name == self.fragment_context.tag_name.lower() and
-                    root.children[0].namespace == self.fragment_context.namespace):
-                    context_elem = root.children[0]
-                    # Promote context element's children to be siblings
+                context_elem = self.fragment_context_element
+                if (
+                    context_elem is not None
+                    and context_elem.parent is root
+                ):
                     for child in list(context_elem.children):
                         context_elem.remove_child(child)
                         root.append_child(child)
-                    # Remove the context element itself
                     root.remove_child(context_elem)
                 self._reparent_children(root, self.document)
                 self.document.remove_child(root)
@@ -2264,8 +2267,13 @@ class TreeBuilder:
         for element in self.open_elements:
             if element.name == "body":
                 return
-        tag = Tag(Tag.START, "body", [], False)
-        self._insert_element(tag, push=True)
+        html_node = self._find_last_on_stack("html")
+        if html_node is None:
+            html_node = self._create_root([])
+        node = SimpleDomNode("body", namespace="html")
+        html_node.append_child(node)
+        node.parent = html_node
+        self.open_elements.append(node)
 
     def _appropriate_insertion_parent(self):
         if self.open_elements:
@@ -2592,7 +2600,7 @@ class TreeBuilder:
         self._generate_implied_end_tags(name)
         while self.open_elements:
             node = self.open_elements.pop()
-            if node.name == name:
+            if node.name == name and node.namespace in {None, "html"}:
                 break
         self._clear_active_formatting_up_to_marker()
         self.mode = InsertionMode.IN_ROW
@@ -2896,6 +2904,9 @@ class TreeBuilder:
                     
                     # Check if this node matches the end tag (case-insensitive)
                     if name_eq:
+                        if self.fragment_context_element is not None and node is self.fragment_context_element:
+                            self._parse_error("unexpected-end-tag-in-fragment-context")
+                            return None
                         # If matched element is HTML namespace, break out to HTML mode
                         if is_html:
                             return ("reprocess", self.mode, token, True)
