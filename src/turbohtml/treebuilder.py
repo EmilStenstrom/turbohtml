@@ -623,8 +623,18 @@ class TreeBuilder:
         return ("reprocess", InsertionMode.BEFORE_HEAD, token)
 
     def _mode_before_head(self, token):
-        if isinstance(token, CharacterTokens) and _is_all_whitespace(token.data):
-            return None
+        if isinstance(token, CharacterTokens):
+            data = token.data or ""
+            if not data:
+                return None
+            if "\x00" in data:
+                self._parse_error("invalid-codepoint-before-head")
+                data = data.replace("\x00", "")
+                if not data:
+                    return None
+            if _is_all_whitespace(data):
+                return None
+            token = CharacterTokens(data)
         if isinstance(token, CommentToken):
             self._append_comment(token.data)
             return None
@@ -1331,7 +1341,9 @@ class TreeBuilder:
                 return None
             if "\x00" in data:
                 self._parse_error("Unexpected null character")
-                data = data.replace("\x00", "\uFFFD")
+                data = data.replace("\x00", "")
+                if not data:
+                    return None
                 token = CharacterTokens(data)
             self.pending_table_text = []
             self.table_text_original_mode = self.mode
@@ -2792,18 +2804,27 @@ class TreeBuilder:
         current = self._adjusted_current_node()
 
         if isinstance(token, CharacterTokens):
-            data = token.data or ""
-            if not data:
+            raw = token.data or ""
+            if not raw:
                 return None
-            if "\x00" in data:
-                self._parse_error("invalid-codepoint-in-foreign-content")
-                data = data.replace("\x00", "\uFFFD")
-            if "\x0c" in data:
-                self._parse_error("invalid-codepoint-in-foreign-content")
-                data = data.replace("\x0c", "\uFFFD")
-            if not data:
+            cleaned = []
+            has_non_null_non_ws = False
+            for ch in raw:
+                if ch == "\x00":
+                    self._parse_error("invalid-codepoint-in-foreign-content")
+                    cleaned.append("\uFFFD")
+                    continue
+                if ch == "\x0c":
+                    self._parse_error("invalid-codepoint-in-foreign-content")
+                    cleaned.append("\uFFFD")
+                    continue
+                cleaned.append(ch)
+                if ch not in "\t\n\f\r ":
+                    has_non_null_non_ws = True
+            if not cleaned:
                 return None
-            if not _is_all_whitespace(data):
+            data = "".join(cleaned)
+            if has_non_null_non_ws:
                 self.frameset_ok = False
             self._append_text(data)
             return None
