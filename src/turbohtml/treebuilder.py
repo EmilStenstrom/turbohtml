@@ -403,14 +403,24 @@ class TreeBuilder:
                             data = current_token.data or ""
                             if data:
                                 if "\x00" in data:
-                                    self._parse_error("unexpected-null-character")
-                                    data = data.replace("\x00", "\uFFFD")
-                                # Reconstruct active formatting elements for non-whitespace text
-                                if not _is_all_whitespace(data):
+                                    self._parse_error("invalid-codepoint")
+                                    data = data.replace("\x00", "")
+                                if "\x0c" in data:
+                                    self._parse_error("invalid-codepoint")
+                                    data = data.replace("\x0c", "")
+                                if not data:
+                                    result = None
+                                elif _is_all_whitespace(data):
+                                    self._append_text(data)
+                                    result = None
+                                else:
+                                    # Reconstruct active formatting elements for non-whitespace text
                                     self._reconstruct_active_formatting_elements()
                                     self.frameset_ok = False
-                                self._append_text(data)
-                            result = None
+                                    self._append_text(data)
+                                    result = None
+                            else:
+                                result = None
                         else:
                             result = self._dispatch(current_token)
                     else:
@@ -2786,9 +2796,14 @@ class TreeBuilder:
             if not data:
                 return None
             if "\x00" in data:
-                self._parse_error("unexpected-null-character")
+                self._parse_error("invalid-codepoint-in-foreign-content")
                 data = data.replace("\x00", "\uFFFD")
-            if data and not _is_all_whitespace(data):
+            if "\x0c" in data:
+                self._parse_error("invalid-codepoint-in-foreign-content")
+                data = data.replace("\x0c", "\uFFFD")
+            if not data:
+                return None
+            if not _is_all_whitespace(data):
                 self.frameset_ok = False
             self._append_text(data)
             return None
