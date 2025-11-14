@@ -1029,9 +1029,10 @@ class TreeBuilder:
                     self._insert_element(token, push=True)
                     return None
                 if name == "a":
-                    self._adoption_agency("a")
-                    self._remove_last_active_formatting_by_name("a")
-                    self._remove_last_open_element_by_name("a")
+                    if self._has_active_formatting_entry("a"):
+                        self._adoption_agency("a")
+                        self._remove_last_active_formatting_by_name("a")
+                        self._remove_last_open_element_by_name("a")
                     self._reconstruct_active_formatting_elements()
                     node = self._insert_element(token, push=True)
                     self._append_active_formatting_entry(name, token.attrs, node)
@@ -1896,9 +1897,10 @@ class TreeBuilder:
                     self._insert_element(token, push=not token.self_closing, namespace=name)
                     return None
                 if name == "a":
-                    self._adoption_agency("a")
-                    self._remove_last_active_formatting_by_name("a")
-                    self._remove_last_open_element_by_name("a")
+                    if self._has_active_formatting_entry("a"):
+                        self._adoption_agency("a")
+                        self._remove_last_active_formatting_by_name("a")
+                        self._remove_last_open_element_by_name("a")
                     self._reconstruct_active_formatting_elements()
                     node = self._insert_element(token, push=True)
                     self._append_active_formatting_entry(name, token.attrs, node)
@@ -2441,6 +2443,15 @@ class TreeBuilder:
         if len(matches) >= 3:
             return matches[0]
         return None
+
+    def _has_active_formatting_entry(self, name):
+        for index in range(len(self.active_formatting) - 1, -1, -1):
+            entry = self.active_formatting[index]
+            if entry is FORMAT_MARKER:
+                break
+            if entry["name"] == name:
+                return True
+        return False
 
     def _remove_last_active_formatting_by_name(self, name):
         for index in range(len(self.active_formatting) - 1, -1, -1):
