@@ -675,22 +675,21 @@ class TreeBuilder:
             if _is_all_whitespace(token.data):
                 self._append_text(token.data)
                 return None
-            # Split leading whitespace from non-whitespace
-            data = token.data
-            leading_ws = ""
+            data = token.data or ""
             i = 0
             while i < len(data) and data[i] in "\t\n\f\r ":
-                leading_ws += data[i]
                 i += 1
+            leading_ws = data[:i]
+            remaining = data[i:]
             if leading_ws:
-                self._append_text(leading_ws)
-            if i < len(data):
-                # Non-whitespace remains - pop head and reprocess
-                remaining = CharacterTokens(data[i:])
-                self._pop_current()
-                self.mode = InsertionMode.AFTER_HEAD
-                return ("reprocess", InsertionMode.AFTER_HEAD, remaining)
-            return None
+                current = self.open_elements[-1] if self.open_elements else None
+                if current is not None and current.children:
+                    self._append_text(leading_ws)
+            if not remaining:
+                return None
+            self._pop_current()
+            self.mode = InsertionMode.AFTER_HEAD
+            return ("reprocess", InsertionMode.AFTER_HEAD, CharacterTokens(remaining))
         if isinstance(token, CommentToken):
             self._append_comment(token.data)
             return None
