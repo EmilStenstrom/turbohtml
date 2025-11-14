@@ -2663,6 +2663,7 @@ class TreeBuilder:
         previous = self.insert_from_table
         self.insert_from_table = True
         try:
+            self._reconstruct_active_formatting_elements()
             self._append_text(data)
         finally:
             self.insert_from_table = previous
