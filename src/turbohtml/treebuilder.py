@@ -1598,6 +1598,10 @@ class TreeBuilder:
                         self.mode = InsertionMode.IN_TABLE
                         return ("reprocess", InsertionMode.IN_TABLE, token)
                     return None
+                if (self.fragment_context and self.fragment_context.tag_name.lower() == "colgroup"
+                    and not self._has_in_table_scope("table")):
+                    self._parse_error("unexpected-start-tag-in-column-group")
+                    return None
                 # Anything else: if we're in a colgroup, pop it and switch to IN_TABLE
                 # But if we're in a template, just ignore non-column content
                 if current and current.name == "colgroup":
@@ -1786,7 +1790,13 @@ class TreeBuilder:
                 if name in {"caption", "col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr"}:
                     if self._close_table_cell():
                         return ("reprocess", self.mode, token)
-                    # If no cell to close, we're not actually in a table - delegate to IN_BODY
+                    # If no cell to close and we're in a fragment cell context, ignore the token
+                    if (self.fragment_context and
+                        self.fragment_context.tag_name.lower() in {"td", "th"} and
+                        not self._has_in_table_scope("table")):
+                        self._parse_error("unexpected-start-tag-in-cell-fragment")
+                        return None
+                    # Otherwise delegate to IN_BODY
                     return self._mode_in_body(token)
                 previous = self.insert_from_table
                 self.insert_from_table = False
@@ -2078,12 +2088,12 @@ class TreeBuilder:
                 return None
             return ("reprocess", InsertionMode.IN_BODY, token)
         if isinstance(token, CommentToken):
-            # Append comment to the html element (root of open_elements stack)
-            for node in self.open_elements:
-                if node.name == "html":
-                    comment = SimpleDomNode("#comment", data=token.data)
-                    node.append_child(comment)
-                    return None
+            html_node = self._find_last_on_stack("html")
+            if html_node is None and self.fragment_context is not None and self.document.children:
+                html_node = next((child for child in self.document.children if child.name == "html"), None)
+            if html_node is not None:
+                html_node.append_child(SimpleDomNode("#comment", data=token.data))
+                return None
             self._append_comment_to_document(token.data)
             return None
         if isinstance(token, Tag):
@@ -2108,6 +2118,13 @@ class TreeBuilder:
             self._parse_error("Unexpected character after </html>")
             return ("reprocess", InsertionMode.IN_BODY, token)
         if isinstance(token, CommentToken):
+            if self.fragment_context is not None:
+                html_node = self._find_last_on_stack("html")
+                if html_node is None and self.document.children:
+                    html_node = next((child for child in self.document.children if child.name == "html"), None)
+                if html_node is not None:
+                    html_node.append_child(SimpleDomNode("#comment", data=token.data))
+                    return None
             self._append_comment_to_document(token.data)
             return None
         if isinstance(token, Tag):
