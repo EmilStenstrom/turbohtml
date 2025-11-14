@@ -930,6 +930,7 @@ class TreeBuilder:
                         body = self.open_elements[1] if len(self.open_elements) > 1 else None
                         if body and body.name == "body":
                             self._add_missing_attributes(body, token.attrs)
+                        self.frameset_ok = False
                         return None
                     self.frameset_ok = False
                     return None
@@ -945,7 +946,6 @@ class TreeBuilder:
                     if self._has_in_button_scope("p"):
                         self._close_p_element()
                     self._insert_element(token, push=True)
-                    self.frameset_ok = False
                     return None
                 if name in HEADING_ELEMENTS:
                     if self._has_in_button_scope("p"):
@@ -1890,6 +1890,26 @@ class TreeBuilder:
                     # For foreign elements, honor the self-closing flag
                     self._insert_element(token, push=not token.self_closing, namespace=name)
                     return None
+                if name == "a":
+                    self._adoption_agency("a")
+                    self._remove_last_active_formatting_by_name("a")
+                    self._remove_last_open_element_by_name("a")
+                    self._reconstruct_active_formatting_elements()
+                    node = self._insert_element(token, push=True)
+                    self._append_active_formatting_entry(name, token.attrs, node)
+                    return None
+                if name in FORMATTING_ELEMENTS:
+                    if name == "nobr" and self._in_scope("nobr"):
+                        self._adoption_agency("nobr")
+                        self._remove_last_active_formatting_by_name("nobr")
+                        self._remove_last_open_element_by_name("nobr")
+                    self._reconstruct_active_formatting_elements()
+                    duplicate_index = self._find_active_formatting_duplicate(name, token.attrs)
+                    if duplicate_index is not None:
+                        self._remove_formatting_entry(duplicate_index)
+                    node = self._insert_element(token, push=True)
+                    self._append_active_formatting_entry(name, token.attrs, node)
+                    return None
                 if name == "hr":
                     # Per spec: pop option and optgroup before inserting hr (makes hr sibling, not child)
                     if self.open_elements and self.open_elements[-1].name == "option":
@@ -1902,7 +1922,7 @@ class TreeBuilder:
                     self._insert_element(token, push=True)
                     return None
                 # Allow common HTML elements in select (newer spec)
-                if name in {"p", "div", "span", "a", "b", "strong", "em", "i", "u", "s", "small", "button", "datalist", "selectedcontent"}:
+                if name in {"p", "div", "span", "button", "datalist", "selectedcontent"}:
                     self._insert_element(token, push=not token.self_closing)
                     return None
                 if name in {"br", "img"}:
@@ -1937,7 +1957,21 @@ class TreeBuilder:
                     self._reset_insertion_mode()
                     return None
                 # Handle end tags for allowed HTML elements in select
-                if name in {"p", "div", "span", "a", "b", "strong", "em", "i", "u", "s", "small", "button", "datalist", "selectedcontent"}:
+                if name == "a" or name in FORMATTING_ELEMENTS:
+                    select_node = self._find_last_on_stack("select")
+                    if select_node is not None:
+                        fmt_index = self._find_active_formatting_index(name)
+                        if fmt_index is not None:
+                            target = self.active_formatting[fmt_index]["node"]
+                            if target in self.open_elements:
+                                select_index = self.open_elements.index(select_node)
+                                target_index = self.open_elements.index(target)
+                                if target_index < select_index:
+                                    self._parse_error(f"Unexpected </{name}> in select")
+                                    return None
+                    self._adoption_agency(name)
+                    return None
+                if name in {"p", "div", "span", "button", "datalist", "selectedcontent"}:
                     # Pop elements until we find the matching element (or give up)
                     found = False
                     for node in reversed(self.open_elements):
@@ -3011,32 +3045,31 @@ class TreeBuilder:
             if target not in self.open_elements:
                 self._parse_error("Formatting element not open")
                 self._remove_formatting_entry(fmt_index)
-                continue
+                return
 
             if not self._has_node_in_scope(target):
                 self._parse_error("Formatting element not in scope")
                 self._remove_formatting_entry(fmt_index)
                 return
 
-            if target is self.open_elements[-1]:
-                self._pop_current()
-                self._remove_formatting_entry(fmt_index)
-                return
+            if target is not self.open_elements[-1]:
+                self._parse_error("Formatting element not current node")
 
             target_index = self.open_elements.index(target)
             furthest_block = None
-            for node in self.open_elements[target_index + 1 : ]:
+            for node in self.open_elements[target_index + 1:]:
                 if self._is_special_element(node):
                     furthest_block = node
                     break
 
             if furthest_block is None:
-                self._close_element_by_node(target)
+                del self.open_elements[target_index:]
                 self._remove_formatting_entry(fmt_index)
                 return
 
             common_ancestor = self.open_elements[target_index - 1] if target_index > 0 else None
-            bookmark_index = fmt_index
+            bookmark_entry = entry
+            bookmark_mode = "replace"
             last_node = furthest_block
             node_index = self.open_elements.index(furthest_block)
             inner_counter = 0
@@ -3049,44 +3082,30 @@ class TreeBuilder:
                     break
 
                 current_fmt_index = self._find_active_formatting_index_by_node(current)
-                if current_fmt_index is not None and inner_counter > 3:
-                    self._remove_formatting_entry(current_fmt_index)
-                    if current_fmt_index < fmt_index:
-                        fmt_index -= 1
-                    if current_fmt_index < bookmark_index:
-                        bookmark_index -= 1
-                    current_fmt_index = None
-
                 if current_fmt_index is None:
                     self.open_elements.pop(node_index)
                     continue
 
+                if inner_counter > 3:
+                    self.open_elements.pop(node_index)
+                    self._remove_formatting_entry(current_fmt_index)
+                    if current_fmt_index < fmt_index:
+                        fmt_index -= 1
+                    if bookmark_mode == "after" and bookmark_entry not in self.active_formatting:
+                        bookmark_entry = entry
+                        bookmark_mode = "replace"
+                    continue
+
                 clone = self._clone_shallow(current)
-                parent = current.parent
-                if parent is not None:
-                    try:
-                        position = parent.children.index(current)
-                    except ValueError:
-                        position = -1
-                    if position != -1:
-                        insert_at = position + 1
-                        if insert_at < len(parent.children):
-                            parent.children.insert(insert_at, clone)
-                        else:
-                            parent.children.append(clone)
-                        clone.parent = parent
-                else:
-                    clone.parent = None
                 self.open_elements[node_index] = clone
-                self.active_formatting[current_fmt_index]["node"] = clone
-                new_attrs = self._clone_attributes(clone.attrs)
-                self.active_formatting[current_fmt_index]["attrs"] = new_attrs
-                self.active_formatting[current_fmt_index]["signature"] = self._attrs_signature(new_attrs)
-                if common_ancestor is current:
-                    common_ancestor = clone
+                fmt_entry = self.active_formatting[current_fmt_index]
+                fmt_entry["node"] = clone
+                fmt_entry["attrs"] = self._clone_attributes(fmt_entry["attrs"])
+                fmt_entry["signature"] = self._attrs_signature(fmt_entry["attrs"])
 
                 if last_node is furthest_block:
-                    bookmark_index = current_fmt_index + 1
+                    bookmark_entry = fmt_entry
+                    bookmark_mode = "after"
 
                 self._detach_node(last_node)
                 clone.append_child(last_node)
@@ -3095,37 +3114,46 @@ class TreeBuilder:
             parent, position = self._appropriate_insertion_location(common_ancestor, foster_parenting=True)
             self._insert_node_at(parent, position, last_node)
 
-            new_element = SimpleDomNode(target.name, attrs=self._active_entry_attrs(entry))
+            new_element = SimpleDomNode(target.name, attrs=self._active_entry_attrs(entry), namespace=target.namespace)
             self._reparent_children(furthest_block, new_element)
             furthest_block.append_child(new_element)
 
-            target_fmt_index = self._find_active_formatting_index_by_node(target)
-            if target_fmt_index is None:
-                target_fmt_index = fmt_index
-
-            self._remove_formatting_entry(target_fmt_index)
-            if bookmark_index > target_fmt_index:
-                bookmark_index -= 1
-            if bookmark_index < 0:
-                bookmark_index = 0
-
-            insert_pos = min(bookmark_index, len(self.active_formatting))
             new_entry = {
                 "name": entry["name"],
                 "attrs": self._clone_attributes(entry["attrs"]),
                 "node": new_element,
                 "signature": entry.get("signature") or self._attrs_signature(entry["attrs"]),
             }
-            self.active_formatting.insert(insert_pos, new_entry)
+
+            def _find_entry(target_entry):
+                for idx, fmt in enumerate(self.active_formatting):
+                    if fmt is target_entry:
+                        return idx
+                return None
+
+            if bookmark_mode == "replace":
+                idx = _find_entry(entry)
+                if idx is not None:
+                    self.active_formatting[idx] = new_entry
+                else:
+                    self.active_formatting.append(new_entry)
+            else:
+                insert_after = _find_entry(bookmark_entry)
+                if insert_after is None:
+                    self.active_formatting.append(new_entry)
+                else:
+                    self.active_formatting.insert(insert_after + 1, new_entry)
+                entry_idx = _find_entry(entry)
+                if entry_idx is not None:
+                    del self.active_formatting[entry_idx]
 
             target_stack_index = self.open_elements.index(target)
-            self.open_elements.pop(target_stack_index)
+            del self.open_elements[target_stack_index]
             furthest_index = self.open_elements.index(furthest_block)
             self.open_elements.insert(furthest_index + 1, new_element)
 
             entry = new_entry
             target = new_element
-            continue
 
         fmt_index = self._find_active_formatting_index(name)
         if fmt_index is not None:
