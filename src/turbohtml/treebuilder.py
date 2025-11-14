@@ -1833,6 +1833,7 @@ class TreeBuilder:
                 self._parse_error("invalid-codepoint-in-select")
                 data = data.replace("\x0c", "")
             if data:
+                self._reconstruct_active_formatting_elements()
                 self._append_text(data)
             return None
         if isinstance(token, CommentToken):
@@ -1849,6 +1850,7 @@ class TreeBuilder:
                         self.open_elements.pop()
                     if self.open_elements and self.open_elements[-1].name == "option":
                         self.open_elements.pop()
+                    self._reconstruct_active_formatting_elements()
                     self._insert_element(token, push=True)
                     return None
                 if name == "optgroup":
@@ -1859,6 +1861,7 @@ class TreeBuilder:
                         self.open_elements.pop()
                     if self.open_elements and self.open_elements[-1].name == "optgroup":
                         self.open_elements.pop()
+                    self._reconstruct_active_formatting_elements()
                     self._insert_element(token, push=True)
                     return None
                 if name == "select":
@@ -1875,6 +1878,7 @@ class TreeBuilder:
                         return ("reprocess", self.mode, token)
                     return None
                 if name == "keygen":
+                    self._reconstruct_active_formatting_elements()
                     self._insert_element(token, push=False)
                     return None
                 if name in {"caption", "col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr", "table"}:
@@ -1888,6 +1892,7 @@ class TreeBuilder:
                     return self._mode_in_head(token)
                 if name in {"svg", "math"}:
                     # For foreign elements, honor the self-closing flag
+                    self._reconstruct_active_formatting_elements()
                     self._insert_element(token, push=not token.self_closing, namespace=name)
                     return None
                 if name == "a":
@@ -1916,20 +1921,25 @@ class TreeBuilder:
                         self.open_elements.pop()
                     if self.open_elements and self.open_elements[-1].name == "optgroup":
                         self.open_elements.pop()
+                    self._reconstruct_active_formatting_elements()
                     self._insert_element(token, push=False)
                     return None
                 if name == "menuitem":
+                    self._reconstruct_active_formatting_elements()
                     self._insert_element(token, push=True)
                     return None
                 # Allow common HTML elements in select (newer spec)
                 if name in {"p", "div", "span", "button", "datalist", "selectedcontent"}:
+                    self._reconstruct_active_formatting_elements()
                     self._insert_element(token, push=not token.self_closing)
                     return None
                 if name in {"br", "img"}:
+                    self._reconstruct_active_formatting_elements()
                     self._insert_element(token, push=False)
                     return None
                 if name == "plaintext":
                     # Per spec: plaintext element is inserted in select (consumes all remaining text)
+                    self._reconstruct_active_formatting_elements()
                     self._insert_element(token, push=True)
                     return None
                 self._parse_error(f"Unexpected <{name}> in select - ignored")
