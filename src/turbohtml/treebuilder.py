@@ -319,8 +319,8 @@ class SimpleDomNode:
 
 class TreeBuilder:
     __slots__ = (
-        "_body_start_handlers",
         "_body_end_handlers",
+        "_body_start_handlers",
         "active_formatting",
         "document",
         "errors",
@@ -518,7 +518,7 @@ class TreeBuilder:
                                 node = self.open_elements[-1]
                                 # Stop if we reach an integration point - don't pop it
                                 if self._is_html_integration_point(node) or self._is_mathml_text_integration_point(
-                                    node
+                                    node,
                                 ):
                                     break
                                 self.open_elements.pop()
@@ -1079,29 +1079,29 @@ class TreeBuilder:
     def _handle_body_start_html(self, token):
         if self.template_modes:
             self._parse_error("Unexpected <html> in template")
-            return None
+            return
         if self.open_elements:
             html = self.open_elements[0]
             self._add_missing_attributes(html, token.attrs)
-        return None
+        return
 
     def _handle_body_start_body(self, token):
         if self.template_modes:
             self._parse_error("Unexpected <body> in template")
-            return None
+            return
         if len(self.open_elements) > 1:
             self._parse_error("Unexpected <body> inside body")
             body = self.open_elements[1] if len(self.open_elements) > 1 else None
             if body and body.name == "body":
                 self._add_missing_attributes(body, token.attrs)
             self.frameset_ok = False
-            return None
+            return
         self.frameset_ok = False
-        return None
+        return
 
     def _handle_body_start_head(self, token):
         self._parse_error("Unexpected <head> in body")
-        return None
+        return
 
     def _handle_body_start_in_head(self, token):
         return self._mode_in_head(token)
@@ -1109,7 +1109,7 @@ class TreeBuilder:
     def _handle_body_start_block_with_p(self, token):
         self._close_p_element()
         self._insert_element(token, push=True)
-        return None
+        return
 
     def _handle_body_start_heading(self, token):
         self._close_p_element()
@@ -1118,24 +1118,24 @@ class TreeBuilder:
             self._pop_current()
         self._insert_element(token, push=True)
         self.frameset_ok = False
-        return None
+        return
 
     def _handle_body_start_pre_listing(self, token):
         self._close_p_element()
         self._insert_element(token, push=True)
         self.ignore_lf = True
         self.frameset_ok = False
-        return None
+        return
 
     def _handle_body_start_form(self, token):
         if self.form_element is not None:
             self._parse_error("Nested form")
-            return None
+            return
         self._close_p_element()
         node = self._insert_element(token, push=True)
         self.form_element = node
         self.frameset_ok = False
-        return None
+        return
 
     def _handle_body_start_button(self, token):
         if self._has_in_scope("button"):
@@ -1143,19 +1143,19 @@ class TreeBuilder:
             self._close_element_by_name("button")
         self._insert_element(token, push=True)
         self.frameset_ok = False
-        return None
+        return
 
     def _handle_body_start_paragraph(self, token):
         self._close_p_element()
         self._insert_element(token, push=True)
-        return None
+        return
 
     def _handle_body_start_math(self, token):
         self._reconstruct_active_formatting_elements()
         attrs = self._prepare_foreign_attributes("math", token.attrs)
         new_tag = Tag(Tag.START, token.name, attrs, token.self_closing)
         self._insert_element(new_tag, push=not token.self_closing, namespace="math")
-        return None
+        return
 
     def _handle_body_start_svg(self, token):
         self._reconstruct_active_formatting_elements()
@@ -1163,7 +1163,7 @@ class TreeBuilder:
         attrs = self._prepare_foreign_attributes("svg", token.attrs)
         new_tag = Tag(Tag.START, adjusted_name, attrs, token.self_closing)
         self._insert_element(new_tag, push=not token.self_closing, namespace="svg")
-        return None
+        return
 
     def _handle_body_start_li(self, token):
         self.frameset_ok = False
@@ -1171,7 +1171,7 @@ class TreeBuilder:
         if self._has_in_list_item_scope("li"):
             self._pop_until_any_inclusive({"li"})
         self._insert_element(token, push=True)
-        return None
+        return
 
     def _handle_body_start_dd_dt(self, token):
         self.frameset_ok = False
@@ -1188,7 +1188,7 @@ class TreeBuilder:
             if self._has_in_definition_scope("dd"):
                 self._pop_until_any_inclusive({"dd"})
         self._insert_element(token, push=True)
-        return None
+        return
 
     def _handle_body_start_a(self, token):
         if self._has_active_formatting_entry("a"):
@@ -1198,7 +1198,7 @@ class TreeBuilder:
         self._reconstruct_active_formatting_elements()
         node = self._insert_element(token, push=True)
         self._append_active_formatting_entry("a", token.attrs, node)
-        return None
+        return
 
     def _handle_body_start_formatting(self, token):
         name = token.name
@@ -1212,32 +1212,32 @@ class TreeBuilder:
             self._remove_formatting_entry(duplicate_index)
         node = self._insert_element(token, push=True)
         self._append_active_formatting_entry(name, token.attrs, node)
-        return None
+        return
 
     def _handle_body_start_applet_like(self, token):
         self._reconstruct_active_formatting_elements()
         self._insert_element(token, push=True)
         self._push_formatting_marker()
         self.frameset_ok = False
-        return None
+        return
 
     def _handle_body_start_hr(self, token):
         self._close_p_element()
         self._insert_element(token, push=False)
         self.frameset_ok = False
-        return None
+        return
 
     def _handle_body_start_br(self, token):
         self._close_p_element()
         self._reconstruct_active_formatting_elements()
         self._insert_element(token, push=False)
         self.frameset_ok = False
-        return None
+        return
 
     def _handle_body_start_frameset(self, token):
         if not self.frameset_ok:
             self._parse_error("unexpected-start-tag-ignored")
-            return None
+            return
         body_index = None
         for i, elem in enumerate(self.open_elements):
             if elem.name == "body":
@@ -1250,7 +1250,7 @@ class TreeBuilder:
             self.open_elements = self.open_elements[:body_index]
         self._insert_element(token, push=True)
         self.mode = InsertionMode.IN_FRAMESET
-        return None
+        return
 
     # ---------------------
     # Body mode end tag handlers
@@ -1259,7 +1259,7 @@ class TreeBuilder:
     def _handle_body_end_body(self, token):
         if self._in_scope("body"):
             self.mode = InsertionMode.AFTER_BODY
-        return None
+        return
 
     def _handle_body_end_html(self, token):
         if self._in_scope("body"):
@@ -1272,50 +1272,50 @@ class TreeBuilder:
             phantom = Tag(Tag.START, "p", [], False)
             self._insert_element(phantom, push=True)
             self._close_p_element()
-        return None
+        return
 
     def _handle_body_end_li(self, token):
         if not self._has_in_list_item_scope("li"):
             self._parse_error("Unexpected </li>")
-            return None
+            return
         self._pop_until_any_inclusive({"li"})
-        return None
+        return
 
     def _handle_body_end_dd_dt(self, token):
         name = token.name
         if not self._has_in_definition_scope(name):
             self._parse_error("Unexpected closing tag")
-            return None
+            return
         self._pop_until_any_inclusive({"dd", "dt"})
-        return None
+        return
 
     def _handle_body_end_form(self, token):
         if self.form_element is None:
             self._parse_error("Unexpected </form>")
-            return None
+            return
         removed = self._remove_from_open_elements(self.form_element)
         self.form_element = None
         if not removed:
             self._parse_error("Form element not in stack")
-        return None
+        return
 
     def _handle_body_end_applet_like(self, token):
         name = token.name
         if not self._in_scope(name):
             self._parse_error("Unexpected closing tag")
-            return None
+            return
         while self.open_elements:
             popped = self.open_elements.pop()
             if popped.name == name:
                 break
         self._clear_active_formatting_up_to_marker()
-        return None
+        return
 
     def _handle_body_end_heading(self, token):
         name = token.name
         if not self._has_any_in_scope(HEADING_ELEMENTS):
             self._parse_error(f"Unexpected </{name}>")
-            return None
+            return
         self._generate_implied_end_tags()
         if self.open_elements and self.open_elements[-1].name != name:
             self._parse_error(f"Mismatched heading end tag </{name}>")
@@ -1323,41 +1323,41 @@ class TreeBuilder:
             popped = self.open_elements.pop()
             if popped.name in HEADING_ELEMENTS:
                 break
-        return None
+        return
 
     def _handle_body_end_block(self, token):
         name = token.name
         if not self._in_scope(name):
             self._parse_error(f"No matching <{name}> tag")
-            return None
+            return
         self._generate_implied_end_tags()
         if self.open_elements and self.open_elements[-1].name != name:
             self._parse_error(f"Unexpected open element while closing {name}")
         self._pop_until_any_inclusive({name})
-        return None
+        return
 
     def _handle_body_end_template(self, token):
         has_template = any(node.name == "template" for node in self.open_elements)
         if not has_template:
-            return None
+            return
         self._generate_implied_end_tags()
         self._pop_until_inclusive("template")
         self._clear_active_formatting_up_to_marker()
         if self.template_modes:
             self.template_modes.pop()
         self._reset_insertion_mode()
-        return None
+        return
 
     def _handle_body_start_structure_ignored(self, token):
         self._parse_error("unexpected-start-tag-ignored")
-        return None
+        return
 
     def _handle_body_start_col_or_frame(self, token):
         if self.fragment_context is None:
             self._parse_error("unexpected-start-tag-ignored")
-            return None
+            return
         self._insert_element(token, push=False)
-        return None
+        return
 
     def _handle_body_start_image(self, token):
         self._parse_error("image-start-tag")
@@ -1365,17 +1365,17 @@ class TreeBuilder:
         self._reconstruct_active_formatting_elements()
         self._insert_element(img_token, push=False)
         self.frameset_ok = False
-        return None
+        return
 
     def _handle_body_start_void_with_formatting(self, token):
         self._reconstruct_active_formatting_elements()
         self._insert_element(token, push=False)
         self.frameset_ok = False
-        return None
+        return
 
     def _handle_body_start_simple_void(self, token):
         self._insert_element(token, push=False)
-        return None
+        return
 
     def _handle_body_start_input(self, token):
         input_type = None
@@ -1386,7 +1386,7 @@ class TreeBuilder:
         self._insert_element(token, push=False)
         if input_type != "hidden":
             self.frameset_ok = False
-        return None
+        return
 
     def _handle_body_start_table(self, token):
         if self.quirks_mode != "quirks":
@@ -1394,7 +1394,7 @@ class TreeBuilder:
         self._insert_element(token, push=True)
         self.frameset_ok = False
         self.mode = InsertionMode.IN_TABLE
-        return None
+        return
 
     def _handle_body_start_plaintext_xmp(self, token):
         self._close_p_element()
@@ -1402,27 +1402,27 @@ class TreeBuilder:
         self.frameset_ok = False
         if token.name == "plaintext":
             self.tokenizer_state_override = TokenSinkResult.Plaintext
-        return None
+        return
 
     def _handle_body_start_textarea(self, token):
         self._insert_element(token, push=True)
         self.ignore_lf = True
         self.frameset_ok = False
-        return None
+        return
 
     def _handle_body_start_select(self, token):
         self._reconstruct_active_formatting_elements()
         self._insert_element(token, push=True)
         self.frameset_ok = False
         self._reset_insertion_mode()
-        return None
+        return
 
     def _handle_body_start_option(self, token):
         if self.open_elements and self.open_elements[-1].name == "option":
             self.open_elements.pop()
         self._reconstruct_active_formatting_elements()
         self._insert_element(token, push=True)
-        return None
+        return
 
     def _handle_body_start_optgroup(self, token):
         if self.open_elements and self.open_elements[-1].name == "option":
@@ -1431,22 +1431,22 @@ class TreeBuilder:
             self.open_elements.pop()
         self._reconstruct_active_formatting_elements()
         self._insert_element(token, push=True)
-        return None
+        return
 
     def _handle_body_start_rp_rt(self, token):
         self._generate_implied_end_tags(exclude="rtc")
         self._insert_element(token, push=True)
-        return None
+        return
 
     def _handle_body_start_rb_rtc(self, token):
         if self.open_elements and self.open_elements[-1].name in {"rb", "rp", "rt", "rtc"}:
             self._generate_implied_end_tags()
         self._insert_element(token, push=True)
-        return None
+        return
 
     def _handle_body_start_table_parse_error(self, token):
         self._parse_error(f"Unexpected <{token.name}> in body")
-        return None
+        return
 
     def _handle_body_start_default(self, token):
         self._reconstruct_active_formatting_elements()
@@ -1456,7 +1456,7 @@ class TreeBuilder:
         name = token.name
         if name not in _BODY_START_FRAMESET_NEUTRAL and name not in FORMATTING_ELEMENTS:
             self.frameset_ok = False
-        return None
+        return
 
     def _mode_in_table(self, token):
         if isinstance(token, CharacterTokens):
@@ -2656,7 +2656,7 @@ class TreeBuilder:
                 "attrs": entry_attrs,
                 "node": node,
                 "signature": signature,
-            }
+            },
         )
 
     def _clear_active_formatting_up_to_marker(self):
