@@ -19,11 +19,14 @@ _ATTR_VALUE_UNQUOTED_TERMINATORS = "\t\n\f >&\"'<=`\r\0"
 _ATTR_NAME_TERMINATORS = "\t\n\f />=\0\"'<"
 _ASCII_LOWER_TABLE = str.maketrans({chr(code): chr(code + 32) for code in range(65, 91)})
 _RCDATA_ELEMENTS = {"title", "textarea"}
+_RAWTEXT_SWITCH_TAGS = {"script", "style", "xmp", "iframe", "noembed", "noframes", "noscript", "textarea", "title"}
 
 _ATTR_VALUE_DOUBLE_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_DOUBLE_TERMINATORS)}]")
 _ATTR_VALUE_SINGLE_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_SINGLE_TERMINATORS)}]")
 _ATTR_VALUE_UNQUOTED_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_UNQUOTED_TERMINATORS)}]")
-_ATTR_NAME_TERMINATOR_PATTERN = re.compile(f"[{re.escape(_ATTR_NAME_TERMINATORS)}]")
+
+_ATTR_VALUE_PART_SLICE = 0
+_ATTR_VALUE_PART_STRING = 1
 
 
 class TokenizerOpts:
@@ -98,9 +101,10 @@ class Tokenizer:
         "_tag_token",
         "buffer",
         "current_attr_name",
-        "current_attr_names",
-        "current_attr_value",
+        "current_attr_name_set",
         "current_attr_value_has_amp",
+        "current_attr_value_literal",
+        "current_attr_value_parts",
         "current_char",
         "current_comment",
         "current_doctype_force_quirks",
@@ -143,9 +147,10 @@ class Tokenizer:
         self.text_buffer = []
         self.current_tag_name = []
         self.current_tag_attrs = []  # flat list [name1, value1, ...]
-        self.current_attr_names = []
+        self.current_attr_name_set = set()
         self.current_attr_name = []
-        self.current_attr_value = []
+        self.current_attr_value_parts = []
+        self.current_attr_value_literal = []
         self.current_attr_value_has_amp = False
         self.current_tag_self_closing = False
         self.current_tag_kind = Tag.START
@@ -174,9 +179,10 @@ class Tokenizer:
         self.text_buffer.clear()
         self.current_tag_name.clear()
         self.current_tag_attrs.clear()
-        self.current_attr_names.clear()
+        self.current_attr_name_set.clear()
         self.current_attr_name.clear()
-        self.current_attr_value.clear()
+        self.current_attr_value_parts.clear()
+        self.current_attr_value_literal = []
         self.current_attr_value_has_amp = False
         self.current_comment.clear()
         self.current_doctype_name.clear()
@@ -465,7 +471,9 @@ class Tokenizer:
             return False
         if c.isalpha():
             self._start_tag(Tag.START)
-            self._append_tag_name(c)
+            if "A" <= c <= "Z":
+                c = chr(ord(c) + 32)
+            self.current_tag_name.append(c)
             self.state = self.TAG_NAME
             return False
 
@@ -486,7 +494,9 @@ class Tokenizer:
             return True
         if c.isalpha():
             self._start_tag(Tag.END)
-            self._append_tag_name(c)
+            if "A" <= c <= "Z":
+                c = chr(ord(c) + 32)
+            self.current_tag_name.append(c)
             self.state = self.TAG_NAME
             return False
         if c == ">":
@@ -502,6 +512,7 @@ class Tokenizer:
 
     def _state_tag_name(self):
         replacement = "\ufffd"
+        append_tag_char = self.current_tag_name.append
         while True:
             c = self._get_char()
             if c is None:
@@ -511,23 +522,22 @@ class Tokenizer:
                 self._emit_token(EOFToken())
                 return True
             if c in ("\t", "\n", "\f", " "):
-                self._finish_attribute()
                 self.state = self.BEFORE_ATTRIBUTE_NAME
                 return False
             if c == "/":
-                self._finish_attribute()
                 self.state = self.SELF_CLOSING_START_TAG
                 return False
             if c == ">":
-                self._finish_attribute()
                 if not self._emit_current_tag():
                     self.state = self.DATA
                 return False
             if c == "\0":
                 self._emit_error("Null character in tag name")
-                self._append_tag_name(replacement)
+                append_tag_char(replacement)
                 continue
-            self._append_tag_name(c)
+            if "A" <= c <= "Z":
+                c = chr(ord(c) + 32)
+            append_tag_char(c)
 
     def _state_before_attribute_name(self):
         while True:
@@ -553,16 +563,21 @@ class Tokenizer:
             if c == "=":
                 self._emit_error("Attribute name cannot start with '='")
                 self._start_attribute()
-                self._append_attr_name(c)
+                if "A" <= c <= "Z":
+                    c = chr(ord(c) + 32)
+                self.current_attr_name.append(c)
                 self.state = self.ATTRIBUTE_NAME
                 return False
             self._start_attribute()
-            self._append_attr_name(c)
+            if "A" <= c <= "Z":
+                c = chr(ord(c) + 32)
+            self.current_attr_name.append(c)
             self.state = self.ATTRIBUTE_NAME
             return False
 
     def _state_attribute_name(self):
         replacement = "\ufffd"
+        append_attr_char = self.current_attr_name.append
         while True:
             if self._consume_attribute_name_run():
                 continue
@@ -594,11 +609,13 @@ class Tokenizer:
                 return False
             if c == "\0":
                 self._emit_error("Null in attribute name")
-                self._append_attr_name(replacement)
+                append_attr_char(replacement)
                 continue
             if c in ('"', "'", "<"):
                 self._emit_error("Invalid character in attribute name")
-            self._append_attr_name(c)
+            if "A" <= c <= "Z":
+                c = chr(ord(c) + 32)
+            append_attr_char(c)
 
     def _state_after_attribute_name(self):
         while True:
@@ -624,7 +641,9 @@ class Tokenizer:
                 return False
             self._finish_attribute()
             self._start_attribute()
-            self._append_attr_name(c)
+            if "A" <= c <= "Z":
+                c = chr(ord(c) + 32)
+            self.current_attr_name.append(c)
             self.state = self.ATTRIBUTE_NAME
             return False
 
@@ -672,14 +691,14 @@ class Tokenizer:
                 self.state = self.AFTER_ATTRIBUTE_NAME
                 return False
             if c == "&":
-                self.current_attr_value.append("&")
+                self._append_attr_value_char("&")
                 self.current_attr_value_has_amp = True
                 continue
             if c == "\0":
                 self._emit_error("Null in attribute value")
-                self.current_attr_value.append(replacement)
+                self._append_attr_value_char(replacement)
                 continue
-            self.current_attr_value.append(c)
+            self._append_attr_value_char(c)
 
     def _state_attribute_value_single(self):
         replacement = "\ufffd"
@@ -698,14 +717,14 @@ class Tokenizer:
                 self.state = self.AFTER_ATTRIBUTE_NAME
                 return False
             if c == "&":
-                self.current_attr_value.append("&")
+                self._append_attr_value_char("&")
                 self.current_attr_value_has_amp = True
                 continue
             if c == "\0":
                 self._emit_error("Null in attribute value")
-                self.current_attr_value.append(replacement)
+                self._append_attr_value_char(replacement)
                 continue
-            self.current_attr_value.append(c)
+            self._append_attr_value_char(c)
 
     def _state_attribute_value_unquoted(self):
         replacement = "\ufffd"
@@ -730,16 +749,16 @@ class Tokenizer:
                     self.state = self.DATA
                 return False
             if c == "&":
-                self.current_attr_value.append("&")
+                self._append_attr_value_char("&")
                 self.current_attr_value_has_amp = True
                 continue
             if c in ('"', "'", "<", "=", "`"):
                 self._emit_error("Invalid character in unquoted attribute value")
             if c == "\0":
                 self._emit_error("Null in attribute value")
-                self.current_attr_value.append(replacement)
+                self._append_attr_value_char(replacement)
                 continue
-            self.current_attr_value.append(c)
+            self._append_attr_value_char(c)
 
     def _state_self_closing_start_tag(self):
         c = self._get_char()
@@ -1405,18 +1424,23 @@ class Tokenizer:
             self.reconsume = False
             return self.current_char
 
+        buffer = self.buffer
+        pos = self.pos
+        length = self.length
         while True:
-            if self.pos >= self.length:
+            if pos >= length:
+                self.pos = pos
                 self.current_char = None
                 return None
 
-            c = self.buffer[self.pos]
-            self.pos += 1
+            c = buffer[pos]
+            pos += 1
 
             if c == "\r":
                 self.ignore_lf = True
                 self.current_char = "\n"
                 self.line += 1
+                self.pos = pos
                 return "\n"
 
             if c == "\n":
@@ -1429,6 +1453,7 @@ class Tokenizer:
                 self.ignore_lf = False
 
             self.current_char = c
+            self.pos = pos
             return c
 
     def _reconsume_current(self):
@@ -1459,59 +1484,95 @@ class Tokenizer:
         self.current_tag_kind = kind
         self.current_tag_name.clear()
         self.current_tag_attrs.clear()
-        self.current_attr_names.clear()
+        self.current_attr_name_set.clear()
         self.current_attr_name.clear()
-        self.current_attr_value.clear()
+        self.current_attr_value_parts.clear()
+        self.current_attr_value_literal = []
         self.current_attr_value_has_amp = False
         self.current_tag_self_closing = False
 
     def _start_attribute(self):
         self.current_attr_name.clear()
-        self.current_attr_value.clear()
+        self.current_attr_value_parts.clear()
+        self.current_attr_value_literal = []
         self.current_attr_value_has_amp = False
 
-    def _append_tag_name(self, c):
-        if "A" <= c <= "Z":
-            c = chr(ord(c) + 32)
-        self.current_tag_name.append(c)
+    def _flush_attr_value_literal(self):
+        literals = self.current_attr_value_literal
+        if not literals:
+            return
+        parts = self.current_attr_value_parts
+        if parts and parts[-1][0] == _ATTR_VALUE_PART_STRING:
+            parts[-1][1].extend(literals)
+        else:
+            parts.append([_ATTR_VALUE_PART_STRING, literals])
+        self.current_attr_value_literal = []
 
-    def _append_attr_name(self, c):
-        if "A" <= c <= "Z":
-            c = chr(ord(c) + 32)
-        self.current_attr_name.append(c)
+    def _append_attr_value_slice(self, start, end):
+        if start >= end:
+            return
+        self._flush_attr_value_literal()
+        parts = self.current_attr_value_parts
+        if parts and parts[-1][0] == _ATTR_VALUE_PART_SLICE and parts[-1][2] == start:
+            parts[-1][2] = end
+            return
+        parts.append([_ATTR_VALUE_PART_SLICE, start, end])
+
+    def _append_attr_value_char(self, c):
+        if not c:
+            return
+        self.current_attr_value_literal.append(c)
+
+    def _materialize_attr_value(self):
+        self._flush_attr_value_literal()
+        parts = self.current_attr_value_parts
+        if not parts:
+            return ""
+        if len(parts) == 1:
+            kind = parts[0][0]
+            if kind == _ATTR_VALUE_PART_SLICE:
+                return self.buffer[parts[0][1] : parts[0][2]]
+            return "".join(parts[0][1])
+        segments = []
+        append = segments.append
+        buffer = self.buffer
+        for part in parts:
+            kind = part[0]
+            if kind == _ATTR_VALUE_PART_SLICE:
+                append(buffer[part[1] : part[2]])
+            else:
+                append("".join(part[1]))
+        return "".join(segments)
 
     def _finish_attribute(self):
         attr_name_buffer = self.current_attr_name
         if not attr_name_buffer:
-            self.current_attr_value.clear()
+            if not self.current_attr_value_parts and not self.current_attr_value_literal and not self.current_attr_value_has_amp:
+                return
+            self.current_attr_value_parts.clear()
+            self.current_attr_value_literal = []
             self.current_attr_value_has_amp = False
             return
         if len(attr_name_buffer) == 1:
             name = attr_name_buffer[0]
         else:
             name = "".join(attr_name_buffer)
-        attr_value_buffer = self.current_attr_value
-        if not attr_value_buffer:
+        self._flush_attr_value_literal()
+        if not self.current_attr_value_parts:
             value = ""
-        elif len(attr_value_buffer) == 1:
-            value = attr_value_buffer[0]
         else:
-            value = "".join(attr_value_buffer)
+            value = self._materialize_attr_value()
         if self.current_attr_value_has_amp:
             value = decode_entities_in_text(value, in_attribute=True)
-        attr_names = self.current_attr_names
-        is_duplicate = False
-        for existing in attr_names:
-            if existing == name:
-                is_duplicate = True
-                break
-        if is_duplicate:
+        attr_names = self.current_attr_name_set
+        if name in attr_names:
             self._emit_error("Duplicate attribute")
         else:
-            attr_names.append(name)
+            attr_names.add(name)
             self.current_tag_attrs.extend((name, value))
         attr_name_buffer.clear()
-        attr_value_buffer.clear()
+        self.current_attr_value_parts.clear()
+        self.current_attr_value_literal = []
         self.current_attr_value_has_amp = False
 
     def _append_text_chunk(self, chunk, *, ends_with_cr=False):
@@ -1549,7 +1610,7 @@ class Tokenizer:
             end = length
             if end == pos:
                 return False
-        self.current_attr_value.append(self.buffer[pos:end])
+        self._append_attr_value_slice(pos, end)
         self.pos = end
         return True
 
@@ -1560,19 +1621,24 @@ class Tokenizer:
         length = self.length
         if pos >= length:
             return False
-        match = _ATTR_NAME_TERMINATOR_PATTERN.search(self.buffer, pos)
-        if match:
-            end = match.start()
-            if end == pos:
-                return False
-        else:
-            end = length
-            if end == pos:
-                return False
-        chunk = self.buffer[pos:end]
+        buffer = self.buffer
+        start = pos
+        has_upper = False
+        while pos < length:
+            c = buffer[pos]
+            if c in _ATTR_NAME_TERMINATORS:
+                break
+            if "A" <= c <= "Z":
+                has_upper = True
+            pos += 1
+        if pos == start:
+            return False
+        chunk = buffer[start:pos]
         if chunk:
-            self.current_attr_name.append(chunk.translate(_ASCII_LOWER_TABLE))
-        self.pos = end
+            if has_upper:
+                chunk = chunk.translate(_ASCII_LOWER_TABLE)
+            self.current_attr_name.append(chunk)
+        self.pos = pos
         return True
 
     def _emit_current_tag(self):
@@ -1590,21 +1656,15 @@ class Tokenizer:
         switched_to_rawtext = False
         if self.current_tag_kind == Tag.START:
             self.last_start_tag_name = name
-            # Only switch to RAWTEXT for these elements in HTML context (not SVG/MathML).
-            # Check if we're in foreign content by looking at open_elements.
-            current_node = self.sink.open_elements[-1] if self.sink.open_elements else None
-            in_foreign = bool(current_node and current_node.namespace not in {None, "html"})
-            if not in_foreign and name in (
-                "script",
-                "style",
-                "xmp",
-                "iframe",
-                "noembed",
-                "noframes",
-                "noscript",
-                "textarea",
-                "title",
-            ):
+            needs_rawtext_check = name in _RAWTEXT_SWITCH_TAGS or name == "plaintext"
+            in_foreign = False
+            if needs_rawtext_check:
+                stack = self.sink.open_elements
+                if stack:
+                    current_node = stack[-1]
+                    if current_node and current_node.namespace not in {None, "html"}:
+                        in_foreign = True
+            if not in_foreign and name in _RAWTEXT_SWITCH_TAGS:
                 self.state = self.RAWTEXT
                 self.rawtext_tag_name = name
                 switched_to_rawtext = True
@@ -1620,8 +1680,10 @@ class Tokenizer:
             switched_to_rawtext = True
         self.current_tag_name.clear()
         self.current_tag_attrs.clear()
+        self.current_attr_name_set.clear()
         self.current_attr_name.clear()
-        self.current_attr_value.clear()
+        self.current_attr_value_parts.clear()
+        self.current_attr_value_literal = []
         self.current_tag_self_closing = False
         self.current_tag_kind = Tag.START
         return switched_to_rawtext
