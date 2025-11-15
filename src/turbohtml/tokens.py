@@ -1,13 +1,5 @@
-class Attribute:
-    __slots__ = ("name", "value")
-
-    def __init__(self, name, value):
-        self.name = name
-        self.value = value
-
-
 class Tag:
-    __slots__ = ("kind", "name", "attrs", "self_closing")
+    __slots__ = ("attrs", "kind", "name", "self_closing")
 
     START = "start"
     END = "end"
@@ -19,7 +11,16 @@ class Tag:
         self.self_closing = bool(self_closing)
 
     def __repr__(self):
-        attrs = " ".join(f"{a.name}={a.value!r}" for a in self.attrs)
+        if self.attrs:
+            parts = []
+            attrs = self.attrs
+            for index in range(0, len(attrs), 2):
+                name = attrs[index]
+                value = attrs[index + 1]
+                parts.append(f"{name}={value!r}")
+            attrs = " ".join(parts)
+        else:
+            attrs = ""
         closing = " /" if self.self_closing else ""
         return f"<{self.kind}:{self.name}{closing} {attrs}>"
 

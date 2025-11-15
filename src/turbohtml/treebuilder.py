@@ -30,7 +30,6 @@ from .constants import (
     TABLE_SCOPE_TERMINATORS,
 )
 from .tokens import (
-    Attribute,
     CharacterTokens,
     CommentToken,
     DoctypeToken,
@@ -190,6 +189,11 @@ def _doctype_error_and_quirks(doctype, iframe_srcdoc):
     return parse_error, quirks_mode
 
 
+def _iter_attr_pairs(attrs):
+    for index in range(0, len(attrs), 2):
+        yield attrs[index], attrs[index + 1]
+
+
 class SimpleDomNode:
     __slots__ = ("attrs", "children", "data", "name", "namespace", "parent", "template_content")
 
@@ -274,22 +278,23 @@ class SimpleDomNode:
 
         # Prepare display names for sorting
         display_attrs = []
-        for attr in self.attrs:
-            attr_name = attr.name
-            # In foreign content (SVG/MathML), only adjusted attributes use space separator
-            # Unknown attributes with colons (e.g., xml:foo) keep their colons
-            if self.namespace and self.namespace not in {None, "html"}:
+        attrs = self.attrs
+        namespace = self.namespace
+        for index in range(0, len(attrs), 2):
+            attr_name = attrs[index]
+            value = attrs[index + 1] or ""
+            display_name = attr_name
+            if namespace and namespace not in {None, "html"}:
                 lower_name = attr_name.lower()
                 if lower_name in FOREIGN_ATTRIBUTE_ADJUSTMENTS:
-                    attr_name = attr_name.replace(":", " ")
-            display_attrs.append((attr_name, attr))
+                    display_name = attr_name.replace(":", " ")
+            display_attrs.append((display_name, value))
 
         # Sort by display name for canonical test output
         display_attrs.sort(key=lambda x: x[0])
 
-        for attr_name, attr in display_attrs:
-            value = attr.value or ""
-            formatted.append(f'| {padding}{attr_name}="{value}"')
+        for display_name, value in display_attrs:
+            formatted.append(f'| {padding}{display_name}="{value}"')
         return formatted
 
     def _format_doctype(self):
@@ -943,9 +948,9 @@ class TreeBuilder:
             # Special handling: input type="hidden" doesn't create body or affect frameset_ok
             if token.kind == Tag.START and token.name == "input":
                 input_type = None
-                for attr in token.attrs:
-                    if attr.name == "type":
-                        input_type = (attr.value or "").lower()
+                for name, value in _iter_attr_pairs(token.attrs):
+                    if name == "type":
+                        input_type = (value or "").lower()
                         break
                 if input_type == "hidden":
                     # Parse error but ignore - don't create body, don't insert element
@@ -1379,9 +1384,9 @@ class TreeBuilder:
 
     def _handle_body_start_input(self, token):
         input_type = None
-        for attr in token.attrs:
-            if attr.name == "type":
-                input_type = (attr.value or "").lower()
+        for name, value in _iter_attr_pairs(token.attrs):
+            if name == "type":
+                input_type = (value or "").lower()
                 break
         self._insert_element(token, push=False)
         if input_type != "hidden":
@@ -1530,9 +1535,9 @@ class TreeBuilder:
                     return self._mode_in_head(token)
                 if name == "input":
                     input_type = None
-                    for attr in token.attrs:
-                        if attr.name == "type":
-                            input_type = (attr.value or "").lower()
+                    for attr_name, attr_value in _iter_attr_pairs(token.attrs):
+                        if attr_name == "type":
+                            input_type = (attr_value or "").lower()
                             break
                     if input_type == "hidden":
                         self._parse_error("unexpected-hidden-input-in-table")
@@ -2494,7 +2499,7 @@ class TreeBuilder:
         return self.document
 
     def _create_element(self, name, namespace, attrs):
-        attr_copies = [Attribute(attr.name, attr.value) for attr in attrs]
+        attr_copies = list(attrs) if attrs else []
         ns = namespace or "html"
         return SimpleDomNode(name, attrs=attr_copies, namespace=ns)
 
@@ -2546,11 +2551,15 @@ class TreeBuilder:
         return False
 
     def _add_missing_attributes(self, node, attrs):
-        existing = {attr.name for attr in node.attrs}
-        for attr in attrs:
-            if attr.name not in existing:
-                node.attrs.append(Attribute(attr.name, attr.value))
-                existing.add(attr.name)
+        existing = set()
+        for index in range(0, len(node.attrs), 2):
+            existing.add(node.attrs[index])
+        for index in range(0, len(attrs), 2):
+            name = attrs[index]
+            value = attrs[index + 1]
+            if name not in existing:
+                node.attrs.extend((name, value))
+                existing.add(name)
 
     def _remove_from_open_elements(self, node):
         for index, current in enumerate(self.open_elements):
@@ -2583,12 +2592,16 @@ class TreeBuilder:
         return None
 
     def _clone_attributes(self, attrs):
-        return [Attribute(attr.name, attr.value) for attr in attrs]
+        return list(attrs) if attrs else []
 
     def _attrs_signature(self, attrs):
         if not attrs:
             return ()
-        items = [(attr.name, attr.value or "") for attr in attrs]
+        items = []
+        for index in range(0, len(attrs), 2):
+            name = attrs[index]
+            value = attrs[index + 1] or ""
+            items.append((name, value))
         items.sort()
         return tuple(items)
 
@@ -2668,8 +2681,8 @@ class TreeBuilder:
     def _tag_has_any_attrs(self, tag, names):
         if not tag.attrs:
             return False
-        for attr in tag.attrs:
-            if attr.name in names:
+        for attr_name, _ in _iter_attr_pairs(tag.attrs):
+            if attr_name in names:
                 return True
         return False
 
@@ -2913,10 +2926,12 @@ class TreeBuilder:
         return SVG_TAG_NAME_ADJUSTMENTS.get(lowered, name)
 
     def _prepare_foreign_attributes(self, namespace, attrs):
+        if not attrs:
+            return []
         adjusted = []
-        for attr in attrs:
-            name = attr.name
-            value = attr.value
+        for index in range(0, len(attrs), 2):
+            name = attrs[index]
+            value = attrs[index + 1]
             lower_name = self._lower_ascii(name)
             if namespace == "math" and lower_name in MATHML_ATTRIBUTE_ADJUSTMENTS:
                 name = MATHML_ATTRIBUTE_ADJUSTMENTS[lower_name]
@@ -2933,14 +2948,17 @@ class TreeBuilder:
                 else:
                     name = local
 
-            adjusted.append(Attribute(name, value))
+            adjusted.extend((name, value))
         return adjusted
 
     def _node_attribute_value(self, node, name):
         target = self._lower_ascii(name)
-        for attr in node.attrs:
-            if self._lower_ascii(attr.name) == target:
-                return attr.value or ""
+        attrs = node.attrs
+        for index in range(0, len(attrs), 2):
+            attr_name = attrs[index]
+            attr_value = attrs[index + 1]
+            if self._lower_ascii(attr_name) == target:
+                return attr_value or ""
         return None
 
     def _is_html_integration_point(self, node):
@@ -3014,8 +3032,8 @@ class TreeBuilder:
         return True
 
     def _foreign_breakout_font(self, tag):
-        for attr in tag.attrs:
-            if self._lower_ascii(attr.name) in {"color", "face", "size"}:
+        for name, _ in _iter_attr_pairs(tag.attrs):
+            if self._lower_ascii(name) in {"color", "face", "size"}:
                 return True
         return False
 
@@ -3210,7 +3228,7 @@ class TreeBuilder:
         return target, len(target.children)
 
     def _clone_shallow(self, node):
-        attrs = [Attribute(attr.name, attr.value) for attr in node.attrs]
+        attrs = list(node.attrs) if node.attrs else []
         return SimpleDomNode(node.name, attrs=attrs, namespace=node.namespace)
 
     def _replace_node(self, old, new):
@@ -3461,8 +3479,8 @@ class TreeBuilder:
             selected_option = None
             for opt in options:
                 if opt.attrs:
-                    for attr in opt.attrs:
-                        if attr.name == "selected":
+                    for attr_name, _ in _iter_attr_pairs(opt.attrs):
+                        if attr_name == "selected":
                             selected_option = opt
                             break
                 if selected_option:
@@ -3507,7 +3525,7 @@ class TreeBuilder:
                 # Element node
                 cloned = SimpleDomNode(
                     child.name,
-                    attrs=[Attribute(a.name, a.value) for a in (child.attrs or [])],
+                    attrs=list(child.attrs) if child.attrs else [],
                     namespace=getattr(child, "namespace", None),
                 )
                 self._clone_children(child, cloned)

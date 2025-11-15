@@ -3,7 +3,6 @@ import sys
 
 from .entities import decode_entities_in_text
 from .tokens import (
-    Attribute,
     CharacterTokens,
     CommentToken,
     Doctype,
@@ -143,7 +142,7 @@ class Tokenizer:
         # Reusable buffers to avoid per-token allocations.
         self.text_buffer = []
         self.current_tag_name = []
-        self.current_tag_attrs = []  # list of Attribute objects
+        self.current_tag_attrs = []  # flat list [name1, value1, ...]
         self.current_attr_names = []
         self.current_attr_name = []
         self.current_attr_value = []
@@ -1510,7 +1509,7 @@ class Tokenizer:
             self._emit_error("Duplicate attribute")
         else:
             attr_names.append(name)
-            self.current_tag_attrs.append(Attribute(name, value))
+            self.current_tag_attrs.extend((name, value))
         attr_name_buffer.clear()
         attr_value_buffer.clear()
         self.current_attr_value_has_amp = False
