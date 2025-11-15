@@ -1,3 +1,5 @@
+import re
+
 from .tokens import (
 	Attribute,
 	CharacterTokens,
@@ -17,6 +19,12 @@ _ATTR_VALUE_SINGLE_TERMINATORS = "'&\r\n\0"
 _ATTR_VALUE_UNQUOTED_TERMINATORS = "\t\n\f >&\"'<=`\r\0"
 _ATTR_NAME_TERMINATORS = "\t\n\f />=\0\"'<"
 _ASCII_LOWER_TABLE = str.maketrans({chr(code): chr(code + 32) for code in range(65, 91)})
+_RCDATA_ELEMENTS = {"title", "textarea"}
+
+_ATTR_VALUE_DOUBLE_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_DOUBLE_TERMINATORS)}]")
+_ATTR_VALUE_SINGLE_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_SINGLE_TERMINATORS)}]")
+_ATTR_VALUE_UNQUOTED_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_UNQUOTED_TERMINATORS)}]")
+_ATTR_NAME_TERMINATOR_PATTERN = re.compile(f"[{re.escape(_ATTR_NAME_TERMINATORS)}]")
 
 
 class TokenizerOpts:
@@ -102,8 +110,10 @@ class Tokenizer:
 		"current_tag_kind",
 		"current_tag_name",
 		"current_tag_attrs",
+		"current_attr_names",
 		"current_attr_name",
 		"current_attr_value",
+		"current_attr_value_has_amp",
 		"current_tag_self_closing",
 		"current_comment",
 		"current_doctype_name",
@@ -114,6 +124,7 @@ class Tokenizer:
 		"rawtext_tag_name",
 		"original_tag_name",
 		"temp_buffer",
+		"_tag_token",
 	)
 
 	def __init__(self, sink, opts=None):
@@ -132,9 +143,11 @@ class Tokenizer:
 		# Reusable buffers to avoid per-token allocations.
 		self.text_buffer = []
 		self.current_tag_name = []
-		self.current_tag_attrs = []  # list of (name, value)
+		self.current_tag_attrs = []  # list of Attribute objects
+		self.current_attr_names = set()
 		self.current_attr_name = []
 		self.current_attr_value = []
+		self.current_attr_value_has_amp = False
 		self.current_tag_self_closing = False
 		self.current_tag_kind = Tag.START
 		self.current_comment = []
@@ -146,6 +159,7 @@ class Tokenizer:
 		self.rawtext_tag_name = None
 		self.original_tag_name = []
 		self.temp_buffer = []
+		self._tag_token = Tag(Tag.START, "", [], False)
 
 	def run(self, html):
 		if html and html[0] == "\ufeff" and self.opts.discard_bom:
@@ -161,8 +175,10 @@ class Tokenizer:
 		self.text_buffer.clear()
 		self.current_tag_name.clear()
 		self.current_tag_attrs.clear()
+		self.current_attr_names.clear()
 		self.current_attr_name.clear()
 		self.current_attr_value.clear()
+		self.current_attr_value_has_amp = False
 		self.current_comment.clear()
 		self.current_doctype_name.clear()
 		self.current_doctype_public.clear()
@@ -173,6 +189,10 @@ class Tokenizer:
 		self.rawtext_tag_name = self.opts.initial_rawtext_tag
 		self.temp_buffer.clear()
 		self.last_start_tag_name = None
+		self._tag_token.kind = Tag.START
+		self._tag_token.name = ""
+		self._tag_token.attrs = []
+		self._tag_token.self_closing = False
 
 		initial_state = self.opts.initial_state
 		if isinstance(initial_state, int):
@@ -644,9 +664,9 @@ class Tokenizer:
 
 	def _state_attribute_value_double(self):
 		replacement = "\ufffd"
-		stop_chars = _ATTR_VALUE_DOUBLE_TERMINATORS
+		stop_pattern = _ATTR_VALUE_DOUBLE_PATTERN
 		while True:
-			if self._consume_attribute_value_run(stop_chars):
+			if self._consume_attribute_value_run(stop_pattern):
 				continue
 			c = self._get_char()
 			if c is None:
@@ -659,8 +679,8 @@ class Tokenizer:
 				self.state = self.AFTER_ATTRIBUTE_NAME
 				return False
 			if c == "&":
-				# TODO: character references
 				self.current_attr_value.append("&")
+				self.current_attr_value_has_amp = True
 				continue
 			if c == "\0":
 				self._emit_error("Null in attribute value")
@@ -670,9 +690,9 @@ class Tokenizer:
 
 	def _state_attribute_value_single(self):
 		replacement = "\ufffd"
-		stop_chars = _ATTR_VALUE_SINGLE_TERMINATORS
+		stop_pattern = _ATTR_VALUE_SINGLE_PATTERN
 		while True:
-			if self._consume_attribute_value_run(stop_chars):
+			if self._consume_attribute_value_run(stop_pattern):
 				continue
 			c = self._get_char()
 			if c is None:
@@ -686,6 +706,7 @@ class Tokenizer:
 				return False
 			if c == "&":
 				self.current_attr_value.append("&")
+				self.current_attr_value_has_amp = True
 				continue
 			if c == "\0":
 				self._emit_error("Null in attribute value")
@@ -695,9 +716,9 @@ class Tokenizer:
 
 	def _state_attribute_value_unquoted(self):
 		replacement = "\ufffd"
-		stop_chars = _ATTR_VALUE_UNQUOTED_TERMINATORS
+		stop_pattern = _ATTR_VALUE_UNQUOTED_PATTERN
 		while True:
-			if self._consume_attribute_value_run(stop_chars):
+			if self._consume_attribute_value_run(stop_pattern):
 				continue
 			c = self._get_char()
 			if c is None:
@@ -717,6 +738,7 @@ class Tokenizer:
 				return False
 			if c == "&":
 				self.current_attr_value.append("&")
+				self.current_attr_value_has_amp = True
 				continue
 			if c in ('"', "'", "<", "=", "`"):
 				self._emit_error("Invalid character in unquoted attribute value")
@@ -1432,10 +1454,9 @@ class Tokenizer:
 			# - PLAINTEXT state does NOT decode
 			# Our tokenizer uses RAWTEXT state for both RCDATA and RAWTEXT elements
 			# so we check the tag name to determine the correct behavior
-			rcdata_elements = {"title", "textarea"}
 			if self.state >= self.PLAINTEXT:
 				self._emit_token(CharacterTokens(data))
-			elif self.state >= self.RAWTEXT and self.rawtext_tag_name not in rcdata_elements:
+			elif self.state >= self.RAWTEXT and self.rawtext_tag_name not in _RCDATA_ELEMENTS:
 				self._emit_token(CharacterTokens(data))
 			else:
 				if "&" in data:
@@ -1446,13 +1467,16 @@ class Tokenizer:
 		self.current_tag_kind = kind
 		self.current_tag_name.clear()
 		self.current_tag_attrs.clear()
+		self.current_attr_names.clear()
 		self.current_attr_name.clear()
 		self.current_attr_value.clear()
+		self.current_attr_value_has_amp = False
 		self.current_tag_self_closing = False
 
 	def _start_attribute(self):
 		self.current_attr_name.clear()
 		self.current_attr_value.clear()
+		self.current_attr_value_has_amp = False
 
 	def _append_tag_name(self, c):
 		if c.isupper():
@@ -1467,24 +1491,33 @@ class Tokenizer:
 			self.current_attr_name.append(c)
 
 	def _finish_attribute(self):
-		if not self.current_attr_name:
+		attr_name_buffer = self.current_attr_name
+		if not attr_name_buffer:
+			self.current_attr_value.clear()
+			self.current_attr_value_has_amp = False
 			return
-		name = "".join(self.current_attr_name)
-		value = "".join(self.current_attr_value)
-		# Decode HTML entities in attribute values (with stricter rules per spec)
-		if "&" in value:
+		if len(attr_name_buffer) == 1:
+			name = attr_name_buffer[0]
+		else:
+			name = "".join(attr_name_buffer)
+		attr_value_buffer = self.current_attr_value
+		if not attr_value_buffer:
+			value = ""
+		elif len(attr_value_buffer) == 1:
+			value = attr_value_buffer[0]
+		else:
+			value = "".join(attr_value_buffer)
+		if self.current_attr_value_has_amp:
 			value = decode_entities_in_text(value, in_attribute=True)
-		duplicate = False
-		for existing_name, _ in self.current_tag_attrs:
-			if existing_name == name:
-				duplicate = True
-				break
-		if duplicate:
+		attr_names = self.current_attr_names
+		if name in attr_names:
 			self._emit_error("Duplicate attribute")
 		else:
-			self.current_tag_attrs.append((name, value))
-		self.current_attr_name.clear()
-		self.current_attr_value.clear()
+			attr_names.add(name)
+			self.current_tag_attrs.append(Attribute(name, value))
+		attr_name_buffer.clear()
+		attr_value_buffer.clear()
+		self.current_attr_value_has_amp = False
 
 	def _append_text_chunk(self, chunk, *, ends_with_cr=False):
 		if not chunk:
@@ -1505,23 +1538,24 @@ class Tokenizer:
 		self.text_buffer.append(chunk)
 		self.ignore_lf = ends_with_cr
 
-	def _consume_attribute_value_run(self, stop_chars):
+	def _consume_attribute_value_run(self, stop_pattern):
 		if self.reconsume:
 			return False
 		pos = self.pos
 		length = self.length
 		if pos >= length:
 			return False
-		buffer = self.buffer
-		while pos < length:
-			ch = buffer[pos]
-			if ch in stop_chars:
-				break
-			pos += 1
-		if pos == self.pos:
-			return False
-		self.current_attr_value.append(buffer[self.pos:pos])
-		self.pos = pos
+		match = stop_pattern.search(self.buffer, pos)
+		if match:
+			end = match.start()
+			if end == pos:
+				return False
+		else:
+			end = length
+			if end == pos:
+				return False
+		self.current_attr_value.append(self.buffer[pos:end])
+		self.pos = end
 		return True
 
 	def _consume_attribute_name_run(self):
@@ -1531,25 +1565,31 @@ class Tokenizer:
 		length = self.length
 		if pos >= length:
 			return False
-		buffer = self.buffer
-		while pos < length:
-			ch = buffer[pos]
-			if ch in _ATTR_NAME_TERMINATORS:
-				break
-			pos += 1
-		if pos == self.pos:
-			return False
-		chunk = buffer[self.pos:pos]
+		match = _ATTR_NAME_TERMINATOR_PATTERN.search(self.buffer, pos)
+		if match:
+			end = match.start()
+			if end == pos:
+				return False
+		else:
+			end = length
+			if end == pos:
+				return False
+		chunk = self.buffer[pos:end]
 		if chunk:
 			self.current_attr_name.append(chunk.translate(_ASCII_LOWER_TABLE))
-		self.pos = pos
+		self.pos = end
 		return True
 
 	def _emit_current_tag(self):
 		self._finish_attribute()
 		name = "".join(self.current_tag_name)
-		attrs = [Attribute(n, v) for (n, v) in self.current_tag_attrs]
-		tag = Tag(self.current_tag_kind, name, attrs, self.current_tag_self_closing)
+		attrs = self.current_tag_attrs
+		self.current_tag_attrs = []
+		tag = self._tag_token
+		tag.kind = self.current_tag_kind
+		tag.name = name
+		tag.attrs = attrs
+		tag.self_closing = self.current_tag_self_closing
 		switched_to_rawtext = False
 		if self.current_tag_kind == Tag.START:
 			self.last_start_tag_name = name

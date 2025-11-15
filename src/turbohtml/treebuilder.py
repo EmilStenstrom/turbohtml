@@ -92,7 +92,9 @@ class InsertionMode(enum.IntEnum):
 
 
 def _is_all_whitespace(text):
-    return all(ch in "\t\n\f\r " for ch in text)
+    if not text:
+        return True
+    return text.strip("\t\n\f\r ") == ""
 
 
 def _doctype_error_and_quirks(doctype, iframe_srcdoc):
