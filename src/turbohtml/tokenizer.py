@@ -528,10 +528,7 @@ class Tokenizer:
                 self._emit_error("Null character in tag name")
                 self._append_tag_name(replacement)
                 continue
-            if c.isupper():
-                self._append_tag_name(chr(ord(c) + 32))
-            else:
-                self.current_tag_name.append(c)
+            self._append_tag_name(c)
 
     def _state_before_attribute_name(self):
         while True:
@@ -602,10 +599,7 @@ class Tokenizer:
                 continue
             if c in ('"', "'", "<"):
                 self._emit_error("Invalid character in attribute name")
-            if c.isupper():
-                self._append_attr_name(chr(ord(c) + 32))
-            else:
-                self.current_attr_name.append(c)
+            self._append_attr_name(c)
 
     def _state_after_attribute_name(self):
         while True:
@@ -1021,7 +1015,7 @@ class Tokenizer:
                 self._emit_doctype()
                 self.state = self.DATA
                 return False
-            if c.isupper():
+            if "A" <= c <= "Z":
                 self.current_doctype_name.append(chr(ord(c) + 32))
             elif c == "\0":
                 self._emit_error("Null in DOCTYPE name")
@@ -1047,7 +1041,7 @@ class Tokenizer:
                 self._emit_doctype()
                 self.state = self.DATA
                 return False
-            if c.isupper():
+            if "A" <= c <= "Z":
                 self.current_doctype_name.append(chr(ord(c) + 32))
                 continue
             if c == "\0":
@@ -1478,16 +1472,14 @@ class Tokenizer:
         self.current_attr_value_has_amp = False
 
     def _append_tag_name(self, c):
-        if c.isupper():
-            self.current_tag_name.append(chr(ord(c) + 32))
-        else:
-            self.current_tag_name.append(c)
+        if "A" <= c <= "Z":
+            c = chr(ord(c) + 32)
+        self.current_tag_name.append(c)
 
     def _append_attr_name(self, c):
-        if c.isupper():
-            self.current_attr_name.append(chr(ord(c) + 32))
-        else:
-            self.current_attr_name.append(c)
+        if "A" <= c <= "Z":
+            c = chr(ord(c) + 32)
+        self.current_attr_name.append(c)
 
     def _finish_attribute(self):
         attr_name_buffer = self.current_attr_name
@@ -1499,7 +1491,6 @@ class Tokenizer:
             name = attr_name_buffer[0]
         else:
             name = "".join(attr_name_buffer)
-        name = sys.intern(name)
         attr_value_buffer = self.current_attr_value
         if not attr_value_buffer:
             value = ""
