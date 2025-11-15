@@ -1,4 +1,5 @@
 import re
+import sys
 
 from .entities import decode_entities_in_text
 from .tokens import (
@@ -1498,6 +1499,7 @@ class Tokenizer:
             name = attr_name_buffer[0]
         else:
             name = "".join(attr_name_buffer)
+        name = sys.intern(name)
         attr_value_buffer = self.current_attr_value
         if not attr_value_buffer:
             value = ""
@@ -1581,6 +1583,8 @@ class Tokenizer:
     def _emit_current_tag(self):
         self._finish_attribute()
         name = "".join(self.current_tag_name)
+        if name:
+            name = sys.intern(name)
         attrs = self.current_tag_attrs
         self.current_tag_attrs = []
         tag = self._tag_token
@@ -1593,12 +1597,8 @@ class Tokenizer:
             self.last_start_tag_name = name
             # Only switch to RAWTEXT for these elements in HTML context (not SVG/MathML).
             # Check if we're in foreign content by looking at open_elements.
-            in_foreign = False
-            if self.sink.open_elements:
-                for elem in self.sink.open_elements:
-                    if elem.namespace and elem.namespace != "html":
-                        in_foreign = True
-                        break
+            current_node = self.sink.open_elements[-1] if self.sink.open_elements else None
+            in_foreign = bool(current_node and current_node.namespace not in {None, "html"})
             if not in_foreign and name in (
                 "script",
                 "style",
