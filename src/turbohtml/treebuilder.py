@@ -88,6 +88,22 @@ class InsertionMode(enum.IntEnum):
     IN_TEMPLATE = 21
 
 
+_BODY_START_IN_HEAD_TAGS = (
+    "base",
+    "basefont",
+    "bgsound",
+    "link",
+    "meta",
+    "noframes",
+    "script",
+    "style",
+    "template",
+    "title",
+)
+
+_BODY_START_FRAMESET_NEUTRAL = BLOCK_WITH_P_START | {"p", "caption", "col", "colgroup", "hr", "pre", "listing"}
+
+
 def _is_all_whitespace(text):
     if not text:
         return True
@@ -270,6 +286,7 @@ class SimpleDomNode:
 
 class TreeBuilder:
     __slots__ = (
+        "_body_start_handlers",
         "active_formatting",
         "document",
         "errors",
@@ -314,7 +331,7 @@ class TreeBuilder:
         self.pending_table_text = []
         self.template_modes = []
         self.tokenizer_state_override = None
-
+        self._init_body_start_handlers()
         if fragment_context is not None:
             # Fragment parsing per HTML5 spec
             root = self._create_element("html", None, [])
@@ -358,6 +375,52 @@ class TreeBuilder:
             # For fragments, frameset_ok starts as False per HTML5 spec
             # This prevents frameset from being inserted in fragment contexts
             self.frameset_ok = False
+
+    def _init_body_start_handlers(self):
+        handlers = {}
+
+        def register(tags, handler):
+            for tag in tags:
+                handlers[tag] = handler
+
+        handlers["html"] = self._handle_body_start_html
+        handlers["body"] = self._handle_body_start_body
+        handlers["head"] = self._handle_body_start_head
+        register(_BODY_START_IN_HEAD_TAGS, self._handle_body_start_in_head)
+        register(BLOCK_WITH_P_START, self._handle_body_start_block_with_p)
+        register(HEADING_ELEMENTS, self._handle_body_start_heading)
+        register(("pre", "listing"), self._handle_body_start_pre_listing)
+        handlers["form"] = self._handle_body_start_form
+        handlers["button"] = self._handle_body_start_button
+        handlers["p"] = self._handle_body_start_paragraph
+        handlers["math"] = self._handle_body_start_math
+        handlers["svg"] = self._handle_body_start_svg
+        handlers["li"] = self._handle_body_start_li
+        register(("dd", "dt"), self._handle_body_start_dd_dt)
+        handlers["a"] = self._handle_body_start_a
+        register((tag for tag in FORMATTING_ELEMENTS if tag != "a"), self._handle_body_start_formatting)
+        register(("applet", "marquee", "object"), self._handle_body_start_applet_like)
+        handlers["hr"] = self._handle_body_start_hr
+        handlers["br"] = self._handle_body_start_br
+        handlers["frameset"] = self._handle_body_start_frameset
+        register(("colgroup", "tbody", "td", "tfoot", "th", "thead", "tr"), self._handle_body_start_structure_ignored)
+        handlers["col"] = self._handle_body_start_col_or_frame
+        handlers["frame"] = self._handle_body_start_col_or_frame
+        handlers["image"] = self._handle_body_start_image
+        register(("area", "embed", "img", "keygen", "wbr"), self._handle_body_start_void_with_formatting)
+        register(("param", "source", "track"), self._handle_body_start_simple_void)
+        handlers["input"] = self._handle_body_start_input
+        handlers["table"] = self._handle_body_start_table
+        register(("plaintext", "xmp"), self._handle_body_start_plaintext_xmp)
+        handlers["textarea"] = self._handle_body_start_textarea
+        handlers["select"] = self._handle_body_start_select
+        handlers["option"] = self._handle_body_start_option
+        handlers["optgroup"] = self._handle_body_start_optgroup
+        register(("rp", "rt"), self._handle_body_start_rp_rt)
+        register(("rb", "rtc"), self._handle_body_start_rb_rtc)
+        handlers["caption"] = self._handle_body_start_table_parse_error
+
+        self._body_start_handlers = handlers
 
     def process_token(self, token):
         if isinstance(token, ParseError):
@@ -925,345 +988,10 @@ class TreeBuilder:
             return None
         if isinstance(token, Tag):
             if token.kind == Tag.START:
-                name = token.name
-                if name == "html":
-                    # In a template, html tags are parse errors and ignored
-                    if self.template_modes:
-                        self._parse_error("Unexpected <html> in template")
-                        return None
-                    if self.open_elements:
-                        html = self.open_elements[0]
-                        self._add_missing_attributes(html, token.attrs)
-                    return None
-                if name == "body":
-                    # In a template, body tags are parse errors and ignored
-                    if self.template_modes:
-                        self._parse_error("Unexpected <body> in template")
-                        return None
-                    if len(self.open_elements) > 1:
-                        self._parse_error("Unexpected <body> inside body")
-                        # Merge attributes onto existing body element
-                        body = self.open_elements[1] if len(self.open_elements) > 1 else None
-                        if body and body.name == "body":
-                            self._add_missing_attributes(body, token.attrs)
-                        self.frameset_ok = False
-                        return None
-                    self.frameset_ok = False
-                    return None
-                if name == "head":
-                    # Ignore <head> in body mode (duplicate head)
-                    self._parse_error("Unexpected <head> in body")
-                    return None
-                # Non-template head-related tags: delegate to IN_HEAD
-                if name in {
-                    "base",
-                    "basefont",
-                    "bgsound",
-                    "link",
-                    "meta",
-                    "noframes",
-                    "script",
-                    "style",
-                    "template",
-                    "title",
-                }:
-                    return self._mode_in_head(token)
-                if name in BLOCK_WITH_P_START:
-                    self._close_p_element()
-                    self._insert_element(token, push=True)
-                    return None
-                if name in HEADING_ELEMENTS:
-                    self._close_p_element()
-                    if self.open_elements and self.open_elements[-1].name in HEADING_ELEMENTS:
-                        self._parse_error("Nested heading")
-                        self._pop_current()
-                    self._insert_element(token, push=True)
-                    self.frameset_ok = False
-                    return None
-                if name in {"pre", "listing"}:
-                    self._close_p_element()
-                    self._insert_element(token, push=True)
-                    self.ignore_lf = True
-                    self.frameset_ok = False
-                    return None
-                if name == "form":
-                    if self.form_element is not None:
-                        self._parse_error("Nested form")
-                        return None
-                    self._close_p_element()
-                    node = self._insert_element(token, push=True)
-                    self.form_element = node
-                    self.frameset_ok = False
-                    return None
-                if name == "button":
-                    # Check for nested button in default scope (not button_scope).
-                    # Button is a terminator in button_scope, so we'd never find it.
-                    # Per spec/html5ever: check if button exists in default scope,
-                    # meaning "is there a button between here and html/table/etc?"
-                    if self._has_in_scope("button"):
-                        self._parse_error("Nested button")
-                        self._close_element_by_name("button")
-                    self._insert_element(token, push=True)
-                    self.frameset_ok = False
-                    return None
-                if name == "p":
-                    self._close_p_element()
-                    self._insert_element(token, push=True)
-                    return None
-                if name == "math":
-                    self._reconstruct_active_formatting_elements()
-                    attrs = self._prepare_foreign_attributes("math", token.attrs)
-                    new_tag = Tag(Tag.START, token.name, attrs, token.self_closing)
-                    # For foreign elements, honor the self-closing flag
-                    self._insert_element(new_tag, push=not token.self_closing, namespace="math")
-                    return None
-                if name == "svg":
-                    self._reconstruct_active_formatting_elements()
-                    adjusted_name = self._adjust_svg_tag_name(token.name)
-                    attrs = self._prepare_foreign_attributes("svg", token.attrs)
-                    new_tag = Tag(Tag.START, adjusted_name, attrs, token.self_closing)
-                    # For foreign elements, honor the self-closing flag
-                    self._insert_element(new_tag, push=not token.self_closing, namespace="svg")
-                    return None
-                if name == "li":
-                    self.frameset_ok = False
-                    self._close_p_element()
-                    if self._has_in_list_item_scope("li"):
-                        self._pop_until_any_inclusive({"li"})
-                    self._insert_element(token, push=True)
-                    return None
-                if name in {"dd", "dt"}:
-                    self.frameset_ok = False
-                    self._close_p_element()
-                    if name == "dd":
-                        if self._has_in_definition_scope("dd"):
-                            self._pop_until_any_inclusive({"dd"})
-                        if self._has_in_definition_scope("dt"):
-                            self._pop_until_any_inclusive({"dt"})
-                    else:
-                        if self._has_in_definition_scope("dt"):
-                            self._pop_until_any_inclusive({"dt"})
-                        if self._has_in_definition_scope("dd"):
-                            self._pop_until_any_inclusive({"dd"})
-                    self._insert_element(token, push=True)
-                    return None
-                if name == "a":
-                    if self._has_active_formatting_entry("a"):
-                        self._adoption_agency("a")
-                        self._remove_last_active_formatting_by_name("a")
-                        self._remove_last_open_element_by_name("a")
-                    self._reconstruct_active_formatting_elements()
-                    node = self._insert_element(token, push=True)
-                    self._append_active_formatting_entry(name, token.attrs, node)
-                    return None
-                is_formatting = name in FORMATTING_ELEMENTS
-                # Note: font is formatting regardless of attributes per html5lib tests
-                if is_formatting:
-                    if name == "nobr" and self._in_scope("nobr"):
-                        self._adoption_agency("nobr")
-                        self._remove_last_active_formatting_by_name("nobr")
-                        self._remove_last_open_element_by_name("nobr")
-                    self._reconstruct_active_formatting_elements()
-                    duplicate_index = self._find_active_formatting_duplicate(name, token.attrs)
-                    if duplicate_index is not None:
-                        self._remove_formatting_entry(duplicate_index)
-                    node = self._insert_element(token, push=True)
-                    self._append_active_formatting_entry(name, token.attrs, node)
-                    return None
-                if name in {"applet", "marquee", "object"}:
-                    self._reconstruct_active_formatting_elements()
-                    self._insert_element(token, push=True)
-                    self._push_formatting_marker()
-                    self.frameset_ok = False
-                    return None
-                if name == "hr":
-                    self._close_p_element()
-                    self._insert_element(token, push=False)
-                    self.frameset_ok = False
-                    return None
-                if name == "br":
-                    self._close_p_element()
-                    # Per html5ever rules.rs:758-774, br reconstructs formatting elements
-                    self._reconstruct_active_formatting_elements()
-                    self._insert_element(token, push=False)
-                    self.frameset_ok = False
-                    return None
-                # Special case: frameset in body mode with frameset_ok flag still true
-                if name == "frameset":
-                    if not self.frameset_ok:
-                        self._parse_error("unexpected-start-tag-ignored")
-                        return None
-                    # Remove body from open_elements and the tree
-                    # Find body element index
-                    body_index = None
-                    for i, elem in enumerate(self.open_elements):
-                        if elem.name == "body":
-                            body_index = i
-                            break
-                    if body_index is not None:
-                        # Remove body and all descendants from open_elements
-                        body_elem = self.open_elements[body_index]
-                        if body_elem.parent:
-                            body_elem.parent.remove_child(body_elem)
-                        # Remove body and everything after it from the stack
-                        self.open_elements = self.open_elements[:body_index]
-                    # Insert frameset and switch mode
-                    self._insert_element(token, push=True)
-                    self.mode = InsertionMode.IN_FRAMESET
-                    return None
-                # Elements that should be ignored in body mode (parse error) in full document parsing
-                # In fragment parsing, these may be valid depending on context
-                if name in {"colgroup", "head", "tbody", "td", "tfoot", "th", "thead", "tr"}:
-                    self._parse_error("unexpected-start-tag-ignored")
-                    return None
-                if self.fragment_context is None and name in {"col", "frame"}:
-                    self._parse_error("unexpected-start-tag-ignored")
-                    return None
-                # Metadata void elements (InHead mode elements) - NO formatting reconstruction
-                # Per html5ever rules.rs:190, these just insert_and_pop without reconstruct.
-                if name in {"base", "basefont", "bgsound", "link", "meta"}:
-                    self._insert_element(token, push=False)
-                    return None
-                # Legacy element: <image> is treated as <img>
-                if name == "image":
-                    self._parse_error("image-start-tag")
-                    # Create new token with img name but same attributes
-                    img_token = Tag(Tag.START, "img", token.attrs, token.self_closing)
-                    self._reconstruct_active_formatting_elements()
-                    self._insert_element(img_token, push=False)
-                    self.frameset_ok = False
-                    return None
-                # Content void elements - reconstruct formatting per html5ever rules.rs:758-774
-                # These DO reconstruct active formatting elements before insertion.
-                if name in {"area", "br", "embed", "img", "keygen", "wbr"}:
-                    self._reconstruct_active_formatting_elements()
-                    self._insert_element(token, push=False)
-                    self.frameset_ok = False
-                    return None
-                # Other void elements (col, frame, param, source, track) - no reconstruct
-                if name in {"col", "frame", "param", "source", "track"}:
-                    self._insert_element(token, push=False)
-                    return None
-                if name == "input":
-                    # Special handling: input type="hidden" does NOT set frameset_ok to false
-                    input_type = None
-                    for attr in token.attrs:
-                        if attr.name == "type":
-                            input_type = (attr.value or "").lower()
-                            break
-                    self._insert_element(token, push=False)
-                    if input_type != "hidden":
-                        self.frameset_ok = False
-                    return None
-                if name == "table":
-                    # HTML5 spec: In standards mode (not quirks), close any open p element before table
-                    if self.quirks_mode != "quirks":
-                        self._close_p_element()
-                    self._insert_element(token, push=True)
-                    self.frameset_ok = False
-                    self.mode = InsertionMode.IN_TABLE
-                    return None
-                if name in {"plaintext", "xmp"}:
-                    # These elements implicitly close p
-                    self._close_p_element()
-                    self._insert_element(token, push=True)
-                    self.frameset_ok = False
-                    # Signal tokenizer to switch to PLAINTEXT mode (plaintext consumes all remaining input)
-                    if name == "plaintext":
-                        self.tokenizer_state_override = TokenSinkResult.Plaintext
-                    return None
-                if name == "textarea":
-                    self._insert_element(token, push=True)
-                    self.ignore_lf = True
-                    self.frameset_ok = False
-                    return None
-                if name == "select":
-                    self._reconstruct_active_formatting_elements()
-                    self._insert_element(token, push=True)
-                    self.frameset_ok = False
-                    self._reset_insertion_mode()
-                    return None
-                if name == "option":
-                    # Close any open option element, reconstruct formatting, then insert.
-                    # Matches html5ever step() InBody optgroup/option handling.
-                    if self.open_elements and self.open_elements[-1].name == "option":
-                        self.open_elements.pop()
-                    self._reconstruct_active_formatting_elements()
-                    self._insert_element(token, push=True)
-                    return None
-                if name == "optgroup":
-                    # Close open option, close open optgroup, reconstruct, insert.
-                    # Matches html5ever step() InBody optgroup/option handling.
-                    if self.open_elements and self.open_elements[-1].name == "option":
-                        self.open_elements.pop()
-                    # Also close any open optgroup
-                    if self.open_elements and self.open_elements[-1].name == "optgroup":
-                        self.open_elements.pop()
-                    self._reconstruct_active_formatting_elements()
-                    self._insert_element(token, push=True)
-                    return None
-                # Ruby elements auto-close previous ruby elements
-                if name in {"rp", "rt"}:
-                    # Generate implied end tags but exclude rtc (rp/rt can appear inside rtc)
-                    self._generate_implied_end_tags(exclude="rtc")
-                    self._insert_element(token, push=True)
-                    return None
-                if name in {"rb", "rtc"}:
-                    # Close rb, rp, rt, or rtc elements before inserting rb/rtc
-                    if self.open_elements and self.open_elements[-1].name in {"rb", "rp", "rt", "rtc"}:
-                        self._generate_implied_end_tags()
-                    self._insert_element(token, push=True)
-                    return None
-                # Table elements that appear outside table context are parse errors and ignored
-                if name in {"caption", "col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr"}:
-                    self._parse_error(f"Unexpected <{name}> in body")
-                    return None
-                # Any other start tag: reconstruct active formatting elements, then insert
-                self._reconstruct_active_formatting_elements()
-                # Per HTML5 spec: self-closing flag should be ignored for non-void HTML elements
-                # Only void elements and foreign elements can be self-closing
-                self._insert_element(token, push=True)
-                if token.self_closing:
-                    self._parse_error("non-void-html-element-start-tag-with-trailing-solidus")
-                # Most elements set frameset_ok to false, except certain whitelisted ones
-                # Per HTML5 spec, these DON'T set frameset_ok to false:
-                # - Formatting elements, paragraph-like block elements, table structure elements
-                # - Head metadata elements (already handled above)
-                if name not in {
-                    "address",
-                    "article",
-                    "aside",
-                    "blockquote",
-                    "center",
-                    "details",
-                    "dialog",
-                    "dir",
-                    "div",
-                    "dl",
-                    "fieldset",
-                    "figcaption",
-                    "figure",
-                    "footer",
-                    "header",
-                    "hgroup",
-                    "main",
-                    "menu",
-                    "nav",
-                    "ol",
-                    "p",
-                    "section",
-                    "summary",
-                    "ul",
-                    "caption",
-                    "col",
-                    "colgroup",
-                    "hr",
-                    "pre",
-                    "listing",
-                }:
-                    if name not in FORMATTING_ELEMENTS:
-                        self.frameset_ok = False
-                return None
+                handler = self._body_start_handlers.get(token.name)
+                if handler:
+                    return handler(token)
+                return self._handle_body_start_default(token)
             name = token.name
 
             # Special case: </br> end tag is treated as <br> start tag
@@ -1402,6 +1130,296 @@ class TreeBuilder:
                 return self._mode_in_template(token)
             self.mode = InsertionMode.AFTER_BODY
             return ("reprocess", InsertionMode.AFTER_BODY, token)
+        return None
+
+    # ---------------------
+    # Body mode start tag handlers
+    # ---------------------
+
+    def _handle_body_start_html(self, token):
+        if self.template_modes:
+            self._parse_error("Unexpected <html> in template")
+            return None
+        if self.open_elements:
+            html = self.open_elements[0]
+            self._add_missing_attributes(html, token.attrs)
+        return None
+
+    def _handle_body_start_body(self, token):
+        if self.template_modes:
+            self._parse_error("Unexpected <body> in template")
+            return None
+        if len(self.open_elements) > 1:
+            self._parse_error("Unexpected <body> inside body")
+            body = self.open_elements[1] if len(self.open_elements) > 1 else None
+            if body and body.name == "body":
+                self._add_missing_attributes(body, token.attrs)
+            self.frameset_ok = False
+            return None
+        self.frameset_ok = False
+        return None
+
+    def _handle_body_start_head(self, token):
+        self._parse_error("Unexpected <head> in body")
+        return None
+
+    def _handle_body_start_in_head(self, token):
+        return self._mode_in_head(token)
+
+    def _handle_body_start_block_with_p(self, token):
+        self._close_p_element()
+        self._insert_element(token, push=True)
+        return None
+
+    def _handle_body_start_heading(self, token):
+        self._close_p_element()
+        if self.open_elements and self.open_elements[-1].name in HEADING_ELEMENTS:
+            self._parse_error("Nested heading")
+            self._pop_current()
+        self._insert_element(token, push=True)
+        self.frameset_ok = False
+        return None
+
+    def _handle_body_start_pre_listing(self, token):
+        self._close_p_element()
+        self._insert_element(token, push=True)
+        self.ignore_lf = True
+        self.frameset_ok = False
+        return None
+
+    def _handle_body_start_form(self, token):
+        if self.form_element is not None:
+            self._parse_error("Nested form")
+            return None
+        self._close_p_element()
+        node = self._insert_element(token, push=True)
+        self.form_element = node
+        self.frameset_ok = False
+        return None
+
+    def _handle_body_start_button(self, token):
+        if self._has_in_scope("button"):
+            self._parse_error("Nested button")
+            self._close_element_by_name("button")
+        self._insert_element(token, push=True)
+        self.frameset_ok = False
+        return None
+
+    def _handle_body_start_paragraph(self, token):
+        self._close_p_element()
+        self._insert_element(token, push=True)
+        return None
+
+    def _handle_body_start_math(self, token):
+        self._reconstruct_active_formatting_elements()
+        attrs = self._prepare_foreign_attributes("math", token.attrs)
+        new_tag = Tag(Tag.START, token.name, attrs, token.self_closing)
+        self._insert_element(new_tag, push=not token.self_closing, namespace="math")
+        return None
+
+    def _handle_body_start_svg(self, token):
+        self._reconstruct_active_formatting_elements()
+        adjusted_name = self._adjust_svg_tag_name(token.name)
+        attrs = self._prepare_foreign_attributes("svg", token.attrs)
+        new_tag = Tag(Tag.START, adjusted_name, attrs, token.self_closing)
+        self._insert_element(new_tag, push=not token.self_closing, namespace="svg")
+        return None
+
+    def _handle_body_start_li(self, token):
+        self.frameset_ok = False
+        self._close_p_element()
+        if self._has_in_list_item_scope("li"):
+            self._pop_until_any_inclusive({"li"})
+        self._insert_element(token, push=True)
+        return None
+
+    def _handle_body_start_dd_dt(self, token):
+        self.frameset_ok = False
+        self._close_p_element()
+        name = token.name
+        if name == "dd":
+            if self._has_in_definition_scope("dd"):
+                self._pop_until_any_inclusive({"dd"})
+            if self._has_in_definition_scope("dt"):
+                self._pop_until_any_inclusive({"dt"})
+        else:
+            if self._has_in_definition_scope("dt"):
+                self._pop_until_any_inclusive({"dt"})
+            if self._has_in_definition_scope("dd"):
+                self._pop_until_any_inclusive({"dd"})
+        self._insert_element(token, push=True)
+        return None
+
+    def _handle_body_start_a(self, token):
+        if self._has_active_formatting_entry("a"):
+            self._adoption_agency("a")
+            self._remove_last_active_formatting_by_name("a")
+            self._remove_last_open_element_by_name("a")
+        self._reconstruct_active_formatting_elements()
+        node = self._insert_element(token, push=True)
+        self._append_active_formatting_entry("a", token.attrs, node)
+        return None
+
+    def _handle_body_start_formatting(self, token):
+        name = token.name
+        if name == "nobr" and self._in_scope("nobr"):
+            self._adoption_agency("nobr")
+            self._remove_last_active_formatting_by_name("nobr")
+            self._remove_last_open_element_by_name("nobr")
+        self._reconstruct_active_formatting_elements()
+        duplicate_index = self._find_active_formatting_duplicate(name, token.attrs)
+        if duplicate_index is not None:
+            self._remove_formatting_entry(duplicate_index)
+        node = self._insert_element(token, push=True)
+        self._append_active_formatting_entry(name, token.attrs, node)
+        return None
+
+    def _handle_body_start_applet_like(self, token):
+        self._reconstruct_active_formatting_elements()
+        self._insert_element(token, push=True)
+        self._push_formatting_marker()
+        self.frameset_ok = False
+        return None
+
+    def _handle_body_start_hr(self, token):
+        self._close_p_element()
+        self._insert_element(token, push=False)
+        self.frameset_ok = False
+        return None
+
+    def _handle_body_start_br(self, token):
+        self._close_p_element()
+        self._reconstruct_active_formatting_elements()
+        self._insert_element(token, push=False)
+        self.frameset_ok = False
+        return None
+
+    def _handle_body_start_frameset(self, token):
+        if not self.frameset_ok:
+            self._parse_error("unexpected-start-tag-ignored")
+            return None
+        body_index = None
+        for i, elem in enumerate(self.open_elements):
+            if elem.name == "body":
+                body_index = i
+                break
+        if body_index is not None:
+            body_elem = self.open_elements[body_index]
+            if body_elem.parent:
+                body_elem.parent.remove_child(body_elem)
+            self.open_elements = self.open_elements[:body_index]
+        self._insert_element(token, push=True)
+        self.mode = InsertionMode.IN_FRAMESET
+        return None
+
+    def _handle_body_start_structure_ignored(self, token):
+        self._parse_error("unexpected-start-tag-ignored")
+        return None
+
+    def _handle_body_start_col_or_frame(self, token):
+        if self.fragment_context is None:
+            self._parse_error("unexpected-start-tag-ignored")
+            return None
+        self._insert_element(token, push=False)
+        return None
+
+    def _handle_body_start_image(self, token):
+        self._parse_error("image-start-tag")
+        img_token = Tag(Tag.START, "img", token.attrs, token.self_closing)
+        self._reconstruct_active_formatting_elements()
+        self._insert_element(img_token, push=False)
+        self.frameset_ok = False
+        return None
+
+    def _handle_body_start_void_with_formatting(self, token):
+        self._reconstruct_active_formatting_elements()
+        self._insert_element(token, push=False)
+        self.frameset_ok = False
+        return None
+
+    def _handle_body_start_simple_void(self, token):
+        self._insert_element(token, push=False)
+        return None
+
+    def _handle_body_start_input(self, token):
+        input_type = None
+        for attr in token.attrs:
+            if attr.name == "type":
+                input_type = (attr.value or "").lower()
+                break
+        self._insert_element(token, push=False)
+        if input_type != "hidden":
+            self.frameset_ok = False
+        return None
+
+    def _handle_body_start_table(self, token):
+        if self.quirks_mode != "quirks":
+            self._close_p_element()
+        self._insert_element(token, push=True)
+        self.frameset_ok = False
+        self.mode = InsertionMode.IN_TABLE
+        return None
+
+    def _handle_body_start_plaintext_xmp(self, token):
+        self._close_p_element()
+        self._insert_element(token, push=True)
+        self.frameset_ok = False
+        if token.name == "plaintext":
+            self.tokenizer_state_override = TokenSinkResult.Plaintext
+        return None
+
+    def _handle_body_start_textarea(self, token):
+        self._insert_element(token, push=True)
+        self.ignore_lf = True
+        self.frameset_ok = False
+        return None
+
+    def _handle_body_start_select(self, token):
+        self._reconstruct_active_formatting_elements()
+        self._insert_element(token, push=True)
+        self.frameset_ok = False
+        self._reset_insertion_mode()
+        return None
+
+    def _handle_body_start_option(self, token):
+        if self.open_elements and self.open_elements[-1].name == "option":
+            self.open_elements.pop()
+        self._reconstruct_active_formatting_elements()
+        self._insert_element(token, push=True)
+        return None
+
+    def _handle_body_start_optgroup(self, token):
+        if self.open_elements and self.open_elements[-1].name == "option":
+            self.open_elements.pop()
+        if self.open_elements and self.open_elements[-1].name == "optgroup":
+            self.open_elements.pop()
+        self._reconstruct_active_formatting_elements()
+        self._insert_element(token, push=True)
+        return None
+
+    def _handle_body_start_rp_rt(self, token):
+        self._generate_implied_end_tags(exclude="rtc")
+        self._insert_element(token, push=True)
+        return None
+
+    def _handle_body_start_rb_rtc(self, token):
+        if self.open_elements and self.open_elements[-1].name in {"rb", "rp", "rt", "rtc"}:
+            self._generate_implied_end_tags()
+        self._insert_element(token, push=True)
+        return None
+
+    def _handle_body_start_table_parse_error(self, token):
+        self._parse_error(f"Unexpected <{token.name}> in body")
+        return None
+
+    def _handle_body_start_default(self, token):
+        self._reconstruct_active_formatting_elements()
+        self._insert_element(token, push=True)
+        if token.self_closing:
+            self._parse_error("non-void-html-element-start-tag-with-trailing-solidus")
+        name = token.name
+        if name not in _BODY_START_FRAMESET_NEUTRAL and name not in FORMATTING_ELEMENTS:
+            self.frameset_ok = False
         return None
 
     def _mode_in_table(self, token):
