@@ -199,7 +199,10 @@ class SimpleDomNode:
 
     def __init__(self, name, attrs=None, data=None, namespace=None):
         self.name = name
-        self.attrs = list(attrs) if attrs else []
+        if attrs:
+            self.attrs = attrs if isinstance(attrs, list) else list(attrs)
+        else:
+            self.attrs = []
         self.children = []
         self.parent = None
         self.data = data
@@ -2499,9 +2502,9 @@ class TreeBuilder:
         return self.document
 
     def _create_element(self, name, namespace, attrs):
-        attr_copies = list(attrs) if attrs else []
         ns = namespace or "html"
-        return SimpleDomNode(name, attrs=attr_copies, namespace=ns)
+        attr_list = attrs if attrs else []
+        return SimpleDomNode(name, attrs=attr_list, namespace=ns)
 
     def _pop_current(self):
         if not self.open_elements:
