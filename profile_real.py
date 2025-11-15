@@ -16,7 +16,7 @@ def load_dict(dict_path: pathlib.Path) -> bytes:
     return dict_path.read_bytes()
 
 
-def load_html_files(batch_path: pathlib.Path, dict_bytes: bytes, limit: int = 10):
+def load_html_files(batch_path: pathlib.Path, dict_bytes: bytes, limit: int = 100):
     """Load HTML files from batch."""
     results = []
     tar_dctx = zstd.ZstdDecompressor()
@@ -51,7 +51,7 @@ dict_bytes = load_dict(pathlib.Path("/home/emilstenstrom/Projects/web100k/html.d
 html_files = load_html_files(
     pathlib.Path("/home/emilstenstrom/Projects/web100k/batches/web100k-batch-001.tar.zst"),
     dict_bytes,
-    limit=10,
+    limit=100,
 )
 
 print(f"Loaded {len(html_files)} files")
