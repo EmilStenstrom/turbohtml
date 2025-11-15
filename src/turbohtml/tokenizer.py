@@ -144,7 +144,7 @@ class Tokenizer:
         self.text_buffer = []
         self.current_tag_name = []
         self.current_tag_attrs = []  # list of Attribute objects
-        self.current_attr_names = set()
+        self.current_attr_names = []
         self.current_attr_name = []
         self.current_attr_value = []
         self.current_attr_value_has_amp = False
@@ -1501,10 +1501,15 @@ class Tokenizer:
         if self.current_attr_value_has_amp:
             value = decode_entities_in_text(value, in_attribute=True)
         attr_names = self.current_attr_names
-        if name in attr_names:
+        is_duplicate = False
+        for existing in attr_names:
+            if existing == name:
+                is_duplicate = True
+                break
+        if is_duplicate:
             self._emit_error("Duplicate attribute")
         else:
-            attr_names.add(name)
+            attr_names.append(name)
             self.current_tag_attrs.append(Attribute(name, value))
         attr_name_buffer.clear()
         attr_value_buffer.clear()
