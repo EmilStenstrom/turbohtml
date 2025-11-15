@@ -103,6 +103,39 @@ _BODY_START_IN_HEAD_TAGS = (
 
 _BODY_START_FRAMESET_NEUTRAL = BLOCK_WITH_P_START | {"p", "caption", "col", "colgroup", "hr", "pre", "listing"}
 
+_BODY_APPLET_LIKE_END_TAGS = {"applet", "marquee", "object"}
+
+_BODY_BLOCK_END_TAGS = {
+    "address",
+    "article",
+    "aside",
+    "blockquote",
+    "button",
+    "center",
+    "details",
+    "dialog",
+    "dir",
+    "div",
+    "dl",
+    "fieldset",
+    "figcaption",
+    "figure",
+    "footer",
+    "header",
+    "hgroup",
+    "listing",
+    "main",
+    "menu",
+    "nav",
+    "ol",
+    "pre",
+    "search",
+    "section",
+    "summary",
+    "table",
+    "ul",
+}
+
 
 def _is_all_whitespace(text):
     if not text:
@@ -1039,7 +1072,7 @@ class TreeBuilder:
                 if not removed:
                     self._parse_error("Form element not in stack")
                 return None
-            if name in {"applet", "marquee", "object"}:
+            if name in _BODY_APPLET_LIKE_END_TAGS:
                 if not self._in_scope(name):
                     self._parse_error("Unexpected closing tag")
                     return None
@@ -1067,36 +1100,7 @@ class TreeBuilder:
                         break
                 return None
             # Block-level end tags (address, article, aside, blockquote, etc.)
-            if name in {
-                "address",
-                "article",
-                "aside",
-                "blockquote",
-                "button",
-                "center",
-                "details",
-                "dialog",
-                "dir",
-                "div",
-                "dl",
-                "fieldset",
-                "figcaption",
-                "figure",
-                "footer",
-                "header",
-                "hgroup",
-                "listing",
-                "main",
-                "menu",
-                "nav",
-                "ol",
-                "pre",
-                "search",
-                "section",
-                "summary",
-                "table",
-                "ul",
-            }:
+            if name in _BODY_BLOCK_END_TAGS:
                 if not self._in_scope(name):
                     self._parse_error(f"No matching <{name}> tag")
                     return None
