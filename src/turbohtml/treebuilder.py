@@ -11,15 +11,12 @@ from .constants import (
     FORMATTING_ELEMENTS,
     HEADING_ELEMENTS,
     HTML4_PUBLIC_PREFIXES,
-    HTML_INTEGRATION_POINT_ELEMENTS,
     HTML_INTEGRATION_POINT_SET,
     IMPLIED_END_TAGS,
     LIMITED_QUIRKY_PUBLIC_PREFIXES,
     LIST_ITEM_SCOPE_TERMINATORS,
     MATHML_ATTRIBUTE_ADJUSTMENTS,
-    MATHML_TEXT_INTEGRATION_POINT_ELEMENTS,
     MATHML_TEXT_INTEGRATION_POINT_SET,
-    NAMESPACE_URL_TO_PREFIX,
     QUIRKY_PUBLIC_MATCHES,
     QUIRKY_PUBLIC_PREFIXES,
     QUIRKY_SYSTEM_MATCHES,
@@ -46,10 +43,10 @@ from .tokens import (
 
 class TreeBuilderOpts:
     __slots__ = (
-        "exact_errors",
-        "scripting_enabled",
-        "iframe_srcdoc",
         "drop_doctype",
+        "exact_errors",
+        "iframe_srcdoc",
+        "scripting_enabled",
     )
 
     def __init__(
@@ -145,7 +142,7 @@ def _doctype_error_and_quirks(doctype, iframe_srcdoc):
 
 
 class SimpleDomNode:
-    __slots__ = ("name", "attrs", "children", "parent", "data", "namespace", "template_content")
+    __slots__ = ("attrs", "children", "data", "name", "namespace", "parent", "template_content")
 
     def __init__(self, name, attrs=None, data=None, namespace=None):
         self.name = name
@@ -195,7 +192,7 @@ class SimpleDomNode:
 
         line = f"| {' ' * indent}<{self._qualified_name()}>"
         attribute_lines = self._format_attributes(indent)
-        
+
         # Template elements output their content document fragment
         if self.name == "template" and self.template_content:
             content_line = f"| {' ' * (indent + 2)}content"
@@ -206,7 +203,7 @@ class SimpleDomNode:
             sections.append(content_line)
             sections.extend(child for child in content_child_lines if child)
             return "\n".join(sections)
-        
+
         child_lines = [child.to_test_format(indent + 2) for child in self.children]
 
         sections = [line]
@@ -225,7 +222,7 @@ class SimpleDomNode:
             return []
         formatted = []
         padding = " " * (indent + 2)
-        
+
         # Prepare display names for sorting
         display_attrs = []
         for attr in self.attrs:
@@ -237,10 +234,10 @@ class SimpleDomNode:
                 if lower_name in FOREIGN_ATTRIBUTE_ADJUSTMENTS:
                     attr_name = attr_name.replace(":", " ")
             display_attrs.append((attr_name, attr))
-        
+
         # Sort by display name for canonical test output
         display_attrs.sort(key=lambda x: x[0])
-        
+
         for attr_name, attr in display_attrs:
             value = attr.value or ""
             formatted.append(f'| {padding}{attr_name}="{value}"')
@@ -273,23 +270,23 @@ class SimpleDomNode:
 
 class TreeBuilder:
     __slots__ = (
-        "opts",
+        "active_formatting",
         "document",
-        "mode",
-        "original_mode",
-        "table_text_original_mode",
-        "open_elements",
-        "head_element",
-        "form_element",
-        "frameset_ok",
         "errors",
-        "quirks_mode",
+        "form_element",
         "fragment_context",
         "fragment_context_element",
+        "frameset_ok",
+        "head_element",
         "ignore_lf",
-        "active_formatting",
         "insert_from_table",
+        "mode",
+        "open_elements",
+        "opts",
+        "original_mode",
         "pending_table_text",
+        "quirks_mode",
+        "table_text_original_mode",
         "template_modes",
         "tokenizer_state_override",
     )
@@ -402,7 +399,9 @@ class TreeBuilder:
                             while self.open_elements and self.open_elements[-1].namespace not in {None, "html"}:
                                 node = self.open_elements[-1]
                                 # Stop if we reach an integration point - don't pop it
-                                if self._is_html_integration_point(node) or self._is_mathml_text_integration_point(node):
+                                if self._is_html_integration_point(node) or self._is_mathml_text_integration_point(
+                                    node
+                                ):
                                     break
                                 self.open_elements.pop()
                             self._reset_insertion_mode()
@@ -436,16 +435,25 @@ class TreeBuilder:
                         # At integration points inside foreign content, check if table tags make sense.
                         # If we're in a table mode but NOT inside an actual HTML table element,
                         # use IN_BODY mode to ignore inappropriate table tags.
-                        if (current.namespace not in {None, "html"} and
-                            (self._is_mathml_text_integration_point(current) or self._is_html_integration_point(current)) and
-                            isinstance(current_token, Tag) and current_token.kind == Tag.START and
-                            self.mode not in {InsertionMode.IN_BODY}):
+                        if (
+                            current.namespace not in {None, "html"}
+                            and (
+                                self._is_mathml_text_integration_point(current)
+                                or self._is_html_integration_point(current)
+                            )
+                            and isinstance(current_token, Tag)
+                            and current_token.kind == Tag.START
+                            and self.mode not in {InsertionMode.IN_BODY}
+                        ):
                             # Check if we're in a table mode but without an actual table in scope
                             # If so, table tags should be ignored (use IN_BODY mode)
                             is_table_mode = self.mode in {
-                                InsertionMode.IN_TABLE, InsertionMode.IN_TABLE_BODY,
-                                InsertionMode.IN_ROW, InsertionMode.IN_CELL,
-                                InsertionMode.IN_CAPTION, InsertionMode.IN_COLUMN_GROUP
+                                InsertionMode.IN_TABLE,
+                                InsertionMode.IN_TABLE_BODY,
+                                InsertionMode.IN_ROW,
+                                InsertionMode.IN_CELL,
+                                InsertionMode.IN_CAPTION,
+                                InsertionMode.IN_COLUMN_GROUP,
                             }
                             has_table_in_scope = self._has_in_table_scope("table")
                             if is_table_mode and not has_table_in_scope:
@@ -507,20 +515,17 @@ class TreeBuilder:
             if self.document.children and self.document.children[0].name == "html":
                 root = self.document.children[0]
                 context_elem = self.fragment_context_element
-                if (
-                    context_elem is not None
-                    and context_elem.parent is root
-                ):
+                if context_elem is not None and context_elem.parent is root:
                     for child in list(context_elem.children):
                         context_elem.remove_child(child)
                         root.append_child(child)
                     root.remove_child(context_elem)
                 self._reparent_children(root, self.document)
                 self.document.remove_child(root)
-        
+
         # Populate selectedcontent elements per HTML5 spec
         self._populate_selectedcontent(self.document)
-        
+
         return self.document
 
     # Insertion mode dispatch ------------------------------------------------
@@ -831,7 +836,17 @@ class TreeBuilder:
                 # Non-hidden input creates body
                 self._insert_body_if_missing()
                 return ("reprocess", InsertionMode.IN_BODY, token)
-            if token.kind == Tag.START and token.name in {"base", "basefont", "bgsound", "link", "meta", "title", "style", "script", "noscript"}:
+            if token.kind == Tag.START and token.name in {
+                "base",
+                "basefont",
+                "bgsound",
+                "link",
+                "meta",
+                "title",
+                "style",
+                "script",
+                "noscript",
+            }:
                 if self.head_element is None:
                     self.head_element = self._insert_phantom("head")
                 self.open_elements.append(self.head_element)
@@ -940,8 +955,18 @@ class TreeBuilder:
                     self._parse_error("Unexpected <head> in body")
                     return None
                 # Non-template head-related tags: delegate to IN_HEAD
-                if name in {"base", "basefont", "bgsound", "link", "meta", "noframes", 
-                           "script", "style", "template", "title"}:
+                if name in {
+                    "base",
+                    "basefont",
+                    "bgsound",
+                    "link",
+                    "meta",
+                    "noframes",
+                    "script",
+                    "style",
+                    "template",
+                    "title",
+                }:
                     return self._mode_in_head(token)
                 if name in BLOCK_WITH_P_START:
                     if self._has_in_button_scope("p"):
@@ -1098,10 +1123,10 @@ class TreeBuilder:
                 # Elements that should be ignored in body mode (parse error) in full document parsing
                 # In fragment parsing, these may be valid depending on context
                 if name in {"colgroup", "head", "tbody", "td", "tfoot", "th", "thead", "tr"}:
-                    self._parse_error(f"unexpected-start-tag-ignored")
+                    self._parse_error("unexpected-start-tag-ignored")
                     return None
                 if self.fragment_context is None and name in {"col", "frame"}:
-                    self._parse_error(f"unexpected-start-tag-ignored")
+                    self._parse_error("unexpected-start-tag-ignored")
                     return None
                 # Metadata void elements (InHead mode elements) - NO formatting reconstruction
                 # Per html5ever rules.rs:190, these just insert_and_pop without reconstruct.
@@ -1214,123 +1239,173 @@ class TreeBuilder:
                 # Per HTML5 spec, these DON'T set frameset_ok to false:
                 # - Formatting elements, paragraph-like block elements, table structure elements
                 # - Head metadata elements (already handled above)
-                if name not in {"address", "article", "aside", "blockquote", "center", "details", 
-                               "dialog", "dir", "div", "dl", "fieldset", "figcaption", "figure", 
-                               "footer", "header", "hgroup", "main", "menu", "nav", "ol", "p", 
-                               "section", "summary", "ul", "caption", "col", "colgroup", "hr",
-                               "pre", "listing"}:
+                if name not in {
+                    "address",
+                    "article",
+                    "aside",
+                    "blockquote",
+                    "center",
+                    "details",
+                    "dialog",
+                    "dir",
+                    "div",
+                    "dl",
+                    "fieldset",
+                    "figcaption",
+                    "figure",
+                    "footer",
+                    "header",
+                    "hgroup",
+                    "main",
+                    "menu",
+                    "nav",
+                    "ol",
+                    "p",
+                    "section",
+                    "summary",
+                    "ul",
+                    "caption",
+                    "col",
+                    "colgroup",
+                    "hr",
+                    "pre",
+                    "listing",
+                }:
                     if name not in FORMATTING_ELEMENTS:
                         self.frameset_ok = False
                 return None
-            else:
-                name = token.name
-                
-                # Special case: </br> end tag is treated as <br> start tag
-                if name == "br":
-                    self._parse_error("Unexpected </br>")
-                    br_tag = Tag(Tag.START, "br", [], False)
-                    return self._mode_in_body(br_tag)
-                
-                if name in FORMATTING_ELEMENTS:
-                    self._adoption_agency(name)
-                    return None
-                if name == "body":
-                    if self._in_scope("body"):
-                        self.mode = InsertionMode.AFTER_BODY
-                    return None
-                if name == "html":
-                    if self._in_scope("body"):
-                        return ("reprocess", InsertionMode.AFTER_BODY, token)
-                    return None
-                if name == "p":
-                    if not self._has_in_button_scope("p"):
-                        self._parse_error("Unexpected </p>")
-                        phantom = Tag(Tag.START, "p", [], False)
-                        self._insert_element(phantom, push=True)
-                    self._close_p_element()
-                    return None
-                if name == "li":
-                    if not self._has_in_list_item_scope("li"):
-                        self._parse_error("Unexpected </li>")
-                        return None
-                    self._pop_until_any_inclusive({"li"})
-                    return None
-                if name in {"dd", "dt"}:
-                    if not self._has_in_definition_scope(name):
-                        self._parse_error("Unexpected closing tag")
-                        return None
-                    self._pop_until_any_inclusive({"dd", "dt"})
-                    return None
-                if name == "form":
-                    if self.form_element is None:
-                        self._parse_error("Unexpected </form>")
-                        return None
-                    removed = self._remove_from_open_elements(self.form_element)
-                    self.form_element = None
-                    if not removed:
-                        self._parse_error("Form element not in stack")
-                    return None
-                if name in {"applet", "marquee", "object"}:
-                    if not self._in_scope(name):
-                        self._parse_error("Unexpected closing tag")
-                        return None
-                    while self.open_elements:
-                        popped = self.open_elements.pop()
-                        if popped.name == name:
-                            break
-                    self._clear_active_formatting_up_to_marker()
-                    return None
-                # Heading end tags: h1, h2, h3, h4, h5, h6
-                if name in HEADING_ELEMENTS:
-                    # If no heading element in scope, parse error and ignore
-                    if not self._has_any_in_scope(HEADING_ELEMENTS):
-                        self._parse_error(f"Unexpected </{name}>")
-                        return None
-                    # Generate implied end tags
-                    self._generate_implied_end_tags()
-                    # If current node is not this heading type, parse error
-                    if self.open_elements and self.open_elements[-1].name != name:
-                        self._parse_error(f"Mismatched heading end tag </{name}>")
-                    # Pop until we pop a heading element (any heading, not necessarily matching)
-                    while self.open_elements:
-                        popped = self.open_elements.pop()
-                        if popped.name in HEADING_ELEMENTS:
-                            break
-                    return None
-                # Block-level end tags (address, article, aside, blockquote, etc.)
-                if name in {
-                    "address", "article", "aside", "blockquote", "button", "center",
-                    "details", "dialog", "dir", "div", "dl", "fieldset", "figcaption",
-                    "figure", "footer", "header", "hgroup", "listing", "main", "menu",
-                    "nav", "ol", "pre", "search", "section", "summary", "table", "ul"
-                }:
-                    if not self._in_scope(name):
-                        self._parse_error(f"No matching <{name}> tag")
-                        return None
-                    # Generate implied end tags (cursory)
-                    self._generate_implied_end_tags()
-                    if self.open_elements and self.open_elements[-1].name != name:
-                        self._parse_error(f"Unexpected open element while closing {name}")
-                    # Pop until we find and pop the target element
-                    self._pop_until_any_inclusive({name})
-                    return None
-                # Template end tag: handle inline (don't delegate to avoid mode corruption)
-                if name == "template":
-                    # Check if template is on the stack (don't use scope check as table blocks it)
-                    has_template = any(node.name == "template" for node in self.open_elements)
-                    if not has_template:
-                        return None
-                    self._generate_implied_end_tags()
-                    self._pop_until_inclusive("template")
-                    self._clear_active_formatting_up_to_marker()
-                    if self.template_modes:
-                        self.template_modes.pop()
-                    # Reset insertion mode to determine correct mode after template
-                    self._reset_insertion_mode()
-                    return None
-                # Any other end tag
-                self._any_other_end_tag(token.name)
+            name = token.name
+
+            # Special case: </br> end tag is treated as <br> start tag
+            if name == "br":
+                self._parse_error("Unexpected </br>")
+                br_tag = Tag(Tag.START, "br", [], False)
+                return self._mode_in_body(br_tag)
+
+            if name in FORMATTING_ELEMENTS:
+                self._adoption_agency(name)
                 return None
+            if name == "body":
+                if self._in_scope("body"):
+                    self.mode = InsertionMode.AFTER_BODY
+                return None
+            if name == "html":
+                if self._in_scope("body"):
+                    return ("reprocess", InsertionMode.AFTER_BODY, token)
+                return None
+            if name == "p":
+                if not self._has_in_button_scope("p"):
+                    self._parse_error("Unexpected </p>")
+                    phantom = Tag(Tag.START, "p", [], False)
+                    self._insert_element(phantom, push=True)
+                self._close_p_element()
+                return None
+            if name == "li":
+                if not self._has_in_list_item_scope("li"):
+                    self._parse_error("Unexpected </li>")
+                    return None
+                self._pop_until_any_inclusive({"li"})
+                return None
+            if name in {"dd", "dt"}:
+                if not self._has_in_definition_scope(name):
+                    self._parse_error("Unexpected closing tag")
+                    return None
+                self._pop_until_any_inclusive({"dd", "dt"})
+                return None
+            if name == "form":
+                if self.form_element is None:
+                    self._parse_error("Unexpected </form>")
+                    return None
+                removed = self._remove_from_open_elements(self.form_element)
+                self.form_element = None
+                if not removed:
+                    self._parse_error("Form element not in stack")
+                return None
+            if name in {"applet", "marquee", "object"}:
+                if not self._in_scope(name):
+                    self._parse_error("Unexpected closing tag")
+                    return None
+                while self.open_elements:
+                    popped = self.open_elements.pop()
+                    if popped.name == name:
+                        break
+                self._clear_active_formatting_up_to_marker()
+                return None
+            # Heading end tags: h1, h2, h3, h4, h5, h6
+            if name in HEADING_ELEMENTS:
+                # If no heading element in scope, parse error and ignore
+                if not self._has_any_in_scope(HEADING_ELEMENTS):
+                    self._parse_error(f"Unexpected </{name}>")
+                    return None
+                # Generate implied end tags
+                self._generate_implied_end_tags()
+                # If current node is not this heading type, parse error
+                if self.open_elements and self.open_elements[-1].name != name:
+                    self._parse_error(f"Mismatched heading end tag </{name}>")
+                # Pop until we pop a heading element (any heading, not necessarily matching)
+                while self.open_elements:
+                    popped = self.open_elements.pop()
+                    if popped.name in HEADING_ELEMENTS:
+                        break
+                return None
+            # Block-level end tags (address, article, aside, blockquote, etc.)
+            if name in {
+                "address",
+                "article",
+                "aside",
+                "blockquote",
+                "button",
+                "center",
+                "details",
+                "dialog",
+                "dir",
+                "div",
+                "dl",
+                "fieldset",
+                "figcaption",
+                "figure",
+                "footer",
+                "header",
+                "hgroup",
+                "listing",
+                "main",
+                "menu",
+                "nav",
+                "ol",
+                "pre",
+                "search",
+                "section",
+                "summary",
+                "table",
+                "ul",
+            }:
+                if not self._in_scope(name):
+                    self._parse_error(f"No matching <{name}> tag")
+                    return None
+                # Generate implied end tags (cursory)
+                self._generate_implied_end_tags()
+                if self.open_elements and self.open_elements[-1].name != name:
+                    self._parse_error(f"Unexpected open element while closing {name}")
+                # Pop until we find and pop the target element
+                self._pop_until_any_inclusive({name})
+                return None
+            # Template end tag: handle inline (don't delegate to avoid mode corruption)
+            if name == "template":
+                # Check if template is on the stack (don't use scope check as table blocks it)
+                has_template = any(node.name == "template" for node in self.open_elements)
+                if not has_template:
+                    return None
+                self._generate_implied_end_tags()
+                self._pop_until_inclusive("template")
+                self._clear_active_formatting_up_to_marker()
+                if self.template_modes:
+                    self.template_modes.pop()
+                # Reset insertion mode to determine correct mode after template
+                self._reset_insertion_mode()
+                return None
+            # Any other end tag
+            self._any_other_end_tag(token.name)
+            return None
         if isinstance(token, EOFToken):
             # If we're in a template, handle EOF in template mode first
             if self.template_modes:
@@ -1504,23 +1579,22 @@ class TreeBuilder:
                     # In fragment parsing, if there's no caption to close, process in IN_BODY mode
                     return self._mode_in_body(token)
                 return self._mode_in_body(token)
-            else:
-                if name == "caption":
-                    if not self._close_caption_element():
-                        return None
+            if name == "caption":
+                if not self._close_caption_element():
                     return None
-                if name == "table":
+                return None
+            if name == "table":
+                if self._close_caption_element():
+                    return ("reprocess", InsertionMode.IN_TABLE, token)
+                return None
+            if name in {"tbody", "tfoot", "thead"}:
+                if self._has_in_table_scope(name):
                     if self._close_caption_element():
                         return ("reprocess", InsertionMode.IN_TABLE, token)
-                    return None
-                if name in {"tbody", "tfoot", "thead"}:
-                    if self._has_in_table_scope(name):
-                        if self._close_caption_element():
-                            return ("reprocess", InsertionMode.IN_TABLE, token)
-                    else:
-                        self._parse_error("unexpected-end-tag")
-                    return None
-                return self._mode_in_body(token)
+                else:
+                    self._parse_error("unexpected-end-tag")
+                return None
+            return self._mode_in_body(token)
         if isinstance(token, EOFToken):
             return self._mode_in_body(token)
         return None
@@ -1544,15 +1618,15 @@ class TreeBuilder:
             data = token.data or ""
             # Find first non-whitespace character
             stripped = data.lstrip(" \t\n\r\f")
-            
+
             if len(stripped) < len(data):
                 # Has leading whitespace - insert it
-                ws = data[:len(data) - len(stripped)]
+                ws = data[: len(data) - len(stripped)]
                 self._append_text(ws)
-            
+
             if not stripped:
                 return None
-            
+
             # Continue processing non-whitespace with a new token
             non_ws_token = CharacterTokens(stripped)
             if current and current.name == "html":
@@ -1592,16 +1666,19 @@ class TreeBuilder:
                         self._pop_current()
                         self.mode = InsertionMode.IN_TABLE
                         return ("reprocess", InsertionMode.IN_TABLE, token)
-                    elif current and current.name == "template":
+                    if current and current.name == "template":
                         # In template, reject duplicate colgroup
                         return None
-                    elif current and current.name != "html":
+                    if current and current.name != "html":
                         self._pop_current()
                         self.mode = InsertionMode.IN_TABLE
                         return ("reprocess", InsertionMode.IN_TABLE, token)
                     return None
-                if (self.fragment_context and self.fragment_context.tag_name.lower() == "colgroup"
-                    and not self._has_in_table_scope("table")):
+                if (
+                    self.fragment_context
+                    and self.fragment_context.tag_name.lower() == "colgroup"
+                    and not self._has_in_table_scope("table")
+                ):
                     self._parse_error("unexpected-start-tag-in-column-group")
                     return None
                 # Anything else: if we're in a colgroup, pop it and switch to IN_TABLE
@@ -1610,40 +1687,39 @@ class TreeBuilder:
                     self._pop_current()
                     self.mode = InsertionMode.IN_TABLE
                     return ("reprocess", InsertionMode.IN_TABLE, token)
-                elif current and current.name == "template":
+                if current and current.name == "template":
                     # In template column group context, non-column content is ignored
                     self._parse_error("unexpected-start-tag-in-template-column-group")
                     return None
-                elif current and current.name != "html":
-                    self._pop_current()
-                    self.mode = InsertionMode.IN_TABLE
-                    return ("reprocess", InsertionMode.IN_TABLE, token)
-                return ("reprocess", InsertionMode.IN_TABLE, token)
-            else:
-                if name == "colgroup":
-                    if current and current.name == "colgroup":
-                        self._pop_current()
-                        self.mode = InsertionMode.IN_TABLE
-                    else:
-                        self._parse_error("unexpected-end-tag")
-                    return None
-                if name == "col":
-                    self._parse_error("unexpected-end-tag")
-                    return None
-                if name == "template":
-                    # Template end tag needs proper handling
-                    return self._mode_in_head(token)
                 if current and current.name != "html":
                     self._pop_current()
                     self.mode = InsertionMode.IN_TABLE
                     return ("reprocess", InsertionMode.IN_TABLE, token)
                 return ("reprocess", InsertionMode.IN_TABLE, token)
+            if name == "colgroup":
+                if current and current.name == "colgroup":
+                    self._pop_current()
+                    self.mode = InsertionMode.IN_TABLE
+                else:
+                    self._parse_error("unexpected-end-tag")
+                return None
+            if name == "col":
+                self._parse_error("unexpected-end-tag")
+                return None
+            if name == "template":
+                # Template end tag needs proper handling
+                return self._mode_in_head(token)
+            if current and current.name != "html":
+                self._pop_current()
+                self.mode = InsertionMode.IN_TABLE
+                return ("reprocess", InsertionMode.IN_TABLE, token)
+            return ("reprocess", InsertionMode.IN_TABLE, token)
         if isinstance(token, EOFToken):
             if current and current.name == "colgroup":
                 self._pop_current()
                 self.mode = InsertionMode.IN_TABLE
                 return ("reprocess", InsertionMode.IN_TABLE, token)
-            elif current and current.name == "template":
+            if current and current.name == "template":
                 # In template, delegate EOF handling to IN_TEMPLATE
                 return self._mode_in_template(token)
             return None
@@ -1676,41 +1752,48 @@ class TreeBuilder:
                         self._parse_error("unexpected-start-tag-in-template-table-context")
                         return None
                     # In fragment parsing with tbody/tfoot/thead context and no tbody on stack, ignore these tags
-                    elif (self.fragment_context and current and current.name == "html" and
-                          self.fragment_context.tag_name.lower() in {"tbody", "tfoot", "thead"}):
+                    elif (
+                        self.fragment_context
+                        and current
+                        and current.name == "html"
+                        and self.fragment_context.tag_name.lower() in {"tbody", "tfoot", "thead"}
+                    ):
                         self._parse_error("unexpected-start-tag")
                         return None
                     self.mode = InsertionMode.IN_TABLE
                     return ("reprocess", InsertionMode.IN_TABLE, token)
                 return self._mode_in_table(token)
-            else:
-                if name in {"tbody", "tfoot", "thead"}:
-                    if not self._has_in_table_scope(name):
-                        self._parse_error("unexpected-end-tag")
-                        return None
-                    self._clear_stack_to_table_body_context()
-                    self._pop_current()
-                    self.mode = InsertionMode.IN_TABLE
-                    return None
-                if name == "table":
-                    current = self.open_elements[-1] if self.open_elements else None
-                    # In a template, reject </table> as there's no table element
-                    if current and current.name == "template":
-                        self._parse_error("unexpected-end-tag")
-                        return None
-                    # In fragment parsing with tbody/tfoot/thead context and no tbody on stack, ignore </table>
-                    if (self.fragment_context and current and current.name == "html" and
-                        self.fragment_context.tag_name.lower() in {"tbody", "tfoot", "thead"}):
-                        self._parse_error("unexpected-end-tag")
-                        return None
-                    if current and current.name in {"tbody", "tfoot", "thead"}:
-                        self.open_elements.pop()
-                    self.mode = InsertionMode.IN_TABLE
-                    return ("reprocess", InsertionMode.IN_TABLE, token)
-                if name in {"caption", "col", "colgroup", "td", "th", "tr"}:
+            if name in {"tbody", "tfoot", "thead"}:
+                if not self._has_in_table_scope(name):
                     self._parse_error("unexpected-end-tag")
                     return None
-                return self._mode_in_table(token)
+                self._clear_stack_to_table_body_context()
+                self._pop_current()
+                self.mode = InsertionMode.IN_TABLE
+                return None
+            if name == "table":
+                current = self.open_elements[-1] if self.open_elements else None
+                # In a template, reject </table> as there's no table element
+                if current and current.name == "template":
+                    self._parse_error("unexpected-end-tag")
+                    return None
+                # In fragment parsing with tbody/tfoot/thead context and no tbody on stack, ignore </table>
+                if (
+                    self.fragment_context
+                    and current
+                    and current.name == "html"
+                    and self.fragment_context.tag_name.lower() in {"tbody", "tfoot", "thead"}
+                ):
+                    self._parse_error("unexpected-end-tag")
+                    return None
+                if current and current.name in {"tbody", "tfoot", "thead"}:
+                    self.open_elements.pop()
+                self.mode = InsertionMode.IN_TABLE
+                return ("reprocess", InsertionMode.IN_TABLE, token)
+            if name in {"caption", "col", "colgroup", "td", "th", "tr"}:
+                self._parse_error("unexpected-end-tag")
+                return None
+            return self._mode_in_table(token)
         if isinstance(token, EOFToken):
             return self._mode_in_table(token)
         return None
@@ -1793,9 +1876,11 @@ class TreeBuilder:
                     if self._close_table_cell():
                         return ("reprocess", self.mode, token)
                     # If no cell to close and we're in a fragment cell context, ignore the token
-                    if (self.fragment_context and
-                        self.fragment_context.tag_name.lower() in {"td", "th"} and
-                        not self._has_in_table_scope("table")):
+                    if (
+                        self.fragment_context
+                        and self.fragment_context.tag_name.lower() in {"td", "th"}
+                        and not self._has_in_table_scope("table")
+                    ):
                         self._parse_error("unexpected-start-tag-in-cell-fragment")
                         return None
                     # Otherwise delegate to IN_BODY
@@ -1957,69 +2042,68 @@ class TreeBuilder:
                     return None
                 self._parse_error(f"Unexpected <{name}> in select - ignored")
                 return None
-            else:
-                if name == "optgroup":
-                    if self.open_elements and self.open_elements[-1].name == "option":
-                        self.open_elements.pop()
-                    if self.open_elements and self.open_elements[-1].name == "optgroup":
-                        self.open_elements.pop()
-                    else:
-                        self._parse_error("Unexpected </optgroup>")
+            if name == "optgroup":
+                if self.open_elements and self.open_elements[-1].name == "option":
+                    self.open_elements.pop()
+                if self.open_elements and self.open_elements[-1].name == "optgroup":
+                    self.open_elements.pop()
+                else:
+                    self._parse_error("Unexpected </optgroup>")
+                return None
+            if name == "option":
+                if self.open_elements and self.open_elements[-1].name == "option":
+                    self.open_elements.pop()
+                else:
+                    self._parse_error("Unexpected </option>")
+                return None
+            if name == "select":
+                if not self._in_scope("select"):
+                    self._parse_error("Unexpected </select>")
                     return None
-                if name == "option":
-                    if self.open_elements and self.open_elements[-1].name == "option":
-                        self.open_elements.pop()
-                    else:
-                        self._parse_error("Unexpected </option>")
-                    return None
-                if name == "select":
-                    if not self._in_scope("select"):
-                        self._parse_error("Unexpected </select>")
-                        return None
+                self._pop_until_any_inclusive({"select"})
+                self._reset_insertion_mode()
+                return None
+            # Handle end tags for allowed HTML elements in select
+            if name == "a" or name in FORMATTING_ELEMENTS:
+                select_node = self._find_last_on_stack("select")
+                if select_node is not None:
+                    fmt_index = self._find_active_formatting_index(name)
+                    if fmt_index is not None:
+                        target = self.active_formatting[fmt_index]["node"]
+                        if target in self.open_elements:
+                            select_index = self.open_elements.index(select_node)
+                            target_index = self.open_elements.index(target)
+                            if target_index < select_index:
+                                self._parse_error(f"Unexpected </{name}> in select")
+                                return None
+                self._adoption_agency(name)
+                return None
+            if name in {"p", "div", "span", "button", "datalist", "selectedcontent"}:
+                # Pop elements until we find the matching element (or give up)
+                found = False
+                for node in reversed(self.open_elements):
+                    if node.name == name:
+                        found = True
+                        break
+                if found:
+                    # Pop elements until we've popped the target
+                    while self.open_elements:
+                        popped = self.open_elements.pop()
+                        if popped.name == name:
+                            break
+                else:
+                    self._parse_error(f"Unexpected </{name}>")
+                return None
+            if name == "template":
+                return self._mode_in_head(token)
+            if name in {"caption", "col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr", "table"}:
+                self._parse_error(f"Unexpected </{name}> in select")
+                if self._in_scope("select"):
                     self._pop_until_any_inclusive({"select"})
                     self._reset_insertion_mode()
-                    return None
-                # Handle end tags for allowed HTML elements in select
-                if name == "a" or name in FORMATTING_ELEMENTS:
-                    select_node = self._find_last_on_stack("select")
-                    if select_node is not None:
-                        fmt_index = self._find_active_formatting_index(name)
-                        if fmt_index is not None:
-                            target = self.active_formatting[fmt_index]["node"]
-                            if target in self.open_elements:
-                                select_index = self.open_elements.index(select_node)
-                                target_index = self.open_elements.index(target)
-                                if target_index < select_index:
-                                    self._parse_error(f"Unexpected </{name}> in select")
-                                    return None
-                    self._adoption_agency(name)
-                    return None
-                if name in {"p", "div", "span", "button", "datalist", "selectedcontent"}:
-                    # Pop elements until we find the matching element (or give up)
-                    found = False
-                    for node in reversed(self.open_elements):
-                        if node.name == name:
-                            found = True
-                            break
-                    if found:
-                        # Pop elements until we've popped the target
-                        while self.open_elements:
-                            popped = self.open_elements.pop()
-                            if popped.name == name:
-                                break
-                    else:
-                        self._parse_error(f"Unexpected </{name}>")
-                    return None
-                if name == "template":
-                    return self._mode_in_head(token)
-                if name in {"caption", "col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr", "table"}:
-                    self._parse_error(f"Unexpected </{name}> in select")
-                    if self._in_scope("select"):
-                        self._pop_until_any_inclusive({"select"})
-                        self._reset_insertion_mode()
-                        return ("reprocess", self.mode, token)
-                    return None
+                    return ("reprocess", self.mode, token)
                 return None
+            return None
         if isinstance(token, EOFToken):
             return self._mode_in_body(token)
         return None
@@ -2055,8 +2139,18 @@ class TreeBuilder:
                     self.mode = InsertionMode.IN_ROW
                     return ("reprocess", InsertionMode.IN_ROW, token)
                 # Default: pop template mode and push IN_BODY
-                if token.name not in {"base", "basefont", "bgsound", "link", "meta", "noframes", 
-                                      "script", "style", "template", "title"}:
+                if token.name not in {
+                    "base",
+                    "basefont",
+                    "bgsound",
+                    "link",
+                    "meta",
+                    "noframes",
+                    "script",
+                    "style",
+                    "template",
+                    "title",
+                }:
                     self.template_modes.pop()
                     self.template_modes.append(InsertionMode.IN_BODY)
                     self.mode = InsertionMode.IN_BODY
@@ -2064,8 +2158,18 @@ class TreeBuilder:
             if token.kind == Tag.END and token.name == "template":
                 return self._mode_in_head(token)
             # Head-related tags process in InHead
-            if token.name in {"base", "basefont", "bgsound", "link", "meta", "noframes", 
-                             "script", "style", "template", "title"}:
+            if token.name in {
+                "base",
+                "basefont",
+                "bgsound",
+                "link",
+                "meta",
+                "noframes",
+                "script",
+                "style",
+                "template",
+                "title",
+            }:
                 return self._mode_in_head(token)
         if isinstance(token, EOFToken):
             # Check if template is on the stack (don't use _in_scope as table blocks it)
@@ -2271,16 +2375,16 @@ class TreeBuilder:
                     return
         target = self._current_node_or_html()
         foster_parenting = self._should_foster_parenting(target, is_text=True)
-        
+
         # Reconstruct active formatting BEFORE getting insertion location when foster parenting
         if foster_parenting:
             self._reconstruct_active_formatting_elements()
-        
+
         # Always use appropriate insertion location to handle templates
         parent, position = self._appropriate_insertion_location(foster_parenting=foster_parenting)
         if parent is None:
             return
-        
+
         # Coalesce with adjacent text node if possible
         if position > 0 and parent.children[position - 1].name == "#text":
             parent.children[position - 1].data = (parent.children[position - 1].data or "") + text
@@ -2288,7 +2392,7 @@ class TreeBuilder:
         if position < len(parent.children) and parent.children[position].name == "#text":
             parent.children[position].data = text + (parent.children[position].data or "")
             return
-        
+
         node = SimpleDomNode("#text", data=text)
         parent.children.insert(position, node)
         node.parent = parent
@@ -2372,7 +2476,7 @@ class TreeBuilder:
         # Step 2: Loop through stack backwards
         for index in range(len(self.open_elements) - 1, -1, -1):
             node = self.open_elements[index]
-            
+
             # Step 2.1: If node's name matches the end tag name
             if node.name == name:
                 # Step 2.2: Generate implied end tags (except for this name)
@@ -2382,12 +2486,12 @@ class TreeBuilder:
                 # Step 2.4: Pop all elements from this node onwards
                 del self.open_elements[index:]
                 return
-            
+
             # Step 2.5: If node is a special element, parse error and ignore the tag
             if self._is_special_element(node):
                 self._parse_error(f"Unexpected end tag </{name}>")
                 return  # Ignore the end tag
-            
+
             # Step 2.6: Continue to next node (previous in stack)
 
     def _close_element_by_node(self, node):
@@ -2502,12 +2606,14 @@ class TreeBuilder:
                 if duplicates >= 3:
                     del self.active_formatting[index]
                     break
-        self.active_formatting.append({
-            "name": name,
-            "attrs": entry_attrs,
-            "node": node,
-            "signature": signature,
-        })
+        self.active_formatting.append(
+            {
+                "name": name,
+                "attrs": entry_attrs,
+                "node": node,
+                "signature": signature,
+            }
+        )
 
     def _clear_active_formatting_up_to_marker(self):
         while self.active_formatting:
@@ -2817,9 +2923,7 @@ class TreeBuilder:
         # use the fragment context element instead
         if not self.open_elements:
             return None
-        if (self.fragment_context and 
-            len(self.open_elements) == 1 and 
-            self.open_elements[0].name == "html"):
+        if self.fragment_context and len(self.open_elements) == 1 and self.open_elements[0].name == "html":
             # Return a pseudo-node representing the fragment context
             # We need something with .namespace, .name, and .attrs attributes
             class PseudoNode:
@@ -2827,9 +2931,10 @@ class TreeBuilder:
                     self.name = name
                     self.namespace = namespace
                     self.attrs = []  # Fragment context has no attributes
+
             return PseudoNode(
                 self.fragment_context.tag_name.lower(),
-                self.fragment_context.namespace
+                self.fragment_context.namespace,
             )
         return self.open_elements[-1]
 
@@ -2893,11 +2998,11 @@ class TreeBuilder:
             for ch in raw:
                 if ch == "\x00":
                     self._parse_error("invalid-codepoint-in-foreign-content")
-                    cleaned.append("\uFFFD")
+                    cleaned.append("\ufffd")
                     continue
                 if ch == "\x0c":
                     self._parse_error("invalid-codepoint-in-foreign-content")
-                    cleaned.append("\uFFFD")
+                    cleaned.append("\ufffd")
                     continue
                 cleaned.append(ch)
                 if ch not in "\t\n\f\r ":
@@ -2921,22 +3026,37 @@ class TreeBuilder:
         if isinstance(token, Tag):
             name_lower = self._lower_ascii(token.name)
             if token.kind == Tag.START:
-                if name_lower in FOREIGN_BREAKOUT_ELEMENTS or (name_lower == "font" and self._foreign_breakout_font(token)):
+                if name_lower in FOREIGN_BREAKOUT_ELEMENTS or (
+                    name_lower == "font" and self._foreign_breakout_font(token)
+                ):
                     self._parse_error("Unexpected HTML element in foreign content")
                     self._pop_until_html_or_integration_point()
                     self._reset_insertion_mode()
                     return ("reprocess", self.mode, token, True)
-                
+
                 # In MathML/SVG, table structure elements can only be children of:
                 # 1. The root foreign element (math/svg), OR
                 # 2. Other table structure elements (but not the same element type)
                 # If the current element is a non-table foreign element, block the table tag
-                table_structure_elements = {"tr", "td", "th", "thead", "tbody", "tfoot", "caption", "col", "colgroup", "table"}
+                table_structure_elements = {
+                    "tr",
+                    "td",
+                    "th",
+                    "thead",
+                    "tbody",
+                    "tfoot",
+                    "caption",
+                    "col",
+                    "colgroup",
+                    "table",
+                }
                 if current.namespace in {"math", "svg"} and name_lower in table_structure_elements:
                     # Check if current element is a table structure element or root foreign
                     current_name = self._lower_ascii(current.name)
                     # Block if: 1) current is not a table/root element, OR 2) same element type (tr in tr, td in td, etc.)
-                    if (current_name not in table_structure_elements and current_name not in {"math", "svg"}) or current_name == name_lower:
+                    if (
+                        current_name not in table_structure_elements and current_name not in {"math", "svg"}
+                    ) or current_name == name_lower:
                         self._parse_error(f"Unexpected {name_lower} in foreign content")
                         return None
 
@@ -2952,14 +3072,14 @@ class TreeBuilder:
 
             if token.kind == Tag.END:
                 name_lower = self._lower_ascii(token.name)
-                
+
                 # Special case: </br> and </p> end tags trigger breakout from foreign content
                 if name_lower in {"br", "p"}:
                     self._parse_error("Unexpected HTML end tag in foreign content")
                     self._pop_until_html_or_integration_point()
                     self._reset_insertion_mode()
                     return ("reprocess", self.mode, token, True)
-                
+
                 # Process foreign end tag per spec: walk stack backwards looking for match
                 idx = len(self.open_elements) - 1
                 first = True
@@ -2974,7 +3094,7 @@ class TreeBuilder:
                     node = self.open_elements[idx]
                     is_html = node.namespace in {None, "html"}
                     name_eq = self._lower_ascii(node.name) == name_lower
-                    
+
                     # Check if this node matches the end tag (case-insensitive)
                     if name_eq:
                         if self.fragment_context_element is not None and node is self.fragment_context_element:
@@ -2986,14 +3106,14 @@ class TreeBuilder:
                         # Otherwise it's a foreign element - pop everything from this point up
                         del self.open_elements[idx:]
                         return None
-                    
+
                     # Per HTML5 spec: if first node doesn't match, it's a parse error
                     if first:
                         self._parse_error("unexpected-end-tag-in-foreign-content")
                         first = False
 
                     idx -= 1
-                
+
                 # Reached here means we scanned entire stack without match - ignore tag
                 return None
 
@@ -3096,7 +3216,7 @@ class TreeBuilder:
 
             target_index = self.open_elements.index(target)
             furthest_block = None
-            for node in self.open_elements[target_index + 1:]:
+            for node in self.open_elements[target_index + 1 :]:
                 if self._is_special_element(node):
                     furthest_block = node
                     break
@@ -3272,78 +3392,78 @@ class TreeBuilder:
 
     def _populate_selectedcontent(self, root):
         """Populate selectedcontent elements with content from selected option.
-        
+
         Per HTML5 spec: selectedcontent mirrors the content of the selected option,
         or the first option if none is selected.
         """
         # Find all select elements
         selects = []
-        self._find_elements(root, 'select', selects)
-        
+        self._find_elements(root, "select", selects)
+
         for select in selects:
             # Find selectedcontent element in this select
-            selectedcontent = self._find_element(select, 'selectedcontent')
+            selectedcontent = self._find_element(select, "selectedcontent")
             if not selectedcontent:
                 continue
-            
+
             # Find all option elements
             options = []
-            self._find_elements(select, 'option', options)
+            self._find_elements(select, "option", options)
             if not options:
                 continue
-            
+
             # Find selected option or use first one
             selected_option = None
             for opt in options:
                 if opt.attrs:
                     for attr in opt.attrs:
-                        if attr.name == 'selected':
+                        if attr.name == "selected":
                             selected_option = opt
                             break
                 if selected_option:
                     break
-            
+
             if not selected_option:
                 selected_option = options[0]
-            
+
             # Clone content from selected option to selectedcontent
             self._clone_children(selected_option, selectedcontent)
-    
+
     def _find_elements(self, node, name, result):
         """Recursively find all elements with given name."""
-        if hasattr(node, 'name') and node.name == name:
+        if hasattr(node, "name") and node.name == name:
             result.append(node)
-        if hasattr(node, 'children'):
+        if hasattr(node, "children"):
             for child in node.children:
                 self._find_elements(child, name, result)
-    
+
     def _find_element(self, node, name):
         """Find first element with given name."""
-        if hasattr(node, 'name') and node.name == name:
+        if hasattr(node, "name") and node.name == name:
             return node
-        if hasattr(node, 'children'):
+        if hasattr(node, "children"):
             for child in node.children:
                 result = self._find_element(child, name)
                 if result:
                     return result
         return None
-    
+
     def _clone_children(self, source, target):
         """Deep clone all children from source to target."""
-        if not hasattr(source, 'children'):
+        if not hasattr(source, "children"):
             return
         for child in source.children:
-            if hasattr(child, 'name') and child.name == '#text':
+            if hasattr(child, "name") and child.name == "#text":
                 # Text node
-                cloned = SimpleDomNode('#text', data=child.data)
+                cloned = SimpleDomNode("#text", data=child.data)
                 target.children.append(cloned)
                 cloned.parent = target
-            elif hasattr(child, 'name'):
+            elif hasattr(child, "name"):
                 # Element node
                 cloned = SimpleDomNode(
                     child.name,
                     attrs=[Attribute(a.name, a.value) for a in (child.attrs or [])],
-                    namespace=getattr(child, 'namespace', None)
+                    namespace=getattr(child, "namespace", None),
                 )
                 self._clone_children(child, cloned)
                 target.children.append(cloned)
