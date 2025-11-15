@@ -320,6 +320,7 @@ class SimpleDomNode:
 class TreeBuilder:
     __slots__ = (
         "_body_start_handlers",
+        "_body_end_handlers",
         "active_formatting",
         "document",
         "errors",
@@ -365,6 +366,7 @@ class TreeBuilder:
         self.template_modes = []
         self.tokenizer_state_override = None
         self._init_body_start_handlers()
+        self._init_body_end_handlers()
         if fragment_context is not None:
             # Fragment parsing per HTML5 spec
             root = self._create_element("html", None, [])
@@ -454,6 +456,26 @@ class TreeBuilder:
         handlers["caption"] = self._handle_body_start_table_parse_error
 
         self._body_start_handlers = handlers
+
+    def _init_body_end_handlers(self):
+        handlers = {}
+
+        def register(tags, handler):
+            for tag in tags:
+                handlers[tag] = handler
+
+        handlers["body"] = self._handle_body_end_body
+        handlers["html"] = self._handle_body_end_html
+        handlers["p"] = self._handle_body_end_p
+        handlers["li"] = self._handle_body_end_li
+        register(("dd", "dt"), self._handle_body_end_dd_dt)
+        handlers["form"] = self._handle_body_end_form
+        register(_BODY_APPLET_LIKE_END_TAGS, self._handle_body_end_applet_like)
+        register(HEADING_ELEMENTS, self._handle_body_end_heading)
+        register(_BODY_BLOCK_END_TAGS, self._handle_body_end_block)
+        handlers["template"] = self._handle_body_end_template
+
+        self._body_end_handlers = handlers
 
     def process_token(self, token):
         if isinstance(token, ParseError):
@@ -1036,95 +1058,9 @@ class TreeBuilder:
             if name in FORMATTING_ELEMENTS:
                 self._adoption_agency(name)
                 return None
-            if name == "body":
-                if self._in_scope("body"):
-                    self.mode = InsertionMode.AFTER_BODY
-                return None
-            if name == "html":
-                if self._in_scope("body"):
-                    return ("reprocess", InsertionMode.AFTER_BODY, token)
-                return None
-            if name == "p":
-                if not self._close_p_element():
-                    self._parse_error("Unexpected </p>")
-                    phantom = Tag(Tag.START, "p", [], False)
-                    self._insert_element(phantom, push=True)
-                    self._close_p_element()
-                return None
-            if name == "li":
-                if not self._has_in_list_item_scope("li"):
-                    self._parse_error("Unexpected </li>")
-                    return None
-                self._pop_until_any_inclusive({"li"})
-                return None
-            if name in {"dd", "dt"}:
-                if not self._has_in_definition_scope(name):
-                    self._parse_error("Unexpected closing tag")
-                    return None
-                self._pop_until_any_inclusive({"dd", "dt"})
-                return None
-            if name == "form":
-                if self.form_element is None:
-                    self._parse_error("Unexpected </form>")
-                    return None
-                removed = self._remove_from_open_elements(self.form_element)
-                self.form_element = None
-                if not removed:
-                    self._parse_error("Form element not in stack")
-                return None
-            if name in _BODY_APPLET_LIKE_END_TAGS:
-                if not self._in_scope(name):
-                    self._parse_error("Unexpected closing tag")
-                    return None
-                while self.open_elements:
-                    popped = self.open_elements.pop()
-                    if popped.name == name:
-                        break
-                self._clear_active_formatting_up_to_marker()
-                return None
-            # Heading end tags: h1, h2, h3, h4, h5, h6
-            if name in HEADING_ELEMENTS:
-                # If no heading element in scope, parse error and ignore
-                if not self._has_any_in_scope(HEADING_ELEMENTS):
-                    self._parse_error(f"Unexpected </{name}>")
-                    return None
-                # Generate implied end tags
-                self._generate_implied_end_tags()
-                # If current node is not this heading type, parse error
-                if self.open_elements and self.open_elements[-1].name != name:
-                    self._parse_error(f"Mismatched heading end tag </{name}>")
-                # Pop until we pop a heading element (any heading, not necessarily matching)
-                while self.open_elements:
-                    popped = self.open_elements.pop()
-                    if popped.name in HEADING_ELEMENTS:
-                        break
-                return None
-            # Block-level end tags (address, article, aside, blockquote, etc.)
-            if name in _BODY_BLOCK_END_TAGS:
-                if not self._in_scope(name):
-                    self._parse_error(f"No matching <{name}> tag")
-                    return None
-                # Generate implied end tags (cursory)
-                self._generate_implied_end_tags()
-                if self.open_elements and self.open_elements[-1].name != name:
-                    self._parse_error(f"Unexpected open element while closing {name}")
-                # Pop until we find and pop the target element
-                self._pop_until_any_inclusive({name})
-                return None
-            # Template end tag: handle inline (don't delegate to avoid mode corruption)
-            if name == "template":
-                # Check if template is on the stack (don't use scope check as table blocks it)
-                has_template = any(node.name == "template" for node in self.open_elements)
-                if not has_template:
-                    return None
-                self._generate_implied_end_tags()
-                self._pop_until_inclusive("template")
-                self._clear_active_formatting_up_to_marker()
-                if self.template_modes:
-                    self.template_modes.pop()
-                # Reset insertion mode to determine correct mode after template
-                self._reset_insertion_mode()
-                return None
+            handler = self._body_end_handlers.get(name)
+            if handler:
+                return handler(token)
             # Any other end tag
             self._any_other_end_tag(token.name)
             return None
@@ -1314,6 +1250,102 @@ class TreeBuilder:
             self.open_elements = self.open_elements[:body_index]
         self._insert_element(token, push=True)
         self.mode = InsertionMode.IN_FRAMESET
+        return None
+
+    # ---------------------
+    # Body mode end tag handlers
+    # ---------------------
+
+    def _handle_body_end_body(self, token):
+        if self._in_scope("body"):
+            self.mode = InsertionMode.AFTER_BODY
+        return None
+
+    def _handle_body_end_html(self, token):
+        if self._in_scope("body"):
+            return ("reprocess", InsertionMode.AFTER_BODY, token)
+        return None
+
+    def _handle_body_end_p(self, token):
+        if not self._close_p_element():
+            self._parse_error("Unexpected </p>")
+            phantom = Tag(Tag.START, "p", [], False)
+            self._insert_element(phantom, push=True)
+            self._close_p_element()
+        return None
+
+    def _handle_body_end_li(self, token):
+        if not self._has_in_list_item_scope("li"):
+            self._parse_error("Unexpected </li>")
+            return None
+        self._pop_until_any_inclusive({"li"})
+        return None
+
+    def _handle_body_end_dd_dt(self, token):
+        name = token.name
+        if not self._has_in_definition_scope(name):
+            self._parse_error("Unexpected closing tag")
+            return None
+        self._pop_until_any_inclusive({"dd", "dt"})
+        return None
+
+    def _handle_body_end_form(self, token):
+        if self.form_element is None:
+            self._parse_error("Unexpected </form>")
+            return None
+        removed = self._remove_from_open_elements(self.form_element)
+        self.form_element = None
+        if not removed:
+            self._parse_error("Form element not in stack")
+        return None
+
+    def _handle_body_end_applet_like(self, token):
+        name = token.name
+        if not self._in_scope(name):
+            self._parse_error("Unexpected closing tag")
+            return None
+        while self.open_elements:
+            popped = self.open_elements.pop()
+            if popped.name == name:
+                break
+        self._clear_active_formatting_up_to_marker()
+        return None
+
+    def _handle_body_end_heading(self, token):
+        name = token.name
+        if not self._has_any_in_scope(HEADING_ELEMENTS):
+            self._parse_error(f"Unexpected </{name}>")
+            return None
+        self._generate_implied_end_tags()
+        if self.open_elements and self.open_elements[-1].name != name:
+            self._parse_error(f"Mismatched heading end tag </{name}>")
+        while self.open_elements:
+            popped = self.open_elements.pop()
+            if popped.name in HEADING_ELEMENTS:
+                break
+        return None
+
+    def _handle_body_end_block(self, token):
+        name = token.name
+        if not self._in_scope(name):
+            self._parse_error(f"No matching <{name}> tag")
+            return None
+        self._generate_implied_end_tags()
+        if self.open_elements and self.open_elements[-1].name != name:
+            self._parse_error(f"Unexpected open element while closing {name}")
+        self._pop_until_any_inclusive({name})
+        return None
+
+    def _handle_body_end_template(self, token):
+        has_template = any(node.name == "template" for node in self.open_elements)
+        if not has_template:
+            return None
+        self._generate_implied_end_tags()
+        self._pop_until_inclusive("template")
+        self._clear_active_formatting_up_to_marker()
+        if self.template_modes:
+            self.template_modes.pop()
+        self._reset_insertion_mode()
         return None
 
     def _handle_body_start_structure_ignored(self, token):
