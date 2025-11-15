@@ -1,6 +1,9 @@
 # Benchmark dependencies for TurboHTML
 # Install with: pip install -r requirements-benchmark.txt
 
+# Memory profiling
+psutil>=7.1.3
+
 # Dataset compression
 zstandard>=0.22.0
 
