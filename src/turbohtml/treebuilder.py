@@ -2305,14 +2305,13 @@ class TreeBuilder:
                     self.open_elements.append(child)
                 return child
 
-        node = SimpleDomNode("html", attrs=[Attribute(attr.name, attr.value) for attr in attrs], namespace="html")
+        node = SimpleDomNode("html", attrs=attrs, namespace="html")
         self.document.append_child(node)
         self.open_elements.append(node)
         return node
 
     def _insert_element(self, tag, *, push, namespace="html"):
-        attrs = [Attribute(attr.name, attr.value) for attr in tag.attrs]
-        node = SimpleDomNode(tag.name, attrs=attrs, namespace=namespace)
+        node = SimpleDomNode(tag.name, attrs=tag.attrs, namespace=namespace)
         target = self._current_node_or_html()
         foster_parenting = self._should_foster_parenting(target, for_tag=tag.name)
         parent, position = self._appropriate_insertion_location(foster_parenting=foster_parenting)

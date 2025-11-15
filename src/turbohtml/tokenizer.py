@@ -12,6 +12,13 @@ from .tokens import (
 from .entities import decode_entities_in_text
 
 
+_ATTR_VALUE_DOUBLE_TERMINATORS = '"&\r\n\0'
+_ATTR_VALUE_SINGLE_TERMINATORS = "'&\r\n\0"
+_ATTR_VALUE_UNQUOTED_TERMINATORS = "\t\n\f >&\"'<=`\r\0"
+_ATTR_NAME_TERMINATORS = "\t\n\f />=\0\"'<"
+_ASCII_LOWER_TABLE = str.maketrans({chr(code): chr(code + 32) for code in range(65, 91)})
+
+
 class TokenizerOpts:
 	__slots__ = ("exact_errors", "discard_bom", "initial_state", "initial_rawtext_tag")
 
@@ -363,22 +370,59 @@ class Tokenizer:
 	# ---------------------
 
 	def _state_data(self):
+		buffer = self.buffer
+		length = self.length
+		pos = self.pos
 		while True:
-			c = self._get_char()
-			if c is None:
+			if self.reconsume:
+				self.reconsume = False
+				c = self.current_char
+				if c is None:
+					self._flush_text()
+					self._emit_token(EOFToken())
+					return True
+				if c == "<":
+					self.ignore_lf = False
+					self._flush_text()
+					self.state = self.TAG_OPEN
+					return False
+				if c == "\0":
+					self._emit_error("Null character in data state")
+					self.ignore_lf = False
+					self.text_buffer.append("\0")
+				else:
+					self._append_text_chunk(c, ends_with_cr=(c == "\r"))
+				pos = self.pos
+				continue
+			if pos >= length:
+				self.pos = length
+				self.current_char = None
 				self._flush_text()
 				self._emit_token(EOFToken())
 				return True
+			start = pos
+			while pos < length:
+				ch = buffer[pos]
+				if ch == "<" or ch == "\0":
+					break
+				pos += 1
+			if pos > start:
+				chunk = buffer[start:pos]
+				self._append_text_chunk(chunk, ends_with_cr=chunk.endswith("\r"))
+				self.pos = pos
+				if pos >= length:
+					continue
+			c = buffer[pos]
+			pos += 1
+			self.pos = pos
+			self.current_char = c
+			self.ignore_lf = False
 			if c == "<":
 				self._flush_text()
 				self.state = self.TAG_OPEN
 				return False
-			if c == "\0":
-				self._emit_error("Null character in data state")
-				# Pass through null - let tree builder decide what to do
-				self.text_buffer.append(c)
-			else:
-				self.text_buffer.append(c)
+			self._emit_error("Null character in data state")
+			self.text_buffer.append("\0")
 
 	def _state_tag_open(self):
 		c = self._get_char()
@@ -504,6 +548,8 @@ class Tokenizer:
 	def _state_attribute_name(self):
 		replacement = "\ufffd"
 		while True:
+			if self._consume_attribute_name_run():
+				continue
 			c = self._get_char()
 			if c is None:
 				self._emit_error("EOF in attribute name")
@@ -598,7 +644,10 @@ class Tokenizer:
 
 	def _state_attribute_value_double(self):
 		replacement = "\ufffd"
+		stop_chars = _ATTR_VALUE_DOUBLE_TERMINATORS
 		while True:
+			if self._consume_attribute_value_run(stop_chars):
+				continue
 			c = self._get_char()
 			if c is None:
 				# Per HTML5 spec: EOF in attribute value is a parse error
@@ -621,7 +670,10 @@ class Tokenizer:
 
 	def _state_attribute_value_single(self):
 		replacement = "\ufffd"
+		stop_chars = _ATTR_VALUE_SINGLE_TERMINATORS
 		while True:
+			if self._consume_attribute_value_run(stop_chars):
+				continue
 			c = self._get_char()
 			if c is None:
 				# Per HTML5 spec: EOF in attribute value is a parse error
@@ -643,7 +695,10 @@ class Tokenizer:
 
 	def _state_attribute_value_unquoted(self):
 		replacement = "\ufffd"
+		stop_chars = _ATTR_VALUE_UNQUOTED_TERMINATORS
 		while True:
+			if self._consume_attribute_value_run(stop_chars):
+				continue
 			c = self._get_char()
 			if c is None:
 				# Per HTML5 spec: EOF in attribute value is a parse error
@@ -1379,15 +1434,13 @@ class Tokenizer:
 			# so we check the tag name to determine the correct behavior
 			rcdata_elements = {"title", "textarea"}
 			if self.state >= self.PLAINTEXT:
-				# PLAINTEXT state - emit literal text without decoding
 				self._emit_token(CharacterTokens(data))
 			elif self.state >= self.RAWTEXT and self.rawtext_tag_name not in rcdata_elements:
-				# RAWTEXT state for actual RAWTEXT elements - emit literal text
 				self._emit_token(CharacterTokens(data))
 			else:
-				# DATA state or RCDATA elements - decode entities
-				decoded = decode_entities_in_text(data)
-				self._emit_token(CharacterTokens(decoded))
+				if "&" in data:
+					data = decode_entities_in_text(data)
+				self._emit_token(CharacterTokens(data))
 
 	def _start_tag(self, kind):
 		self.current_tag_kind = kind
@@ -1419,7 +1472,8 @@ class Tokenizer:
 		name = "".join(self.current_attr_name)
 		value = "".join(self.current_attr_value)
 		# Decode HTML entities in attribute values (with stricter rules per spec)
-		value = decode_entities_in_text(value, in_attribute=True)
+		if "&" in value:
+			value = decode_entities_in_text(value, in_attribute=True)
 		duplicate = False
 		for existing_name, _ in self.current_tag_attrs:
 			if existing_name == name:
@@ -1431,6 +1485,65 @@ class Tokenizer:
 			self.current_tag_attrs.append((name, value))
 		self.current_attr_name.clear()
 		self.current_attr_value.clear()
+
+	def _append_text_chunk(self, chunk, *, ends_with_cr=False):
+		if not chunk:
+			self.ignore_lf = ends_with_cr
+			return
+		if self.ignore_lf:
+			if chunk[0] == "\n":
+				chunk = chunk[1:]
+				if not chunk:
+					self.ignore_lf = ends_with_cr
+					return
+			self.ignore_lf = False
+		if "\r" in chunk:
+			chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
+		newlines = chunk.count("\n")
+		if newlines:
+			self.line += newlines
+		self.text_buffer.append(chunk)
+		self.ignore_lf = ends_with_cr
+
+	def _consume_attribute_value_run(self, stop_chars):
+		if self.reconsume:
+			return False
+		pos = self.pos
+		length = self.length
+		if pos >= length:
+			return False
+		buffer = self.buffer
+		while pos < length:
+			ch = buffer[pos]
+			if ch in stop_chars:
+				break
+			pos += 1
+		if pos == self.pos:
+			return False
+		self.current_attr_value.append(buffer[self.pos:pos])
+		self.pos = pos
+		return True
+
+	def _consume_attribute_name_run(self):
+		if self.reconsume:
+			return False
+		pos = self.pos
+		length = self.length
+		if pos >= length:
+			return False
+		buffer = self.buffer
+		while pos < length:
+			ch = buffer[pos]
+			if ch in _ATTR_NAME_TERMINATORS:
+				break
+			pos += 1
+		if pos == self.pos:
+			return False
+		chunk = buffer[self.pos:pos]
+		if chunk:
+			self.current_attr_name.append(chunk.translate(_ASCII_LOWER_TABLE))
+		self.pos = pos
+		return True
 
 	def _emit_current_tag(self):
 		self._finish_attribute()
@@ -1577,40 +1690,82 @@ class Tokenizer:
 		return False
 
 	def _state_rawtext(self):
-		# Consume characters until '<'
-		# Special case: for script tags, check for <!-- to enter escaped mode
+		buffer = self.buffer
+		length = self.length
+		pos = self.pos
 		while True:
-			c = self._get_char()
-			if c is None:
+			if self.reconsume:
+				self.reconsume = False
+				c = self.current_char
+				if c is None:
+					self._flush_text()
+					self._emit_token(EOFToken())
+					return True
+				if c == "<":
+					if self.rawtext_tag_name == "script":
+						next1 = self._peek_char(0)
+						next2 = self._peek_char(1)
+						next3 = self._peek_char(2)
+						if next1 == "!" and next2 == "-" and next3 == "-":
+							self.text_buffer.extend(["<", "!", "-", "-"])
+							self._get_char()
+							self._get_char()
+							self._get_char()
+							self.state = self.SCRIPT_DATA_ESCAPED
+							return False
+					self.state = self.RAWTEXT_LESS_THAN_SIGN
+					return False
+				if c == "\0":
+					self._emit_error("Null character in rawtext")
+					self.text_buffer.append("\ufffd")
+				else:
+					self._append_text_chunk(c, ends_with_cr=(c == "\r"))
+				pos = self.pos
+				continue
+			lt_index = buffer.find("<", pos)
+			null_index = buffer.find("\0", pos)
+			next_special = lt_index if lt_index != -1 else length
+			if null_index != -1 and null_index < next_special:
+				if null_index > pos:
+					chunk = buffer[pos:null_index]
+					self._append_text_chunk(chunk, ends_with_cr=chunk.endswith("\r"))
+				else:
+					self.ignore_lf = False
+				self._emit_error("Null character in rawtext")
+				self.text_buffer.append("\ufffd")
+				pos = null_index + 1
+				self.pos = pos
+				continue
+			if lt_index == -1:
+				if pos < length:
+					chunk = buffer[pos:length]
+					if chunk:
+						self._append_text_chunk(chunk, ends_with_cr=chunk.endswith("\r"))
+					else:
+						self.ignore_lf = False
+				self.pos = length
 				self._flush_text()
 				self._emit_token(EOFToken())
 				return True
-			if c == "<":
-				# Check if we're in a script tag and might be entering escaped mode
-				if self.rawtext_tag_name == "script":
-					# Look ahead for !--
-					next1 = self._peek_char(0)
-					next2 = self._peek_char(1)
-					next3 = self._peek_char(2)
-					if next1 == "!" and next2 == "-" and next3 == "-":
-						# Entering script data escaped mode
-						self.text_buffer.append("<")
-						self.text_buffer.append("!")
-						self.text_buffer.append("-")
-						self.text_buffer.append("-")
-						# Consume the !--
-						self._get_char()  # !
-						self._get_char()  # -
-						self._get_char()  # -
-						self.state = self.SCRIPT_DATA_ESCAPED
-						return False
-				self.state = self.RAWTEXT_LESS_THAN_SIGN
-				return False
-			if c == "\0":
-				self._emit_error("Null character in rawtext")
-				self.text_buffer.append("\ufffd")
-			else:
-				self.text_buffer.append(c)
+			if lt_index > pos:
+				chunk = buffer[pos:lt_index]
+				self._append_text_chunk(chunk, ends_with_cr=chunk.endswith("\r"))
+			pos = lt_index + 1
+			self.pos = pos
+			# Handle script escaped transition before treating '<' as markup boundary
+			if self.rawtext_tag_name == "script":
+				next1 = self._peek_char(0)
+				next2 = self._peek_char(1)
+				next3 = self._peek_char(2)
+				if next1 == "!" and next2 == "-" and next3 == "-":
+					self.text_buffer.extend(["<", "!", "-", "-"])
+					self._get_char()
+					self._get_char()
+					self._get_char()
+					self.state = self.SCRIPT_DATA_ESCAPED
+					return False
+			self.state = self.RAWTEXT_LESS_THAN_SIGN
+			return False
 
 	def _state_rawtext_less_than_sign(self):
 		c = self._get_char()
