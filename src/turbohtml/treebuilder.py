@@ -969,13 +969,11 @@ class TreeBuilder:
                 }:
                     return self._mode_in_head(token)
                 if name in BLOCK_WITH_P_START:
-                    if self._has_in_button_scope("p"):
-                        self._close_p_element()
+                    self._close_p_element()
                     self._insert_element(token, push=True)
                     return None
                 if name in HEADING_ELEMENTS:
-                    if self._has_in_button_scope("p"):
-                        self._close_p_element()
+                    self._close_p_element()
                     if self.open_elements and self.open_elements[-1].name in HEADING_ELEMENTS:
                         self._parse_error("Nested heading")
                         self._pop_current()
@@ -983,8 +981,7 @@ class TreeBuilder:
                     self.frameset_ok = False
                     return None
                 if name in {"pre", "listing"}:
-                    if self._has_in_button_scope("p"):
-                        self._close_p_element()
+                    self._close_p_element()
                     self._insert_element(token, push=True)
                     self.ignore_lf = True
                     self.frameset_ok = False
@@ -993,8 +990,7 @@ class TreeBuilder:
                     if self.form_element is not None:
                         self._parse_error("Nested form")
                         return None
-                    if self._has_in_button_scope("p"):
-                        self._close_p_element()
+                    self._close_p_element()
                     node = self._insert_element(token, push=True)
                     self.form_element = node
                     self.frameset_ok = False
@@ -1011,8 +1007,7 @@ class TreeBuilder:
                     self.frameset_ok = False
                     return None
                 if name == "p":
-                    if self._has_in_button_scope("p"):
-                        self._close_p_element()
+                    self._close_p_element()
                     self._insert_element(token, push=True)
                     return None
                 if name == "math":
@@ -1032,16 +1027,14 @@ class TreeBuilder:
                     return None
                 if name == "li":
                     self.frameset_ok = False
-                    if self._has_in_button_scope("p"):
-                        self._close_p_element()
+                    self._close_p_element()
                     if self._has_in_list_item_scope("li"):
                         self._pop_until_any_inclusive({"li"})
                     self._insert_element(token, push=True)
                     return None
                 if name in {"dd", "dt"}:
                     self.frameset_ok = False
-                    if self._has_in_button_scope("p"):
-                        self._close_p_element()
+                    self._close_p_element()
                     if name == "dd":
                         if self._has_in_definition_scope("dd"):
                             self._pop_until_any_inclusive({"dd"})
@@ -1084,14 +1077,12 @@ class TreeBuilder:
                     self.frameset_ok = False
                     return None
                 if name == "hr":
-                    if self._has_in_button_scope("p"):
-                        self._close_p_element()
+                    self._close_p_element()
                     self._insert_element(token, push=False)
                     self.frameset_ok = False
                     return None
                 if name == "br":
-                    if self._has_in_button_scope("p"):
-                        self._close_p_element()
+                    self._close_p_element()
                     # Per html5ever rules.rs:758-774, br reconstructs formatting elements
                     self._reconstruct_active_formatting_elements()
                     self._insert_element(token, push=False)
@@ -1166,7 +1157,7 @@ class TreeBuilder:
                     return None
                 if name == "table":
                     # HTML5 spec: In standards mode (not quirks), close any open p element before table
-                    if self.quirks_mode != "quirks" and self._has_in_button_scope("p"):
+                    if self.quirks_mode != "quirks":
                         self._close_p_element()
                     self._insert_element(token, push=True)
                     self.frameset_ok = False
@@ -1174,8 +1165,7 @@ class TreeBuilder:
                     return None
                 if name in {"plaintext", "xmp"}:
                     # These elements implicitly close p
-                    if self._has_in_button_scope("p"):
-                        self._close_p_element()
+                    self._close_p_element()
                     self._insert_element(token, push=True)
                     self.frameset_ok = False
                     # Signal tokenizer to switch to PLAINTEXT mode (plaintext consumes all remaining input)
@@ -1294,11 +1284,11 @@ class TreeBuilder:
                     return ("reprocess", InsertionMode.AFTER_BODY, token)
                 return None
             if name == "p":
-                if not self._has_in_button_scope("p"):
+                if not self._close_p_element():
                     self._parse_error("Unexpected </p>")
                     phantom = Tag(Tag.START, "p", [], False)
                     self._insert_element(phantom, push=True)
-                self._close_p_element()
+                    self._close_p_element()
                 return None
             if name == "li":
                 if not self._has_in_list_item_scope("li"):
@@ -3325,22 +3315,24 @@ class TreeBuilder:
     def _set_quirks_mode(self, mode):
         self.quirks_mode = mode
 
-    def _has_element_in_scope(self, name, terminators, check_integration_points=True):
-        for node in reversed(self.open_elements):
+    def _find_in_scope_index(self, name, terminators, check_integration_points=True):
+        for idx in range(len(self.open_elements) - 1, -1, -1):
+            node = self.open_elements[idx]
             if node.name == name:
-                return True
+                return idx
             if node.namespace not in {None, "html"}:
-                # Foreign elements act as scope boundaries if they are integration points
-                # (but only for non-table scopes - table scopes ignore integration points)
                 if check_integration_points:
                     if self._is_html_integration_point(node):
-                        return False
+                        return -1
                     if self._is_mathml_text_integration_point(node):
-                        return False
+                        return -1
                 continue
             if node.name in terminators:
-                return False
-        return False
+                return -1
+        return -1
+
+    def _has_element_in_scope(self, name, terminators, check_integration_points=True):
+        return self._find_in_scope_index(name, terminators, check_integration_points) != -1
 
     def _has_in_scope(self, name):
         """Check if element is in default scope (html5ever: default_scope)."""
@@ -3368,12 +3360,11 @@ class TreeBuilder:
         return False
 
     def _close_p_element(self):
-        if not self._has_in_button_scope("p"):
-            return
-        while self.open_elements:
-            node = self.open_elements.pop()
-            if node.name == "p":
-                break
+        index = self._find_in_scope_index("p", BUTTON_SCOPE_TERMINATORS)
+        if index == -1:
+            return False
+        del self.open_elements[index:]
+        return True
 
     def _pop_until_any_inclusive(self, names):
         target = set(names)
