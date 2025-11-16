@@ -17,10 +17,10 @@ _ATTR_VALUE_DOUBLE_TERMINATORS = '"&\r\n\0'
 _ATTR_VALUE_SINGLE_TERMINATORS = "'&\r\n\0"
 _ATTR_VALUE_UNQUOTED_TERMINATORS = "\t\n\f >&\"'<=`\r\0"
 _ATTR_NAME_TERMINATORS = "\t\n\f />=\0\"'<"
+_TAG_NAME_TERMINATORS = "\t\n\f />\0"
 _ASCII_LOWER_TABLE = str.maketrans({chr(code): chr(code + 32) for code in range(65, 91)})
 _RCDATA_ELEMENTS = {"title", "textarea"}
 _RAWTEXT_SWITCH_TAGS = {"script", "style", "xmp", "iframe", "noembed", "noframes", "noscript", "textarea", "title"}
-
 _ATTR_VALUE_DOUBLE_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_DOUBLE_TERMINATORS)}]")
 _ATTR_VALUE_SINGLE_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_SINGLE_TERMINATORS)}]")
 _ATTR_VALUE_UNQUOTED_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_UNQUOTED_TERMINATORS)}]")
@@ -513,6 +513,8 @@ class Tokenizer:
         replacement = "\ufffd"
         append_tag_char = self.current_tag_name.append
         while True:
+            if self._consume_tag_name_run():
+                continue
             c = self._get_char()
             if c is None:
                 self._emit_error("EOF in tag name")
@@ -1571,6 +1573,32 @@ class Tokenizer:
                 return False
         self.current_attr_value.append(self.buffer[pos:end])
         self.pos = end
+        return True
+
+    def _consume_tag_name_run(self):
+        if self.reconsume:
+            return False
+        pos = self.pos
+        length = self.length
+        if pos >= length:
+            return False
+        buffer = self.buffer
+        start = pos
+        has_upper = False
+        while pos < length:
+            c = buffer[pos]
+            if c in _TAG_NAME_TERMINATORS:
+                break
+            if "A" <= c <= "Z":
+                has_upper = True
+            pos += 1
+        if pos == start:
+            return False
+        chunk = buffer[start:pos]
+        if has_upper:
+            chunk = chunk.translate(_ASCII_LOWER_TABLE)
+        self.current_tag_name.append(chunk)
+        self.pos = pos
         return True
 
     def _consume_attribute_name_run(self):
