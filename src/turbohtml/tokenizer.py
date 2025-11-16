@@ -26,6 +26,10 @@ _ATTR_VALUE_SINGLE_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_SINGLE_TERMINA
 _ATTR_VALUE_UNQUOTED_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_UNQUOTED_TERMINATORS)}]")
 
 
+def _is_ascii_alpha(c):
+    return c is not None and (("A" <= c <= "Z") or ("a" <= c <= "z"))
+
+
 
 class TokenizerOpts:
     __slots__ = ("discard_bom", "exact_errors", "initial_rawtext_tag", "initial_state")
@@ -464,7 +468,7 @@ class Tokenizer:
             self._reconsume_current()
             self.state = self.BOGUS_COMMENT
             return False
-        if c.isalpha():
+        if _is_ascii_alpha(c):
             self._start_tag(Tag.START)
             if "A" <= c <= "Z":
                 c = chr(ord(c) + 32)
@@ -487,7 +491,7 @@ class Tokenizer:
             self._flush_text()
             self._emit_token(EOFToken())
             return True
-        if c.isalpha():
+        if _is_ascii_alpha(c):
             self._start_tag(Tag.END)
             if "A" <= c <= "Z":
                 c = chr(ord(c) + 32)
@@ -1841,7 +1845,7 @@ class Tokenizer:
 
     def _state_rawtext_end_tag_open(self):
         c = self._get_char()
-        if c and c.isalpha():
+        if _is_ascii_alpha(c):
             self.current_tag_name.append(c.lower())
             self.original_tag_name.append(c)
             self.state = self.RAWTEXT_END_TAG_NAME
@@ -1856,7 +1860,7 @@ class Tokenizer:
         # Check if this matches the opening tag name
         while True:
             c = self._get_char()
-            if c and c.isalpha():
+            if _is_ascii_alpha(c):
                 self.current_tag_name.append(c.lower())
                 self.original_tag_name.append(c)
                 continue
@@ -1994,7 +1998,7 @@ class Tokenizer:
             self.temp_buffer.clear()
             self.state = self.SCRIPT_DATA_ESCAPED_END_TAG_OPEN
             return False
-        if c and c.isalpha():
+        if _is_ascii_alpha(c):
             self.temp_buffer.clear()
             self.text_buffer.append("<")
             self._reconsume_current()
@@ -2007,7 +2011,7 @@ class Tokenizer:
 
     def _state_script_data_escaped_end_tag_open(self):
         c = self._get_char()
-        if c and c.isalpha():
+        if _is_ascii_alpha(c):
             self.current_tag_name.clear()
             self.original_tag_name.clear()
             self._reconsume_current()
@@ -2021,7 +2025,7 @@ class Tokenizer:
 
     def _state_script_data_escaped_end_tag_name(self):
         c = self._get_char()
-        if c and c.isalpha():
+        if _is_ascii_alpha(c):
             self.current_tag_name.append(c.lower())
             self.original_tag_name.append(c)
             self.temp_buffer.append(c)
@@ -2072,7 +2076,7 @@ class Tokenizer:
                 self.state = self.SCRIPT_DATA_ESCAPED
             self.text_buffer.append(c)
             return False
-        if c and c.isalpha():
+        if _is_ascii_alpha(c):
             self.temp_buffer.append(c)
             self.text_buffer.append(c)
             return False
@@ -2172,7 +2176,7 @@ class Tokenizer:
                 self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
             self.text_buffer.append(c)
             return False
-        if c and c.isalpha():
+        if _is_ascii_alpha(c):
             self.temp_buffer.append(c)
             self.text_buffer.append(c)
             return False
