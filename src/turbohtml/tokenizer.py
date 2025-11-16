@@ -558,9 +558,7 @@ class Tokenizer:
             if c == "=":
                 self._emit_error("Attribute name cannot start with '='")
                 self._start_attribute()
-                if "A" <= c <= "Z":
-                    c = chr(ord(c) + 32)
-                self.current_attr_name.append(c)
+                self.current_attr_name.append("=")
                 self.state = self.ATTRIBUTE_NAME
                 return False
             self._start_attribute()
@@ -1549,9 +1547,7 @@ class Tokenizer:
             self.ignore_lf = False
         if "\r" in chunk:
             chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
-        newlines = chunk.count("\n")
-        if newlines:
-            self.line += newlines
+        self.line += chunk.count("\n")
         self.text_buffer.append(chunk)
         self.ignore_lf = ends_with_cr
 
@@ -1814,10 +1810,7 @@ class Tokenizer:
             if lt_index == -1:
                 if pos < length:
                     chunk = buffer[pos:length]
-                    if chunk:
-                        self._append_text_chunk(chunk, ends_with_cr=chunk.endswith("\r"))
-                    else:
-                        self.ignore_lf = False
+                    self._append_text_chunk(chunk, ends_with_cr=chunk.endswith("\r"))
                 self.pos = length
                 self._flush_text()
                 self._emit_token(EOFToken())
