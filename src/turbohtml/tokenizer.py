@@ -100,7 +100,6 @@ class Tokenizer:
         "buffer",
         "current_attr_name",
         "current_attr_name_lookup",
-        "current_attr_names",
         "current_attr_value",
         "current_attr_value_has_amp",
         "current_char",
@@ -145,7 +144,6 @@ class Tokenizer:
         self.text_buffer = []
         self.current_tag_name = []
         self.current_tag_attrs = []  # flat list [name1, value1, ...]
-        self.current_attr_names = []
         self.current_attr_name_lookup = None
         self.current_attr_name = []
         self.current_attr_value = []
@@ -177,7 +175,6 @@ class Tokenizer:
         self.text_buffer.clear()
         self.current_tag_name.clear()
         self.current_tag_attrs.clear()
-        self.current_attr_names.clear()
         self.current_attr_name_lookup = None
         self.current_attr_name.clear()
         self.current_attr_value.clear()
@@ -1487,7 +1484,6 @@ class Tokenizer:
         self.current_tag_kind = kind
         self.current_tag_name.clear()
         self.current_tag_attrs.clear()
-        self.current_attr_names.clear()
         self.current_attr_name_lookup = None
         self.current_attr_name.clear()
         self.current_attr_value.clear()
@@ -1521,16 +1517,16 @@ class Tokenizer:
             value = "".join(attr_value_buffer)
         if self.current_attr_value_has_amp:
             value = decode_entities_in_text(value, in_attribute=True)
-        attr_names = self.current_attr_names
         lookup = self.current_attr_name_lookup
         is_duplicate = False
+        attrs = self.current_tag_attrs
         if lookup is None:
-            for existing in attr_names:
-                if existing == name:
+            for i in range(0, len(attrs), 2):
+                if attrs[i] == name:
                     is_duplicate = True
                     break
-            if not is_duplicate and len(attr_names) >= 8:
-                lookup = set(attr_names)
+            if not is_duplicate and len(attrs) >= 16:
+                lookup = {attrs[i] for i in range(0, len(attrs), 2)}
                 self.current_attr_name_lookup = lookup
         else:
             if name in lookup:
@@ -1540,7 +1536,6 @@ class Tokenizer:
         if is_duplicate:
             self._emit_error("Duplicate attribute")
         else:
-            attr_names.append(name)
             attrs = self.current_tag_attrs
             attrs.append(name)
             attrs.append(value)
@@ -1672,7 +1667,6 @@ class Tokenizer:
         if self.state != state_before_emit:
             switched_to_rawtext = True
         self.current_tag_name.clear()
-        self.current_attr_names.clear()
         self.current_attr_name_lookup = None
         self.current_attr_name.clear()
         self.current_attr_value.clear()
