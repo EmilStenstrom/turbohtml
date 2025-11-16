@@ -1869,8 +1869,7 @@ class Tokenizer:
                 continue
             # End of tag name - check if it matches
             tag_name = "".join(self.current_tag_name)
-            if tag_name == self.rawtext_tag_name and c in (" ", "\t", "\n", "\r", "\f", "/", ">"):
-                # Valid end tag - emit it
+            if tag_name == self.rawtext_tag_name:
                 if c == ">":
                     attrs = []
                     tag = Tag(Tag.END, tag_name, attrs, False)
@@ -2038,27 +2037,28 @@ class Tokenizer:
         tag_name = "".join(self.current_tag_name)
         is_appropriate = tag_name == self.rawtext_tag_name
 
-        if is_appropriate and c in (" ", "\t", "\n", "\r", "\f"):
-            self.current_tag_kind = Tag.END
-            self.current_tag_attrs.clear()
-            self.state = self.BEFORE_ATTRIBUTE_NAME
-            return False
-        if is_appropriate and c == "/":
-            self._flush_text()
-            self.current_tag_kind = Tag.END
-            self.current_tag_attrs.clear()
-            self.state = self.SELF_CLOSING_START_TAG
-            return False
-        if is_appropriate and c == ">":
-            self._flush_text()
-            attrs = []
-            tag = Tag(Tag.END, tag_name, attrs, False)
-            self._emit_token(tag)
-            self.state = self.DATA
-            self.rawtext_tag_name = None
-            self.current_tag_name.clear()
-            self.original_tag_name.clear()
-            return False
+        if is_appropriate:
+            if c in (" ", "\t", "\n", "\r", "\f"):
+                self.current_tag_kind = Tag.END
+                self.current_tag_attrs.clear()
+                self.state = self.BEFORE_ATTRIBUTE_NAME
+                return False
+            if c == "/":
+                self._flush_text()
+                self.current_tag_kind = Tag.END
+                self.current_tag_attrs.clear()
+                self.state = self.SELF_CLOSING_START_TAG
+                return False
+            if c == ">":
+                self._flush_text()
+                attrs = []
+                tag = Tag(Tag.END, tag_name, attrs, False)
+                self._emit_token(tag)
+                self.state = self.DATA
+                self.rawtext_tag_name = None
+                self.current_tag_name.clear()
+                self.original_tag_name.clear()
+                return False
         # Not an appropriate end tag
         self.text_buffer.append("<")
         self.text_buffer.append("/")
