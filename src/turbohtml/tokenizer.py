@@ -551,8 +551,7 @@ class Tokenizer:
                 self.state = self.SELF_CLOSING_START_TAG
                 return False
             if c == ">":
-                if self._has_pending_attribute():
-                    self._finish_attribute()
+                self._finish_attribute()
                 if not self._emit_current_tag():
                     self.state = self.DATA
                 return False
@@ -618,8 +617,7 @@ class Tokenizer:
             c = self._get_char()
             if c is None:
                 self._emit_error("EOF after attribute name")
-                if self._has_pending_attribute():
-                    self._finish_attribute()
+                self._finish_attribute()
                 self._emit_current_tag()
                 self._emit_token(EOFToken())
                 return True
@@ -632,13 +630,11 @@ class Tokenizer:
                 self.state = self.BEFORE_ATTRIBUTE_VALUE
                 return False
             if c == ">":
-                if self._has_pending_attribute():
-                    self._finish_attribute()
+                self._finish_attribute()
                 if not self._emit_current_tag():
                     self.state = self.DATA
                 return False
-            if self._has_pending_attribute():
-                self._finish_attribute()
+            self._finish_attribute()
             self._start_attribute()
             if "A" <= c <= "Z":
                 c = chr(ord(c) + 32)
@@ -763,8 +759,7 @@ class Tokenizer:
         c = self._get_char()
         if c is None:
             self._emit_error("EOF in self-closing tag")
-            if self._has_pending_attribute():
-                self._finish_attribute()
+            self._finish_attribute()
             self._emit_current_tag()
             self._emit_token(EOFToken())
             return True
@@ -1496,8 +1491,6 @@ class Tokenizer:
         self.current_attr_value_has_amp = False
 
     def _append_attr_value_char(self, c):
-        if not c:
-            return
         self.current_attr_value.append(c)
 
     def _finish_attribute(self):
@@ -1542,15 +1535,6 @@ class Tokenizer:
         attr_name_buffer.clear()
         attr_value_buffer.clear()
         self.current_attr_value_has_amp = False
-
-    def _has_pending_attribute(self):
-        if self.current_attr_name:
-            return True
-        if self.current_attr_value:
-            return True
-        if self.current_attr_value_has_amp:
-            return True
-        return False
 
     def _append_text_chunk(self, chunk, *, ends_with_cr=False):
         if not chunk:
@@ -1611,17 +1595,15 @@ class Tokenizer:
         if pos == start:
             return False
         chunk = buffer[start:pos]
-        if chunk:
-            if has_upper:
-                chunk = chunk.translate(_ASCII_LOWER_TABLE)
-            self.current_attr_name.append(chunk)
+        if has_upper:
+            chunk = chunk.translate(_ASCII_LOWER_TABLE)
+        self.current_attr_name.append(chunk)
         self.pos = pos
         return True
 
 
     def _emit_current_tag(self):
-        if self._has_pending_attribute():
-            self._finish_attribute()
+        self._finish_attribute()
         name_parts = self.current_tag_name
         part_count = len(name_parts)
         if part_count == 0:
