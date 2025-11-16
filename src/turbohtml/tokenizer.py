@@ -25,8 +25,6 @@ _ATTR_VALUE_DOUBLE_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_DOUBLE_TERMINA
 _ATTR_VALUE_SINGLE_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_SINGLE_TERMINATORS)}]")
 _ATTR_VALUE_UNQUOTED_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_UNQUOTED_TERMINATORS)}]")
 
-_ATTR_VALUE_PART_SLICE = 0
-_ATTR_VALUE_PART_STRING = 1
 
 
 class TokenizerOpts:
@@ -101,10 +99,10 @@ class Tokenizer:
         "_tag_token",
         "buffer",
         "current_attr_name",
-        "current_attr_name_set",
+        "current_attr_name_lookup",
+        "current_attr_names",
+        "current_attr_value",
         "current_attr_value_has_amp",
-        "current_attr_value_literal",
-        "current_attr_value_parts",
         "current_char",
         "current_comment",
         "current_doctype_force_quirks",
@@ -147,10 +145,10 @@ class Tokenizer:
         self.text_buffer = []
         self.current_tag_name = []
         self.current_tag_attrs = []  # flat list [name1, value1, ...]
-        self.current_attr_name_set = set()
+        self.current_attr_names = []
+        self.current_attr_name_lookup = None
         self.current_attr_name = []
-        self.current_attr_value_parts = []
-        self.current_attr_value_literal = []
+        self.current_attr_value = []
         self.current_attr_value_has_amp = False
         self.current_tag_self_closing = False
         self.current_tag_kind = Tag.START
@@ -179,10 +177,10 @@ class Tokenizer:
         self.text_buffer.clear()
         self.current_tag_name.clear()
         self.current_tag_attrs.clear()
-        self.current_attr_name_set.clear()
+        self.current_attr_names.clear()
+        self.current_attr_name_lookup = None
         self.current_attr_name.clear()
-        self.current_attr_value_parts.clear()
-        self.current_attr_value_literal = []
+        self.current_attr_value.clear()
         self.current_attr_value_has_amp = False
         self.current_comment.clear()
         self.current_doctype_name.clear()
@@ -556,7 +554,8 @@ class Tokenizer:
                 self.state = self.SELF_CLOSING_START_TAG
                 return False
             if c == ">":
-                self._finish_attribute()
+                if self._has_pending_attribute():
+                    self._finish_attribute()
                 if not self._emit_current_tag():
                     self.state = self.DATA
                 return False
@@ -622,7 +621,8 @@ class Tokenizer:
             c = self._get_char()
             if c is None:
                 self._emit_error("EOF after attribute name")
-                self._finish_attribute()
+                if self._has_pending_attribute():
+                    self._finish_attribute()
                 self._emit_current_tag()
                 self._emit_token(EOFToken())
                 return True
@@ -635,11 +635,13 @@ class Tokenizer:
                 self.state = self.BEFORE_ATTRIBUTE_VALUE
                 return False
             if c == ">":
-                self._finish_attribute()
+                if self._has_pending_attribute():
+                    self._finish_attribute()
                 if not self._emit_current_tag():
                     self.state = self.DATA
                 return False
-            self._finish_attribute()
+            if self._has_pending_attribute():
+                self._finish_attribute()
             self._start_attribute()
             if "A" <= c <= "Z":
                 c = chr(ord(c) + 32)
@@ -764,7 +766,8 @@ class Tokenizer:
         c = self._get_char()
         if c is None:
             self._emit_error("EOF in self-closing tag")
-            self._finish_attribute()
+            if self._has_pending_attribute():
+                self._finish_attribute()
             self._emit_current_tag()
             self._emit_token(EOFToken())
             return True
@@ -1484,96 +1487,75 @@ class Tokenizer:
         self.current_tag_kind = kind
         self.current_tag_name.clear()
         self.current_tag_attrs.clear()
-        self.current_attr_name_set.clear()
+        self.current_attr_names.clear()
+        self.current_attr_name_lookup = None
         self.current_attr_name.clear()
-        self.current_attr_value_parts.clear()
-        self.current_attr_value_literal = []
+        self.current_attr_value.clear()
         self.current_attr_value_has_amp = False
         self.current_tag_self_closing = False
 
     def _start_attribute(self):
         self.current_attr_name.clear()
-        self.current_attr_value_parts.clear()
-        self.current_attr_value_literal = []
+        self.current_attr_value.clear()
         self.current_attr_value_has_amp = False
-
-    def _flush_attr_value_literal(self):
-        literals = self.current_attr_value_literal
-        if not literals:
-            return
-        parts = self.current_attr_value_parts
-        if parts and parts[-1][0] == _ATTR_VALUE_PART_STRING:
-            parts[-1][1].extend(literals)
-        else:
-            parts.append([_ATTR_VALUE_PART_STRING, literals])
-        self.current_attr_value_literal = []
-
-    def _append_attr_value_slice(self, start, end):
-        if start >= end:
-            return
-        self._flush_attr_value_literal()
-        parts = self.current_attr_value_parts
-        if parts and parts[-1][0] == _ATTR_VALUE_PART_SLICE and parts[-1][2] == start:
-            parts[-1][2] = end
-            return
-        parts.append([_ATTR_VALUE_PART_SLICE, start, end])
 
     def _append_attr_value_char(self, c):
         if not c:
             return
-        self.current_attr_value_literal.append(c)
-
-    def _materialize_attr_value(self):
-        self._flush_attr_value_literal()
-        parts = self.current_attr_value_parts
-        if not parts:
-            return ""
-        if len(parts) == 1:
-            kind = parts[0][0]
-            if kind == _ATTR_VALUE_PART_SLICE:
-                return self.buffer[parts[0][1] : parts[0][2]]
-            return "".join(parts[0][1])
-        segments = []
-        append = segments.append
-        buffer = self.buffer
-        for part in parts:
-            kind = part[0]
-            if kind == _ATTR_VALUE_PART_SLICE:
-                append(buffer[part[1] : part[2]])
-            else:
-                append("".join(part[1]))
-        return "".join(segments)
+        self.current_attr_value.append(c)
 
     def _finish_attribute(self):
         attr_name_buffer = self.current_attr_name
         if not attr_name_buffer:
-            if not self.current_attr_value_parts and not self.current_attr_value_literal and not self.current_attr_value_has_amp:
-                return
-            self.current_attr_value_parts.clear()
-            self.current_attr_value_literal = []
-            self.current_attr_value_has_amp = False
             return
         if len(attr_name_buffer) == 1:
             name = attr_name_buffer[0]
         else:
             name = "".join(attr_name_buffer)
-        self._flush_attr_value_literal()
-        if not self.current_attr_value_parts:
+        attr_value_buffer = self.current_attr_value
+        if not attr_value_buffer:
             value = ""
+        elif len(attr_value_buffer) == 1:
+            value = attr_value_buffer[0]
         else:
-            value = self._materialize_attr_value()
+            value = "".join(attr_value_buffer)
         if self.current_attr_value_has_amp:
             value = decode_entities_in_text(value, in_attribute=True)
-        attr_names = self.current_attr_name_set
-        if name in attr_names:
+        attr_names = self.current_attr_names
+        lookup = self.current_attr_name_lookup
+        is_duplicate = False
+        if lookup is None:
+            for existing in attr_names:
+                if existing == name:
+                    is_duplicate = True
+                    break
+            if not is_duplicate and len(attr_names) >= 8:
+                lookup = set(attr_names)
+                self.current_attr_name_lookup = lookup
+        else:
+            if name in lookup:
+                is_duplicate = True
+            else:
+                lookup.add(name)
+        if is_duplicate:
             self._emit_error("Duplicate attribute")
         else:
-            attr_names.add(name)
-            self.current_tag_attrs.extend((name, value))
+            attr_names.append(name)
+            attrs = self.current_tag_attrs
+            attrs.append(name)
+            attrs.append(value)
         attr_name_buffer.clear()
-        self.current_attr_value_parts.clear()
-        self.current_attr_value_literal = []
+        attr_value_buffer.clear()
         self.current_attr_value_has_amp = False
+
+    def _has_pending_attribute(self):
+        if self.current_attr_name:
+            return True
+        if self.current_attr_value:
+            return True
+        if self.current_attr_value_has_amp:
+            return True
+        return False
 
     def _append_text_chunk(self, chunk, *, ends_with_cr=False):
         if not chunk:
@@ -1610,7 +1592,7 @@ class Tokenizer:
             end = length
             if end == pos:
                 return False
-        self._append_attr_value_slice(pos, end)
+        self.current_attr_value.append(self.buffer[pos:end])
         self.pos = end
         return True
 
@@ -1641,9 +1623,18 @@ class Tokenizer:
         self.pos = pos
         return True
 
+
     def _emit_current_tag(self):
-        self._finish_attribute()
-        name = "".join(self.current_tag_name)
+        if self._has_pending_attribute():
+            self._finish_attribute()
+        name_parts = self.current_tag_name
+        part_count = len(name_parts)
+        if part_count == 0:
+            name = ""
+        elif part_count == 1:
+            name = name_parts[0]
+        else:
+            name = "".join(name_parts)
         if name:
             name = sys.intern(name)
         attrs = self.current_tag_attrs
@@ -1657,21 +1648,23 @@ class Tokenizer:
         if self.current_tag_kind == Tag.START:
             self.last_start_tag_name = name
             needs_rawtext_check = name in _RAWTEXT_SWITCH_TAGS or name == "plaintext"
-            in_foreign = False
             if needs_rawtext_check:
                 stack = self.sink.open_elements
+                in_foreign = False
                 if stack:
                     current_node = stack[-1]
-                    if current_node and current_node.namespace not in {None, "html"}:
-                        in_foreign = True
-            if not in_foreign and name in _RAWTEXT_SWITCH_TAGS:
-                self.state = self.RAWTEXT
-                self.rawtext_tag_name = name
-                switched_to_rawtext = True
-            # PLAINTEXT: everything after is text (no end tag, no parsing)
-            if not in_foreign and name == "plaintext":
-                self.state = self.PLAINTEXT
-                switched_to_rawtext = True
+                    if current_node:
+                        namespace = current_node.namespace
+                        if namespace is not None and namespace != "html":
+                            in_foreign = True
+                if not in_foreign:
+                    if name in _RAWTEXT_SWITCH_TAGS:
+                        self.state = self.RAWTEXT
+                        self.rawtext_tag_name = name
+                        switched_to_rawtext = True
+                    elif name == "plaintext":
+                        self.state = self.PLAINTEXT
+                        switched_to_rawtext = True
         # Remember current state before emitting
         state_before_emit = self.state
         self._emit_token(tag)
@@ -1679,11 +1672,10 @@ class Tokenizer:
         if self.state != state_before_emit:
             switched_to_rawtext = True
         self.current_tag_name.clear()
-        self.current_tag_attrs.clear()
-        self.current_attr_name_set.clear()
+        self.current_attr_names.clear()
+        self.current_attr_name_lookup = None
         self.current_attr_name.clear()
-        self.current_attr_value_parts.clear()
-        self.current_attr_value_literal = []
+        self.current_attr_value.clear()
         self.current_tag_self_closing = False
         self.current_tag_kind = Tag.START
         return switched_to_rawtext
