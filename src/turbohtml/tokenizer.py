@@ -1496,15 +1496,6 @@ class Tokenizer:
             name = attr_name_buffer[0]
         else:
             name = "".join(attr_name_buffer)
-        attr_value_buffer = self.current_attr_value
-        if not attr_value_buffer:
-            value = ""
-        elif len(attr_value_buffer) == 1:
-            value = attr_value_buffer[0]
-        else:
-            value = "".join(attr_value_buffer)
-        if self.current_attr_value_has_amp:
-            value = decode_entities_in_text(value, in_attribute=True)
         lookup = self.current_attr_name_lookup
         is_duplicate = False
         attrs = self.current_tag_attrs
@@ -1521,13 +1512,23 @@ class Tokenizer:
                 is_duplicate = True
             else:
                 lookup.add(name)
+        attr_name_buffer.clear()
+        attr_value_buffer = self.current_attr_value
         if is_duplicate:
             self._emit_error("Duplicate attribute")
+            attr_value_buffer.clear()
+            self.current_attr_value_has_amp = False
+            return
+        if not attr_value_buffer:
+            value = ""
+        elif len(attr_value_buffer) == 1:
+            value = attr_value_buffer[0]
         else:
-            attrs = self.current_tag_attrs
-            attrs.append(name)
-            attrs.append(value)
-        attr_name_buffer.clear()
+            value = "".join(attr_value_buffer)
+        if self.current_attr_value_has_amp:
+            value = decode_entities_in_text(value, in_attribute=True)
+        attrs.append(name)
+        attrs.append(value)
         attr_value_buffer.clear()
         self.current_attr_value_has_amp = False
 
