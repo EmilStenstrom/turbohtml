@@ -786,16 +786,13 @@ class Tokenizer:
         if self._consume_if("[CDATA["):
             # CDATA sections are only valid in foreign content (SVG/MathML)
             # Check if the adjusted current node is in a foreign namespace
-            is_foreign = False
-            if self.sink.open_elements:
-                current = self.sink.open_elements[-1]
-                if current.namespace not in {None, "html"}:
-                    is_foreign = True
-
-            if is_foreign:
-                # Proper CDATA section in foreign content
-                self.state = self.CDATA_SECTION
-                return False
+            stack = self.sink.open_elements
+            if stack:
+                current = stack[-1]
+                if current and current.namespace not in {None, "html"}:
+                    # Proper CDATA section in foreign content
+                    self.state = self.CDATA_SECTION
+                    return False
             # Treat as bogus comment in HTML context, preserving "[CDATA[" prefix
             self._emit_error("CDATA section outside foreign content")
             self.current_comment.clear()
@@ -1623,14 +1620,9 @@ class Tokenizer:
             needs_rawtext_check = name in _RAWTEXT_SWITCH_TAGS or name == "plaintext"
             if needs_rawtext_check:
                 stack = self.sink.open_elements
-                in_foreign = False
-                if stack:
-                    current_node = stack[-1]
-                    if current_node:
-                        namespace = current_node.namespace
-                        if namespace is not None and namespace != "html":
-                            in_foreign = True
-                if not in_foreign:
+                current_node = stack[-1] if stack else None
+                namespace = current_node.namespace if current_node else None
+                if namespace is None or namespace == "html":
                     if name in _RAWTEXT_SWITCH_TAGS:
                         self.state = self.RAWTEXT
                         self.rawtext_tag_name = name
