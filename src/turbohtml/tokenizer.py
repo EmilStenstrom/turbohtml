@@ -855,17 +855,17 @@ class Tokenizer:
             return False
         if c == "\0":
             self._emit_error("Null in comment")
-            self.current_comment.append("-")
-            self.current_comment.append(replacement)
+            self.current_comment.extend(("-", replacement))
         else:
-            self.current_comment.append("-")
-            self.current_comment.append(c)
+            self.current_comment.extend(("-", c))
         self.state = self.COMMENT
         return False
 
     def _state_comment(self):
         replacement = "\ufffd"
         while True:
+            if self._consume_comment_run():
+                continue
             c = self._get_char()
             if c is None:
                 self._emit_error("EOF in comment")
@@ -894,8 +894,7 @@ class Tokenizer:
             return False
         if c == "\0":
             self._emit_error("Null in comment")
-            self.current_comment.append("-")
-            self.current_comment.append(replacement)
+            self.current_comment.extend(("-", replacement))
             self.state = self.COMMENT
             return False
         if c == ">":
@@ -903,8 +902,7 @@ class Tokenizer:
             self._emit_comment()
             self.state = self.DATA
             return False
-        self.current_comment.append("-")
-        self.current_comment.append(c)
+        self.current_comment.extend(("-", c))
         self.state = self.COMMENT
         return False
 
@@ -928,15 +926,11 @@ class Tokenizer:
             return False
         if c == "\0":
             self._emit_error("Null in comment")
-            self.current_comment.append("-")
-            self.current_comment.append("-")
-            self.current_comment.append(replacement)
+            self.current_comment.extend(("--", replacement))
             self.state = self.COMMENT
             return False
         self._emit_error("Comment not properly closed")
-        self.current_comment.append("-")
-        self.current_comment.append("-")
-        self.current_comment.append(c)
+        self.current_comment.extend(("--", c))
         self.state = self.COMMENT
         return False
 
@@ -1549,7 +1543,8 @@ class Tokenizer:
                     self.ignore_lf = ends_with_cr
                     return
             self.ignore_lf = False
-        if "\r" in chunk:
+        cr_index = chunk.find("\r")
+        if cr_index != -1:
             chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
         self.line += chunk.count("\n")
         self.text_buffer.append(chunk)
@@ -1627,6 +1622,25 @@ class Tokenizer:
         self.pos = pos
         return True
 
+    def _consume_comment_run(self):
+        if self.reconsume:
+            return False
+        pos = self.pos
+        length = self.length
+        if pos >= length:
+            return False
+        buffer = self.buffer
+        start = pos
+        while pos < length:
+            c = buffer[pos]
+            if c == "-" or c == "\0":
+                break
+            pos += 1
+        if pos == start:
+            return False
+        self.current_comment.append(buffer[start:pos])
+        self.pos = pos
+        return True
 
     def _emit_current_tag(self):
         self._finish_attribute()
@@ -1878,8 +1892,7 @@ class Tokenizer:
             self.original_tag_name.append(c)
             self.state = self.RAWTEXT_END_TAG_NAME
             return False
-        self.text_buffer.append("<")
-        self.text_buffer.append("/")
+        self.text_buffer.extend(("<", "/"))
         self._reconsume_current()
         self.state = self.RAWTEXT
         return False
@@ -1919,8 +1932,7 @@ class Tokenizer:
             # If we hit EOF or tag doesn't match, emit as text
             if c is None:
                 # EOF - emit incomplete tag as text (preserve original case) then EOF
-                self.text_buffer.append("<")
-                self.text_buffer.append("/")
+                self.text_buffer.extend(("<", "/"))
                 for ch in self.original_tag_name:
                     self.text_buffer.append(ch)
                 self.current_tag_name.clear()
@@ -1929,8 +1941,7 @@ class Tokenizer:
                 self._emit_token(EOFToken())
                 return True
             # Not a matching end tag - emit as text (preserve original case)
-            self.text_buffer.append("<")
-            self.text_buffer.append("/")
+            self.text_buffer.extend(("<", "/"))
             for ch in self.original_tag_name:
                 self.text_buffer.append(ch)
             self.current_tag_name.clear()
@@ -2045,8 +2056,7 @@ class Tokenizer:
             self._reconsume_current()
             self.state = self.SCRIPT_DATA_ESCAPED_END_TAG_NAME
             return False
-        self.text_buffer.append("<")
-        self.text_buffer.append("/")
+        self.text_buffer.extend(("<", "/"))
         self._reconsume_current()
         self.state = self.SCRIPT_DATA_ESCAPED
         return False
@@ -2085,8 +2095,7 @@ class Tokenizer:
                 self.original_tag_name.clear()
                 return False
         # Not an appropriate end tag
-        self.text_buffer.append("<")
-        self.text_buffer.append("/")
+        self.text_buffer.extend(("<", "/"))
         for ch in self.temp_buffer:
             self.text_buffer.append(ch)
         self._reconsume_current()
