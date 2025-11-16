@@ -101,6 +101,7 @@ class Tokenizer:
 
     __slots__ = (
         "_tag_token",
+        "_state_handlers",
         "buffer",
         "current_attr_name",
         "current_attr_name_lookup",
@@ -165,6 +166,66 @@ class Tokenizer:
         self.temp_buffer = []
         self._tag_token = Tag(Tag.START, "", [], False)
 
+        # State dispatch table for faster lookup
+        self._state_handlers = {
+            self.DATA: self._state_data,
+            self.TAG_OPEN: self._state_tag_open,
+            self.END_TAG_OPEN: self._state_end_tag_open,
+            self.TAG_NAME: self._state_tag_name,
+            self.BEFORE_ATTRIBUTE_NAME: self._state_before_attribute_name,
+            self.ATTRIBUTE_NAME: self._state_attribute_name,
+            self.AFTER_ATTRIBUTE_NAME: self._state_after_attribute_name,
+            self.BEFORE_ATTRIBUTE_VALUE: self._state_before_attribute_value,
+            self.ATTRIBUTE_VALUE_DOUBLE: self._state_attribute_value_double,
+            self.ATTRIBUTE_VALUE_SINGLE: self._state_attribute_value_single,
+            self.ATTRIBUTE_VALUE_UNQUOTED: self._state_attribute_value_unquoted,
+            self.SELF_CLOSING_START_TAG: self._state_self_closing_start_tag,
+            self.MARKUP_DECLARATION_OPEN: self._state_markup_declaration_open,
+            self.COMMENT_START: self._state_comment_start,
+            self.COMMENT_START_DASH: self._state_comment_start_dash,
+            self.COMMENT: self._state_comment,
+            self.COMMENT_END_DASH: self._state_comment_end_dash,
+            self.COMMENT_END: self._state_comment_end,
+            self.COMMENT_END_BANG: self._state_comment_end_bang,
+            self.BOGUS_COMMENT: self._state_bogus_comment,
+            self.DOCTYPE: self._state_doctype,
+            self.BEFORE_DOCTYPE_NAME: self._state_before_doctype_name,
+            self.DOCTYPE_NAME: self._state_doctype_name,
+            self.AFTER_DOCTYPE_NAME: self._state_after_doctype_name,
+            self.BOGUS_DOCTYPE: self._state_bogus_doctype,
+            self.AFTER_DOCTYPE_PUBLIC_KEYWORD: self._state_after_doctype_public_keyword,
+            self.AFTER_DOCTYPE_SYSTEM_KEYWORD: self._state_after_doctype_system_keyword,
+            self.BEFORE_DOCTYPE_PUBLIC_IDENTIFIER: self._state_before_doctype_public_identifier,
+            self.DOCTYPE_PUBLIC_IDENTIFIER_DOUBLE_QUOTED: self._state_doctype_public_identifier_double_quoted,
+            self.DOCTYPE_PUBLIC_IDENTIFIER_SINGLE_QUOTED: self._state_doctype_public_identifier_single_quoted,
+            self.AFTER_DOCTYPE_PUBLIC_IDENTIFIER: self._state_after_doctype_public_identifier,
+            self.BETWEEN_DOCTYPE_PUBLIC_AND_SYSTEM_IDENTIFIERS: self._state_between_doctype_public_and_system_identifiers,
+            self.BEFORE_DOCTYPE_SYSTEM_IDENTIFIER: self._state_before_doctype_system_identifier,
+            self.DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE_QUOTED: self._state_doctype_system_identifier_double_quoted,
+            self.DOCTYPE_SYSTEM_IDENTIFIER_SINGLE_QUOTED: self._state_doctype_system_identifier_single_quoted,
+            self.AFTER_DOCTYPE_SYSTEM_IDENTIFIER: self._state_after_doctype_system_identifier,
+            self.CDATA_SECTION: self._state_cdata_section,
+            self.CDATA_SECTION_BRACKET: self._state_cdata_section_bracket,
+            self.CDATA_SECTION_END: self._state_cdata_section_end,
+            self.RAWTEXT: self._state_rawtext,
+            self.RAWTEXT_LESS_THAN_SIGN: self._state_rawtext_less_than_sign,
+            self.RAWTEXT_END_TAG_OPEN: self._state_rawtext_end_tag_open,
+            self.RAWTEXT_END_TAG_NAME: self._state_rawtext_end_tag_name,
+            self.PLAINTEXT: self._state_plaintext,
+            self.SCRIPT_DATA_ESCAPED: self._state_script_data_escaped,
+            self.SCRIPT_DATA_ESCAPED_DASH: self._state_script_data_escaped_dash,
+            self.SCRIPT_DATA_ESCAPED_DASH_DASH: self._state_script_data_escaped_dash_dash,
+            self.SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN: self._state_script_data_escaped_less_than_sign,
+            self.SCRIPT_DATA_ESCAPED_END_TAG_OPEN: self._state_script_data_escaped_end_tag_open,
+            self.SCRIPT_DATA_ESCAPED_END_TAG_NAME: self._state_script_data_escaped_end_tag_name,
+            self.SCRIPT_DATA_DOUBLE_ESCAPE_START: self._state_script_data_double_escape_start,
+            self.SCRIPT_DATA_DOUBLE_ESCAPED: self._state_script_data_double_escaped,
+            self.SCRIPT_DATA_DOUBLE_ESCAPED_DASH: self._state_script_data_double_escaped_dash,
+            self.SCRIPT_DATA_DOUBLE_ESCAPED_DASH_DASH: self._state_script_data_double_escaped_dash_dash,
+            self.SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN: self._state_script_data_double_escaped_less_than_sign,
+            self.SCRIPT_DATA_DOUBLE_ESCAPE_END: self._state_script_data_double_escape_end,
+        }
+
     def run(self, html):
         if html and html[0] == "\ufeff" and self.opts.discard_bom:
             html = html[1:]
@@ -204,179 +265,11 @@ class Tokenizer:
         else:
             self.state = self.DATA
 
+        handlers = self._state_handlers
         while True:
-            state = self.state
-            if state == self.DATA:
-                if self._state_data():
-                    break
-            elif state == self.TAG_OPEN:
-                if self._state_tag_open():
-                    break
-            elif state == self.END_TAG_OPEN:
-                if self._state_end_tag_open():
-                    break
-            elif state == self.TAG_NAME:
-                if self._state_tag_name():
-                    break
-            elif state == self.BEFORE_ATTRIBUTE_NAME:
-                if self._state_before_attribute_name():
-                    break
-            elif state == self.ATTRIBUTE_NAME:
-                if self._state_attribute_name():
-                    break
-            elif state == self.AFTER_ATTRIBUTE_NAME:
-                if self._state_after_attribute_name():
-                    break
-            elif state == self.BEFORE_ATTRIBUTE_VALUE:
-                if self._state_before_attribute_value():
-                    break
-            elif state == self.ATTRIBUTE_VALUE_DOUBLE:
-                if self._state_attribute_value_double():
-                    break
-            elif state == self.ATTRIBUTE_VALUE_SINGLE:
-                if self._state_attribute_value_single():
-                    break
-            elif state == self.ATTRIBUTE_VALUE_UNQUOTED:
-                if self._state_attribute_value_unquoted():
-                    break
-            elif state == self.SELF_CLOSING_START_TAG:
-                if self._state_self_closing_start_tag():
-                    break
-            elif state == self.MARKUP_DECLARATION_OPEN:
-                if self._state_markup_declaration_open():
-                    break
-            elif state == self.COMMENT_START:
-                if self._state_comment_start():
-                    break
-            elif state == self.COMMENT_START_DASH:
-                if self._state_comment_start_dash():
-                    break
-            elif state == self.COMMENT:
-                if self._state_comment():
-                    break
-            elif state == self.COMMENT_END_DASH:
-                if self._state_comment_end_dash():
-                    break
-            elif state == self.COMMENT_END:
-                if self._state_comment_end():
-                    break
-            elif state == self.COMMENT_END_BANG:
-                if self._state_comment_end_bang():
-                    break
-            elif state == self.BOGUS_COMMENT:
-                if self._state_bogus_comment():
-                    break
-            elif state == self.DOCTYPE:
-                if self._state_doctype():
-                    break
-            elif state == self.BEFORE_DOCTYPE_NAME:
-                if self._state_before_doctype_name():
-                    break
-            elif state == self.DOCTYPE_NAME:
-                if self._state_doctype_name():
-                    break
-            elif state == self.AFTER_DOCTYPE_NAME:
-                if self._state_after_doctype_name():
-                    break
-            elif state == self.AFTER_DOCTYPE_PUBLIC_KEYWORD:
-                if self._state_after_doctype_public_keyword():
-                    break
-            elif state == self.AFTER_DOCTYPE_SYSTEM_KEYWORD:
-                if self._state_after_doctype_system_keyword():
-                    break
-            elif state == self.BEFORE_DOCTYPE_PUBLIC_IDENTIFIER:
-                if self._state_before_doctype_public_identifier():
-                    break
-            elif state == self.DOCTYPE_PUBLIC_IDENTIFIER_DOUBLE_QUOTED:
-                if self._state_doctype_public_identifier_double_quoted():
-                    break
-            elif state == self.DOCTYPE_PUBLIC_IDENTIFIER_SINGLE_QUOTED:
-                if self._state_doctype_public_identifier_single_quoted():
-                    break
-            elif state == self.AFTER_DOCTYPE_PUBLIC_IDENTIFIER:
-                if self._state_after_doctype_public_identifier():
-                    break
-            elif state == self.BETWEEN_DOCTYPE_PUBLIC_AND_SYSTEM_IDENTIFIERS:
-                if self._state_between_doctype_public_and_system_identifiers():
-                    break
-            elif state == self.BEFORE_DOCTYPE_SYSTEM_IDENTIFIER:
-                if self._state_before_doctype_system_identifier():
-                    break
-            elif state == self.DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE_QUOTED:
-                if self._state_doctype_system_identifier_double_quoted():
-                    break
-            elif state == self.DOCTYPE_SYSTEM_IDENTIFIER_SINGLE_QUOTED:
-                if self._state_doctype_system_identifier_single_quoted():
-                    break
-            elif state == self.AFTER_DOCTYPE_SYSTEM_IDENTIFIER:
-                if self._state_after_doctype_system_identifier():
-                    break
-            elif state == self.BOGUS_DOCTYPE:
-                if self._state_bogus_doctype():
-                    break
-            elif state == self.CDATA_SECTION:
-                if self._state_cdata_section():
-                    break
-            elif state == self.CDATA_SECTION_BRACKET:
-                if self._state_cdata_section_bracket():
-                    break
-            elif state == self.CDATA_SECTION_END:
-                if self._state_cdata_section_end():
-                    break
-            elif state == self.RAWTEXT:
-                if self._state_rawtext():
-                    break
-            elif state == self.RAWTEXT_LESS_THAN_SIGN:
-                if self._state_rawtext_less_than_sign():
-                    break
-            elif state == self.RAWTEXT_END_TAG_OPEN:
-                if self._state_rawtext_end_tag_open():
-                    break
-            elif state == self.RAWTEXT_END_TAG_NAME:
-                if self._state_rawtext_end_tag_name():
-                    break
-            elif state == self.PLAINTEXT:
-                if self._state_plaintext():
-                    break
-            elif state == self.SCRIPT_DATA_ESCAPED:
-                if self._state_script_data_escaped():
-                    break
-            elif state == self.SCRIPT_DATA_ESCAPED_DASH:
-                if self._state_script_data_escaped_dash():
-                    break
-            elif state == self.SCRIPT_DATA_ESCAPED_DASH_DASH:
-                if self._state_script_data_escaped_dash_dash():
-                    break
-            elif state == self.SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN:
-                if self._state_script_data_escaped_less_than_sign():
-                    break
-            elif state == self.SCRIPT_DATA_ESCAPED_END_TAG_OPEN:
-                if self._state_script_data_escaped_end_tag_open():
-                    break
-            elif state == self.SCRIPT_DATA_ESCAPED_END_TAG_NAME:
-                if self._state_script_data_escaped_end_tag_name():
-                    break
-            elif state == self.SCRIPT_DATA_DOUBLE_ESCAPE_START:
-                if self._state_script_data_double_escape_start():
-                    break
-            elif state == self.SCRIPT_DATA_DOUBLE_ESCAPED:
-                if self._state_script_data_double_escaped():
-                    break
-            elif state == self.SCRIPT_DATA_DOUBLE_ESCAPED_DASH:
-                if self._state_script_data_double_escaped_dash():
-                    break
-            elif state == self.SCRIPT_DATA_DOUBLE_ESCAPED_DASH_DASH:
-                if self._state_script_data_double_escaped_dash_dash():
-                    break
-            elif state == self.SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN:
-                if self._state_script_data_double_escaped_less_than_sign():
-                    break
-            elif state == self.SCRIPT_DATA_DOUBLE_ESCAPE_END:
-                if self._state_script_data_double_escape_end():
-                    break
-            else:
-                # Unknown state fallback to data.
-                self.state = self.DATA
+            handler = handlers.get(self.state)
+            if handler():
+                break
 
     # ---------------------
     # Helper methods
