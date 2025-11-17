@@ -190,8 +190,27 @@ def _doctype_error_and_quirks(doctype, iframe_srcdoc):
 
 
 def _iter_attr_pairs(attrs):
-    for index in range(0, len(attrs), 2):
-        yield attrs[index], attrs[index + 1]
+    if not attrs:
+        return
+    if isinstance(attrs, dict):
+        for name, value in attrs.items():
+            yield name, value
+        return
+    iterator = iter(attrs)
+    for name in iterator:
+        yield name, next(iterator, "")
+
+
+def _as_attr_dict(attrs):
+    if not attrs:
+        return {}
+    if isinstance(attrs, dict):
+        return dict(attrs)
+    attr_map = {}
+    for name, value in _iter_attr_pairs(attrs):
+        if name not in attr_map:
+            attr_map[name] = value
+    return attr_map
 
 
 class SimpleDomNode:
@@ -199,10 +218,7 @@ class SimpleDomNode:
 
     def __init__(self, name, attrs=None, data=None, namespace=None):
         self.name = name
-        if attrs:
-            self.attrs = attrs if isinstance(attrs, list) else list(attrs)
-        else:
-            self.attrs = []
+        self.attrs = _as_attr_dict(attrs)
         self.children = []
         self.parent = None
         self.data = data
@@ -281,11 +297,9 @@ class SimpleDomNode:
 
         # Prepare display names for sorting
         display_attrs = []
-        attrs = self.attrs
         namespace = self.namespace
-        for index in range(0, len(attrs), 2):
-            attr_name = attrs[index]
-            value = attrs[index + 1] or ""
+        for attr_name, attr_value in self.attrs.items():
+            value = attr_value or ""
             display_name = attr_name
             if namespace and namespace not in {None, "html"}:
                 lower_name = attr_name.lower()
@@ -377,7 +391,7 @@ class TreeBuilder:
         self._init_body_end_handlers()
         if fragment_context is not None:
             # Fragment parsing per HTML5 spec
-            root = self._create_element("html", None, [])
+            root = self._create_element("html", None, {})
             self.document.append_child(root)
             self.open_elements.append(root)
             # Set mode based on context element name
@@ -391,7 +405,7 @@ class TreeBuilder:
                 adjusted_name = context_name
                 if namespace == "svg":
                     adjusted_name = self._adjust_svg_tag_name(context_name)
-                context_element = self._create_element(adjusted_name, namespace, [])
+                context_element = self._create_element(adjusted_name, namespace, {})
                 root.append_child(context_element)
                 self.open_elements.append(context_element)
                 self.fragment_context_element = context_element
@@ -735,7 +749,7 @@ class TreeBuilder:
                 self.mode = InsertionMode.BEFORE_HEAD
                 return None
             if token.kind == Tag.END and token.name in {"head", "body", "html", "br"}:
-                self._create_root([])
+                self._create_root({})
                 self.mode = InsertionMode.BEFORE_HEAD
                 return ("reprocess", InsertionMode.BEFORE_HEAD, token)
             if token.kind == Tag.END:
@@ -743,7 +757,7 @@ class TreeBuilder:
                 self._parse_error("Unexpected end tag in before html")
                 return None
         if isinstance(token, EOFToken):
-            self._create_root([])
+            self._create_root({})
             self.mode = InsertionMode.BEFORE_HEAD
             return ("reprocess", InsertionMode.BEFORE_HEAD, token)
 
@@ -754,7 +768,7 @@ class TreeBuilder:
             if len(stripped) != len(token.data):
                 token = CharacterTokens(stripped)
 
-        self._create_root([])
+        self._create_root({})
         self.mode = InsertionMode.BEFORE_HEAD
         return ("reprocess", InsertionMode.BEFORE_HEAD, token)
 
@@ -1060,7 +1074,7 @@ class TreeBuilder:
             # Special case: </br> end tag is treated as <br> start tag
             if name == "br":
                 self._parse_error("Unexpected </br>")
-                br_tag = Tag(Tag.START, "br", [], False)
+                br_tag = Tag(Tag.START, "br", {}, False)
                 return self._mode_in_body(br_tag)
 
             if name in FORMATTING_ELEMENTS:
@@ -1277,7 +1291,7 @@ class TreeBuilder:
     def _handle_body_end_p(self, token):
         if not self._close_p_element():
             self._parse_error("Unexpected </p>")
-            phantom = Tag(Tag.START, "p", [], False)
+            phantom = Tag(Tag.START, "p", {}, False)
             self._insert_element(phantom, push=True)
             self._close_p_element()
         return
@@ -1505,7 +1519,7 @@ class TreeBuilder:
                     return None
                 if name == "col":
                     self._clear_stack_to_table_context()
-                    implied = Tag(Tag.START, "colgroup", [], False)
+                    implied = Tag(Tag.START, "colgroup", {}, False)
                     self._insert_element(implied, push=True)
                     self.mode = InsertionMode.IN_COLUMN_GROUP
                     return ("reprocess", InsertionMode.IN_COLUMN_GROUP, token)
@@ -1516,7 +1530,7 @@ class TreeBuilder:
                     return None
                 if name in {"td", "th", "tr"}:
                     self._clear_stack_to_table_context()
-                    implied = Tag(Tag.START, "tbody", [], False)
+                    implied = Tag(Tag.START, "tbody", {}, False)
                     self._insert_element(implied, push=True)
                     self.mode = InsertionMode.IN_TABLE_BODY
                     return ("reprocess", InsertionMode.IN_TABLE_BODY, token)
@@ -1791,7 +1805,7 @@ class TreeBuilder:
                 if name in {"td", "th"}:
                     self._parse_error("unexpected-cell-in-table-body")
                     self._clear_stack_to_table_body_context()
-                    implied = Tag(Tag.START, "tr", [], False)
+                    implied = Tag(Tag.START, "tr", {}, False)
                     self._insert_element(implied, push=True)
                     self.mode = InsertionMode.IN_ROW
                     return ("reprocess", InsertionMode.IN_ROW, token)
@@ -2479,7 +2493,7 @@ class TreeBuilder:
         return node
 
     def _insert_phantom(self, name):
-        tag = Tag(Tag.START, name, [], False)
+        tag = Tag(Tag.START, name, {}, False)
         return self._insert_element(tag, push=True)
 
     def _insert_body_if_missing(self):
@@ -2488,7 +2502,7 @@ class TreeBuilder:
                 return
         html_node = self._find_last_on_stack("html")
         if html_node is None:
-            html_node = self._create_root([])
+            html_node = self._create_root({})
         node = SimpleDomNode("body", namespace="html")
         html_node.append_child(node)
         node.parent = html_node
@@ -2503,8 +2517,7 @@ class TreeBuilder:
 
     def _create_element(self, name, namespace, attrs):
         ns = namespace or "html"
-        attr_list = attrs if attrs else []
-        return SimpleDomNode(name, attrs=attr_list, namespace=ns)
+        return SimpleDomNode(name, attrs=attrs, namespace=ns)
 
     def _pop_current(self):
         if not self.open_elements:
@@ -2554,15 +2567,12 @@ class TreeBuilder:
         return False
 
     def _add_missing_attributes(self, node, attrs):
-        existing = set()
-        for index in range(0, len(node.attrs), 2):
-            existing.add(node.attrs[index])
-        for index in range(0, len(attrs), 2):
-            name = attrs[index]
-            value = attrs[index + 1]
+        if not attrs:
+            return
+        existing = node.attrs
+        for name, value in _iter_attr_pairs(attrs):
             if name not in existing:
-                node.attrs.extend((name, value))
-                existing.add(name)
+                existing[name] = value
 
     def _remove_from_open_elements(self, node):
         for index, current in enumerate(self.open_elements):
@@ -2595,16 +2605,14 @@ class TreeBuilder:
         return None
 
     def _clone_attributes(self, attrs):
-        return list(attrs) if attrs else []
+        return _as_attr_dict(attrs)
 
     def _attrs_signature(self, attrs):
         if not attrs:
             return ()
         items = []
-        for index in range(0, len(attrs), 2):
-            name = attrs[index]
-            value = attrs[index + 1] or ""
-            items.append((name, value))
+        for name, value in _iter_attr_pairs(attrs):
+            items.append((name, value or ""))
         items.sort()
         return tuple(items)
 
@@ -2930,11 +2938,9 @@ class TreeBuilder:
 
     def _prepare_foreign_attributes(self, namespace, attrs):
         if not attrs:
-            return []
-        adjusted = []
-        for index in range(0, len(attrs), 2):
-            name = attrs[index]
-            value = attrs[index + 1]
+            return {}
+        adjusted = {}
+        for name, value in _iter_attr_pairs(attrs):
             lower_name = self._lower_ascii(name)
             if namespace == "math" and lower_name in MATHML_ATTRIBUTE_ADJUSTMENTS:
                 name = MATHML_ATTRIBUTE_ADJUSTMENTS[lower_name]
@@ -2951,15 +2957,16 @@ class TreeBuilder:
                 else:
                     name = local
 
-            adjusted.extend((name, value))
+            if name not in adjusted:
+                adjusted[name] = value
         return adjusted
 
     def _node_attribute_value(self, node, name):
         target = self._lower_ascii(name)
         attrs = node.attrs
-        for index in range(0, len(attrs), 2):
-            attr_name = attrs[index]
-            attr_value = attrs[index + 1]
+        if not attrs:
+            return None
+        for attr_name, attr_value in attrs.items():
             if self._lower_ascii(attr_name) == target:
                 return attr_value or ""
         return None
@@ -2995,7 +3002,7 @@ class TreeBuilder:
                 def __init__(self, name, namespace):
                     self.name = name
                     self.namespace = namespace
-                    self.attrs = []  # Fragment context has no attributes
+                    self.attrs = {}
 
             return PseudoNode(
                 self.fragment_context.tag_name.lower(),
@@ -3231,7 +3238,7 @@ class TreeBuilder:
         return target, len(target.children)
 
     def _clone_shallow(self, node):
-        attrs = list(node.attrs) if node.attrs else []
+        attrs = self._clone_attributes(node.attrs)
         return SimpleDomNode(node.name, attrs=attrs, namespace=node.namespace)
 
     def _replace_node(self, old, new):
@@ -3528,7 +3535,7 @@ class TreeBuilder:
                 # Element node
                 cloned = SimpleDomNode(
                     child.name,
-                    attrs=list(child.attrs) if child.attrs else [],
+                    attrs=self._clone_attributes(child.attrs),
                     namespace=getattr(child, "namespace", None),
                 )
                 self._clone_children(child, cloned)

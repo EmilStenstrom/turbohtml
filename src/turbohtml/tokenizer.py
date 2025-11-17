@@ -104,7 +104,6 @@ class Tokenizer:
         "_state_handlers",
         "buffer",
         "current_attr_name",
-        "current_attr_name_lookup",
         "current_attr_value",
         "current_attr_value_has_amp",
         "current_char",
@@ -148,8 +147,7 @@ class Tokenizer:
         # Reusable buffers to avoid per-token allocations.
         self.text_buffer = []
         self.current_tag_name = []
-        self.current_tag_attrs = []  # flat list [name1, value1, ...]
-        self.current_attr_name_lookup = None
+        self.current_tag_attrs = {}
         self.current_attr_name = []
         self.current_attr_value = []
         self.current_attr_value_has_amp = False
@@ -164,7 +162,7 @@ class Tokenizer:
         self.rawtext_tag_name = None
         self.original_tag_name = []
         self.temp_buffer = []
-        self._tag_token = Tag(Tag.START, "", [], False)
+        self._tag_token = Tag(Tag.START, "", {}, False)
 
         # State dispatch table for faster lookup
         self._state_handlers = {
@@ -239,8 +237,7 @@ class Tokenizer:
         self.line = 1
         self.text_buffer.clear()
         self.current_tag_name.clear()
-        self.current_tag_attrs.clear()
-        self.current_attr_name_lookup = None
+        self.current_tag_attrs = {}
         self.current_attr_name.clear()
         self.current_attr_value.clear()
         self.current_attr_value_has_amp = False
@@ -256,7 +253,7 @@ class Tokenizer:
         self.last_start_tag_name = None
         self._tag_token.kind = Tag.START
         self._tag_token.name = ""
-        self._tag_token.attrs = []
+        self._tag_token.attrs = {}
         self._tag_token.self_closing = False
 
         initial_state = self.opts.initial_state
@@ -1366,8 +1363,7 @@ class Tokenizer:
     def _start_tag(self, kind):
         self.current_tag_kind = kind
         self.current_tag_name.clear()
-        self.current_tag_attrs.clear()
-        self.current_attr_name_lookup = None
+        self.current_tag_attrs = {}
         self.current_attr_name.clear()
         self.current_attr_value.clear()
         self.current_attr_value_has_amp = False
@@ -1389,22 +1385,8 @@ class Tokenizer:
             name = attr_name_buffer[0]
         else:
             name = "".join(attr_name_buffer)
-        lookup = self.current_attr_name_lookup
-        is_duplicate = False
         attrs = self.current_tag_attrs
-        if lookup is None:
-            for i in range(0, len(attrs), 2):
-                if attrs[i] == name:
-                    is_duplicate = True
-                    break
-            if not is_duplicate and len(attrs) >= 16:
-                lookup = {attrs[i] for i in range(0, len(attrs), 2)}
-                self.current_attr_name_lookup = lookup
-        else:
-            if name in lookup:
-                is_duplicate = True
-            else:
-                lookup.add(name)
+        is_duplicate = name in attrs
         attr_name_buffer.clear()
         attr_value_buffer = self.current_attr_value
         if is_duplicate:
@@ -1420,8 +1402,7 @@ class Tokenizer:
             value = "".join(attr_value_buffer)
         if self.current_attr_value_has_amp:
             value = decode_entities_in_text(value, in_attribute=True)
-        attrs.append(name)
-        attrs.append(value)
+        attrs[name] = value
         attr_value_buffer.clear()
         self.current_attr_value_has_amp = False
 
@@ -1548,7 +1529,7 @@ class Tokenizer:
         if name:
             name = sys.intern(name)
         attrs = self.current_tag_attrs
-        self.current_tag_attrs = []
+        self.current_tag_attrs = {}
         tag = self._tag_token
         tag.kind = self.current_tag_kind
         tag.name = name
@@ -1577,7 +1558,6 @@ class Tokenizer:
         if self.state != state_before_emit:
             switched_to_rawtext = True
         self.current_tag_name.clear()
-        self.current_attr_name_lookup = None
         self.current_attr_name.clear()
         self.current_attr_value.clear()
         self.current_tag_self_closing = False
@@ -1813,13 +1793,13 @@ class Tokenizer:
                 if c in (" ", "\t", "\n", "\r", "\f"):
                     # Whitespace after tag name - switch to BEFORE_ATTRIBUTE_NAME
                     self.current_tag_kind = Tag.END
-                    self.current_tag_attrs.clear()
+                    self.current_tag_attrs = {}
                     self.state = self.BEFORE_ATTRIBUTE_NAME
                     return False
                 if c == "/":
                     self._flush_text()
                     self.current_tag_kind = Tag.END
-                    self.current_tag_attrs.clear()
+                    self.current_tag_attrs = {}
                     self.state = self.SELF_CLOSING_START_TAG
                     return False
             # If we hit EOF or tag doesn't match, emit as text
@@ -1968,13 +1948,13 @@ class Tokenizer:
         if is_appropriate:
             if c in (" ", "\t", "\n", "\r", "\f"):
                 self.current_tag_kind = Tag.END
-                self.current_tag_attrs.clear()
+                self.current_tag_attrs = {}
                 self.state = self.BEFORE_ATTRIBUTE_NAME
                 return False
             if c == "/":
                 self._flush_text()
                 self.current_tag_kind = Tag.END
-                self.current_tag_attrs.clear()
+                self.current_tag_attrs = {}
                 self.state = self.SELF_CLOSING_START_TAG
                 return False
             if c == ">":

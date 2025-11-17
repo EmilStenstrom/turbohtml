@@ -7,17 +7,20 @@ class Tag:
     def __init__(self, kind, name, attrs, self_closing=False):
         self.kind = kind
         self.name = name
-        self.attrs = attrs
+        self.attrs = attrs if attrs is not None else {}
         self.self_closing = bool(self_closing)
 
     def __repr__(self):
         if self.attrs:
-            parts = []
-            attrs = self.attrs
-            for index in range(0, len(attrs), 2):
-                name = attrs[index]
-                value = attrs[index + 1]
-                parts.append(f"{name}={value!r}")
+            if isinstance(self.attrs, dict):
+                parts = [f"{name}={value!r}" for name, value in self.attrs.items()]
+            else:
+                parts = []
+                attrs = self.attrs
+                for index in range(0, len(attrs), 2):
+                    name = attrs[index]
+                    value = attrs[index + 1]
+                    parts.append(f"{name}={value!r}")
             attrs = " ".join(parts)
         else:
             attrs = ""
