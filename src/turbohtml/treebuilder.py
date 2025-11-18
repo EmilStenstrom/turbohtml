@@ -343,6 +343,8 @@ class TreeBuilder:
     __slots__ = (
         "_body_end_handlers",
         "_body_start_handlers",
+        "_body_token_handlers",
+        "_mode_handlers",
         "active_formatting",
         "document",
         "errors",
@@ -389,6 +391,36 @@ class TreeBuilder:
         self.tokenizer_state_override = None
         self._init_body_start_handlers()
         self._init_body_end_handlers()
+        self._body_token_handlers = {
+            CharacterTokens: self._handle_characters_in_body,
+            CommentToken: self._handle_comment_in_body,
+            Tag: self._handle_tag_in_body,
+            EOFToken: self._handle_eof_in_body,
+        }
+        self._mode_handlers = [
+            self._mode_initial,
+            self._mode_before_html,
+            self._mode_before_head,
+            self._mode_in_head,
+            self._mode_in_head_noscript,
+            self._mode_after_head,
+            self._mode_text,
+            self._mode_in_body,
+            self._mode_after_body,
+            self._mode_after_after_body,
+            self._mode_in_table,
+            self._mode_in_table_text,
+            self._mode_in_caption,
+            self._mode_in_column_group,
+            self._mode_in_table_body,
+            self._mode_in_row,
+            self._mode_in_cell,
+            self._mode_in_frameset,
+            self._mode_after_frameset,
+            self._mode_after_after_frameset,
+            self._mode_in_select,
+            self._mode_in_template,
+        ]
         if fragment_context is not None:
             # Fragment parsing per HTML5 spec
             root = self._create_element("html", None, {})
@@ -511,12 +543,16 @@ class TreeBuilder:
         reprocess = True
         current_token = token
         force_html_mode = False
+        
+        # Cache mode handlers list for speed
+        mode_handlers = self._mode_handlers
+        
         while reprocess:
             reprocess = False
             if force_html_mode:
                 # Force processing in HTML mode, bypassing foreign content check
                 force_html_mode = False
-                result = self._dispatch(current_token)
+                result = mode_handlers[self.mode](current_token)
             elif self._should_use_foreign_content(current_token):
                 result = self._process_foreign_content(current_token)
             else:
@@ -531,7 +567,8 @@ class TreeBuilder:
                             should_pop = False
                         # Don't pop when inserting new svg/math elements
                         if isinstance(current_token, Tag) and current_token.kind == Tag.START:
-                            name_lower = self._lower_ascii(current_token.name)
+                            # Optimization: Tokenizer already lowercases tag names
+                            name_lower = current_token.name
                             if name_lower in {"svg", "math"}:
                                 should_pop = False
                         if should_pop:
@@ -570,7 +607,7 @@ class TreeBuilder:
                             else:
                                 result = None
                         else:
-                            result = self._dispatch(current_token)
+                            result = mode_handlers[self.mode](current_token)
                     else:
                         # At integration points inside foreign content, check if table tags make sense.
                         # If we're in a table mode but NOT inside an actual HTML table element,
@@ -600,16 +637,16 @@ class TreeBuilder:
                                 # Temporarily use IN_BODY mode for this tag
                                 saved_mode = self.mode
                                 self.mode = InsertionMode.IN_BODY
-                                result = self._dispatch(current_token)
+                                result = mode_handlers[self.mode](current_token)
                                 # Restore mode if no mode change was requested
                                 if self.mode == InsertionMode.IN_BODY:
                                     self.mode = saved_mode
                             else:
-                                result = self._dispatch(current_token)
+                                result = mode_handlers[self.mode](current_token)
                         else:
-                            result = self._dispatch(current_token)
+                            result = mode_handlers[self.mode](current_token)
                 else:
-                    result = self._dispatch(current_token)
+                    result = mode_handlers[self.mode](current_token)
             if result is None:
                 result_to_return = self.tokenizer_state_override or TokenSinkResult.Continue
                 self.tokenizer_state_override = None
@@ -671,51 +708,7 @@ class TreeBuilder:
     # Insertion mode dispatch ------------------------------------------------
 
     def _dispatch(self, token):
-        if self.mode == InsertionMode.INITIAL:
-            return self._mode_initial(token)
-        if self.mode == InsertionMode.BEFORE_HTML:
-            return self._mode_before_html(token)
-        if self.mode == InsertionMode.BEFORE_HEAD:
-            return self._mode_before_head(token)
-        if self.mode == InsertionMode.IN_HEAD:
-            return self._mode_in_head(token)
-        if self.mode == InsertionMode.IN_HEAD_NOSCRIPT:
-            return self._mode_in_head_noscript(token)
-        if self.mode == InsertionMode.AFTER_HEAD:
-            return self._mode_after_head(token)
-        if self.mode == InsertionMode.TEXT:
-            return self._mode_text(token)
-        if self.mode == InsertionMode.IN_BODY:
-            return self._mode_in_body(token)
-        if self.mode == InsertionMode.IN_TABLE:
-            return self._mode_in_table(token)
-        if self.mode == InsertionMode.IN_TABLE_TEXT:
-            return self._mode_in_table_text(token)
-        if self.mode == InsertionMode.IN_CAPTION:
-            return self._mode_in_caption(token)
-        if self.mode == InsertionMode.IN_COLUMN_GROUP:
-            return self._mode_in_column_group(token)
-        if self.mode == InsertionMode.IN_TABLE_BODY:
-            return self._mode_in_table_body(token)
-        if self.mode == InsertionMode.IN_ROW:
-            return self._mode_in_row(token)
-        if self.mode == InsertionMode.IN_CELL:
-            return self._mode_in_cell(token)
-        if self.mode == InsertionMode.IN_SELECT:
-            return self._mode_in_select(token)
-        if self.mode == InsertionMode.IN_TEMPLATE:
-            return self._mode_in_template(token)
-        if self.mode == InsertionMode.AFTER_BODY:
-            return self._mode_after_body(token)
-        if self.mode == InsertionMode.AFTER_AFTER_BODY:
-            return self._mode_after_after_body(token)
-        if self.mode == InsertionMode.IN_FRAMESET:
-            return self._mode_in_frameset(token)
-        if self.mode == InsertionMode.AFTER_FRAMESET:
-            return self._mode_after_frameset(token)
-        if self.mode == InsertionMode.AFTER_AFTER_FRAMESET:
-            return self._mode_after_after_frameset(token)
-        return self._mode_in_body(token)
+        return self._mode_handlers[self.mode](token)
 
     def _mode_initial(self, token):
         if isinstance(token, CharacterTokens):
@@ -1040,59 +1033,66 @@ class TreeBuilder:
         return None
 
     def _mode_in_body(self, token):
-        if isinstance(token, CharacterTokens):
-            data = token.data or ""
-            if not data:
-                return None
-            if "\x00" in data:
-                self._parse_error("invalid-codepoint")
-                data = data.replace("\x00", "")
-            if "\x0c" in data:
-                self._parse_error("invalid-codepoint")
-                data = data.replace("\x0c", "")
-            if not data:
-                return None
-            if _is_all_whitespace(data):
-                self._reconstruct_active_formatting_elements()
-                self._append_text(data)
-                return None
+        handler = self._body_token_handlers.get(type(token))
+        if handler:
+            return handler(token)
+        return None
+
+    def _handle_characters_in_body(self, token):
+        data = token.data or ""
+        if not data:
+            return None
+        if "\x00" in data:
+            self._parse_error("invalid-codepoint")
+            data = data.replace("\x00", "")
+        if "\x0c" in data:
+            self._parse_error("invalid-codepoint")
+            data = data.replace("\x0c", "")
+        if not data:
+            return None
+        if _is_all_whitespace(data):
             self._reconstruct_active_formatting_elements()
-            self.frameset_ok = False
             self._append_text(data)
             return None
-        if isinstance(token, CommentToken):
-            self._append_comment(token.data)
-            return None
-        if isinstance(token, Tag):
-            if token.kind == Tag.START:
-                handler = self._body_start_handlers.get(token.name)
-                if handler:
-                    return handler(token)
-                return self._handle_body_start_default(token)
-            name = token.name
+        self._reconstruct_active_formatting_elements()
+        self.frameset_ok = False
+        self._append_text(data)
+        return None
 
-            # Special case: </br> end tag is treated as <br> start tag
-            if name == "br":
-                self._parse_error("Unexpected </br>")
-                br_tag = Tag(Tag.START, "br", {}, False)
-                return self._mode_in_body(br_tag)
+    def _handle_comment_in_body(self, token):
+        self._append_comment(token.data)
+        return None
 
-            if name in FORMATTING_ELEMENTS:
-                self._adoption_agency(name)
-                return None
-            handler = self._body_end_handlers.get(name)
+    def _handle_tag_in_body(self, token):
+        if token.kind == Tag.START:
+            handler = self._body_start_handlers.get(token.name)
             if handler:
                 return handler(token)
-            # Any other end tag
-            self._any_other_end_tag(token.name)
+            return self._handle_body_start_default(token)
+        name = token.name
+
+        # Special case: </br> end tag is treated as <br> start tag
+        if name == "br":
+            self._parse_error("Unexpected </br>")
+            br_tag = Tag(Tag.START, "br", {}, False)
+            return self._mode_in_body(br_tag)
+
+        if name in FORMATTING_ELEMENTS:
+            self._adoption_agency(name)
             return None
-        if isinstance(token, EOFToken):
-            # If we're in a template, handle EOF in template mode first
-            if self.template_modes:
-                return self._mode_in_template(token)
-            self.mode = InsertionMode.AFTER_BODY
-            return ("reprocess", InsertionMode.AFTER_BODY, token)
+        handler = self._body_end_handlers.get(name)
+        if handler:
+            return handler(token)
+        # Any other end tag
+        self._any_other_end_tag(token.name)
         return None
+
+    def _handle_eof_in_body(self, token):
+        # If we're in a template, handle EOF in template mode first
+        if self.template_modes:
+            return self._mode_in_template(token)
+        self.mode = InsertionMode.AFTER_BODY
+        return ("reprocess", InsertionMode.AFTER_BODY, token)
 
     # ---------------------
     # Body mode start tag handlers
@@ -1901,7 +1901,7 @@ class TreeBuilder:
                         return ("reprocess", self.mode, token)
                     self._parse_error("unexpected-end-tag")
                     return None
-                if name in {"caption", "col", "colgroup", "td", "th"}:
+                if name in {"caption", "col", "group", "td", "th"}:
                     self._parse_error("unexpected-end-tag")
                     return None
                 previous = self.insert_from_table
@@ -2384,7 +2384,8 @@ class TreeBuilder:
                 return self._mode_in_template(token)
             return None
         self._parse_error("Unexpected token after frameset")
-        return None
+        self.mode = InsertionMode.IN_FRAMESET
+        return ("reprocess", InsertionMode.IN_FRAMESET, token)
 
     def _mode_after_after_frameset(self, token):
         # Per HTML5 spec §13.2.6.4.18: After after frameset insertion mode
@@ -2394,12 +2395,11 @@ class TreeBuilder:
             if _is_all_whitespace(token.data):
                 self._mode_in_body(token)
                 return None
-            # Non-whitespace is ignored (filtered out)
-            return None
-        if isinstance(token, CommentToken):
+            # Non-whitespace falls through to "Anything else"
+        elif isinstance(token, CommentToken):
             self._append_comment_to_document(token.data)
             return None
-        if isinstance(token, Tag):
+        elif isinstance(token, Tag):
             if token.kind == Tag.START and token.name == "html":
                 return ("reprocess", InsertionMode.IN_BODY, token)
             if token.kind == Tag.START and token.name == "noframes":
@@ -2408,13 +2408,15 @@ class TreeBuilder:
                 self.original_mode = self.mode
                 self.mode = InsertionMode.TEXT
                 return None
-        if isinstance(token, EOFToken):
+        elif isinstance(token, EOFToken):
             # If we're in a template, handle EOF in template mode first
             if self.template_modes:
                 return self._mode_in_template(token)
             return None
+        
         self._parse_error("Unexpected token after after frameset")
-        return None
+        self.mode = InsertionMode.IN_FRAMESET
+        return ("reprocess", InsertionMode.IN_FRAMESET, token)
 
     # Helpers ----------------------------------------------------------------
 
@@ -2439,6 +2441,25 @@ class TreeBuilder:
                 text = text[1:]
                 if not text:
                     return
+        
+        # Fast path optimization for common case
+        if self.open_elements:
+            target = self.open_elements[-1]
+        elif self.document.children:
+            target = self.document.children[-1]
+        else:
+            target = self.document
+
+        if target.name not in TABLE_FOSTER_TARGETS and not target.template_content:
+             children = target.children
+             if children and children[-1].name == "#text":
+                 children[-1].data += text
+             else:
+                 node = SimpleDomNode("#text", data=text)
+                 children.append(node)
+                 node.parent = target
+             return
+
         target = self._current_node_or_html()
         foster_parenting = self._should_foster_parenting(target, is_text=True)
 

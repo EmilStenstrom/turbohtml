@@ -165,64 +165,64 @@ class Tokenizer:
         self._tag_token = Tag(Tag.START, "", {}, False)
 
         # State dispatch table for faster lookup
-        self._state_handlers = {
-            self.DATA: self._state_data,
-            self.TAG_OPEN: self._state_tag_open,
-            self.END_TAG_OPEN: self._state_end_tag_open,
-            self.TAG_NAME: self._state_tag_name,
-            self.BEFORE_ATTRIBUTE_NAME: self._state_before_attribute_name,
-            self.ATTRIBUTE_NAME: self._state_attribute_name,
-            self.AFTER_ATTRIBUTE_NAME: self._state_after_attribute_name,
-            self.BEFORE_ATTRIBUTE_VALUE: self._state_before_attribute_value,
-            self.ATTRIBUTE_VALUE_DOUBLE: self._state_attribute_value_double,
-            self.ATTRIBUTE_VALUE_SINGLE: self._state_attribute_value_single,
-            self.ATTRIBUTE_VALUE_UNQUOTED: self._state_attribute_value_unquoted,
-            self.SELF_CLOSING_START_TAG: self._state_self_closing_start_tag,
-            self.MARKUP_DECLARATION_OPEN: self._state_markup_declaration_open,
-            self.COMMENT_START: self._state_comment_start,
-            self.COMMENT_START_DASH: self._state_comment_start_dash,
-            self.COMMENT: self._state_comment,
-            self.COMMENT_END_DASH: self._state_comment_end_dash,
-            self.COMMENT_END: self._state_comment_end,
-            self.COMMENT_END_BANG: self._state_comment_end_bang,
-            self.BOGUS_COMMENT: self._state_bogus_comment,
-            self.DOCTYPE: self._state_doctype,
-            self.BEFORE_DOCTYPE_NAME: self._state_before_doctype_name,
-            self.DOCTYPE_NAME: self._state_doctype_name,
-            self.AFTER_DOCTYPE_NAME: self._state_after_doctype_name,
-            self.BOGUS_DOCTYPE: self._state_bogus_doctype,
-            self.AFTER_DOCTYPE_PUBLIC_KEYWORD: self._state_after_doctype_public_keyword,
-            self.AFTER_DOCTYPE_SYSTEM_KEYWORD: self._state_after_doctype_system_keyword,
-            self.BEFORE_DOCTYPE_PUBLIC_IDENTIFIER: self._state_before_doctype_public_identifier,
-            self.DOCTYPE_PUBLIC_IDENTIFIER_DOUBLE_QUOTED: self._state_doctype_public_identifier_double_quoted,
-            self.DOCTYPE_PUBLIC_IDENTIFIER_SINGLE_QUOTED: self._state_doctype_public_identifier_single_quoted,
-            self.AFTER_DOCTYPE_PUBLIC_IDENTIFIER: self._state_after_doctype_public_identifier,
-            self.BETWEEN_DOCTYPE_PUBLIC_AND_SYSTEM_IDENTIFIERS: self._state_between_doctype_public_and_system_identifiers,
-            self.BEFORE_DOCTYPE_SYSTEM_IDENTIFIER: self._state_before_doctype_system_identifier,
-            self.DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE_QUOTED: self._state_doctype_system_identifier_double_quoted,
-            self.DOCTYPE_SYSTEM_IDENTIFIER_SINGLE_QUOTED: self._state_doctype_system_identifier_single_quoted,
-            self.AFTER_DOCTYPE_SYSTEM_IDENTIFIER: self._state_after_doctype_system_identifier,
-            self.CDATA_SECTION: self._state_cdata_section,
-            self.CDATA_SECTION_BRACKET: self._state_cdata_section_bracket,
-            self.CDATA_SECTION_END: self._state_cdata_section_end,
-            self.RAWTEXT: self._state_rawtext,
-            self.RAWTEXT_LESS_THAN_SIGN: self._state_rawtext_less_than_sign,
-            self.RAWTEXT_END_TAG_OPEN: self._state_rawtext_end_tag_open,
-            self.RAWTEXT_END_TAG_NAME: self._state_rawtext_end_tag_name,
-            self.PLAINTEXT: self._state_plaintext,
-            self.SCRIPT_DATA_ESCAPED: self._state_script_data_escaped,
-            self.SCRIPT_DATA_ESCAPED_DASH: self._state_script_data_escaped_dash,
-            self.SCRIPT_DATA_ESCAPED_DASH_DASH: self._state_script_data_escaped_dash_dash,
-            self.SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN: self._state_script_data_escaped_less_than_sign,
-            self.SCRIPT_DATA_ESCAPED_END_TAG_OPEN: self._state_script_data_escaped_end_tag_open,
-            self.SCRIPT_DATA_ESCAPED_END_TAG_NAME: self._state_script_data_escaped_end_tag_name,
-            self.SCRIPT_DATA_DOUBLE_ESCAPE_START: self._state_script_data_double_escape_start,
-            self.SCRIPT_DATA_DOUBLE_ESCAPED: self._state_script_data_double_escaped,
-            self.SCRIPT_DATA_DOUBLE_ESCAPED_DASH: self._state_script_data_double_escaped_dash,
-            self.SCRIPT_DATA_DOUBLE_ESCAPED_DASH_DASH: self._state_script_data_double_escaped_dash_dash,
-            self.SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN: self._state_script_data_double_escaped_less_than_sign,
-            self.SCRIPT_DATA_DOUBLE_ESCAPE_END: self._state_script_data_double_escape_end,
-        }
+        self._state_handlers = [
+            self._state_data,
+            self._state_tag_open,
+            self._state_end_tag_open,
+            self._state_tag_name,
+            self._state_before_attribute_name,
+            self._state_attribute_name,
+            self._state_after_attribute_name,
+            self._state_before_attribute_value,
+            self._state_attribute_value_double,
+            self._state_attribute_value_single,
+            self._state_attribute_value_unquoted,
+            self._state_self_closing_start_tag,
+            self._state_markup_declaration_open,
+            self._state_comment_start,
+            self._state_comment_start_dash,
+            self._state_comment,
+            self._state_comment_end_dash,
+            self._state_comment_end,
+            self._state_comment_end_bang,
+            self._state_bogus_comment,
+            self._state_doctype,
+            self._state_before_doctype_name,
+            self._state_doctype_name,
+            self._state_after_doctype_name,
+            self._state_bogus_doctype,
+            self._state_after_doctype_public_keyword,
+            self._state_after_doctype_system_keyword,
+            self._state_before_doctype_public_identifier,
+            self._state_doctype_public_identifier_double_quoted,
+            self._state_doctype_public_identifier_single_quoted,
+            self._state_after_doctype_public_identifier,
+            self._state_between_doctype_public_and_system_identifiers,
+            self._state_before_doctype_system_identifier,
+            self._state_doctype_system_identifier_double_quoted,
+            self._state_doctype_system_identifier_single_quoted,
+            self._state_after_doctype_system_identifier,
+            self._state_cdata_section,
+            self._state_cdata_section_bracket,
+            self._state_cdata_section_end,
+            self._state_rawtext,
+            self._state_rawtext_less_than_sign,
+            self._state_rawtext_end_tag_open,
+            self._state_rawtext_end_tag_name,
+            self._state_plaintext,
+            self._state_script_data_escaped,
+            self._state_script_data_escaped_dash,
+            self._state_script_data_escaped_dash_dash,
+            self._state_script_data_escaped_less_than_sign,
+            self._state_script_data_escaped_end_tag_open,
+            self._state_script_data_escaped_end_tag_name,
+            self._state_script_data_double_escape_start,
+            self._state_script_data_double_escaped,
+            self._state_script_data_double_escaped_dash,
+            self._state_script_data_double_escaped_dash_dash,
+            self._state_script_data_double_escaped_less_than_sign,
+            self._state_script_data_double_escape_end,
+        ]
 
     def run(self, html):
         if html and html[0] == "\ufeff" and self.opts.discard_bom:
@@ -264,7 +264,7 @@ class Tokenizer:
 
         handlers = self._state_handlers
         while True:
-            handler = handlers.get(self.state)
+            handler = handlers[self.state]
             if handler():
                 break
 
@@ -314,18 +314,34 @@ class Tokenizer:
                 self._flush_text()
                 self._emit_token(EOFToken())
                 return True
-            start = pos
-            while pos < length:
-                ch = buffer[pos]
-                if ch == "<" or ch == "\0":
-                    break
-                pos += 1
-            if pos > start:
-                chunk = buffer[start:pos]
-                self._append_text_chunk(chunk, ends_with_cr=chunk.endswith("\r"))
-                self.pos = pos
-                if pos >= length:
-                    continue
+
+            # Optimized loop using find
+            next_lt = buffer.find("<", pos)
+
+            if next_lt == -1:
+                next_lt = length
+
+            end = next_lt
+
+            if end > pos:
+                chunk = buffer[pos:end]
+                # Check for null in the chunk
+                null_index = chunk.find("\0")
+                if null_index != -1:
+                    # Found null, process up to null
+                    actual_end = pos + null_index
+                    chunk = buffer[pos:actual_end]
+                    self._append_text_chunk(chunk, ends_with_cr=chunk.endswith("\r"))
+                    pos = actual_end
+                    self.pos = pos
+                    # The loop will continue, next char is \0, handled below
+                else:
+                    self._append_text_chunk(chunk, ends_with_cr=chunk.endswith("\r"))
+                    pos = end
+                    self.pos = pos
+                    if pos >= length:
+                        continue
+
             c = buffer[pos]
             pos += 1
             self.pos = pos
@@ -364,7 +380,7 @@ class Tokenizer:
                 c = chr(ord(c) + 32)
             self.current_tag_name.append(c)
             self.state = self.TAG_NAME
-            return False
+            return self._state_tag_name()
 
         self._emit_error("Invalid first character of tag name")
         self.text_buffer.append("<")
@@ -414,10 +430,10 @@ class Tokenizer:
                 return True
             if c in ("\t", "\n", "\f", " "):
                 self.state = self.BEFORE_ATTRIBUTE_NAME
-                return False
+                return self._state_before_attribute_name()
             if c == "/":
                 self.state = self.SELF_CLOSING_START_TAG
-                return False
+                return self._state_self_closing_start_tag()
             if c == ">":
                 if not self._emit_current_tag():
                     self.state = self.DATA
@@ -456,13 +472,13 @@ class Tokenizer:
                 self._start_attribute()
                 self.current_attr_name.append("=")
                 self.state = self.ATTRIBUTE_NAME
-                return False
+                return self._state_attribute_name()
             self._start_attribute()
             if "A" <= c <= "Z":
                 c = chr(ord(c) + 32)
             self.current_attr_name.append(c)
             self.state = self.ATTRIBUTE_NAME
-            return False
+            return self._state_attribute_name()
 
     def _state_attribute_name(self):
         replacement = "\ufffd"
@@ -483,14 +499,14 @@ class Tokenizer:
             if c in ("\t", "\n", "\f", " "):
                 self._finish_attribute()
                 self.state = self.AFTER_ATTRIBUTE_NAME
-                return False
+                return self._state_after_attribute_name()
             if c == "/":
                 self._finish_attribute()
                 self.state = self.SELF_CLOSING_START_TAG
-                return False
+                return self._state_self_closing_start_tag()
             if c == "=":
                 self.state = self.BEFORE_ATTRIBUTE_VALUE
-                return False
+                return self._state_before_attribute_value()
             if c == ">":
                 self._finish_attribute()
                 if not self._emit_current_tag():
@@ -549,10 +565,10 @@ class Tokenizer:
                 return False
             if c == '"':
                 self.state = self.ATTRIBUTE_VALUE_DOUBLE
-                return False
+                return self._state_attribute_value_double()
             if c == "'":
                 self.state = self.ATTRIBUTE_VALUE_SINGLE
-                return False
+                return self._state_attribute_value_single()
             if c == ">":
                 self._emit_error("Missing attribute value")
                 self._finish_attribute()
@@ -561,14 +577,28 @@ class Tokenizer:
                 return False
             self._reconsume_current()
             self.state = self.ATTRIBUTE_VALUE_UNQUOTED
-            return False
+            return self._state_attribute_value_unquoted()
 
     def _state_attribute_value_double(self):
         replacement = "\ufffd"
         stop_pattern = _ATTR_VALUE_DOUBLE_PATTERN
+        buffer = self.buffer
+        length = self.length
+        
         while True:
-            if self._consume_attribute_value_run(stop_pattern):
-                continue
+            # Inline _consume_attribute_value_run
+            pos = self.pos
+            if pos < length:
+                match = stop_pattern.search(buffer, pos)
+                if match:
+                    end = match.start()
+                else:
+                    end = length
+                
+                if end > pos:
+                    self.current_attr_value.append(buffer[pos:end])
+                    self.pos = end
+            
             c = self._get_char()
             if c is None:
                 # Per HTML5 spec: EOF in attribute value is a parse error
@@ -578,7 +608,7 @@ class Tokenizer:
                 return True
             if c == '"':
                 self.state = self.AFTER_ATTRIBUTE_NAME
-                return False
+                return self._state_after_attribute_name()
             if c == "&":
                 self._append_attr_value_char("&")
                 self.current_attr_value_has_amp = True
@@ -592,9 +622,23 @@ class Tokenizer:
     def _state_attribute_value_single(self):
         replacement = "\ufffd"
         stop_pattern = _ATTR_VALUE_SINGLE_PATTERN
+        buffer = self.buffer
+        length = self.length
+        
         while True:
-            if self._consume_attribute_value_run(stop_pattern):
-                continue
+            # Inline _consume_attribute_value_run
+            pos = self.pos
+            if pos < length:
+                match = stop_pattern.search(buffer, pos)
+                if match:
+                    end = match.start()
+                else:
+                    end = length
+                
+                if end > pos:
+                    self.current_attr_value.append(buffer[pos:end])
+                    self.pos = end
+            
             c = self._get_char()
             if c is None:
                 # Per HTML5 spec: EOF in attribute value is a parse error
@@ -1517,7 +1561,32 @@ class Tokenizer:
         return True
 
     def _emit_current_tag(self):
-        self._finish_attribute()
+        # Inline _finish_attribute for performance
+        attr_name_buffer = self.current_attr_name
+        if attr_name_buffer:
+            if len(attr_name_buffer) == 1:
+                name = attr_name_buffer[0]
+            else:
+                name = "".join(attr_name_buffer)
+            name = sys.intern(name)
+            
+            value_parts = self.current_attr_value
+            if not value_parts:
+                value = ""
+            elif len(value_parts) == 1:
+                value = value_parts[0]
+            else:
+                value = "".join(value_parts)
+                
+            if name not in self.current_tag_attrs:
+                if self.current_attr_value_has_amp:
+                    value = decode_entities_in_text(value, in_attribute=True)
+                self.current_tag_attrs[name] = value
+            
+            attr_name_buffer.clear()
+            self.current_attr_value.clear()
+            self.current_attr_value_has_amp = False
+
         name_parts = self.current_tag_name
         part_count = len(name_parts)
         if part_count == 0:
