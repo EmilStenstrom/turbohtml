@@ -205,7 +205,7 @@ def _as_attr_dict(attrs):
     if not attrs:
         return {}
     if isinstance(attrs, dict):
-        return dict(attrs)
+        return attrs
     attr_map = {}
     for name, value in _iter_attr_pairs(attrs):
         if name not in attr_map:
@@ -2505,6 +2505,29 @@ class TreeBuilder:
 
     def _insert_element(self, tag, *, push, namespace="html"):
         node = SimpleDomNode(tag.name, attrs=tag.attrs, namespace=namespace)
+        
+        # Fast path for common case: not inserting from table
+        if not self.insert_from_table:
+            if self.open_elements:
+                target = self.open_elements[-1]
+            elif self.document.children:
+                target = self.document.children[-1]
+            else:
+                target = self.document
+            
+            # Handle template content insertion
+            if target.name == "template" and target.template_content:
+                parent = target.template_content
+            else:
+                parent = target
+                
+            parent.children.append(node)
+            node.parent = parent
+            
+            if push:
+                self.open_elements.append(node)
+            return node
+
         target = self._current_node_or_html()
         foster_parenting = self._should_foster_parenting(target, for_tag=tag.name)
         parent, position = self._appropriate_insertion_location(foster_parenting=foster_parenting)

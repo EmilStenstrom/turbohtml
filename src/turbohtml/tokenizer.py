@@ -21,8 +21,11 @@ _TAG_NAME_TERMINATORS = "\t\n\f />\0"
 _ASCII_LOWER_TABLE = str.maketrans({chr(code): chr(code + 32) for code in range(65, 91)})
 _RCDATA_ELEMENTS = {"title", "textarea"}
 _RAWTEXT_SWITCH_TAGS = {"script", "style", "xmp", "iframe", "noembed", "noframes", "noscript", "textarea", "title"}
-_ATTR_VALUE_DOUBLE_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_DOUBLE_TERMINATORS)}]")
-_ATTR_VALUE_SINGLE_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_SINGLE_TERMINATORS)}]")
+
+_ATTR_VALUE_DOUBLE_TERMINATORS_OPT = '"&\0'
+_ATTR_VALUE_SINGLE_TERMINATORS_OPT = "'&\0"
+_ATTR_VALUE_DOUBLE_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_DOUBLE_TERMINATORS_OPT)}]")
+_ATTR_VALUE_SINGLE_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_SINGLE_TERMINATORS_OPT)}]")
 _ATTR_VALUE_UNQUOTED_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_UNQUOTED_TERMINATORS)}]")
 
 
@@ -317,6 +320,7 @@ class Tokenizer:
 
             # Optimized loop using find
             next_lt = buffer.find("<", pos)
+            # print(f"DEBUG: pos={pos} next_lt={next_lt} chunk={buffer[pos:next_lt]}")
 
             if next_lt == -1:
                 next_lt = length
@@ -596,16 +600,34 @@ class Tokenizer:
                     end = length
                 
                 if end > pos:
-                    self.current_attr_value.append(buffer[pos:end])
+                    chunk = buffer[pos:end]
+                    
+                    # Update line count based on RAW chunk
+                    if "\n" in chunk or "\r" in chunk:
+                        newlines = chunk.count("\n")
+                        returns = chunk.count("\r")
+                        crlf = chunk.count("\r\n")
+                        self.line += newlines + returns - crlf
+                        
+                        # Normalize chunk for value
+                        if returns:
+                            chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
+                    
+                    self.current_attr_value.append(chunk)
                     self.pos = end
             
-            c = self._get_char()
-            if c is None:
-                # Per HTML5 spec: EOF in attribute value is a parse error
-                # The incomplete tag is discarded (not emitted)
+            # Inlined _get_char logic
+            if self.pos >= length:
+                self.current_char = None
                 self._emit_error("EOF in attribute value")
                 self._emit_token(EOFToken())
                 return True
+
+            c = buffer[self.pos]
+            self.pos += 1
+            
+            self.current_char = c
+
             if c == '"':
                 self.state = self.AFTER_ATTRIBUTE_NAME
                 return self._state_after_attribute_name()
@@ -636,16 +658,34 @@ class Tokenizer:
                     end = length
                 
                 if end > pos:
-                    self.current_attr_value.append(buffer[pos:end])
+                    chunk = buffer[pos:end]
+                    
+                    # Update line count based on RAW chunk
+                    if "\n" in chunk or "\r" in chunk:
+                        newlines = chunk.count("\n")
+                        returns = chunk.count("\r")
+                        crlf = chunk.count("\r\n")
+                        self.line += newlines + returns - crlf
+                        
+                        # Normalize chunk for value
+                        if returns:
+                            chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
+                    
+                    self.current_attr_value.append(chunk)
                     self.pos = end
             
-            c = self._get_char()
-            if c is None:
-                # Per HTML5 spec: EOF in attribute value is a parse error
-                # The incomplete tag is discarded (not emitted)
+            # Inlined _get_char logic
+            if self.pos >= length:
+                self.current_char = None
                 self._emit_error("EOF in attribute value")
                 self._emit_token(EOFToken())
                 return True
+
+            c = buffer[self.pos]
+            self.pos += 1
+            
+            self.current_char = c
+
             if c == "'":
                 self.state = self.AFTER_ATTRIBUTE_NAME
                 return False
@@ -1568,7 +1608,7 @@ class Tokenizer:
                 name = attr_name_buffer[0]
             else:
                 name = "".join(attr_name_buffer)
-            name = sys.intern(name)
+            # name = sys.intern(name)
             
             value_parts = self.current_attr_value
             if not value_parts:
@@ -1596,7 +1636,8 @@ class Tokenizer:
         else:
             name = "".join(name_parts)
         if name:
-            name = sys.intern(name)
+            # name = sys.intern(name)
+            pass
         attrs = self.current_tag_attrs
         self.current_tag_attrs = {}
         tag = self._tag_token
@@ -2139,6 +2180,11 @@ class Tokenizer:
             self.temp_buffer.clear()
             self.text_buffer.append("/")
             self.state = self.SCRIPT_DATA_DOUBLE_ESCAPE_END
+            return False
+        if _is_ascii_alpha(c):
+            self.temp_buffer.clear()
+            self._reconsume_current()
+            self.state = self.SCRIPT_DATA_DOUBLE_ESCAPE_START
             return False
         self._reconsume_current()
         self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
