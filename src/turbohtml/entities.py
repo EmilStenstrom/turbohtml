@@ -152,147 +152,153 @@ def decode_entities_in_text(text, in_attribute=False):
         
     result = []
     i = 0
-    while i < len(text):
-        if text[i] == "&":
-            # Look for entity
-            j = i + 1
+    length = len(text)
+    while i < length:
+        next_amp = text.find("&", i)
+        if next_amp == -1:
+            result.append(text[i:])
+            break
+        
+        if next_amp > i:
+            result.append(text[i:next_amp])
+        
+        i = next_amp
+        # Look for entity
+        j = i + 1
+        
+        # Check for numeric entity
+        if j < length and text[j] == "#":
+            j += 1
+            is_hex = False
             
-            # Check for numeric entity
-            if j < len(text) and text[j] == "#":
+            if j < length and text[j] in "xX":
+                is_hex = True
                 j += 1
-                is_hex = False
-                
-                if j < len(text) and text[j] in "xX":
-                    is_hex = True
+            
+            # Collect digits
+            digit_start = j
+            if is_hex:
+                while j < length and text[j] in "0123456789abcdefABCDEF":
                     j += 1
-                
-                # Collect digits
-                digit_start = j
-                if is_hex:
-                    while j < len(text) and text[j] in "0123456789abcdefABCDEF":
-                        j += 1
-                else:
-                    while j < len(text) and text[j].isdigit():
-                        j += 1
-                
-                has_semicolon = j < len(text) and text[j] == ";"
-                digit_text = text[digit_start:j]
-                
-                if digit_text:
-                    decoded = decode_numeric_entity(digit_text, is_hex=is_hex)
-                    if decoded:
-                        result.append(decoded)
-                        if has_semicolon:
-                            i = j + 1
-                        else:
-                            i = j
-                        continue
-                
-                # Invalid numeric entity, keep as-is
-                result.append(text[i:j+1 if has_semicolon else j])
-                i = j + 1 if has_semicolon else j
-                continue
+            else:
+                while j < length and text[j].isdigit():
+                    j += 1
             
-            # Named entity
-            # Collect alphanumeric characters (entity names are case-sensitive and can include uppercase)
-            while j < len(text) and (text[j].isalpha() or text[j].isdigit()):
-                j += 1
+            has_semicolon = j < length and text[j] == ";"
+            digit_text = text[digit_start:j]
             
-            entity_name = text[i+1:j]
-            has_semicolon = j < len(text) and text[j] == ";"
-            
-            if not entity_name:
-                result.append("&")
-                i += 1
-                continue
-            
-            # Try exact match first (with semicolon expected)
-            if has_semicolon and entity_name in NAMED_ENTITIES:
-                result.append(NAMED_ENTITIES[entity_name])
-                i = j + 1
-                continue
-            
-            # If we have a semicolon but exact match failed, try prefix matching
-            # This handles &notit; -> ¬it; (decode &not, leave it;)
-            if has_semicolon:
-                best_match = None
-                best_match_len = 0
-                for k in range(len(entity_name), 0, -1):
-                    prefix = entity_name[:k]
-                    if prefix in NAMED_ENTITIES:
-                        best_match = NAMED_ENTITIES[prefix]
-                        best_match_len = k
-                        break
-                
-                if best_match:
-                    result.append(best_match)
-                    # Continue after the matched prefix, not after semicolon
-                    i = i + 1 + best_match_len
+            if digit_text:
+                decoded = decode_numeric_entity(digit_text, is_hex=is_hex)
+                if decoded:
+                    result.append(decoded)
+                    if has_semicolon:
+                        i = j + 1
+                    else:
+                        i = j
                     continue
             
-            # Try without semicolon for legacy compatibility
-            # Only legacy entities can be used without semicolons
-            if entity_name in LEGACY_ENTITIES and entity_name in NAMED_ENTITIES:
-                # Legacy entities without semicolon have strict rules:
-                # In attributes: don't decode if followed by alphanumeric or '='
-                # In text: don't decode if followed by lowercase/digit
-                # Per HTML5 spec §13.2.5.72
-                next_char = text[j] if j < len(text) else None
-                if in_attribute:
-                    if next_char and (next_char.isalnum() or next_char == "="):
-                        result.append("&")
-                        i += 1
-                        continue
-                else:
-                    if next_char and (next_char.islower() or next_char.isdigit()):
-                        result.append("&")
-                        i += 1
-                        continue
-                
-                # Decode legacy entity
-                result.append(NAMED_ENTITIES[entity_name])
-                i = j
-                continue
-            
-            # Try longest prefix match for legacy entities without semicolon
-            # This handles cases like &notit where &not is valid but &notit is not
+            # Invalid numeric entity, keep as-is
+            result.append(text[i:j+1 if has_semicolon else j])
+            i = j + 1 if has_semicolon else j
+            continue
+        
+        # Named entity
+        # Collect alphanumeric characters (entity names are case-sensitive and can include uppercase)
+        while j < length and (text[j].isalpha() or text[j].isdigit()):
+            j += 1
+        
+        entity_name = text[i+1:j]
+        has_semicolon = j < length and text[j] == ";"
+        
+        if not entity_name:
+            result.append("&")
+            i += 1
+            continue
+        
+        # Try exact match first (with semicolon expected)
+        if has_semicolon and entity_name in NAMED_ENTITIES:
+            result.append(NAMED_ENTITIES[entity_name])
+            i = j + 1
+            continue
+        
+        # If we have a semicolon but exact match failed, try prefix matching
+        # This handles &notit; -> ¬it; (decode &not, leave it;)
+        if has_semicolon:
             best_match = None
             best_match_len = 0
             for k in range(len(entity_name), 0, -1):
                 prefix = entity_name[:k]
-                if prefix in LEGACY_ENTITIES and prefix in NAMED_ENTITIES:
+                if prefix in NAMED_ENTITIES:
                     best_match = NAMED_ENTITIES[prefix]
                     best_match_len = k
                     break
             
             if best_match:
-                # Check legacy entity rules
-                end_pos = i + 1 + best_match_len
-                next_char = text[end_pos] if end_pos < len(text) else None
-                if in_attribute:
-                    if next_char and (next_char.isalnum() or next_char == "="):
-                        result.append("&")
-                        i += 1
-                        continue
-                else:
-                    if next_char and (next_char.islower() or next_char.isdigit()):
-                        result.append("&")
-                        i += 1
-                        continue
-                
                 result.append(best_match)
+                # Continue after the matched prefix, not after semicolon
                 i = i + 1 + best_match_len
                 continue
-            
-            # No match found
-            if has_semicolon:
-                result.append(text[i:j+1])
-                i = j + 1
+        
+        # Try without semicolon for legacy compatibility
+        # Only legacy entities can be used without semicolons
+        if entity_name in LEGACY_ENTITIES and entity_name in NAMED_ENTITIES:
+            # Legacy entities without semicolon have strict rules:
+            # In attributes: don't decode if followed by alphanumeric or '='
+            # In text: don't decode if followed by lowercase/digit
+            # Per HTML5 spec §13.2.5.72
+            next_char = text[j] if j < length else None
+            if in_attribute:
+                if next_char and (next_char.isalnum() or next_char == "="):
+                    result.append("&")
+                    i += 1
+                    continue
             else:
-                result.append("&")
-                i += 1
+                if next_char and (next_char.islower() or next_char.isdigit()):
+                    result.append("&")
+                    i += 1
+                    continue
+            
+            # Decode legacy entity
+            result.append(NAMED_ENTITIES[entity_name])
+            i = j
+            continue
+        
+        # Try longest prefix match for legacy entities without semicolon
+        # This handles cases like &notit where &not is valid but &notit is not
+        best_match = None
+        best_match_len = 0
+        for k in range(len(entity_name), 0, -1):
+            prefix = entity_name[:k]
+            if prefix in LEGACY_ENTITIES and prefix in NAMED_ENTITIES:
+                best_match = NAMED_ENTITIES[prefix]
+                best_match_len = k
+                break
+        
+        if best_match:
+            # Check legacy entity rules
+            end_pos = i + 1 + best_match_len
+            next_char = text[end_pos] if end_pos < length else None
+            if in_attribute:
+                if next_char and (next_char.isalnum() or next_char == "="):
+                    result.append("&")
+                    i += 1
+                    continue
+            else:
+                if next_char and (next_char.islower() or next_char.isdigit()):
+                    result.append("&")
+                    i += 1
+                    continue
+            
+            result.append(best_match)
+            i = i + 1 + best_match_len
+            continue
+        
+        # No match found
+        if has_semicolon:
+            result.append(text[i:j+1])
+            i = j + 1
         else:
-            result.append(text[i])
+            result.append("&")
             i += 1
             
     return "".join(result)

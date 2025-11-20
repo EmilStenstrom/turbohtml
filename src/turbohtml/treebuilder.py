@@ -389,38 +389,6 @@ class TreeBuilder:
         self.pending_table_text = []
         self.template_modes = []
         self.tokenizer_state_override = None
-        self._init_body_start_handlers()
-        self._init_body_end_handlers()
-        self._body_token_handlers = {
-            CharacterTokens: self._handle_characters_in_body,
-            CommentToken: self._handle_comment_in_body,
-            Tag: self._handle_tag_in_body,
-            EOFToken: self._handle_eof_in_body,
-        }
-        self._mode_handlers = [
-            self._mode_initial,
-            self._mode_before_html,
-            self._mode_before_head,
-            self._mode_in_head,
-            self._mode_in_head_noscript,
-            self._mode_after_head,
-            self._mode_text,
-            self._mode_in_body,
-            self._mode_after_body,
-            self._mode_after_after_body,
-            self._mode_in_table,
-            self._mode_in_table_text,
-            self._mode_in_caption,
-            self._mode_in_column_group,
-            self._mode_in_table_body,
-            self._mode_in_row,
-            self._mode_in_cell,
-            self._mode_in_frameset,
-            self._mode_after_frameset,
-            self._mode_after_after_frameset,
-            self._mode_in_select,
-            self._mode_in_template,
-        ]
         if fragment_context is not None:
             # Fragment parsing per HTML5 spec
             root = self._create_element("html", None, {})
@@ -465,71 +433,59 @@ class TreeBuilder:
             # This prevents frameset from being inserted in fragment contexts
             self.frameset_ok = False
 
-    def _init_body_start_handlers(self):
-        handlers = {}
+    def _set_quirks_mode(self, mode):
+        self.quirks_mode = mode
 
-        def register(tags, handler):
-            for tag in tags:
-                handlers[tag] = handler
+    def _parse_error(self, message):
+        if self.opts.exact_errors:
+            self.errors.append(message)
 
-        handlers["html"] = self._handle_body_start_html
-        handlers["body"] = self._handle_body_start_body
-        handlers["head"] = self._handle_body_start_head
-        register(_BODY_START_IN_HEAD_TAGS, self._handle_body_start_in_head)
-        register(BLOCK_WITH_P_START, self._handle_body_start_block_with_p)
-        register(HEADING_ELEMENTS, self._handle_body_start_heading)
-        register(("pre", "listing"), self._handle_body_start_pre_listing)
-        handlers["form"] = self._handle_body_start_form
-        handlers["button"] = self._handle_body_start_button
-        handlers["p"] = self._handle_body_start_paragraph
-        handlers["math"] = self._handle_body_start_math
-        handlers["svg"] = self._handle_body_start_svg
-        handlers["li"] = self._handle_body_start_li
-        register(("dd", "dt"), self._handle_body_start_dd_dt)
-        handlers["a"] = self._handle_body_start_a
-        register((tag for tag in FORMATTING_ELEMENTS if tag != "a"), self._handle_body_start_formatting)
-        register(("applet", "marquee", "object"), self._handle_body_start_applet_like)
-        handlers["hr"] = self._handle_body_start_hr
-        handlers["br"] = self._handle_body_start_br
-        handlers["frameset"] = self._handle_body_start_frameset
-        register(("colgroup", "tbody", "td", "tfoot", "th", "thead", "tr"), self._handle_body_start_structure_ignored)
-        handlers["col"] = self._handle_body_start_col_or_frame
-        handlers["frame"] = self._handle_body_start_col_or_frame
-        handlers["image"] = self._handle_body_start_image
-        register(("area", "embed", "img", "keygen", "wbr"), self._handle_body_start_void_with_formatting)
-        register(("param", "source", "track"), self._handle_body_start_simple_void)
-        handlers["input"] = self._handle_body_start_input
-        handlers["table"] = self._handle_body_start_table
-        register(("plaintext", "xmp"), self._handle_body_start_plaintext_xmp)
-        handlers["textarea"] = self._handle_body_start_textarea
-        handlers["select"] = self._handle_body_start_select
-        handlers["option"] = self._handle_body_start_option
-        handlers["optgroup"] = self._handle_body_start_optgroup
-        register(("rp", "rt"), self._handle_body_start_rp_rt)
-        register(("rb", "rtc"), self._handle_body_start_rb_rtc)
-        handlers["caption"] = self._handle_body_start_table_parse_error
+    def _has_element_in_scope(self, target, terminators=None, check_integration_points=True):
+        if terminators is None:
+            terminators = DEFAULT_SCOPE_TERMINATORS
+        for node in reversed(self.open_elements):
+            if node.name == target:
+                return True
+            if node.namespace in {None, "html"} and node.name in terminators:
+                return False
+            if check_integration_points and (self._is_html_integration_point(node) or self._is_mathml_text_integration_point(node)):
+                return False
+        return False
 
-        self._body_start_handlers = handlers
+    def _has_element_in_button_scope(self, target):
+        return self._has_element_in_scope(target, BUTTON_SCOPE_TERMINATORS)
 
-    def _init_body_end_handlers(self):
-        handlers = {}
+    def _has_element_in_list_item_scope(self, target):
+        return self._has_element_in_scope(target, LIST_ITEM_SCOPE_TERMINATORS)
 
-        def register(tags, handler):
-            for tag in tags:
-                handlers[tag] = handler
+    def _has_element_in_select_scope(self, target):
+        for node in reversed(self.open_elements):
+            if node.name == target:
+                return True
+            if node.name not in {"optgroup", "option"}:
+                return False
+        return False
 
-        handlers["body"] = self._handle_body_end_body
-        handlers["html"] = self._handle_body_end_html
-        handlers["p"] = self._handle_body_end_p
-        handlers["li"] = self._handle_body_end_li
-        register(("dd", "dt"), self._handle_body_end_dd_dt)
-        handlers["form"] = self._handle_body_end_form
-        register(_BODY_APPLET_LIKE_END_TAGS, self._handle_body_end_applet_like)
-        register(HEADING_ELEMENTS, self._handle_body_end_heading)
-        register(_BODY_BLOCK_END_TAGS, self._handle_body_end_block)
-        handlers["template"] = self._handle_body_end_template
+    def _pop_until_inclusive(self, name):
+        while self.open_elements:
+            node = self.open_elements.pop()
+            if node.name == name:
+                break
 
-        self._body_end_handlers = handlers
+    def _pop_until_any_inclusive(self, names):
+        while self.open_elements:
+            node = self.open_elements.pop()
+            if node.name in names:
+                break
+
+    def _close_p_element(self):
+        if self._has_element_in_button_scope("p"):
+            self._generate_implied_end_tags("p")
+            if self.open_elements[-1].name != "p":
+                self._parse_error("Unexpected end tag </p>")
+            self._pop_until_inclusive("p")
+            return True
+        return False
 
     def process_token(self, token):
         if isinstance(token, ParseError):
@@ -545,108 +501,109 @@ class TreeBuilder:
         force_html_mode = False
         
         # Cache mode handlers list for speed
-        mode_handlers = self._mode_handlers
+        mode_handlers = self._MODE_HANDLERS
         
         while reprocess:
             reprocess = False
-            if force_html_mode:
-                # Force processing in HTML mode, bypassing foreign content check
+            
+            # Optimization: Check for HTML namespace first (common case)
+            current_node = self.open_elements[-1] if self.open_elements else None
+            is_html_namespace = current_node is None or current_node.namespace in {None, "html"}
+            
+            if force_html_mode or is_html_namespace:
                 force_html_mode = False
-                result = mode_handlers[self.mode](current_token)
+                result = mode_handlers[self.mode](self, current_token)
             elif self._should_use_foreign_content(current_token):
                 result = self._process_foreign_content(current_token)
             else:
-                if self.open_elements:
-                    current = self.open_elements[-1]
-                    # Only pop foreign elements if we're NOT at an HTML/MathML integration point
-                    # and NOT about to insert a new foreign element (svg/math)
-                    if current.namespace not in {None, "html"} and not isinstance(current_token, EOFToken):
-                        should_pop = True
-                        # Don't pop at integration points - they stay on stack to receive content
-                        if self._is_html_integration_point(current) or self._is_mathml_text_integration_point(current):
+                # Foreign content stack logic
+                current = current_node
+                # Only pop foreign elements if we're NOT at an HTML/MathML integration point
+                # and NOT about to insert a new foreign element (svg/math)
+                if not isinstance(current_token, EOFToken):
+                    should_pop = True
+                    # Don't pop at integration points - they stay on stack to receive content
+                    if self._is_html_integration_point(current) or self._is_mathml_text_integration_point(current):
+                        should_pop = False
+                    # Don't pop when inserting new svg/math elements
+                    if isinstance(current_token, Tag) and current_token.kind == Tag.START:
+                        # Optimization: Tokenizer already lowercases tag names
+                        name_lower = current_token.name
+                        if name_lower in {"svg", "math"}:
                             should_pop = False
-                        # Don't pop when inserting new svg/math elements
-                        if isinstance(current_token, Tag) and current_token.kind == Tag.START:
-                            # Optimization: Tokenizer already lowercases tag names
-                            name_lower = current_token.name
-                            if name_lower in {"svg", "math"}:
-                                should_pop = False
-                        if should_pop:
-                            # Pop foreign elements above integration points, but not the integration point itself
-                            while self.open_elements and self.open_elements[-1].namespace not in {None, "html"}:
-                                node = self.open_elements[-1]
-                                # Stop if we reach an integration point - don't pop it
-                                if self._is_html_integration_point(node) or self._is_mathml_text_integration_point(
-                                    node,
-                                ):
-                                    break
-                                self.open_elements.pop()
-                            self._reset_insertion_mode()
-                    # Special handling: text at integration points inserts directly, bypassing mode dispatch
-                    if isinstance(current_token, CharacterTokens) and current.namespace not in {None, "html"}:
-                        if self._is_mathml_text_integration_point(current):
-                            data = current_token.data or ""
-                            if data:
-                                if "\x00" in data:
-                                    self._parse_error("invalid-codepoint")
-                                    data = data.replace("\x00", "")
-                                if "\x0c" in data:
-                                    self._parse_error("invalid-codepoint")
-                                    data = data.replace("\x0c", "")
-                                if not data:
-                                    result = None
-                                elif _is_all_whitespace(data):
-                                    self._append_text(data)
-                                    result = None
-                                else:
-                                    # Reconstruct active formatting elements for non-whitespace text
-                                    self._reconstruct_active_formatting_elements()
-                                    self.frameset_ok = False
-                                    self._append_text(data)
-                                    result = None
+                    if should_pop:
+                        # Pop foreign elements above integration points, but not the integration point itself
+                        while self.open_elements and self.open_elements[-1].namespace not in {None, "html"}:
+                            node = self.open_elements[-1]
+                            # Stop if we reach an integration point - don't pop it
+                            if self._is_html_integration_point(node) or self._is_mathml_text_integration_point(
+                                node,
+                            ):
+                                break
+                            self.open_elements.pop()
+                        self._reset_insertion_mode()
+                
+                # Special handling: text at integration points inserts directly, bypassing mode dispatch
+                if isinstance(current_token, CharacterTokens):
+                    if self._is_mathml_text_integration_point(current):
+                        data = current_token.data or ""
+                        if data:
+                            if "\x00" in data:
+                                self._parse_error("invalid-codepoint")
+                                data = data.replace("\x00", "")
+                            if "\x0c" in data:
+                                self._parse_error("invalid-codepoint")
+                                data = data.replace("\x0c", "")
+                            if not data:
+                                result = None
+                            elif _is_all_whitespace(data):
+                                self._append_text(data)
+                                result = None
                             else:
+                                # Reconstruct active formatting elements for non-whitespace text
+                                self._reconstruct_active_formatting_elements()
+                                self.frameset_ok = False
+                                self._append_text(data)
                                 result = None
                         else:
-                            result = mode_handlers[self.mode](current_token)
+                            result = None
                     else:
-                        # At integration points inside foreign content, check if table tags make sense.
-                        # If we're in a table mode but NOT inside an actual HTML table element,
-                        # use IN_BODY mode to ignore inappropriate table tags.
-                        if (
-                            current.namespace not in {None, "html"}
-                            and (
-                                self._is_mathml_text_integration_point(current)
-                                or self._is_html_integration_point(current)
-                            )
-                            and isinstance(current_token, Tag)
-                            and current_token.kind == Tag.START
-                            and self.mode not in {InsertionMode.IN_BODY}
-                        ):
-                            # Check if we're in a table mode but without an actual table in scope
-                            # If so, table tags should be ignored (use IN_BODY mode)
-                            is_table_mode = self.mode in {
-                                InsertionMode.IN_TABLE,
-                                InsertionMode.IN_TABLE_BODY,
-                                InsertionMode.IN_ROW,
-                                InsertionMode.IN_CELL,
-                                InsertionMode.IN_CAPTION,
-                                InsertionMode.IN_COLUMN_GROUP,
-                            }
-                            has_table_in_scope = self._has_in_table_scope("table")
-                            if is_table_mode and not has_table_in_scope:
-                                # Temporarily use IN_BODY mode for this tag
-                                saved_mode = self.mode
-                                self.mode = InsertionMode.IN_BODY
-                                result = mode_handlers[self.mode](current_token)
-                                # Restore mode if no mode change was requested
-                                if self.mode == InsertionMode.IN_BODY:
-                                    self.mode = saved_mode
-                            else:
-                                result = mode_handlers[self.mode](current_token)
-                        else:
-                            result = mode_handlers[self.mode](current_token)
+                        result = mode_handlers[self.mode](self, current_token)
                 else:
-                    result = mode_handlers[self.mode](current_token)
+                    # At integration points inside foreign content, check if table tags make sense.
+                    if (
+                        (
+                            self._is_mathml_text_integration_point(current)
+                            or self._is_html_integration_point(current)
+                        )
+                        and isinstance(current_token, Tag)
+                        and current_token.kind == Tag.START
+                        and self.mode not in {InsertionMode.IN_BODY}
+                    ):
+                        # Check if we're in a table mode but without an actual table in scope
+                        # If so, table tags should be ignored (use IN_BODY mode)
+                        is_table_mode = self.mode in {
+                            InsertionMode.IN_TABLE,
+                            InsertionMode.IN_TABLE_BODY,
+                            InsertionMode.IN_ROW,
+                            InsertionMode.IN_CELL,
+                            InsertionMode.IN_CAPTION,
+                            InsertionMode.IN_COLUMN_GROUP,
+                        }
+                        has_table_in_scope = self._has_in_table_scope("table")
+                        if is_table_mode and not has_table_in_scope:
+                            # Temporarily use IN_BODY mode for this tag
+                            saved_mode = self.mode
+                            self.mode = InsertionMode.IN_BODY
+                            result = mode_handlers[self.mode](self, current_token)
+                            # Restore mode if no mode change was requested
+                            if self.mode == InsertionMode.IN_BODY:
+                                self.mode = saved_mode
+                        else:
+                            result = mode_handlers[self.mode](self, current_token)
+                    else:
+                        result = mode_handlers[self.mode](self, current_token)
+
             if result is None:
                 result_to_return = self.tokenizer_state_override or TokenSinkResult.Continue
                 self.tokenizer_state_override = None
@@ -708,7 +665,7 @@ class TreeBuilder:
     # Insertion mode dispatch ------------------------------------------------
 
     def _dispatch(self, token):
-        return self._mode_handlers[self.mode](token)
+        return self._MODE_HANDLERS[self.mode](self, token)
 
     def _mode_initial(self, token):
         if isinstance(token, CharacterTokens):
@@ -1033,9 +990,9 @@ class TreeBuilder:
         return None
 
     def _mode_in_body(self, token):
-        handler = self._body_token_handlers.get(type(token))
+        handler = self._BODY_TOKEN_HANDLERS.get(type(token))
         if handler:
-            return handler(token)
+            return handler(self, token)
         return None
 
     def _handle_characters_in_body(self, token):
@@ -1065,9 +1022,9 @@ class TreeBuilder:
 
     def _handle_tag_in_body(self, token):
         if token.kind == Tag.START:
-            handler = self._body_start_handlers.get(token.name)
+            handler = self._BODY_START_HANDLERS.get(token.name)
             if handler:
-                return handler(token)
+                return handler(self, token)
             return self._handle_body_start_default(token)
         name = token.name
 
@@ -1080,9 +1037,9 @@ class TreeBuilder:
         if name in FORMATTING_ELEMENTS:
             self._adoption_agency(name)
             return None
-        handler = self._body_end_handlers.get(name)
+        handler = self._BODY_END_HANDLERS.get(name)
         if handler:
-            return handler(token)
+            return handler(self, token)
         # Any other end tag
         self._any_other_end_tag(token.name)
         return None
@@ -1211,6 +1168,148 @@ class TreeBuilder:
                 self._pop_until_any_inclusive({"dd"})
         self._insert_element(token, push=True)
         return
+
+    def _adoption_agency(self, subject):
+        # 1. If the current node is the subject, and it is not in the active formatting elements list...
+        if self.open_elements and self.open_elements[-1].name == subject:
+            if not self._has_active_formatting_entry(subject):
+                self._pop_until_inclusive(subject)
+                return
+
+        # 2. Outer loop
+        for _ in range(8):
+            # 3. Find formatting element
+            formatting_element_index = self._find_active_formatting_index(subject)
+            if formatting_element_index is None:
+                return
+            
+            formatting_element_entry = self.active_formatting[formatting_element_index]
+            formatting_element = formatting_element_entry["node"]
+
+            # 4. If formatting element is not in open elements
+            if formatting_element not in self.open_elements:
+                self._parse_error("Adoption agency: formatting element not in open elements")
+                self._remove_formatting_entry(formatting_element_index)
+                return
+
+            # 5. If formatting element is in open elements but not in scope
+            if not self._has_element_in_scope(formatting_element.name):
+                self._parse_error("Adoption agency: formatting element not in scope")
+                return
+
+            # 6. If formatting element is not the current node
+            if formatting_element is not self.open_elements[-1]:
+                self._parse_error("Adoption agency: formatting element not current node")
+
+            # 7. Find furthest block
+            furthest_block = None
+            formatting_element_in_open_index = self.open_elements.index(formatting_element)
+            
+            for i in range(formatting_element_in_open_index + 1, len(self.open_elements)):
+                node = self.open_elements[i]
+                if self._is_special_element(node):
+                    furthest_block = node
+                    break
+            
+            if furthest_block is None:
+                while self.open_elements:
+                    popped = self.open_elements.pop()
+                    if popped is formatting_element:
+                        break
+                self._remove_formatting_entry(formatting_element_index)
+                return
+
+            # 8. Bookmark
+            bookmark = formatting_element_index + 1
+
+            # 9. Node and Last Node
+            node = furthest_block
+            last_node = furthest_block
+            
+            # 10. Inner loop
+            inner_loop_counter = 0
+            while True:
+                inner_loop_counter += 1
+                
+                # 10.1 Node = element above node
+                node_index = self.open_elements.index(node)
+                node = self.open_elements[node_index - 1]
+                
+                # 10.2 If node is formatting element, break
+                if node is formatting_element:
+                    break
+                
+                # 10.3 Find active formatting entry for node
+                node_formatting_index = self._find_active_formatting_index_by_node(node)
+                
+                if inner_loop_counter > 3 and node_formatting_index is not None:
+                    self._remove_formatting_entry(node_formatting_index)
+                    if node_formatting_index < bookmark:
+                        bookmark -= 1
+                    node_formatting_index = None
+                
+                if node_formatting_index is None:
+                    node_index = self.open_elements.index(node)
+                    self.open_elements.remove(node)
+                    node = self.open_elements[node_index]
+                    continue
+                
+                # 10.4 Replace entry with new element
+                entry = self.active_formatting[node_formatting_index]
+                new_element = self._create_element(entry["name"], entry["node"].namespace, entry["attrs"])
+                entry["node"] = new_element
+                self.open_elements[self.open_elements.index(node)] = new_element
+                node = new_element
+                
+                # 10.5 If last node is furthest block, update bookmark
+                if last_node is furthest_block:
+                    bookmark = node_formatting_index + 1
+                
+                # 10.6 Reparent last_node
+                if last_node.parent:
+                    last_node.parent.remove_child(last_node)
+                node.append_child(last_node)
+                
+                # 10.7
+                last_node = node
+
+            # 11. Insert last_node into common ancestor
+            common_ancestor = self.open_elements[formatting_element_in_open_index - 1]
+            if last_node.parent:
+                last_node.parent.remove_child(last_node)
+            
+            if self._should_foster_parenting(common_ancestor, for_tag=last_node.name):
+                parent, position = self._appropriate_insertion_location(common_ancestor, foster_parenting=True)
+                self._insert_node_at(parent, position, last_node)
+            else:
+                if common_ancestor.name == "template" and common_ancestor.template_content:
+                    common_ancestor.template_content.append_child(last_node)
+                else:
+                    common_ancestor.append_child(last_node)
+            
+            # 12. Create new formatting element
+            entry = self.active_formatting[formatting_element_index]
+            new_formatting_element = self._create_element(entry["name"], entry["node"].namespace, entry["attrs"])
+            entry["node"] = new_formatting_element
+            
+            # 13. Move children of furthest block
+            while furthest_block.children:
+                child = furthest_block.children[0]
+                furthest_block.remove_child(child)
+                new_formatting_element.append_child(child)
+            
+            furthest_block.append_child(new_formatting_element)
+            
+            # 14. Remove formatting element from active formatting and insert new at bookmark
+            self._remove_formatting_entry(formatting_element_index)
+            if bookmark > formatting_element_index:
+                bookmark -= 1
+            self.active_formatting.insert(bookmark, entry)
+            
+            # 15. Remove formatting element from open elements and insert new one
+            self.open_elements.remove(formatting_element)
+            furthest_block_index = self.open_elements.index(furthest_block)
+            self.open_elements.insert(furthest_block_index + 1, new_formatting_element)
 
     def _handle_body_start_a(self, token):
         if self._has_active_formatting_entry("a"):
@@ -3100,6 +3199,8 @@ class TreeBuilder:
                 break
             if self._is_mathml_text_integration_point(node):
                 break
+            if self.fragment_context_element is not None and node is self.fragment_context_element:
+                break
             self.open_elements.pop()
 
     def _process_foreign_content(self, token):
@@ -3200,13 +3301,6 @@ class TreeBuilder:
                 idx = len(self.open_elements) - 1
                 first = True
                 while idx >= 0:
-                    # Never pop html/body/head (handle at idx=0)
-                    if idx == 0:
-                        # No match found at all - ignore the end tag with parse error
-                        if first:
-                            self._parse_error("unexpected-end-tag-in-foreign-content")
-                        return None
-
                     node = self.open_elements[idx]
                     is_html = node.namespace in {None, "html"}
                     name_eq = self._lower_ascii(node.name) == name_lower
@@ -3227,6 +3321,14 @@ class TreeBuilder:
                     if first:
                         self._parse_error("unexpected-end-tag-in-foreign-content")
                         first = False
+
+                    # If we hit an HTML element that doesn't match, process in secondary mode
+                    if is_html:
+                        return ("reprocess", self.mode, token, True)
+
+                    # If we reached the root (and it wasn't HTML or matched), ignore the token
+                    if idx == 0:
+                        return None
 
                     idx -= 1
 
@@ -3302,210 +3404,6 @@ class TreeBuilder:
         for child in children:
             source.remove_child(child)
             target.append_child(child)
-
-    def _adoption_agency(self, name):
-        if self.open_elements and self.open_elements[-1].name == name:
-            if self._find_active_formatting_index_by_node(self.open_elements[-1]) is None:
-                self._pop_current()
-                return
-
-        for _ in range(8):
-            fmt_index = self._find_active_formatting_index(name)
-            if fmt_index is None:
-                self._any_other_end_tag(name)
-                return
-
-            entry = self.active_formatting[fmt_index]
-            target = entry["node"]
-            if target not in self.open_elements:
-                self._parse_error("Formatting element not open")
-                self._remove_formatting_entry(fmt_index)
-                return
-
-            if not self._has_node_in_scope(target):
-                self._parse_error("Formatting element not in scope")
-                self._remove_formatting_entry(fmt_index)
-                return
-
-            if target is not self.open_elements[-1]:
-                self._parse_error("Formatting element not current node")
-
-            target_index = self.open_elements.index(target)
-            furthest_block = None
-            for node in self.open_elements[target_index + 1 :]:
-                if self._is_special_element(node):
-                    furthest_block = node
-                    break
-
-            if furthest_block is None:
-                del self.open_elements[target_index:]
-                self._remove_formatting_entry(fmt_index)
-                return
-
-            common_ancestor = self.open_elements[target_index - 1] if target_index > 0 else None
-            bookmark_entry = entry
-            bookmark_mode = "replace"
-            last_node = furthest_block
-            node_index = self.open_elements.index(furthest_block)
-            inner_counter = 0
-
-            while True:
-                inner_counter += 1
-                node_index -= 1
-                current = self.open_elements[node_index]
-                if current is target:
-                    break
-
-                current_fmt_index = self._find_active_formatting_index_by_node(current)
-                if current_fmt_index is None:
-                    self.open_elements.pop(node_index)
-                    continue
-
-                if inner_counter > 3:
-                    self.open_elements.pop(node_index)
-                    self._remove_formatting_entry(current_fmt_index)
-                    if current_fmt_index < fmt_index:
-                        fmt_index -= 1
-                    if bookmark_mode == "after" and bookmark_entry not in self.active_formatting:
-                        bookmark_entry = entry
-                        bookmark_mode = "replace"
-                    continue
-
-                clone = self._clone_shallow(current)
-                self.open_elements[node_index] = clone
-                fmt_entry = self.active_formatting[current_fmt_index]
-                fmt_entry["node"] = clone
-                fmt_entry["attrs"] = self._clone_attributes(fmt_entry["attrs"])
-                fmt_entry["signature"] = self._attrs_signature(fmt_entry["attrs"])
-
-                if last_node is furthest_block:
-                    bookmark_entry = fmt_entry
-                    bookmark_mode = "after"
-
-                self._detach_node(last_node)
-                clone.append_child(last_node)
-                last_node = clone
-
-            parent, position = self._appropriate_insertion_location(common_ancestor, foster_parenting=True)
-            self._insert_node_at(parent, position, last_node)
-
-            new_element = SimpleDomNode(target.name, attrs=self._active_entry_attrs(entry), namespace=target.namespace)
-            self._reparent_children(furthest_block, new_element)
-            furthest_block.append_child(new_element)
-
-            new_entry = {
-                "name": entry["name"],
-                "attrs": self._clone_attributes(entry["attrs"]),
-                "node": new_element,
-                "signature": entry.get("signature") or self._attrs_signature(entry["attrs"]),
-            }
-
-            def _find_entry(target_entry):
-                for idx, fmt in enumerate(self.active_formatting):
-                    if fmt is target_entry:
-                        return idx
-                return None
-
-            if bookmark_mode == "replace":
-                idx = _find_entry(entry)
-                if idx is not None:
-                    self.active_formatting[idx] = new_entry
-                else:
-                    self.active_formatting.append(new_entry)
-            else:
-                insert_after = _find_entry(bookmark_entry)
-                if insert_after is None:
-                    self.active_formatting.append(new_entry)
-                else:
-                    self.active_formatting.insert(insert_after + 1, new_entry)
-                entry_idx = _find_entry(entry)
-                if entry_idx is not None:
-                    del self.active_formatting[entry_idx]
-
-            target_stack_index = self.open_elements.index(target)
-            del self.open_elements[target_stack_index]
-            furthest_index = self.open_elements.index(furthest_block)
-            self.open_elements.insert(furthest_index + 1, new_element)
-
-            entry = new_entry
-            target = new_element
-
-        fmt_index = self._find_active_formatting_index(name)
-        if fmt_index is not None:
-            self._remove_formatting_entry(fmt_index)
-
-    def _parse_error(self, message):
-        if self.opts.exact_errors:
-            self.errors.append(message)
-
-    def _set_quirks_mode(self, mode):
-        self.quirks_mode = mode
-
-    def _find_in_scope_index(self, name, terminators, check_integration_points=True):
-        for idx in range(len(self.open_elements) - 1, -1, -1):
-            node = self.open_elements[idx]
-            if node.name == name:
-                return idx
-            if node.namespace not in {None, "html"}:
-                if check_integration_points:
-                    if self._is_html_integration_point(node):
-                        return -1
-                    if self._is_mathml_text_integration_point(node):
-                        return -1
-                continue
-            if node.name in terminators:
-                return -1
-        return -1
-
-    def _has_element_in_scope(self, name, terminators, check_integration_points=True):
-        return self._find_in_scope_index(name, terminators, check_integration_points) != -1
-
-    def _has_in_scope(self, name):
-        """Check if element is in default scope (html5ever: default_scope)."""
-        return self._has_element_in_scope(name, DEFAULT_SCOPE_TERMINATORS)
-
-    def _has_in_button_scope(self, name):
-        return self._has_element_in_scope(name, BUTTON_SCOPE_TERMINATORS)
-
-    def _has_in_list_item_scope(self, name):
-        return self._has_element_in_scope(name, LIST_ITEM_SCOPE_TERMINATORS)
-
-    def _has_in_definition_scope(self, name):
-        return self._has_element_in_scope(name, DEFINITION_SCOPE_TERMINATORS)
-
-    def _has_any_in_scope(self, names):
-        """Check if any element from the given set is in scope."""
-        terminators = DEFAULT_SCOPE_TERMINATORS
-        for node in reversed(self.open_elements):
-            if node.name in names:
-                return True
-            if node.namespace in {None, "html"} and node.name in terminators:
-                return False
-            if node.namespace not in {None, "html"}:
-                return False
-        return False
-
-    def _close_p_element(self):
-        index = self._find_in_scope_index("p", BUTTON_SCOPE_TERMINATORS)
-        if index == -1:
-            return False
-        del self.open_elements[index:]
-        return True
-
-    def _pop_until_any_inclusive(self, names):
-        target = set(names)
-        while self.open_elements:
-            node = self.open_elements.pop()
-            if node.name in target:
-                return True
-        return False
-
-    def _pop_until_inclusive(self, name):
-        while self.open_elements:
-            node = self.open_elements.pop()
-            if node.name == name:
-                return True
-        return False
 
     def _populate_selectedcontent(self, root):
         """Populate selectedcontent elements with content from selected option.
@@ -3585,3 +3483,211 @@ class TreeBuilder:
                 self._clone_children(child, cloned)
                 target.children.append(cloned)
                 cloned.parent = target
+
+    def _has_in_scope(self, name):
+        return self._has_element_in_scope(name, DEFAULT_SCOPE_TERMINATORS)
+
+    def _has_in_button_scope(self, name):
+        return self._has_element_in_scope(name, BUTTON_SCOPE_TERMINATORS)
+
+    def _has_in_list_item_scope(self, name):
+        return self._has_element_in_scope(name, LIST_ITEM_SCOPE_TERMINATORS)
+
+    def _has_in_definition_scope(self, name):
+        return self._has_element_in_scope(name, DEFINITION_SCOPE_TERMINATORS)
+
+    def _has_any_in_scope(self, names):
+        terminators = DEFAULT_SCOPE_TERMINATORS
+        for node in reversed(self.open_elements):
+            if node.name in names:
+                return True
+            if node.namespace in {None, "html"} and node.name in terminators:
+                return False
+            if node.namespace not in {None, "html"}:
+                return False
+        return False
+
+    _BODY_START_HANDLERS = {
+        "a": _handle_body_start_a,
+        "address": _handle_body_start_block_with_p,
+        "applet": _handle_body_start_applet_like,
+        "area": _handle_body_start_void_with_formatting,
+        "article": _handle_body_start_block_with_p,
+        "aside": _handle_body_start_block_with_p,
+        "b": _handle_body_start_formatting,
+        "base": _handle_body_start_in_head,
+        "basefont": _handle_body_start_in_head,
+        "bgsound": _handle_body_start_in_head,
+        "big": _handle_body_start_formatting,
+        "blockquote": _handle_body_start_block_with_p,
+        "body": _handle_body_start_body,
+        "br": _handle_body_start_br,
+        "button": _handle_body_start_button,
+        "caption": _handle_body_start_table_parse_error,
+        "center": _handle_body_start_block_with_p,
+        "code": _handle_body_start_formatting,
+        "col": _handle_body_start_col_or_frame,
+        "colgroup": _handle_body_start_structure_ignored,
+        "dd": _handle_body_start_dd_dt,
+        "details": _handle_body_start_block_with_p,
+        "dialog": _handle_body_start_block_with_p,
+        "dir": _handle_body_start_block_with_p,
+        "div": _handle_body_start_block_with_p,
+        "dl": _handle_body_start_block_with_p,
+        "dt": _handle_body_start_dd_dt,
+        "em": _handle_body_start_formatting,
+        "embed": _handle_body_start_void_with_formatting,
+        "fieldset": _handle_body_start_block_with_p,
+        "figcaption": _handle_body_start_block_with_p,
+        "figure": _handle_body_start_block_with_p,
+        "font": _handle_body_start_formatting,
+        "footer": _handle_body_start_block_with_p,
+        "form": _handle_body_start_form,
+        "frame": _handle_body_start_col_or_frame,
+        "frameset": _handle_body_start_frameset,
+        "h1": _handle_body_start_heading,
+        "h2": _handle_body_start_heading,
+        "h3": _handle_body_start_heading,
+        "h4": _handle_body_start_heading,
+        "h5": _handle_body_start_heading,
+        "h6": _handle_body_start_heading,
+        "head": _handle_body_start_head,
+        "header": _handle_body_start_block_with_p,
+        "hgroup": _handle_body_start_block_with_p,
+        "hr": _handle_body_start_hr,
+        "html": _handle_body_start_html,
+        "i": _handle_body_start_formatting,
+        "image": _handle_body_start_image,
+        "img": _handle_body_start_void_with_formatting,
+        "input": _handle_body_start_input,
+        "keygen": _handle_body_start_void_with_formatting,
+        "li": _handle_body_start_li,
+        "link": _handle_body_start_in_head,
+        "listing": _handle_body_start_pre_listing,
+        "main": _handle_body_start_block_with_p,
+        "marquee": _handle_body_start_applet_like,
+        "math": _handle_body_start_math,
+        "menu": _handle_body_start_block_with_p,
+        "meta": _handle_body_start_in_head,
+        "nav": _handle_body_start_block_with_p,
+        "nobr": _handle_body_start_formatting,
+        "noframes": _handle_body_start_in_head,
+        "object": _handle_body_start_applet_like,
+        "ol": _handle_body_start_block_with_p,
+        "optgroup": _handle_body_start_optgroup,
+        "option": _handle_body_start_option,
+        "p": _handle_body_start_paragraph,
+        "param": _handle_body_start_simple_void,
+        "plaintext": _handle_body_start_plaintext_xmp,
+        "pre": _handle_body_start_pre_listing,
+        "rb": _handle_body_start_rb_rtc,
+        "rp": _handle_body_start_rp_rt,
+        "rt": _handle_body_start_rp_rt,
+        "rtc": _handle_body_start_rb_rtc,
+        "s": _handle_body_start_formatting,
+        "script": _handle_body_start_in_head,
+        "search": _handle_body_start_block_with_p,
+        "section": _handle_body_start_block_with_p,
+        "select": _handle_body_start_select,
+        "small": _handle_body_start_formatting,
+        "source": _handle_body_start_simple_void,
+        "strike": _handle_body_start_formatting,
+        "strong": _handle_body_start_formatting,
+        "style": _handle_body_start_in_head,
+        "summary": _handle_body_start_block_with_p,
+        "svg": _handle_body_start_svg,
+        "table": _handle_body_start_table,
+        "tbody": _handle_body_start_structure_ignored,
+        "td": _handle_body_start_structure_ignored,
+        "template": _handle_body_start_in_head,
+        "textarea": _handle_body_start_textarea,
+        "tfoot": _handle_body_start_structure_ignored,
+        "th": _handle_body_start_structure_ignored,
+        "thead": _handle_body_start_structure_ignored,
+        "title": _handle_body_start_in_head,
+        "tr": _handle_body_start_structure_ignored,
+        "track": _handle_body_start_simple_void,
+        "tt": _handle_body_start_formatting,
+        "u": _handle_body_start_formatting,
+        "ul": _handle_body_start_block_with_p,
+        "wbr": _handle_body_start_void_with_formatting,
+        "xmp": _handle_body_start_plaintext_xmp,
+    }
+    _BODY_END_HANDLERS = {
+        "address": _handle_body_end_block,
+        "applet": _handle_body_end_applet_like,
+        "article": _handle_body_end_block,
+        "aside": _handle_body_end_block,
+        "blockquote": _handle_body_end_block,
+        "body": _handle_body_end_body,
+        "button": _handle_body_end_block,
+        "center": _handle_body_end_block,
+        "dd": _handle_body_end_dd_dt,
+        "details": _handle_body_end_block,
+        "dialog": _handle_body_end_block,
+        "dir": _handle_body_end_block,
+        "div": _handle_body_end_block,
+        "dl": _handle_body_end_block,
+        "dt": _handle_body_end_dd_dt,
+        "fieldset": _handle_body_end_block,
+        "figcaption": _handle_body_end_block,
+        "figure": _handle_body_end_block,
+        "footer": _handle_body_end_block,
+        "form": _handle_body_end_form,
+        "h1": _handle_body_end_heading,
+        "h2": _handle_body_end_heading,
+        "h3": _handle_body_end_heading,
+        "h4": _handle_body_end_heading,
+        "h5": _handle_body_end_heading,
+        "h6": _handle_body_end_heading,
+        "header": _handle_body_end_block,
+        "hgroup": _handle_body_end_block,
+        "html": _handle_body_end_html,
+        "li": _handle_body_end_li,
+        "listing": _handle_body_end_block,
+        "main": _handle_body_end_block,
+        "marquee": _handle_body_end_applet_like,
+        "menu": _handle_body_end_block,
+        "nav": _handle_body_end_block,
+        "object": _handle_body_end_applet_like,
+        "ol": _handle_body_end_block,
+        "p": _handle_body_end_p,
+        "pre": _handle_body_end_block,
+        "search": _handle_body_end_block,
+        "section": _handle_body_end_block,
+        "summary": _handle_body_end_block,
+        "table": _handle_body_end_block,
+        "template": _handle_body_end_template,
+        "ul": _handle_body_end_block,
+    }
+    _MODE_HANDLERS = [
+        _mode_initial,
+        _mode_before_html,
+        _mode_before_head,
+        _mode_in_head,
+        _mode_in_head_noscript,
+        _mode_after_head,
+        _mode_text,
+        _mode_in_body,
+        _mode_after_body,
+        _mode_after_after_body,
+        _mode_in_table,
+        _mode_in_table_text,
+        _mode_in_caption,
+        _mode_in_column_group,
+        _mode_in_table_body,
+        _mode_in_row,
+        _mode_in_cell,
+        _mode_in_frameset,
+        _mode_after_frameset,
+        _mode_after_after_frameset,
+        _mode_in_select,
+        _mode_in_template,
+    ]
+
+    _BODY_TOKEN_HANDLERS = {
+        CharacterTokens: _handle_characters_in_body,
+        CommentToken: _handle_comment_in_body,
+        Tag: _handle_tag_in_body,
+        EOFToken: _handle_eof_in_body,
+    }

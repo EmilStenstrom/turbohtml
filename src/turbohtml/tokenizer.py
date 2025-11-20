@@ -28,6 +28,10 @@ _ATTR_VALUE_DOUBLE_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_DOUBLE_TERMINA
 _ATTR_VALUE_SINGLE_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_SINGLE_TERMINATORS_OPT)}]")
 _ATTR_VALUE_UNQUOTED_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_UNQUOTED_TERMINATORS)}]")
 
+_TAG_NAME_RUN_PATTERN = re.compile(r"[^\t\n\f />\0]+")
+_ATTR_NAME_RUN_PATTERN = re.compile(r"[^\t\n\f />=\0\"'<]+")
+_COMMENT_RUN_PATTERN = re.compile(r"[^-\0]+")
+
 
 def _is_ascii_alpha(c):
     return c is not None and (("A" <= c <= "Z") or ("a" <= c <= "z"))
@@ -104,6 +108,8 @@ class Tokenizer:
 
     __slots__ = (
         "_tag_token",
+        "_char_token",
+        "_comment_token",
         "_state_handlers",
         "buffer",
         "current_attr_name",
@@ -134,6 +140,9 @@ class Tokenizer:
         "text_buffer",
     )
 
+    # _STATE_HANDLERS is defined at the end of the file
+
+
     def __init__(self, sink, opts=None):
         self.sink = sink
         self.opts = opts or TokenizerOpts()
@@ -150,7 +159,7 @@ class Tokenizer:
         # Reusable buffers to avoid per-token allocations.
         self.text_buffer = []
         self.current_tag_name = []
-        self.current_tag_attrs = {}
+        self.current_tag_attrs = None
         self.current_attr_name = []
         self.current_attr_value = []
         self.current_attr_value_has_amp = False
@@ -166,66 +175,8 @@ class Tokenizer:
         self.original_tag_name = []
         self.temp_buffer = []
         self._tag_token = Tag(Tag.START, "", {}, False)
-
-        # State dispatch table for faster lookup
-        self._state_handlers = [
-            self._state_data,
-            self._state_tag_open,
-            self._state_end_tag_open,
-            self._state_tag_name,
-            self._state_before_attribute_name,
-            self._state_attribute_name,
-            self._state_after_attribute_name,
-            self._state_before_attribute_value,
-            self._state_attribute_value_double,
-            self._state_attribute_value_single,
-            self._state_attribute_value_unquoted,
-            self._state_self_closing_start_tag,
-            self._state_markup_declaration_open,
-            self._state_comment_start,
-            self._state_comment_start_dash,
-            self._state_comment,
-            self._state_comment_end_dash,
-            self._state_comment_end,
-            self._state_comment_end_bang,
-            self._state_bogus_comment,
-            self._state_doctype,
-            self._state_before_doctype_name,
-            self._state_doctype_name,
-            self._state_after_doctype_name,
-            self._state_bogus_doctype,
-            self._state_after_doctype_public_keyword,
-            self._state_after_doctype_system_keyword,
-            self._state_before_doctype_public_identifier,
-            self._state_doctype_public_identifier_double_quoted,
-            self._state_doctype_public_identifier_single_quoted,
-            self._state_after_doctype_public_identifier,
-            self._state_between_doctype_public_and_system_identifiers,
-            self._state_before_doctype_system_identifier,
-            self._state_doctype_system_identifier_double_quoted,
-            self._state_doctype_system_identifier_single_quoted,
-            self._state_after_doctype_system_identifier,
-            self._state_cdata_section,
-            self._state_cdata_section_bracket,
-            self._state_cdata_section_end,
-            self._state_rawtext,
-            self._state_rawtext_less_than_sign,
-            self._state_rawtext_end_tag_open,
-            self._state_rawtext_end_tag_name,
-            self._state_plaintext,
-            self._state_script_data_escaped,
-            self._state_script_data_escaped_dash,
-            self._state_script_data_escaped_dash_dash,
-            self._state_script_data_escaped_less_than_sign,
-            self._state_script_data_escaped_end_tag_open,
-            self._state_script_data_escaped_end_tag_name,
-            self._state_script_data_double_escape_start,
-            self._state_script_data_double_escaped,
-            self._state_script_data_double_escaped_dash,
-            self._state_script_data_double_escaped_dash_dash,
-            self._state_script_data_double_escaped_less_than_sign,
-            self._state_script_data_double_escape_end,
-        ]
+        self._char_token = CharacterTokens("")
+        self._comment_token = CommentToken("")
 
     def run(self, html):
         if html and html[0] == "\ufeff" and self.opts.discard_bom:
@@ -240,7 +191,7 @@ class Tokenizer:
         self.line = 1
         self.text_buffer.clear()
         self.current_tag_name.clear()
-        self.current_tag_attrs = {}
+        self.current_tag_attrs = None
         self.current_attr_name.clear()
         self.current_attr_value.clear()
         self.current_attr_value_has_amp = False
@@ -265,10 +216,10 @@ class Tokenizer:
         else:
             self.state = self.DATA
 
-        handlers = self._state_handlers
+        handlers = self._STATE_HANDLERS
         while True:
             handler = handlers[self.state]
-            if handler():
+            if handler(self):
                 break
 
     # ---------------------
@@ -1436,18 +1387,21 @@ class Tokenizer:
             # Our tokenizer uses RAWTEXT state for both RCDATA and RAWTEXT elements
             # so we check the tag name to determine the correct behavior
             if self.state >= self.PLAINTEXT:
-                self._emit_token(CharacterTokens(data))
+                self._char_token.data = data
+                self._emit_token(self._char_token)
             elif self.state >= self.RAWTEXT and self.rawtext_tag_name not in _RCDATA_ELEMENTS:
-                self._emit_token(CharacterTokens(data))
+                self._char_token.data = data
+                self._emit_token(self._char_token)
             else:
                 if "&" in data:
                     data = decode_entities_in_text(data)
-                self._emit_token(CharacterTokens(data))
+                self._char_token.data = data
+                self._emit_token(self._char_token)
 
     def _start_tag(self, kind):
         self.current_tag_kind = kind
         self.current_tag_name.clear()
-        self.current_tag_attrs = {}
+        self.current_tag_attrs = None
         self.current_attr_name.clear()
         self.current_attr_value.clear()
         self.current_attr_value_has_amp = False
@@ -1469,6 +1423,8 @@ class Tokenizer:
             name = attr_name_buffer[0]
         else:
             name = "".join(attr_name_buffer)
+        if self.current_tag_attrs is None:
+            self.current_tag_attrs = {}
         attrs = self.current_tag_attrs
         is_duplicate = name in attrs
         attr_name_buffer.clear()
@@ -1587,18 +1543,13 @@ class Tokenizer:
         length = self.length
         if pos >= length:
             return False
-        buffer = self.buffer
-        start = pos
-        while pos < length:
-            c = buffer[pos]
-            if c == "-" or c == "\0":
-                break
-            pos += 1
-        if pos == start:
-            return False
-        self.current_comment.append(buffer[start:pos])
-        self.pos = pos
-        return True
+            
+        match = _COMMENT_RUN_PATTERN.match(self.buffer, pos)
+        if match:
+            self.current_comment.append(match.group(0))
+            self.pos = match.end()
+            return True
+        return False
 
     def _emit_current_tag(self):
         # Inline _finish_attribute for performance
@@ -1608,7 +1559,7 @@ class Tokenizer:
                 name = attr_name_buffer[0]
             else:
                 name = "".join(attr_name_buffer)
-            # name = sys.intern(name)
+            name = sys.intern(name)
             
             value_parts = self.current_attr_value
             if not value_parts:
@@ -1618,6 +1569,8 @@ class Tokenizer:
             else:
                 value = "".join(value_parts)
                 
+            if self.current_tag_attrs is None:
+                self.current_tag_attrs = {}
             if name not in self.current_tag_attrs:
                 if self.current_attr_value_has_amp:
                     value = decode_entities_in_text(value, in_attribute=True)
@@ -1636,10 +1589,10 @@ class Tokenizer:
         else:
             name = "".join(name_parts)
         if name:
-            # name = sys.intern(name)
+            name = sys.intern(name)
             pass
-        attrs = self.current_tag_attrs
-        self.current_tag_attrs = {}
+        attrs = self.current_tag_attrs or {}
+        self.current_tag_attrs = None
         tag = self._tag_token
         tag.kind = self.current_tag_kind
         tag.name = name
@@ -1677,7 +1630,8 @@ class Tokenizer:
     def _emit_comment(self):
         data = "".join(self.current_comment)
         self.current_comment.clear()
-        self._emit_token(CommentToken(data))
+        self._comment_token.data = data
+        self._emit_token(self._comment_token)
 
     def _emit_doctype(self):
         name = "".join(self.current_doctype_name) if self.current_doctype_name else None
@@ -2195,6 +2149,7 @@ class Tokenizer:
         if c in (" ", "\t", "\n", "\r", "\f", "/", ">"):
             # Check if temp_buffer contains "script"
             temp = "".join(self.temp_buffer).lower()
+           
             if temp == "script":
                 self.state = self.SCRIPT_DATA_ESCAPED
             else:
@@ -2208,3 +2163,63 @@ class Tokenizer:
         self._reconsume_current()
         self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
         return False
+
+
+Tokenizer._STATE_HANDLERS = [
+    Tokenizer._state_data,
+    Tokenizer._state_tag_open,
+    Tokenizer._state_end_tag_open,
+    Tokenizer._state_tag_name,
+    Tokenizer._state_before_attribute_name,
+    Tokenizer._state_attribute_name,
+    Tokenizer._state_after_attribute_name,
+    Tokenizer._state_before_attribute_value,
+    Tokenizer._state_attribute_value_double,
+    Tokenizer._state_attribute_value_single,
+    Tokenizer._state_attribute_value_unquoted,
+    Tokenizer._state_self_closing_start_tag,
+    Tokenizer._state_markup_declaration_open,
+    Tokenizer._state_comment_start,
+    Tokenizer._state_comment_start_dash,
+    Tokenizer._state_comment,
+    Tokenizer._state_comment_end_dash,
+    Tokenizer._state_comment_end,
+    Tokenizer._state_comment_end_bang,
+    Tokenizer._state_bogus_comment,
+    Tokenizer._state_doctype,
+    Tokenizer._state_before_doctype_name,
+    Tokenizer._state_doctype_name,
+    Tokenizer._state_after_doctype_name,
+    Tokenizer._state_bogus_doctype,
+    Tokenizer._state_after_doctype_public_keyword,
+    Tokenizer._state_after_doctype_system_keyword,
+    Tokenizer._state_before_doctype_public_identifier,
+    Tokenizer._state_doctype_public_identifier_double_quoted,
+    Tokenizer._state_doctype_public_identifier_single_quoted,
+    Tokenizer._state_after_doctype_public_identifier,
+    Tokenizer._state_between_doctype_public_and_system_identifiers,
+    Tokenizer._state_before_doctype_system_identifier,
+    Tokenizer._state_doctype_system_identifier_double_quoted,
+    Tokenizer._state_doctype_system_identifier_single_quoted,
+    Tokenizer._state_after_doctype_system_identifier,
+    Tokenizer._state_cdata_section,
+    Tokenizer._state_cdata_section_bracket,
+    Tokenizer._state_cdata_section_end,
+    Tokenizer._state_rawtext,
+    Tokenizer._state_rawtext_less_than_sign,
+    Tokenizer._state_rawtext_end_tag_open,
+    Tokenizer._state_rawtext_end_tag_name,
+    Tokenizer._state_plaintext,
+    Tokenizer._state_script_data_escaped,
+    Tokenizer._state_script_data_escaped_dash,
+    Tokenizer._state_script_data_escaped_dash_dash,
+    Tokenizer._state_script_data_escaped_less_than_sign,
+    Tokenizer._state_script_data_escaped_end_tag_open,
+    Tokenizer._state_script_data_escaped_end_tag_name,
+    Tokenizer._state_script_data_double_escape_start,
+    Tokenizer._state_script_data_double_escaped,
+    Tokenizer._state_script_data_double_escaped_dash,
+    Tokenizer._state_script_data_double_escaped_dash_dash,
+    Tokenizer._state_script_data_double_escaped_less_than_sign,
+    Tokenizer._state_script_data_double_escape_end,
+]

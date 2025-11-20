@@ -1,8 +1,8 @@
 class Tag:
     __slots__ = ("attrs", "kind", "name", "self_closing")
 
-    START = "start"
-    END = "end"
+    START = 0
+    END = 1
 
     def __init__(self, kind, name, attrs, self_closing=False):
         self.kind = kind
@@ -25,7 +25,8 @@ class Tag:
         else:
             attrs = ""
         closing = " /" if self.self_closing else ""
-        return f"<{self.kind}:{self.name}{closing} {attrs}>"
+        kind_str = "start" if self.kind == self.START else "end"
+        return f"<{kind_str}:{self.name}{closing} {attrs}>"
 
 
 class CharacterTokens:
@@ -77,10 +78,10 @@ class ParseError:
 class TokenSinkResult:
     __slots__ = ()
 
-    Continue = "continue"
-    Plaintext = "plaintext"
-    RawData = "raw-data"
-    Script = "script"
+    Continue = 0
+    Plaintext = 1
+    RawData = 2
+    Script = 3
 
 
 class Token:
