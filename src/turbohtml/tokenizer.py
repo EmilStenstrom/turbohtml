@@ -286,12 +286,41 @@ class Tokenizer:
                     # Found null, process up to null
                     actual_end = pos + null_index
                     chunk = buffer[pos:actual_end]
-                    self._append_text_chunk(chunk, ends_with_cr=chunk.endswith("\r"))
+                    
+                    # Inline _append_text_chunk
+                    if chunk:
+                        if self.ignore_lf:
+                            if chunk.startswith("\n"):
+                                chunk = chunk[1:]
+                            self.ignore_lf = False
+                        
+                        if "\r" in chunk:
+                            chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
+                        
+                        self.line += chunk.count("\n")
+                        self.text_buffer.append(chunk)
+                        self.ignore_lf = chunk.endswith("\r")
+                    else:
+                        if self.ignore_lf:
+                            self.ignore_lf = False
+
                     pos = actual_end
                     self.pos = pos
                     # The loop will continue, next char is \0, handled below
                 else:
-                    self._append_text_chunk(chunk, ends_with_cr=chunk.endswith("\r"))
+                    # Inline _append_text_chunk
+                    if self.ignore_lf:
+                        if chunk.startswith("\n"):
+                            chunk = chunk[1:]
+                        self.ignore_lf = False
+                    
+                    if "\r" in chunk:
+                        chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
+                    
+                    self.line += chunk.count("\n")
+                    self.text_buffer.append(chunk)
+                    self.ignore_lf = chunk.endswith("\r")
+
                     pos = end
                     self.pos = pos
                     if pos >= length:
@@ -373,9 +402,22 @@ class Tokenizer:
     def _state_tag_name(self):
         replacement = "\ufffd"
         append_tag_char = self.current_tag_name.append
+        buffer = self.buffer
+        length = self.length
+
         while True:
-            if self._consume_tag_name_run():
-                continue
+            # Inline _consume_tag_name_run
+            if not self.reconsume:
+                pos = self.pos
+                if pos < length:
+                    match = _TAG_NAME_RUN_PATTERN.match(buffer, pos)
+                    if match:
+                        chunk = match.group(0)
+                        if not chunk.islower():
+                             chunk = chunk.translate(_ASCII_LOWER_TABLE)
+                        append_tag_char(chunk)
+                        self.pos = match.end()
+
             c = self._get_char()
             if c is None:
                 self._emit_error("EOF in tag name")
@@ -413,7 +455,7 @@ class Tokenizer:
                 self._emit_token(EOFToken())
                 return True
             if c in ("\t", "\n", "\f", " "):
-                return False
+                continue
             if c == "/":
                 self.state = self.SELF_CLOSING_START_TAG
                 return False
@@ -438,9 +480,22 @@ class Tokenizer:
     def _state_attribute_name(self):
         replacement = "\ufffd"
         append_attr_char = self.current_attr_name.append
+        buffer = self.buffer
+        length = self.length
+
         while True:
-            if self._consume_attribute_name_run():
-                continue
+            # Inline _consume_attribute_name_run
+            if not self.reconsume:
+                pos = self.pos
+                if pos < length:
+                    match = _ATTR_NAME_RUN_PATTERN.match(buffer, pos)
+                    if match:
+                        chunk = match.group(0)
+                        if not chunk.islower():
+                            chunk = chunk.translate(_ASCII_LOWER_TABLE)
+                        append_attr_char(chunk)
+                        self.pos = match.end()
+
             c = self._get_char()
             if c is None:
                 self._emit_error("EOF in attribute name")
@@ -487,7 +542,7 @@ class Tokenizer:
                 self._emit_token(EOFToken())
                 return True
             if c in ("\t", "\n", "\f", " "):
-                return False
+                continue
             if c == "/":
                 self.state = self.SELF_CLOSING_START_TAG
                 return False
@@ -517,7 +572,7 @@ class Tokenizer:
                 self._emit_token(EOFToken())
                 return True
             if c in ("\t", "\n", "\f", " "):
-                return False
+                continue
             if c == '"':
                 self.state = self.ATTRIBUTE_VALUE_DOUBLE
                 return self._state_attribute_value_double()
@@ -1574,10 +1629,7 @@ class Tokenizer:
             name = name_parts[0]
         else:
             name = "".join(name_parts)
-        if name:
-            name = sys.intern(name)
-            pass
-        attrs = self.current_tag_attrs or {}
+        attrs = self.current_tag_attrs
         self.current_tag_attrs = None
         tag = self._tag_token
         tag.kind = self.current_tag_kind
@@ -1634,11 +1686,11 @@ class Tokenizer:
 
     def _emit_token(self, token):
         result = self.sink.process_token(token)
-        if result == TokenSinkResult.Plaintext:
+        if result == 1: # TokenSinkResult.Plaintext
             self.state = self.PLAINTEXT
-        elif result == TokenSinkResult.RawData:
+        elif result == 2: # TokenSinkResult.RawData
             self.state = self.DATA
-        elif result == TokenSinkResult.Script:
+        elif result == 3: # TokenSinkResult.Script
             self.state = self.DATA
 
     def _emit_error(self, message):

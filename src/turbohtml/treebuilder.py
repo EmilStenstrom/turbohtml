@@ -218,19 +218,21 @@ class SimpleDomNode:
 
     def __init__(self, name, attrs=None, data=None, namespace=None):
         self.name = name
-        self.attrs = _as_attr_dict(attrs)
+        self.attrs = attrs if attrs is not None else {}
         self.children = []
         self.parent = None
         self.data = data
-        if name in {"#text", "#comment", "!doctype", "#document", "#document-fragment"}:
+        
+        if name.startswith("#") or name == "!doctype":
             self.namespace = namespace
+            self.template_content = None
         else:
             self.namespace = namespace or "html"
-        # Only HTML template elements have a document fragment for their content
-        if name == "template" and self.namespace == "html":
-            self.template_content = SimpleDomNode("#document-fragment")
-        else:
-            self.template_content = None
+            # Only HTML template elements have a document fragment for their content
+            if name == "template" and self.namespace == "html":
+                self.template_content = SimpleDomNode("#document-fragment")
+            else:
+                self.template_content = None
 
     def append_child(self, node):
         self.children.append(node)
@@ -446,9 +448,11 @@ class TreeBuilder:
         for node in reversed(self.open_elements):
             if node.name == target:
                 return True
-            if node.namespace in {None, "html"} and node.name in terminators:
-                return False
-            if check_integration_points and (self._is_html_integration_point(node) or self._is_mathml_text_integration_point(node)):
+            ns = node.namespace
+            if ns == "html" or ns is None:
+                if node.name in terminators:
+                    return False
+            elif check_integration_points and (self._is_html_integration_point(node) or self._is_mathml_text_integration_point(node)):
                 return False
         return False
 
@@ -512,7 +516,52 @@ class TreeBuilder:
             
             if force_html_mode or is_html_namespace:
                 force_html_mode = False
-                result = mode_handlers[self.mode](self, current_token)
+                if self.mode == InsertionMode.IN_BODY:
+                    # Inline _mode_in_body for performance
+                    token_type = type(current_token)
+                    if token_type is Tag:
+                        # Inline _handle_tag_in_body
+                        if current_token.kind == 0: # Tag.START
+                            handler = self._BODY_START_HANDLERS.get(current_token.name)
+                            if handler:
+                                result = handler(self, current_token)
+                            else:
+                                # Inline _handle_body_start_default
+                                if self.active_formatting:
+                                    self._reconstruct_active_formatting_elements()
+                                self._insert_element(current_token, push=True)
+                                if current_token.self_closing:
+                                    self._parse_error("non-void-html-element-start-tag-with-trailing-solidus")
+                                name = current_token.name
+                                if name not in _BODY_START_FRAMESET_NEUTRAL and name not in FORMATTING_ELEMENTS:
+                                    self.frameset_ok = False
+                                result = None
+                        else:
+                            name = current_token.name
+                            if name == "br":
+                                self._parse_error("Unexpected </br>")
+                                br_tag = Tag(0, "br", {}, False)
+                                result = self._handle_body_start_br(br_tag)
+                            elif name in FORMATTING_ELEMENTS:
+                                self._adoption_agency(name)
+                                result = None
+                            else:
+                                handler = self._BODY_END_HANDLERS.get(name)
+                                if handler:
+                                    result = handler(self, current_token)
+                                else:
+                                    self._any_other_end_tag(name)
+                                    result = None
+                    elif token_type is CharacterTokens:
+                        result = self._handle_characters_in_body(current_token)
+                    elif token_type is CommentToken:
+                        result = self._handle_comment_in_body(current_token)
+                    elif token_type is EOFToken:
+                        result = self._handle_eof_in_body(current_token)
+                    else:
+                        result = None
+                else:
+                    result = mode_handlers[self.mode](self, current_token)
             elif self._should_use_foreign_content(current_token):
                 result = self._process_foreign_content(current_token)
             else:
