@@ -1491,24 +1491,18 @@ class Tokenizer:
         length = self.length
         if pos >= length:
             return False
-        buffer = self.buffer
-        start = pos
-        has_upper = False
-        while pos < length:
-            c = buffer[pos]
-            if c in _TAG_NAME_TERMINATORS:
-                break
-            if "A" <= c <= "Z":
-                has_upper = True
-            pos += 1
-        if pos == start:
-            return False
-        chunk = buffer[start:pos]
-        if has_upper:
-            chunk = chunk.translate(_ASCII_LOWER_TABLE)
-        self.current_tag_name.append(chunk)
-        self.pos = pos
-        return True
+        
+        match = _TAG_NAME_RUN_PATTERN.match(self.buffer, pos)
+        if match:
+            chunk = match.group(0)
+            # Optimization: check if we need to translate
+            if not chunk.islower():
+                 chunk = chunk.translate(_ASCII_LOWER_TABLE)
+            
+            self.current_tag_name.append(chunk)
+            self.pos = match.end()
+            return True
+        return False
 
     def _consume_attribute_name_run(self):
         if self.reconsume:
@@ -1517,24 +1511,16 @@ class Tokenizer:
         length = self.length
         if pos >= length:
             return False
-        buffer = self.buffer
-        start = pos
-        has_upper = False
-        while pos < length:
-            c = buffer[pos]
-            if c in _ATTR_NAME_TERMINATORS:
-                break
-            if "A" <= c <= "Z":
-                has_upper = True
-            pos += 1
-        if pos == start:
-            return False
-        chunk = buffer[start:pos]
-        if has_upper:
-            chunk = chunk.translate(_ASCII_LOWER_TABLE)
-        self.current_attr_name.append(chunk)
-        self.pos = pos
-        return True
+            
+        match = _ATTR_NAME_RUN_PATTERN.match(self.buffer, pos)
+        if match:
+            chunk = match.group(0)
+            if not chunk.islower():
+                chunk = chunk.translate(_ASCII_LOWER_TABLE)
+            self.current_attr_name.append(chunk)
+            self.pos = match.end()
+            return True
+        return False
 
     def _consume_comment_run(self):
         if self.reconsume:
@@ -1559,7 +1545,7 @@ class Tokenizer:
                 name = attr_name_buffer[0]
             else:
                 name = "".join(attr_name_buffer)
-            name = sys.intern(name)
+            # name = sys.intern(name)  # Optimization: Don't intern attribute names
             
             value_parts = self.current_attr_value
             if not value_parts:

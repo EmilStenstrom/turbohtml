@@ -3117,6 +3117,8 @@ class TreeBuilder:
     def _is_html_integration_point(self, node):
         if node is None:
             return False
+        if node.namespace in {None, "html"}:
+            return False
         # annotation-xml is an HTML integration point only with specific encoding values
         if node.namespace == "math" and node.name == "annotation-xml":
             encoding = self._node_attribute_value(node, "encoding")
@@ -3130,6 +3132,8 @@ class TreeBuilder:
 
     def _is_mathml_text_integration_point(self, node):
         if node is None:
+            return False
+        if node.namespace != "math":
             return False
         return (node.namespace, node.name) in MATHML_TEXT_INTEGRATION_POINT_SET
 
