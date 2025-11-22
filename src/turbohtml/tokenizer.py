@@ -159,7 +159,7 @@ class Tokenizer:
         # Reusable buffers to avoid per-token allocations.
         self.text_buffer = []
         self.current_tag_name = []
-        self.current_tag_attrs = None
+        self.current_tag_attrs = {}
         self.current_attr_name = []
         self.current_attr_value = []
         self.current_attr_value_has_amp = False
@@ -191,7 +191,7 @@ class Tokenizer:
         self.line = 1
         self.text_buffer.clear()
         self.current_tag_name.clear()
-        self.current_tag_attrs = None
+        self.current_tag_attrs = {}
         self.current_attr_name.clear()
         self.current_attr_value.clear()
         self.current_attr_value_has_amp = False
@@ -279,12 +279,11 @@ class Tokenizer:
             end = next_lt
 
             if end > pos:
-                chunk = buffer[pos:end]
-                # Check for null in the chunk
-                null_index = chunk.find("\0")
+                # Check for null in the range
+                null_index = buffer.find("\0", pos, end)
                 if null_index != -1:
                     # Found null, process up to null
-                    actual_end = pos + null_index
+                    actual_end = null_index
                     chunk = buffer[pos:actual_end]
                     
                     # Inline _append_text_chunk
@@ -308,6 +307,7 @@ class Tokenizer:
                     self.pos = pos
                     # The loop will continue, next char is \0, handled below
                 else:
+                    chunk = buffer[pos:end]
                     # Inline _append_text_chunk
                     if self.ignore_lf:
                         if chunk.startswith("\n"):
@@ -1540,7 +1540,7 @@ class Tokenizer:
     def _start_tag(self, kind):
         self.current_tag_kind = kind
         self.current_tag_name.clear()
-        self.current_tag_attrs = None
+        # self.current_tag_attrs is already {} from _emit_current_tag or init
         self.current_attr_name.clear()
         self.current_attr_value.clear()
         self.current_attr_value_has_amp = False
@@ -1562,8 +1562,6 @@ class Tokenizer:
             name = attr_name_buffer[0]
         else:
             name = "".join(attr_name_buffer)
-        if self.current_tag_attrs is None:
-            self.current_tag_attrs = {}
         attrs = self.current_tag_attrs
         is_duplicate = name in attrs
         attr_name_buffer.clear()
@@ -1627,8 +1625,8 @@ class Tokenizer:
             name = name_parts[0]
         else:
             name = "".join(name_parts)
-        attrs = self.current_tag_attrs or {}
-        self.current_tag_attrs = None
+        attrs = self.current_tag_attrs
+        self.current_tag_attrs = {}
         tag = self._tag_token
         tag.kind = self.current_tag_kind
         tag.name = name
