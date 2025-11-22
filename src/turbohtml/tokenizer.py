@@ -457,11 +457,6 @@ class Tokenizer:
                 self._emit_error("Null character in tag name")
                 append_tag_char(replacement)
                 continue
-            
-            # Should be unreachable if regex is working correctly
-            if "A" <= c <= "Z":
-                c = chr(ord(c) + 32)
-            append_tag_char(c)
 
     def _state_before_attribute_name(self):
         while True:
@@ -714,7 +709,6 @@ class Tokenizer:
                 self._emit_error("Null in attribute value")
                 self._append_attr_value_char(replacement)
                 continue
-            self._append_attr_value_char(c)
 
     def _state_attribute_value_single(self):
         replacement = "\ufffd"
@@ -772,7 +766,6 @@ class Tokenizer:
                 self._emit_error("Null in attribute value")
                 self._append_attr_value_char(replacement)
                 continue
-            self._append_attr_value_char(c)
 
     def _state_attribute_value_unquoted(self):
         replacement = "\ufffd"
@@ -943,7 +936,6 @@ class Tokenizer:
                 self._emit_error("Null in comment")
                 self.current_comment.append(replacement)
                 continue
-            self.current_comment.append(c)
 
     def _state_comment_end_dash(self):
         replacement = "\ufffd"
