@@ -10,24 +10,6 @@ class Tag:
         self.attrs = attrs if attrs is not None else {}
         self.self_closing = bool(self_closing)
 
-    def __repr__(self):
-        if self.attrs:
-            if isinstance(self.attrs, dict):
-                parts = [f"{name}={value!r}" for name, value in self.attrs.items()]
-            else:
-                parts = []
-                attrs = self.attrs
-                for index in range(0, len(attrs), 2):
-                    name = attrs[index]
-                    value = attrs[index + 1]
-                    parts.append(f"{name}={value!r}")
-            attrs = " ".join(parts)
-        else:
-            attrs = ""
-        closing = " /" if self.self_closing else ""
-        kind_str = "start" if self.kind == self.START else "end"
-        return f"<{kind_str}:{self.name}{closing} {attrs}>"
-
 
 class CharacterTokens:
     __slots__ = ("data",)
@@ -82,10 +64,3 @@ class TokenSinkResult:
     Plaintext = 1
     RawData = 2
     Script = 3
-
-
-class Token:
-    __slots__ = ("data",)
-
-    def __init__(self, data):
-        self.data = data

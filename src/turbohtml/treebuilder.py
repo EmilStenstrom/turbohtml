@@ -45,19 +45,16 @@ class TreeBuilderOpts:
         "drop_doctype",
         "exact_errors",
         "iframe_srcdoc",
-        "scripting_enabled",
     )
 
     def __init__(
         self,
         *,
         exact_errors=False,
-        scripting_enabled=True,
         iframe_srcdoc=False,
         drop_doctype=False,
     ):
         self.exact_errors = bool(exact_errors)
-        self.scripting_enabled = bool(scripting_enabled)
         self.iframe_srcdoc = bool(iframe_srcdoc)
         self.drop_doctype = bool(drop_doctype)
 
@@ -67,24 +64,23 @@ class InsertionMode(enum.IntEnum):
     BEFORE_HTML = 1
     BEFORE_HEAD = 2
     IN_HEAD = 3
-    IN_HEAD_NOSCRIPT = 4
-    AFTER_HEAD = 5
-    TEXT = 6
-    IN_BODY = 7
-    AFTER_BODY = 8
-    AFTER_AFTER_BODY = 9
-    IN_TABLE = 10
-    IN_TABLE_TEXT = 11
-    IN_CAPTION = 12
-    IN_COLUMN_GROUP = 13
-    IN_TABLE_BODY = 14
-    IN_ROW = 15
-    IN_CELL = 16
-    IN_FRAMESET = 17
-    AFTER_FRAMESET = 18
-    AFTER_AFTER_FRAMESET = 19
-    IN_SELECT = 20
-    IN_TEMPLATE = 21
+    AFTER_HEAD = 4
+    TEXT = 5
+    IN_BODY = 6
+    AFTER_BODY = 7
+    AFTER_AFTER_BODY = 8
+    IN_TABLE = 9
+    IN_TABLE_TEXT = 10
+    IN_CAPTION = 11
+    IN_COLUMN_GROUP = 12
+    IN_TABLE_BODY = 13
+    IN_ROW = 14
+    IN_CELL = 15
+    IN_FRAMESET = 16
+    AFTER_FRAMESET = 17
+    AFTER_AFTER_FRAMESET = 18
+    IN_SELECT = 19
+    IN_TEMPLATE = 20
 
 
 _BODY_START_IN_HEAD_TAGS = (
@@ -976,10 +972,6 @@ class TreeBuilder:
                 self._reset_insertion_mode()
                 return None
             if token.kind == Tag.START and token.name in {"title", "style", "script", "noscript", "noframes"}:
-                if token.name == "noscript" and not self.opts.scripting_enabled:
-                    self._insert_element(token, push=True)
-                    self.mode = InsertionMode.IN_HEAD_NOSCRIPT
-                    return None
                 self._insert_element(token, push=True)
                 self.original_mode = self.mode
                 self.mode = InsertionMode.TEXT
@@ -1000,43 +992,6 @@ class TreeBuilder:
         self._pop_current()
         self.mode = InsertionMode.AFTER_HEAD
         return ("reprocess", InsertionMode.AFTER_HEAD, token)
-
-    def _mode_in_head_noscript(self, token):
-        def anything_else():
-            self._parse_error("Unexpected token in head noscript")
-            self._pop_current()
-            return ("reprocess", InsertionMode.IN_HEAD, token)
-
-        if isinstance(token, CharacterTokens):
-            if _is_all_whitespace(token.data):
-                # Whitespace is processed using InHead rules
-                # but we stay in InHeadNoscript mode
-                self._mode_in_head(token)
-                return None
-            return anything_else()
-        if isinstance(token, CommentToken):
-            # Comment is processed using InHead rules
-            # but we stay in InHeadNoscript mode
-            self._mode_in_head(token)
-            return None
-        if isinstance(token, Tag):
-            if token.kind == Tag.START and token.name == "html":
-                return ("reprocess", InsertionMode.IN_BODY, token)
-            if token.kind == Tag.END and token.name == "noscript":
-                self._pop_current()
-                self.mode = InsertionMode.IN_HEAD
-                return None
-            if token.kind == Tag.START and token.name in {"basefont", "bgsound", "link", "meta", "noframes", "style"}:
-                return ("reprocess", InsertionMode.IN_HEAD, token)
-            if token.kind == Tag.START and token.name == "noscript":
-                return anything_else()
-            if token.kind == Tag.END and token.name in {"br", "head", "html"}:
-                return anything_else()
-            return anything_else()
-        if isinstance(token, EOFToken):
-            self._pop_current()
-            return ("reprocess", InsertionMode.IN_HEAD, token)
-        return anything_else()
 
     def _mode_after_head(self, token):
         if isinstance(token, CharacterTokens):
@@ -1094,21 +1049,16 @@ class TreeBuilder:
                 "script",
                 "noscript",
             }:
-                if self.head_element is None:
-                    self.head_element = self._insert_phantom("head")
                 self.open_elements.append(self.head_element)
                 result = self._mode_in_head(token)
                 # Remove the head element from wherever it is in the stack
                 # (it might not be at the end if we inserted other elements like <title>)
-                if self.head_element in self.open_elements:
-                    self.open_elements.remove(self.head_element)
+                self.open_elements.remove(self.head_element)
                 return result
             if token.kind == Tag.START and token.name == "template":
                 # Template in after-head needs special handling:
                 # Process in IN_HEAD mode, which will switch to IN_TEMPLATE
                 # Don't remove head from stack - let normal processing continue
-                if self.head_element is None:
-                    self.head_element = self._insert_phantom("head")
                 self.open_elements.append(self.head_element)
                 self.mode = InsertionMode.IN_HEAD
                 return ("reprocess", InsertionMode.IN_HEAD, token)
@@ -3836,7 +3786,6 @@ class TreeBuilder:
         _mode_before_html,
         _mode_before_head,
         _mode_in_head,
-        _mode_in_head_noscript,
         _mode_after_head,
         _mode_text,
         _mode_in_body,

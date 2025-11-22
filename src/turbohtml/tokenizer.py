@@ -457,6 +457,8 @@ class Tokenizer:
                 self._emit_error("Null character in tag name")
                 append_tag_char(replacement)
                 continue
+            
+            # Should be unreachable if regex is working correctly
             if "A" <= c <= "Z":
                 c = chr(ord(c) + 32)
             append_tag_char(c)
@@ -571,8 +573,6 @@ class Tokenizer:
                 continue
             if c in ('"', "'", "<"):
                 self._emit_error("Invalid character in attribute name")
-            if "A" <= c <= "Z":
-                c = chr(ord(c) + 32)
             append_attr_char(c)
 
     def _state_after_attribute_name(self):
