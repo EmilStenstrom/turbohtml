@@ -54,53 +54,7 @@ class InsertionMode(enum.IntEnum):
     IN_TEMPLATE = 20
 
 
-_BODY_START_IN_HEAD_TAGS = (
-    "base",
-    "basefont",
-    "bgsound",
-    "link",
-    "meta",
-    "noframes",
-    "script",
-    "style",
-    "template",
-    "title",
-)
-
 _BODY_START_FRAMESET_NEUTRAL = BLOCK_WITH_P_START | {"p", "caption", "col", "colgroup", "hr", "pre", "listing"}
-
-_BODY_APPLET_LIKE_END_TAGS = {"applet", "marquee", "object"}
-
-_BODY_BLOCK_END_TAGS = {
-    "address",
-    "article",
-    "aside",
-    "blockquote",
-    "button",
-    "center",
-    "details",
-    "dialog",
-    "dir",
-    "div",
-    "dl",
-    "fieldset",
-    "figcaption",
-    "figure",
-    "footer",
-    "header",
-    "hgroup",
-    "listing",
-    "main",
-    "menu",
-    "nav",
-    "ol",
-    "pre",
-    "search",
-    "section",
-    "summary",
-    "table",
-    "ul",
-}
 
 
 def _is_all_whitespace(text):
