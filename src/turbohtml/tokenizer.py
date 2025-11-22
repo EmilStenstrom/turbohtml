@@ -244,24 +244,13 @@ class Tokenizer:
         while True:
             if self.reconsume:
                 self.reconsume = False
-                c = self.current_char
-                if c is None:
+                if self.current_char is None:
                     self._flush_text()
                     self._emit_token(EOFToken())
                     return True
-                if c == "<":
-                    self.ignore_lf = False
-                    self._flush_text()
-                    self.state = self.TAG_OPEN
-                    return False
-                if c == "\0":
-                    self._emit_error("Null character in data state")
-                    self.ignore_lf = False
-                    self.text_buffer.append("\0")
-                else:
-                    self._append_text_chunk(c, ends_with_cr=(c == "\r"))
+                self.pos -= 1
                 pos = self.pos
-                continue
+
             if pos >= length:
                 self.pos = length
                 self.current_char = None
@@ -303,16 +292,18 @@ class Tokenizer:
                         if self.ignore_lf:
                             self.ignore_lf = False
 
-                    pos = actual_end
+                    # Handle the null character
+                    self._emit_error("Null character in data state")
+                    self.text_buffer.append("\0")
+                    self.ignore_lf = False
+                    
+                    pos = actual_end + 1
                     self.pos = pos
-                    # The loop will continue, next char is \0, handled below
+                    continue
                 else:
                     chunk = buffer[pos:end]
                     # Inline _append_text_chunk
-                    if self.ignore_lf:
-                        if chunk.startswith("\n"):
-                            chunk = chunk[1:]
-                        self.ignore_lf = False
+                    # ignore_lf is always False here because it's cleared after null or <
                     
                     if "\r" in chunk:
                         chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
@@ -335,6 +326,7 @@ class Tokenizer:
                 self._flush_text()
                 self.state = self.TAG_OPEN
                 return False
+            # Unreachable if find works correctly
             self._emit_error("Null character in data state")
             self.text_buffer.append("\0")
 
@@ -1767,32 +1759,14 @@ class Tokenizer:
         while True:
             if self.reconsume:
                 self.reconsume = False
-                c = self.current_char
-                if c is None:
+                if self.current_char is None:
                     self._flush_text()
                     self._emit_token(EOFToken())
                     return True
-                if c == "<":
-                    if self.rawtext_tag_name == "script":
-                        next1 = self._peek_char(0)
-                        next2 = self._peek_char(1)
-                        next3 = self._peek_char(2)
-                        if next1 == "!" and next2 == "-" and next3 == "-":
-                            self.text_buffer.extend(["<", "!", "-", "-"])
-                            self._get_char()
-                            self._get_char()
-                            self._get_char()
-                            self.state = self.SCRIPT_DATA_ESCAPED
-                            return False
-                    self.state = self.RAWTEXT_LESS_THAN_SIGN
-                    return False
-                if c == "\0":
-                    self._emit_error("Null character in rawtext")
-                    self.text_buffer.append("\ufffd")
-                else:
-                    self._append_text_chunk(c, ends_with_cr=(c == "\r"))
+                self.pos -= 1
                 pos = self.pos
-                continue
+
+            # Optimized loop using find
             lt_index = buffer.find("<", pos)
             null_index = buffer.find("\0", pos)
             next_special = lt_index if lt_index != -1 else length
@@ -2143,6 +2117,7 @@ class Tokenizer:
         if c == ">":
             self.text_buffer.append(">")
             self.state = self.RAWTEXT
+           
             return False
         if c == "\0":
             self._emit_error("unexpected-null-character")

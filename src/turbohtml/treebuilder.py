@@ -194,7 +194,7 @@ class SimpleDomNode:
         
         if name.startswith("#") or name == "!doctype":
             self.namespace = namespace
-            if name == "#text" or name == "#comment" or name == "!doctype":
+            if name == "#comment" or name == "!doctype":
                 self.children = None
                 self.attrs = None
             else:
@@ -218,9 +218,6 @@ class SimpleDomNode:
         if self.name in {"#document", "#document-fragment"}:
             parts = [child.to_test_format(0) for child in self.children]
             return "\n".join(part for part in parts if part)
-        if self.name == "#text":
-            text = self.data or ""
-            return f'| {" " * indent}"{text}"'
         if self.name == "#comment":
             comment = self.data or ""
             return f"| {' ' * indent}<!-- {comment} -->"
@@ -462,17 +459,6 @@ class TreeBuilder:
 
     def _has_element_in_button_scope(self, target):
         return self._has_element_in_scope(target, BUTTON_SCOPE_TERMINATORS)
-
-    def _has_element_in_list_item_scope(self, target):
-        return self._has_element_in_scope(target, LIST_ITEM_SCOPE_TERMINATORS)
-
-    def _has_element_in_select_scope(self, target):
-        for node in reversed(self.open_elements):
-            if node.name == target:
-                return True
-            if node.name not in {"optgroup", "option"}:
-                return False
-        return False
 
     def _pop_until_inclusive(self, name):
         while self.open_elements:
@@ -3574,9 +3560,6 @@ class TreeBuilder:
 
     def _has_in_scope(self, name):
         return self._has_element_in_scope(name, DEFAULT_SCOPE_TERMINATORS)
-
-    def _has_in_button_scope(self, name):
-        return self._has_element_in_scope(name, BUTTON_SCOPE_TERMINATORS)
 
     def _has_in_list_item_scope(self, name):
         return self._has_element_in_scope(name, LIST_ITEM_SCOPE_TERMINATORS)
