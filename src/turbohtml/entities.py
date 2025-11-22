@@ -90,25 +90,20 @@ def decode_numeric_entity(text, is_hex=False):
     Returns:
         The decoded character, or None if invalid
     """
-    try:
-        if is_hex:
-            codepoint = int(text, 16)
-        else:
-            codepoint = int(text, 10)
-            
-        # Apply HTML5 replacements for certain ranges
-        if codepoint in NUMERIC_REPLACEMENTS:
-            return NUMERIC_REPLACEMENTS[codepoint]
-            
-        # Invalid ranges per HTML5 spec
-        if codepoint > 0x10FFFF:
-            return "\ufffd"  # REPLACEMENT CHARACTER
-        if 0xD800 <= codepoint <= 0xDFFF:  # Surrogate range
-            return "\ufffd"
-            
-        return chr(codepoint)
-    except (ValueError, OverflowError):
-        return None
+    base = 16 if is_hex else 10
+    codepoint = int(text, base)
+
+    # Apply HTML5 replacements for certain ranges
+    if codepoint in NUMERIC_REPLACEMENTS:
+        return NUMERIC_REPLACEMENTS[codepoint]
+
+    # Invalid ranges per HTML5 spec
+    if codepoint > 0x10FFFF:
+        return "\ufffd"  # REPLACEMENT CHARACTER
+    if 0xD800 <= codepoint <= 0xDFFF:  # Surrogate range
+        return "\ufffd"
+
+    return chr(codepoint)
 
 
 def decode_entities_in_text(text, in_attribute=False):
@@ -126,9 +121,6 @@ def decode_entities_in_text(text, in_attribute=False):
     Returns:
         Text with entities decoded
     """
-    if "&" not in text:
-        return text
-        
     result = []
     i = 0
     length = len(text)
@@ -167,14 +159,9 @@ def decode_entities_in_text(text, in_attribute=False):
             digit_text = text[digit_start:j]
             
             if digit_text:
-                decoded = decode_numeric_entity(digit_text, is_hex=is_hex)
-                if decoded:
-                    result.append(decoded)
-                    if has_semicolon:
-                        i = j + 1
-                    else:
-                        i = j
-                    continue
+                result.append(decode_numeric_entity(digit_text, is_hex=is_hex))
+                i = j + 1 if has_semicolon else j
+                continue
             
             # Invalid numeric entity, keep as-is
             result.append(text[i:j+1 if has_semicolon else j])
@@ -221,21 +208,14 @@ def decode_entities_in_text(text, in_attribute=False):
         # Try without semicolon for legacy compatibility
         # Only legacy entities can be used without semicolons
         if entity_name in LEGACY_ENTITIES and entity_name in NAMED_ENTITIES:
-            # Legacy entities without semicolon have strict rules:
-            # In attributes: don't decode if followed by alphanumeric or '='
-            # In text: don't decode if followed by lowercase/digit
+            # Legacy entities without semicolon have strict rules in attributes:
+            # don't decode if followed by alphanumeric or '='
             # Per HTML5 spec §13.2.5.72
             next_char = text[j] if j < length else None
-            if in_attribute:
-                if next_char and (next_char.isalnum() or next_char == "="):
-                    result.append("&")
-                    i += 1
-                    continue
-            else:
-                if next_char and (next_char.islower() or next_char.isdigit()):
-                    result.append("&")
-                    i += 1
-                    continue
+            if in_attribute and next_char and (next_char.isalnum() or next_char == "="):
+                result.append("&")
+                i += 1
+                continue
             
             # Decode legacy entity
             result.append(NAMED_ENTITIES[entity_name])
@@ -258,15 +238,13 @@ def decode_entities_in_text(text, in_attribute=False):
             end_pos = i + 1 + best_match_len
             next_char = text[end_pos] if end_pos < length else None
             if in_attribute:
-                if next_char and (next_char.isalnum() or next_char == "="):
-                    result.append("&")
-                    i += 1
-                    continue
-            else:
-                if next_char and (next_char.islower() or next_char.isdigit()):
-                    result.append("&")
-                    i += 1
-                    continue
+                result.append("&")
+                i += 1
+                continue
+            if next_char and (next_char.islower() or next_char.isdigit()):
+                result.append("&")
+                i += 1
+                continue
             
             result.append(best_match)
             i = i + 1 + best_match_len

@@ -1,0 +1,59 @@
+#data
+<div>&#;</div>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <div>
+|       "&#;"
+
+#data
+<p>&notit</p>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|       "&notit"
+
+#data
+<span>&notX</span>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <span>
+|       "¬X"
+
+#data
+<div title="&not=foo"></div>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <div>
+|       title="&not=foo"
+
+#data
+<b>&amp1</b>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <b>
+|       "&amp1"
+
+#data
+<div title="&not"></div>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <div>
+|       title="¬"
