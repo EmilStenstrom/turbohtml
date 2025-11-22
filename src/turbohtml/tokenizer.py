@@ -587,6 +587,7 @@ class Tokenizer:
             if c in ("\t", "\n", "\f", " "):
                 continue
             if c == "/":
+                self._finish_attribute()
                 self.state = self.SELF_CLOSING_START_TAG
                 return False
             if c == "=":
@@ -699,6 +700,7 @@ class Tokenizer:
                         return False
                     if next_c == "/":
                         self.pos += 1
+                        self._finish_attribute()
                         self.state = self.SELF_CLOSING_START_TAG
                         return self._state_self_closing_start_tag()
 
@@ -1617,34 +1619,6 @@ class Tokenizer:
         return False
 
     def _emit_current_tag(self):
-        # Inline _finish_attribute for performance
-        attr_name_buffer = self.current_attr_name
-        if attr_name_buffer:
-            if len(attr_name_buffer) == 1:
-                name = attr_name_buffer[0]
-            else:
-                name = "".join(attr_name_buffer)
-            # name = sys.intern(name)  # Optimization: Don't intern attribute names
-            
-            value_parts = self.current_attr_value
-            if not value_parts:
-                value = ""
-            elif len(value_parts) == 1:
-                value = value_parts[0]
-            else:
-                value = "".join(value_parts)
-                
-            if self.current_tag_attrs is None:
-                self.current_tag_attrs = {}
-            if name not in self.current_tag_attrs:
-                if self.current_attr_value_has_amp:
-                    value = decode_entities_in_text(value, in_attribute=True)
-                self.current_tag_attrs[name] = value
-            
-            attr_name_buffer.clear()
-            self.current_attr_value.clear()
-            self.current_attr_value_has_amp = False
-
         name_parts = self.current_tag_name
         part_count = len(name_parts)
         if part_count == 0:
@@ -2174,6 +2148,7 @@ class Tokenizer:
         if c == "<":
             self.text_buffer.append("<")
             self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN
+           
             return False
         if c == ">":
             self.text_buffer.append(">")

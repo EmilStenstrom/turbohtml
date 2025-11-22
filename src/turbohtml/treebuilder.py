@@ -136,6 +136,10 @@ def _is_all_whitespace(text):
     return text.strip("\t\n\f\r ") == ""
 
 
+def _contains_prefix(haystack, needle):
+    return any(needle.startswith(prefix) for prefix in haystack)
+
+
 def _doctype_error_and_quirks(doctype, iframe_srcdoc):
     name = doctype.name.lower() if doctype.name else None
     public_id = doctype.public_id
@@ -157,9 +161,6 @@ def _doctype_error_and_quirks(doctype, iframe_srcdoc):
 
     public_lower = public_id.lower() if public_id else None
     system_lower = system_id.lower() if system_id else None
-
-    def _contains_prefix(haystack, needle):
-        return any(needle.startswith(prefix) for prefix in haystack)
 
     if doctype.force_quirks:
         quirks_mode = "quirks"
