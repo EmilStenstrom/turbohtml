@@ -275,7 +275,6 @@ class TreeBuilder:
         "_mode_handlers",
         "active_formatting",
         "document",
-        "errors",
         "form_element",
         "fragment_context",
         "fragment_context_element",
@@ -310,7 +309,6 @@ class TreeBuilder:
         self.head_element = None
         self.form_element = None
         self.frameset_ok = True
-        self.errors = []
         self.quirks_mode = "no-quirks"
         self.ignore_lf = False
         self.active_formatting = []
@@ -366,7 +364,7 @@ class TreeBuilder:
         self.quirks_mode = mode
 
     def _parse_error(self, message):
-        self.errors.append(message)
+        return None
 
     def _has_element_in_scope(self, target, terminators=None, check_integration_points=True):
         if terminators is None:
@@ -408,7 +406,6 @@ class TreeBuilder:
 
     def process_token(self, token):
         if isinstance(token, ParseError):
-            self.errors.append(token.message)
             return TokenSinkResult.Continue
 
         if isinstance(token, DoctypeToken):
