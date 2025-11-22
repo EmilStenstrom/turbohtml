@@ -2928,14 +2928,6 @@ class TreeBuilder:
             entry["node"] = new_node
             index += 1
 
-    def _has_node_in_scope(self, node):
-        for current in reversed(self.open_elements):
-            if current is node:
-                return True
-            if current.namespace in {None, "html"} and current.name in DEFAULT_SCOPE_TERMINATORS:
-                return False
-        return False
-
     def _insert_node_at(self, parent, index, node):
         if index is None or index >= len(parent.children):
             parent.append_child(node)
