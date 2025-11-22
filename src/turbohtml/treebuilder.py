@@ -1668,29 +1668,29 @@ class TreeBuilder:
                         if self._close_caption_element():
                             return ("reprocess", InsertionMode.IN_TABLE, token)
                         return None
-                    self._clear_stack_to_table_context()
+                    self._clear_stack_until({"table", "template", "html"})
                     self._push_formatting_marker()
                     self._insert_element(token, push=True)
                     self.mode = InsertionMode.IN_CAPTION
                     return None
                 if name == "colgroup":
-                    self._clear_stack_to_table_context()
+                    self._clear_stack_until({"table", "template", "html"})
                     self._insert_element(token, push=True)
                     self.mode = InsertionMode.IN_COLUMN_GROUP
                     return None
                 if name == "col":
-                    self._clear_stack_to_table_context()
+                    self._clear_stack_until({"table", "template", "html"})
                     implied = Tag(Tag.START, "colgroup", {}, False)
                     self._insert_element(implied, push=True)
                     self.mode = InsertionMode.IN_COLUMN_GROUP
                     return ("reprocess", InsertionMode.IN_COLUMN_GROUP, token)
                 if name in {"tbody", "tfoot", "thead"}:
-                    self._clear_stack_to_table_context()
+                    self._clear_stack_until({"table", "template", "html"})
                     self._insert_element(token, push=True)
                     self.mode = InsertionMode.IN_TABLE_BODY
                     return None
                 if name in {"td", "th", "tr"}:
-                    self._clear_stack_to_table_context()
+                    self._clear_stack_until({"table", "template", "html"})
                     implied = Tag(Tag.START, "tbody", {}, False)
                     self._insert_element(implied, push=True)
                     self.mode = InsertionMode.IN_TABLE_BODY
@@ -1959,13 +1959,13 @@ class TreeBuilder:
             name = token.name
             if token.kind == Tag.START:
                 if name == "tr":
-                    self._clear_stack_to_table_body_context()
+                    self._clear_stack_until({"tbody", "tfoot", "thead", "template", "html"})
                     self._insert_element(token, push=True)
                     self.mode = InsertionMode.IN_ROW
                     return None
                 if name in {"td", "th"}:
                     self._parse_error("unexpected-cell-in-table-body")
-                    self._clear_stack_to_table_body_context()
+                    self._clear_stack_until({"tbody", "tfoot", "thead", "template", "html"})
                     implied = Tag(Tag.START, "tr", {}, False)
                     self._insert_element(implied, push=True)
                     self.mode = InsertionMode.IN_ROW
@@ -1994,7 +1994,7 @@ class TreeBuilder:
                 if not self._has_in_table_scope(name):
                     self._parse_error("unexpected-end-tag")
                     return None
-                self._clear_stack_to_table_body_context()
+                self._clear_stack_until({"tbody", "tfoot", "thead", "template", "html"})
                 self._pop_current()
                 self.mode = InsertionMode.IN_TABLE
                 return None
@@ -2032,7 +2032,7 @@ class TreeBuilder:
             name = token.name
             if token.kind == Tag.START:
                 if name in {"td", "th"}:
-                    self._clear_stack_to_table_row_context()
+                    self._clear_stack_until({"tr", "template", "html"})
                     self._insert_element(token, push=True)
                     self._push_formatting_marker()
                     self.mode = InsertionMode.IN_CELL
@@ -2076,7 +2076,7 @@ class TreeBuilder:
         return None
 
     def _end_tr_element(self):
-        self._clear_stack_to_table_row_context()
+        self._clear_stack_until({"tr", "template", "html"})
         if self.open_elements and self.open_elements[-1].name == "tr":
             self.open_elements.pop()
         # When in a template, restore template mode; otherwise use IN_TABLE_BODY
@@ -2923,9 +2923,6 @@ class TreeBuilder:
             index = 0
         while index < len(self.active_formatting):
             entry = self.active_formatting[index]
-            if entry is FORMAT_MARKER:
-                index += 1
-                continue
             tag = Tag(Tag.START, entry["name"], self._clone_attributes(entry["attrs"]), False)
             new_node = self._insert_element(tag, push=True)
             entry["node"] = new_node
@@ -2939,29 +2936,12 @@ class TreeBuilder:
                 return False
         return False
 
-    def _detach_node(self, node):
-        parent = node.parent
-        if parent is None:
-            return
-        parent.remove_child(node)
-
-    def _append_node(self, parent, node):
-        if parent is None:
-            return
-        self._detach_node(node)
-        parent.append_child(node)
-
     def _insert_node_at(self, parent, index, node):
-        if parent is None:
-            return
-        self._detach_node(node)
         if index is None or index >= len(parent.children):
             parent.append_child(node)
-            return
-        if index < 0:
-            index = 0
-        parent.children.insert(index, node)
-        node.parent = parent
+        else:
+            parent.children.insert(index, node)
+            node.parent = parent
 
     def _find_last_on_stack(self, name):
         for node in reversed(self.open_elements):
@@ -2976,15 +2956,6 @@ class TreeBuilder:
                 break
             self.open_elements.pop()
 
-    def _clear_stack_to_table_context(self):
-        self._clear_stack_until({"table", "template", "html"})
-
-    def _clear_stack_to_table_body_context(self):
-        self._clear_stack_until({"tbody", "tfoot", "thead", "template", "html"})
-
-    def _clear_stack_to_table_row_context(self):
-        self._clear_stack_until({"tr", "template", "html"})
-
     def _generate_implied_end_tags(self, exclude=None):
         while self.open_elements:
             node = self.open_elements[-1]
@@ -2995,12 +2966,6 @@ class TreeBuilder:
 
     def _has_in_table_scope(self, name):
         return self._has_element_in_scope(name, TABLE_SCOPE_TERMINATORS, check_integration_points=False)
-
-    def _has_in_table_body_scope(self, name):
-        return self._has_element_in_scope(name, TABLE_BODY_SCOPE_TERMINATORS, check_integration_points=False)
-
-    def _has_in_table_row_scope(self, name):
-        return self._has_element_in_scope(name, TABLE_ROW_SCOPE_TERMINATORS, check_integration_points=False)
 
     def _close_table_cell(self):
         if self._has_in_table_scope("td"):
