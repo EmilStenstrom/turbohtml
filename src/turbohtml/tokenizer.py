@@ -1711,7 +1711,7 @@ class Tokenizer:
             name = name_parts[0]
         else:
             name = "".join(name_parts)
-        attrs = self.current_tag_attrs
+        attrs = self.current_tag_attrs or {}
         self.current_tag_attrs = None
         tag = self._tag_token
         tag.kind = self.current_tag_kind
@@ -1771,8 +1771,6 @@ class Tokenizer:
         if result == 1: # TokenSinkResult.Plaintext
             self.state = self.PLAINTEXT
         elif result == 2: # TokenSinkResult.RawData
-            self.state = self.DATA
-        elif result == 3: # TokenSinkResult.Script
             self.state = self.DATA
 
     def _emit_error(self, message):

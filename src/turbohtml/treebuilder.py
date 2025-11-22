@@ -185,30 +185,6 @@ def _doctype_error_and_quirks(doctype, iframe_srcdoc):
     return parse_error, quirks_mode
 
 
-def _iter_attr_pairs(attrs):
-    if not attrs:
-        return
-    if isinstance(attrs, dict):
-        for name, value in attrs.items():
-            yield name, value
-        return
-    iterator = iter(attrs)
-    for name in iterator:
-        yield name, next(iterator, "")
-
-
-def _as_attr_dict(attrs):
-    if not attrs:
-        return {}
-    if isinstance(attrs, dict):
-        return attrs
-    attr_map = {}
-    for name, value in _iter_attr_pairs(attrs):
-        if name not in attr_map:
-            attr_map[name] = value
-    return attr_map
-
-
 class SimpleDomNode:
     __slots__ = ("attrs", "children", "data", "name", "namespace", "parent")
 
@@ -1027,7 +1003,7 @@ class TreeBuilder:
             # Special handling: input type="hidden" doesn't create body or affect frameset_ok
             if token.kind == Tag.START and token.name == "input":
                 input_type = None
-                for name, value in _iter_attr_pairs(token.attrs):
+                for name, value in token.attrs.items():
                     if name == "type":
                         input_type = (value or "").lower()
                         break
@@ -1607,7 +1583,7 @@ class TreeBuilder:
 
     def _handle_body_start_input(self, token):
         input_type = None
-        for name, value in _iter_attr_pairs(token.attrs):
+        for name, value in token.attrs.items():
             if name == "type":
                 input_type = (value or "").lower()
                 break
@@ -1758,7 +1734,7 @@ class TreeBuilder:
                     return self._mode_in_head(token)
                 if name == "input":
                     input_type = None
-                    for attr_name, attr_value in _iter_attr_pairs(token.attrs):
+                    for attr_name, attr_value in token.attrs.items():
                         if attr_name == "type":
                             input_type = (attr_value or "").lower()
                             break
@@ -2828,7 +2804,7 @@ class TreeBuilder:
         if not attrs:
             return
         existing = node.attrs
-        for name, value in _iter_attr_pairs(attrs):
+        for name, value in attrs.items():
             if name not in existing:
                 existing[name] = value
 
@@ -2863,13 +2839,13 @@ class TreeBuilder:
         return None
 
     def _clone_attributes(self, attrs):
-        return _as_attr_dict(attrs)
+        return attrs.copy() if attrs else {}
 
     def _attrs_signature(self, attrs):
         if not attrs:
             return ()
         items = []
-        for name, value in _iter_attr_pairs(attrs):
+        for name, value in attrs.items():
             items.append((name, value or ""))
         items.sort()
         return tuple(items)
@@ -2950,7 +2926,7 @@ class TreeBuilder:
     def _tag_has_any_attrs(self, tag, names):
         if not tag.attrs:
             return False
-        for attr_name, _ in _iter_attr_pairs(tag.attrs):
+        for attr_name, _ in tag.attrs.items():
             if attr_name in names:
                 return True
         return False
@@ -3198,7 +3174,7 @@ class TreeBuilder:
         if not attrs:
             return {}
         adjusted = {}
-        for name, value in _iter_attr_pairs(attrs):
+        for name, value in attrs.items():
             lower_name = self._lower_ascii(name)
             if namespace == "math" and lower_name in MATHML_ATTRIBUTE_ADJUSTMENTS:
                 name = MATHML_ATTRIBUTE_ADJUSTMENTS[lower_name]
@@ -3304,7 +3280,7 @@ class TreeBuilder:
         return True
 
     def _foreign_breakout_font(self, tag):
-        for name, _ in _iter_attr_pairs(tag.attrs):
+        for name, _ in tag.attrs.items():
             if self._lower_ascii(name) in {"color", "face", "size"}:
                 return True
         return False
@@ -3550,7 +3526,7 @@ class TreeBuilder:
             selected_option = None
             for opt in options:
                 if opt.attrs:
-                    for attr_name, _ in _iter_attr_pairs(opt.attrs):
+                    for attr_name, _ in opt.attrs.items():
                         if attr_name == "selected":
                             selected_option = opt
                             break

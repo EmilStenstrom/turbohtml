@@ -63,4 +63,3 @@ class TokenSinkResult:
     Continue = 0
     Plaintext = 1
     RawData = 2
-    Script = 3
