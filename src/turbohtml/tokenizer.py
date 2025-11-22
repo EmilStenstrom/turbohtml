@@ -1,5 +1,4 @@
 import re
-import sys
 
 from .entities import decode_entities_in_text
 from .tokens import (

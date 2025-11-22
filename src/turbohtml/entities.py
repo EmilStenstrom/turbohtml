@@ -111,27 +111,6 @@ def decode_numeric_entity(text, is_hex=False):
         return None
 
 
-def decode_named_entity(text, allow_without_semicolon=False):
-    """Decode a named character reference like &amp; or &nbsp;.
-    
-    Args:
-        text: The entity name (without & or ;)
-        allow_without_semicolon: Whether to decode even without trailing semicolon
-        
-    Returns:
-        The decoded character(s), or None if not found
-    """
-    # Try exact match with semicolon
-    if text in NAMED_ENTITIES:
-        return NAMED_ENTITIES[text]
-        
-    # Try without trailing semicolon if allowed (legacy compatibility)
-    if allow_without_semicolon and text.rstrip(";") in NAMED_ENTITIES:
-        return NAMED_ENTITIES[text.rstrip(";")]
-        
-    return None
-
-
 def decode_entities_in_text(text, in_attribute=False):
     """Decode all HTML entities in text.
     

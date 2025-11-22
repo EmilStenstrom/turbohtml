@@ -42,10 +42,6 @@ class DoctypeToken:
         self.doctype = doctype
 
 
-class NullCharacterToken:
-    __slots__ = ()
-
-
 class EOFToken:
     __slots__ = ()
 

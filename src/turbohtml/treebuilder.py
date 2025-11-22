@@ -760,7 +760,9 @@ class TreeBuilder:
                         context_elem.remove_child(child)
                         root.append_child(child)
                     root.remove_child(context_elem)
-                self._reparent_children(root, self.document)
+                for child in list(root.children):
+                    root.remove_child(child)
+                    self.document.append_child(child)
                 self.document.remove_child(root)
 
         # Populate selectedcontent elements per HTML5 spec
@@ -2997,35 +2999,21 @@ class TreeBuilder:
         self.head_element = head
         return head
 
-    def _clear_stack_to_table_context(self):
+    def _clear_stack_until(self, names):
         while self.open_elements:
             node = self.open_elements[-1]
-            # Only clear HTML elements; stop at table/template/html or foreign content
-            if node.namespace not in {None, "html"}:
-                break
-            if node.name in {"table", "template", "html"}:
+            if node.name in names and node.namespace in {None, "html"}:
                 break
             self.open_elements.pop()
+
+    def _clear_stack_to_table_context(self):
+        self._clear_stack_until({"table", "template", "html"})
 
     def _clear_stack_to_table_body_context(self):
-        while self.open_elements:
-            node = self.open_elements[-1]
-            # Only clear HTML elements; stop at tbody/tfoot/thead/template/html or foreign content
-            if node.namespace not in {None, "html"}:
-                break
-            if node.name in {"tbody", "tfoot", "thead", "template", "html"}:
-                break
-            self.open_elements.pop()
+        self._clear_stack_until({"tbody", "tfoot", "thead", "template", "html"})
 
     def _clear_stack_to_table_row_context(self):
-        while self.open_elements:
-            node = self.open_elements[-1]
-            # Only clear HTML elements; stop at tr/template/html or foreign content
-            if node.namespace not in {None, "html"}:
-                break
-            if node.name in {"tr", "template", "html"}:
-                break
-            self.open_elements.pop()
+        self._clear_stack_until({"tr", "template", "html"})
 
     def _generate_implied_end_tags(self, exclude=None):
         while self.open_elements:
@@ -3470,12 +3458,6 @@ class TreeBuilder:
         parent.children[index] = new
         new.parent = parent
         old.parent = None
-
-    def _reparent_children(self, source, target):
-        children = list(source.children)
-        for child in children:
-            source.remove_child(child)
-            target.append_child(child)
 
     def _populate_selectedcontent(self, root):
         """Populate selectedcontent elements with content from selected option.
