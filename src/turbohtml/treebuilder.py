@@ -2836,10 +2836,7 @@ class TreeBuilder:
             if entry is FORMAT_MARKER:
                 matches.clear()
                 continue
-            existing_signature = entry.get("signature")
-            if existing_signature is None:
-                existing_signature = self._attrs_signature(entry["attrs"])
-                entry["signature"] = existing_signature
+            existing_signature = entry["signature"]
             if entry["name"] == name and existing_signature == signature:
                 matches.append(index)
         if len(matches) >= 3:
@@ -2878,10 +2875,7 @@ class TreeBuilder:
             entry = self.active_formatting[index]
             if entry is FORMAT_MARKER:
                 break
-            existing_signature = entry.get("signature")
-            if existing_signature is None:
-                existing_signature = self._attrs_signature(entry["attrs"])
-                entry["signature"] = existing_signature
+            existing_signature = entry["signature"]
             if entry["name"] == name and existing_signature == signature:
                 duplicates += 1
                 if duplicates >= 3:
@@ -2901,14 +2895,6 @@ class TreeBuilder:
             entry = self.active_formatting.pop()
             if entry is FORMAT_MARKER:
                 break
-
-    def _tag_has_any_attrs(self, tag, names):
-        if not tag.attrs:
-            return False
-        for attr_name, _ in tag.attrs.items():
-            if attr_name in names:
-                return True
-        return False
 
     def _push_formatting_marker(self):
         self.active_formatting.append(FORMAT_MARKER)
@@ -2985,19 +2971,6 @@ class TreeBuilder:
             if node.name == name:
                 return node
         return None
-
-    def _ensure_head_element(self):
-        if self.head_element is not None:
-            return self.head_element
-        html_node = self._find_last_on_stack("html")
-        if html_node is None and self.document.children:
-            html_node = self.document.children[0]
-        if html_node is None:
-            return None
-        head = SimpleDomNode("head")
-        html_node.append_child(head)
-        self.head_element = head
-        return head
 
     def _clear_stack_until(self, names):
         while self.open_elements:
@@ -3442,22 +3415,6 @@ class TreeBuilder:
             return target.template_content, len(target.template_content.children)
 
         return target, len(target.children)
-
-    def _clone_shallow(self, node):
-        attrs = self._clone_attributes(node.attrs)
-        return SimpleDomNode(node.name, attrs=attrs, namespace=node.namespace)
-
-    def _replace_node(self, old, new):
-        parent = old.parent
-        if parent is None:
-            return
-        try:
-            index = parent.children.index(old)
-        except ValueError:
-            return
-        parent.children[index] = new
-        new.parent = parent
-        old.parent = None
 
     def _populate_selectedcontent(self, root):
         """Populate selectedcontent elements with content from selected option.
