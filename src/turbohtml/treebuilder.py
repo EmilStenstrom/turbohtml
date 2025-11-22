@@ -29,34 +29,7 @@ from .constants import (
     TABLE_ROW_SCOPE_TERMINATORS,
     TABLE_SCOPE_TERMINATORS,
 )
-from .tokens import (
-    CharacterTokens,
-    CommentToken,
-    DoctypeToken,
-    EOFToken,
-    ParseError,
-    Tag,
-    TokenSinkResult,
-)
-
-
-class TreeBuilderOpts:
-    __slots__ = (
-        "drop_doctype",
-        "exact_errors",
-        "iframe_srcdoc",
-    )
-
-    def __init__(
-        self,
-        *,
-        exact_errors=False,
-        iframe_srcdoc=False,
-        drop_doctype=False,
-    ):
-        self.exact_errors = bool(exact_errors)
-        self.iframe_srcdoc = bool(iframe_srcdoc)
-        self.drop_doctype = bool(drop_doctype)
+from .tokens import CharacterTokens, CommentToken, DoctypeToken, EOFToken, ParseError, Tag, TokenSinkResult
 
 
 class InsertionMode(enum.IntEnum):
@@ -360,7 +333,6 @@ class TreeBuilder:
         "insert_from_table",
         "mode",
         "open_elements",
-        "opts",
         "original_mode",
         "pending_table_text",
         "quirks_mode",
@@ -369,8 +341,10 @@ class TreeBuilder:
         "tokenizer_state_override",
     )
 
-    def __init__(self, fragment_context=None, opts=None):
-        self.opts = opts or TreeBuilderOpts()
+    def __init__(
+        self,
+        fragment_context=None,
+    ):
         self.fragment_context = fragment_context
         self.fragment_context_element = None
         if fragment_context is not None:
@@ -440,8 +414,7 @@ class TreeBuilder:
         self.quirks_mode = mode
 
     def _parse_error(self, message):
-        if self.opts.exact_errors:
-            self.errors.append(message)
+        self.errors.append(message)
 
     def _has_element_in_scope(self, target, terminators=None, check_integration_points=True):
         if terminators is None:
@@ -483,8 +456,7 @@ class TreeBuilder:
 
     def process_token(self, token):
         if isinstance(token, ParseError):
-            if self.opts.exact_errors:
-                self.errors.append(token.message)
+            self.errors.append(token.message)
             return TokenSinkResult.Continue
 
         if isinstance(token, DoctypeToken):
@@ -736,11 +708,10 @@ class TreeBuilder:
             return TokenSinkResult.Continue
 
         doctype = token.doctype
-        parse_error, quirks_mode = _doctype_error_and_quirks(doctype, self.opts.iframe_srcdoc)
+        parse_error, quirks_mode = _doctype_error_and_quirks(doctype, False)
 
-        if not self.opts.drop_doctype:
-            node = SimpleDomNode("!doctype", data=doctype)
-            self.document.append_child(node)
+        node = SimpleDomNode("!doctype", data=doctype)
+        self.document.append_child(node)
 
         if parse_error:
             self._parse_error("Unexpected DOCTYPE")
@@ -779,20 +750,17 @@ class TreeBuilder:
         if isinstance(token, CharacterTokens):
             if _is_all_whitespace(token.data):
                 return None
-            if not self.opts.iframe_srcdoc:
-                self._set_quirks_mode("quirks")
+            self._set_quirks_mode("quirks")
             return ("reprocess", InsertionMode.BEFORE_HTML, token)
         if isinstance(token, CommentToken):
             self._append_comment_to_document(token.data)
             return None
         if isinstance(token, EOFToken):
-            if not self.opts.iframe_srcdoc:
-                self._set_quirks_mode("quirks")
+            self._set_quirks_mode("quirks")
             self.mode = InsertionMode.BEFORE_HTML
             return ("reprocess", InsertionMode.BEFORE_HTML, token)
         # Anything else (Tags, etc) - no DOCTYPE seen, so quirks mode
-        if not self.opts.iframe_srcdoc:
-            self._set_quirks_mode("quirks")
+        self._set_quirks_mode("quirks")
         return ("reprocess", InsertionMode.BEFORE_HTML, token)
 
     def _mode_before_html(self, token):
@@ -2486,7 +2454,7 @@ class TreeBuilder:
                     self._parse_error("Unexpected frameset end tag")
                     return None
                 self.open_elements.pop()
-                if not self.opts.iframe_srcdoc and self.open_elements and self.open_elements[-1].name != "frameset":
+                if self.open_elements and self.open_elements[-1].name != "frameset":
                     self.mode = InsertionMode.AFTER_FRAMESET
                 return None
             if token.kind == Tag.START and token.name == "frame":
