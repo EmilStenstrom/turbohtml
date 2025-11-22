@@ -2903,9 +2903,6 @@ class TreeBuilder:
         if 0 <= index < len(self.active_formatting):
             del self.active_formatting[index]
 
-    def _active_entry_attrs(self, entry):
-        return self._clone_attributes(entry["attrs"])
-
     def _reconstruct_active_formatting_elements(self):
         if not self.active_formatting:
             return
@@ -2929,7 +2926,7 @@ class TreeBuilder:
             if entry is FORMAT_MARKER:
                 index += 1
                 continue
-            tag = Tag(Tag.START, entry["name"], self._active_entry_attrs(entry), False)
+            tag = Tag(Tag.START, entry["name"], self._clone_attributes(entry["attrs"]), False)
             new_node = self._insert_element(tag, push=True)
             entry["node"] = new_node
             index += 1
@@ -3284,32 +3281,6 @@ class TreeBuilder:
                     self._reset_insertion_mode()
                     return ("reprocess", self.mode, token, True)
 
-                # In MathML/SVG, table structure elements can only be children of:
-                # 1. The root foreign element (math/svg), OR
-                # 2. Other table structure elements (but not the same element type)
-                # If the current element is a non-table foreign element, block the table tag
-                table_structure_elements = {
-                    "tr",
-                    "td",
-                    "th",
-                    "thead",
-                    "tbody",
-                    "tfoot",
-                    "caption",
-                    "col",
-                    "colgroup",
-                    "table",
-                }
-                if current.namespace in {"math", "svg"} and name_lower in table_structure_elements:
-                    # Check if current element is a table structure element or root foreign
-                    current_name = self._lower_ascii(current.name)
-                    # Block if: 1) current is not a table/root element, OR 2) same element type (tr in tr, td in td, etc.)
-                    if (
-                        current_name not in table_structure_elements and current_name not in {"math", "svg"}
-                    ) or current_name == name_lower:
-                        self._parse_error(f"Unexpected {name_lower} in foreign content")
-                        return None
-
                 namespace = current.namespace
                 adjusted_name = token.name
                 if namespace == "svg":
@@ -3368,18 +3339,13 @@ class TreeBuilder:
                 # Reached here means we scanned entire stack without match - ignore tag
                 return None
 
-        if isinstance(token, EOFToken):
-            return None
 
-        return None
 
     def _appropriate_insertion_location(self, override_target=None, *, foster_parenting=False):
         if override_target is not None:
             target = override_target
         elif self.open_elements:
             target = self.open_elements[-1]
-        elif self.document.children:
-            target = self.document.children[-1]
         else:
             target = self.document
 

@@ -665,31 +665,6 @@ class Tokenizer:
             self.current_char = c
 
             if c == '"':
-                # Optimization: consume whitespace
-                while self.pos < length:
-                    next_c = buffer[self.pos]
-                    if next_c in (" ", "\t", "\f"):
-                        self.pos += 1
-                    elif next_c == "\n":
-                        self.pos += 1
-                        self.line += 1
-                    else:
-                        break
-                
-                if self.pos < length:
-                    next_c = buffer[self.pos]
-                    if next_c == ">":
-                        self.pos += 1
-                        self._finish_attribute()
-                        if not self._emit_current_tag():
-                            self.state = self.DATA
-                        return False
-                    if next_c == "/":
-                        self.pos += 1
-                        self._finish_attribute()
-                        self.state = self.SELF_CLOSING_START_TAG
-                        return self._state_self_closing_start_tag()
-
                 self.state = self.AFTER_ATTRIBUTE_NAME
                 return self._state_after_attribute_name()
             if c == "&":
