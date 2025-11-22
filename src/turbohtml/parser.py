@@ -5,7 +5,7 @@ from .treebuilder import TreeBuilder
 
 
 class TurboHTML:
-    __slots__ = ("debug", "tree_builder", "tokenizer", "root", "fragment_context")
+    __slots__ = ("debug", "fragment_context", "root", "tokenizer", "tree_builder")
 
     def __init__(
         self,
@@ -20,7 +20,7 @@ class TurboHTML:
         self.fragment_context = fragment_context
         self.tree_builder = tree_builder or TreeBuilder(fragment_context=fragment_context)
         opts = tokenizer_opts or TokenizerOpts()
-        
+
         # For RAWTEXT fragment contexts, set initial tokenizer state and rawtext tag
         if fragment_context and not fragment_context.namespace:
             rawtext_elements = {"textarea", "title", "style"}
@@ -30,7 +30,7 @@ class TurboHTML:
                 opts.initial_rawtext_tag = tag_name
             elif tag_name in ("plaintext", "script"):
                 opts.initial_state = Tokenizer.PLAINTEXT
-        
+
         self.tokenizer = Tokenizer(self.tree_builder, opts)
         self.tokenizer.run(html or "")
         self.root = self.tree_builder.finish()

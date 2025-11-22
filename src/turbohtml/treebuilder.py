@@ -24,9 +24,7 @@ from .constants import (
     SVG_ATTRIBUTE_ADJUSTMENTS,
     SVG_TAG_NAME_ADJUSTMENTS,
     TABLE_ALLOWED_CHILDREN,
-    TABLE_BODY_SCOPE_TERMINATORS,
     TABLE_FOSTER_TARGETS,
-    TABLE_ROW_SCOPE_TERMINATORS,
     TABLE_SCOPE_TERMINATORS,
 )
 from .tokens import CharacterTokens, CommentToken, DoctypeToken, EOFToken, ParseError, Tag, TokenSinkResult
@@ -164,7 +162,7 @@ class SimpleDomNode:
         self.name = name
         self.parent = None
         self.data = data
-        
+
         if name.startswith("#") or name == "!doctype":
             self.namespace = namespace
             if name == "#comment" or name == "!doctype":
@@ -276,7 +274,7 @@ class ElementNode(SimpleDomNode):
 
 class TemplateNode(ElementNode):
     __slots__ = ("template_content",)
-    
+
     def __init__(self, name, attrs=None, data=None, namespace=None):
         super().__init__(name, attrs, namespace)
         if self.namespace == "html":
@@ -297,12 +295,12 @@ class TemplateNode(ElementNode):
             content_child_lines = [child.to_test_format(indent + 4) for child in self.template_content.children]
             sections.append(content_line)
             sections.extend(child for child in content_child_lines if child)
-            
+
         return "\n".join(sections)
 
 
 class TextNode:
-    __slots__ = ("data", "parent", "name", "namespace")
+    __slots__ = ("data", "name", "namespace", "parent")
 
     def __init__(self, data):
         self.data = data
@@ -465,17 +463,17 @@ class TreeBuilder:
         reprocess = True
         current_token = token
         force_html_mode = False
-        
+
         # Cache mode handlers list for speed
         mode_handlers = self._MODE_HANDLERS
-        
+
         while reprocess:
             reprocess = False
-            
+
             # Optimization: Check for HTML namespace first (common case)
             current_node = self.open_elements[-1] if self.open_elements else None
             is_html_namespace = current_node is None or current_node.namespace in {None, "html"}
-            
+
             if force_html_mode or is_html_namespace:
                 force_html_mode = False
                 if self.mode == InsertionMode.IN_BODY:
@@ -494,10 +492,10 @@ class TreeBuilder:
                                         break
                                     if node.namespace in {None, "html"} and node.name in BUTTON_SCOPE_TERMINATORS:
                                         break
-                                
+
                                 if has_p:
                                     self._close_p_element()
-                                
+
                                 self._insert_element(current_token, push=True)
                                 result = None
                             elif name == "p":
@@ -526,10 +524,10 @@ class TreeBuilder:
                                         break
                                     if node.namespace in {None, "html"} and node.name in BUTTON_SCOPE_TERMINATORS:
                                         break
-                                
+
                                 if has_p:
                                     self._close_p_element()
-                                
+
                                 self._insert_element(current_token, push=False)
                                 self.frameset_ok = False
                                 result = None
@@ -573,7 +571,7 @@ class TreeBuilder:
                             if "\x0c" in data:
                                 self._parse_error("invalid-codepoint")
                                 data = data.replace("\x0c", "")
-                            
+
                             if data:
                                 if _is_all_whitespace(data):
                                     self._reconstruct_active_formatting_elements()
@@ -620,7 +618,7 @@ class TreeBuilder:
                                 break
                             self.open_elements.pop()
                         self._reset_insertion_mode()
-                
+
                 # Special handling: text at integration points inserts directly, bypassing mode dispatch
                 if isinstance(current_token, CharacterTokens):
                     if self._is_mathml_text_integration_point(current):
@@ -1028,7 +1026,7 @@ class TreeBuilder:
     def _handle_characters_in_body(self, token):
         data = token.data or ""
         if not data:
-            return None
+            return
         if "\x00" in data:
             self._parse_error("invalid-codepoint")
             data = data.replace("\x00", "")
@@ -1036,19 +1034,19 @@ class TreeBuilder:
             self._parse_error("invalid-codepoint")
             data = data.replace("\x0c", "")
         if not data:
-            return None
+            return
         if _is_all_whitespace(data):
             self._reconstruct_active_formatting_elements()
             self._append_text(data)
-            return None
+            return
         self._reconstruct_active_formatting_elements()
         self.frameset_ok = False
         self._append_text(data)
-        return None
+        return
 
     def _handle_comment_in_body(self, token):
         self._append_comment(token.data)
-        return None
+        return
 
     def _handle_tag_in_body(self, token):
         if token.kind == Tag.START:
@@ -1212,7 +1210,7 @@ class TreeBuilder:
             formatting_element_index = self._find_active_formatting_index(subject)
             if formatting_element_index is None:
                 return
-            
+
             formatting_element_entry = self.active_formatting[formatting_element_index]
             formatting_element = formatting_element_entry["node"]
 
@@ -1234,13 +1232,13 @@ class TreeBuilder:
             # 7. Find furthest block
             furthest_block = None
             formatting_element_in_open_index = self.open_elements.index(formatting_element)
-            
+
             for i in range(formatting_element_in_open_index + 1, len(self.open_elements)):
                 node = self.open_elements[i]
                 if self._is_special_element(node):
                     furthest_block = node
                     break
-            
+
             if furthest_block is None:
                 while self.open_elements:
                     popped = self.open_elements.pop()
@@ -1255,51 +1253,51 @@ class TreeBuilder:
             # 9. Node and Last Node
             node = furthest_block
             last_node = furthest_block
-            
+
             # 10. Inner loop
             inner_loop_counter = 0
             while True:
                 inner_loop_counter += 1
-                
+
                 # 10.1 Node = element above node
                 node_index = self.open_elements.index(node)
                 node = self.open_elements[node_index - 1]
-                
+
                 # 10.2 If node is formatting element, break
                 if node is formatting_element:
                     break
-                
+
                 # 10.3 Find active formatting entry for node
                 node_formatting_index = self._find_active_formatting_index_by_node(node)
-                
+
                 if inner_loop_counter > 3 and node_formatting_index is not None:
                     self._remove_formatting_entry(node_formatting_index)
                     if node_formatting_index < bookmark:
                         bookmark -= 1
                     node_formatting_index = None
-                
+
                 if node_formatting_index is None:
                     node_index = self.open_elements.index(node)
                     self.open_elements.remove(node)
                     node = self.open_elements[node_index]
                     continue
-                
+
                 # 10.4 Replace entry with new element
                 entry = self.active_formatting[node_formatting_index]
                 new_element = self._create_element(entry["name"], entry["node"].namespace, entry["attrs"])
                 entry["node"] = new_element
                 self.open_elements[self.open_elements.index(node)] = new_element
                 node = new_element
-                
+
                 # 10.5 If last node is furthest block, update bookmark
                 if last_node is furthest_block:
                     bookmark = node_formatting_index + 1
-                
+
                 # 10.6 Reparent last_node
                 if last_node.parent:
                     last_node.parent.remove_child(last_node)
                 node.append_child(last_node)
-                
+
                 # 10.7
                 last_node = node
 
@@ -1307,7 +1305,7 @@ class TreeBuilder:
             common_ancestor = self.open_elements[formatting_element_in_open_index - 1]
             if last_node.parent:
                 last_node.parent.remove_child(last_node)
-            
+
             if self._should_foster_parenting(common_ancestor, for_tag=last_node.name):
                 parent, position = self._appropriate_insertion_location(common_ancestor, foster_parenting=True)
                 self._insert_node_at(parent, position, last_node)
@@ -1316,26 +1314,26 @@ class TreeBuilder:
                     common_ancestor.template_content.append_child(last_node)
                 else:
                     common_ancestor.append_child(last_node)
-            
+
             # 12. Create new formatting element
             entry = self.active_formatting[formatting_element_index]
             new_formatting_element = self._create_element(entry["name"], entry["node"].namespace, entry["attrs"])
             entry["node"] = new_formatting_element
-            
+
             # 13. Move children of furthest block
             while furthest_block.children:
                 child = furthest_block.children[0]
                 furthest_block.remove_child(child)
                 new_formatting_element.append_child(child)
-            
+
             furthest_block.append_child(new_formatting_element)
-            
+
             # 14. Remove formatting element from active formatting and insert new at bookmark
             self._remove_formatting_entry(formatting_element_index)
             if bookmark > formatting_element_index:
                 bookmark -= 1
             self.active_formatting.insert(bookmark, entry)
-            
+
             # 15. Remove formatting element from open elements and insert new one
             self.open_elements.remove(formatting_element)
             furthest_block_index = self.open_elements.index(furthest_block)
@@ -2535,7 +2533,7 @@ class TreeBuilder:
             if self.template_modes:
                 return self._mode_in_template(token)
             return None
-        
+
         self._parse_error("Unexpected token after after frameset")
         self.mode = InsertionMode.IN_FRAMESET
         return ("reprocess", InsertionMode.IN_FRAMESET, token)
@@ -2563,7 +2561,7 @@ class TreeBuilder:
                 text = text[1:]
                 if not text:
                     return
-        
+
         # Fast path optimization for common case
         if self.open_elements:
             target = self.open_elements[-1]
@@ -2579,7 +2577,7 @@ class TreeBuilder:
                  if type(last_child) is TextNode:
                      last_child.data += text
                      return
-             
+
              node = TextNode(text)
              children.append(node)
              node.parent = target
@@ -2633,7 +2631,7 @@ class TreeBuilder:
             node = TemplateNode(tag.name, attrs=tag.attrs, namespace=namespace)
         else:
             node = ElementNode(tag.name, attrs=tag.attrs, namespace=namespace)
-        
+
         # Fast path for common case: not inserting from table
         if not self.insert_from_table:
             if self.open_elements:
@@ -2642,16 +2640,16 @@ class TreeBuilder:
                 target = self.document.children[-1]
             else:
                 target = self.document
-            
+
             # Handle template content insertion
             if type(target) is TemplateNode:
                 parent = target.template_content
             else:
                 parent = target
-                
+
             parent.children.append(node)
             node.parent = parent
-            
+
             if push:
                 self.open_elements.append(node)
             return node
@@ -3343,7 +3341,7 @@ class TreeBuilder:
         """Recursively find all elements with given name."""
         if node.name == name:
             result.append(node)
-        
+
         if type(node) is not TextNode and node.children:
             for child in node.children:
                 self._find_elements(child, name, result)
@@ -3352,7 +3350,7 @@ class TreeBuilder:
         """Find first element with given name."""
         if node.name == name:
             return node
-        
+
         if type(node) is not TextNode and node.children:
             for child in node.children:
                 result = self._find_element(child, name)

@@ -9,7 +9,6 @@ from .tokens import (
     EOFToken,
     ParseError,
     Tag,
-    TokenSinkResult,
 )
 
 _ATTR_VALUE_DOUBLE_TERMINATORS = '"&\r\n\0'
@@ -106,10 +105,10 @@ class Tokenizer:
     SCRIPT_DATA_DOUBLE_ESCAPE_END = 55
 
     __slots__ = (
-        "_tag_token",
         "_char_token",
         "_comment_token",
         "_state_handlers",
+        "_tag_token",
         "buffer",
         "current_attr_name",
         "current_attr_value",
@@ -273,17 +272,17 @@ class Tokenizer:
                     # Found null, process up to null
                     actual_end = null_index
                     chunk = buffer[pos:actual_end]
-                    
+
                     # Inline _append_text_chunk
                     if chunk:
                         if self.ignore_lf:
                             if chunk.startswith("\n"):
                                 chunk = chunk[1:]
                             self.ignore_lf = False
-                        
+
                         if "\r" in chunk:
                             chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
-                        
+
                         self.line += chunk.count("\n")
                         self.text_buffer.append(chunk)
                         self.ignore_lf = chunk.endswith("\r")
@@ -295,26 +294,25 @@ class Tokenizer:
                     self._emit_error("Null character in data state")
                     self.text_buffer.append("\0")
                     self.ignore_lf = False
-                    
+
                     pos = actual_end + 1
                     self.pos = pos
                     continue
-                else:
-                    chunk = buffer[pos:end]
-                    # Inline _append_text_chunk
-                    # ignore_lf is always False here because it's cleared after null or <
-                    
-                    if "\r" in chunk:
-                        chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
-                    
-                    self.line += chunk.count("\n")
-                    self.text_buffer.append(chunk)
-                    self.ignore_lf = chunk.endswith("\r")
+                chunk = buffer[pos:end]
+                # Inline _append_text_chunk
+                # ignore_lf is always False here because it's cleared after null or <
 
-                    pos = end
-                    self.pos = pos
-                    if pos >= length:
-                        continue
+                if "\r" in chunk:
+                    chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
+
+                self.line += chunk.count("\n")
+                self.text_buffer.append(chunk)
+                self.ignore_lf = chunk.endswith("\r")
+
+                pos = end
+                self.pos = pos
+                if pos >= length:
+                    continue
 
             c = buffer[pos]
             pos += 1
@@ -408,7 +406,7 @@ class Tokenizer:
                              chunk = chunk.translate(_ASCII_LOWER_TABLE)
                         append_tag_char(chunk)
                         self.pos = match.end()
-                        
+
                         if self.pos < length:
                             c = buffer[self.pos]
                             if c in (" ", "\t", "\n", "\f"):
@@ -501,7 +499,7 @@ class Tokenizer:
                             chunk = chunk.translate(_ASCII_LOWER_TABLE)
                         append_attr_char(chunk)
                         self.pos = match.end()
-                        
+
                         if self.pos < length:
                             c = buffer[self.pos]
                             if c == "=":
@@ -624,7 +622,7 @@ class Tokenizer:
         stop_pattern = _ATTR_VALUE_DOUBLE_PATTERN
         buffer = self.buffer
         length = self.length
-        
+
         while True:
             # Inline _consume_attribute_value_run
             pos = self.pos
@@ -634,24 +632,24 @@ class Tokenizer:
                     end = match.start()
                 else:
                     end = length
-                
+
                 if end > pos:
                     chunk = buffer[pos:end]
-                    
+
                     # Update line count based on RAW chunk
                     if "\n" in chunk or "\r" in chunk:
                         newlines = chunk.count("\n")
                         returns = chunk.count("\r")
                         crlf = chunk.count("\r\n")
                         self.line += newlines + returns - crlf
-                        
+
                         # Normalize chunk for value
                         if returns:
                             chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
-                    
+
                     self.current_attr_value.append(chunk)
                     self.pos = end
-            
+
             # Inlined _get_char logic
             if self.pos >= length:
                 self.current_char = None
@@ -661,7 +659,7 @@ class Tokenizer:
 
             c = buffer[self.pos]
             self.pos += 1
-            
+
             self.current_char = c
 
             if c == '"':
@@ -681,7 +679,7 @@ class Tokenizer:
         stop_pattern = _ATTR_VALUE_SINGLE_PATTERN
         buffer = self.buffer
         length = self.length
-        
+
         while True:
             # Inline _consume_attribute_value_run
             pos = self.pos
@@ -691,24 +689,24 @@ class Tokenizer:
                     end = match.start()
                 else:
                     end = length
-                
+
                 if end > pos:
                     chunk = buffer[pos:end]
-                    
+
                     # Update line count based on RAW chunk
                     if "\n" in chunk or "\r" in chunk:
                         newlines = chunk.count("\n")
                         returns = chunk.count("\r")
                         crlf = chunk.count("\r\n")
                         self.line += newlines + returns - crlf
-                        
+
                         # Normalize chunk for value
                         if returns:
                             chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
-                    
+
                     self.current_attr_value.append(chunk)
                     self.pos = end
-            
+
             # Inlined _get_char logic
             if self.pos >= length:
                 self.current_char = None
@@ -718,7 +716,7 @@ class Tokenizer:
 
             c = buffer[self.pos]
             self.pos += 1
-            
+
             self.current_char = c
 
             if c == "'":
@@ -749,7 +747,7 @@ class Tokenizer:
                         end = match.start()
                     else:
                         end = length
-                    
+
                     if end > pos:
                         self.current_attr_value.append(buffer[pos:end])
                         self.pos = end
@@ -1566,7 +1564,7 @@ class Tokenizer:
         length = self.length
         if pos >= length:
             return False
-            
+
         match = _COMMENT_RUN_PATTERN.match(self.buffer, pos)
         if match:
             self.current_comment.append(match.group(0))
@@ -2086,12 +2084,12 @@ class Tokenizer:
         if c == "<":
             self.text_buffer.append("<")
             self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN
-           
+
             return False
         if c == ">":
             self.text_buffer.append(">")
             self.state = self.RAWTEXT
-           
+
             return False
         if c == "\0":
             self._emit_error("unexpected-null-character")
@@ -2123,7 +2121,7 @@ class Tokenizer:
         if c in (" ", "\t", "\n", "\r", "\f", "/", ">"):
             # Check if temp_buffer contains "script"
             temp = "".join(self.temp_buffer).lower()
-           
+
             if temp == "script":
                 self.state = self.SCRIPT_DATA_ESCAPED
             else:

@@ -15,7 +15,7 @@ _HTML5_ENTITIES = html.entities.html5
 NAMED_ENTITIES = {}
 for key, value in _HTML5_ENTITIES.items():
     # Remove trailing semicolon for lookup
-    if key.endswith(';'):
+    if key.endswith(";"):
         NAMED_ENTITIES[key[:-1]] = value
     else:
         NAMED_ENTITIES[key] = value
@@ -129,23 +129,23 @@ def decode_entities_in_text(text, in_attribute=False):
         if next_amp == -1:
             result.append(text[i:])
             break
-        
+
         if next_amp > i:
             result.append(text[i:next_amp])
-        
+
         i = next_amp
         # Look for entity
         j = i + 1
-        
+
         # Check for numeric entity
         if j < length and text[j] == "#":
             j += 1
             is_hex = False
-            
+
             if j < length and text[j] in "xX":
                 is_hex = True
                 j += 1
-            
+
             # Collect digits
             digit_start = j
             if is_hex:
@@ -154,39 +154,39 @@ def decode_entities_in_text(text, in_attribute=False):
             else:
                 while j < length and text[j].isdigit():
                     j += 1
-            
+
             has_semicolon = j < length and text[j] == ";"
             digit_text = text[digit_start:j]
-            
+
             if digit_text:
                 result.append(decode_numeric_entity(digit_text, is_hex=is_hex))
                 i = j + 1 if has_semicolon else j
                 continue
-            
+
             # Invalid numeric entity, keep as-is
             result.append(text[i:j+1 if has_semicolon else j])
             i = j + 1 if has_semicolon else j
             continue
-        
+
         # Named entity
         # Collect alphanumeric characters (entity names are case-sensitive and can include uppercase)
         while j < length and (text[j].isalpha() or text[j].isdigit()):
             j += 1
-        
+
         entity_name = text[i+1:j]
         has_semicolon = j < length and text[j] == ";"
-        
+
         if not entity_name:
             result.append("&")
             i += 1
             continue
-        
+
         # Try exact match first (with semicolon expected)
         if has_semicolon and entity_name in NAMED_ENTITIES:
             result.append(NAMED_ENTITIES[entity_name])
             i = j + 1
             continue
-        
+
         # If we have a semicolon but exact match failed, try prefix matching
         # This handles &notit; -> ¬it; (decode &not, leave it;)
         if has_semicolon:
@@ -198,13 +198,13 @@ def decode_entities_in_text(text, in_attribute=False):
                     best_match = NAMED_ENTITIES[prefix]
                     best_match_len = k
                     break
-            
+
             if best_match:
                 result.append(best_match)
                 # Continue after the matched prefix, not after semicolon
                 i = i + 1 + best_match_len
                 continue
-        
+
         # Try without semicolon for legacy compatibility
         # Only legacy entities can be used without semicolons
         if entity_name in LEGACY_ENTITIES and entity_name in NAMED_ENTITIES:
@@ -216,12 +216,12 @@ def decode_entities_in_text(text, in_attribute=False):
                 result.append("&")
                 i += 1
                 continue
-            
+
             # Decode legacy entity
             result.append(NAMED_ENTITIES[entity_name])
             i = j
             continue
-        
+
         # Try longest prefix match for legacy entities without semicolon
         # This handles cases like &notit where &not is valid but &notit is not
         best_match = None
@@ -232,7 +232,7 @@ def decode_entities_in_text(text, in_attribute=False):
                 best_match = NAMED_ENTITIES[prefix]
                 best_match_len = k
                 break
-        
+
         if best_match:
             # Check legacy entity rules
             end_pos = i + 1 + best_match_len
@@ -245,11 +245,11 @@ def decode_entities_in_text(text, in_attribute=False):
                 result.append("&")
                 i += 1
                 continue
-            
+
             result.append(best_match)
             i = i + 1 + best_match_len
             continue
-        
+
         # No match found
         if has_semicolon:
             result.append(text[i:j+1])
@@ -257,5 +257,5 @@ def decode_entities_in_text(text, in_attribute=False):
         else:
             result.append("&")
             i += 1
-            
+
     return "".join(result)

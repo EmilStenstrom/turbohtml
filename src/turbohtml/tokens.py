@@ -26,7 +26,7 @@ class CommentToken:
 
 
 class Doctype:
-    __slots__ = ("name", "public_id", "system_id", "force_quirks")
+    __slots__ = ("force_quirks", "name", "public_id", "system_id")
 
     def __init__(self, name=None, public_id=None, system_id=None, force_quirks=False):
         self.name = name
