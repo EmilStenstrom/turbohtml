@@ -133,8 +133,6 @@ _BODY_BLOCK_END_TAGS = {
 
 
 def _is_all_whitespace(text):
-    if not text:
-        return True
     return text.strip("\t\n\f\r ") == ""
 
 
@@ -208,14 +206,6 @@ class SimpleDomNode:
 
     def append_child(self, node):
         self.children.append(node)
-        node.parent = self
-
-    def insert_before(self, node, reference):
-        if reference not in self.children:
-            self.append_child(node)
-            return
-        index = self.children.index(reference)
-        self.children.insert(index, node)
         node.parent = self
 
     def remove_child(self, node):

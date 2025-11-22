@@ -1601,64 +1601,6 @@ class Tokenizer:
         self.text_buffer.append(chunk)
         self.ignore_lf = ends_with_cr
 
-    def _consume_attribute_value_run(self, stop_pattern):
-        if self.reconsume:
-            return False
-        pos = self.pos
-        length = self.length
-        if pos >= length:
-            return False
-        match = stop_pattern.search(self.buffer, pos)
-        if match:
-            end = match.start()
-            if end == pos:
-                return False
-        else:
-            end = length
-            if end == pos:
-                return False
-        self.current_attr_value.append(self.buffer[pos:end])
-        self.pos = end
-        return True
-
-    def _consume_tag_name_run(self):
-        if self.reconsume:
-            return False
-        pos = self.pos
-        length = self.length
-        if pos >= length:
-            return False
-        
-        match = _TAG_NAME_RUN_PATTERN.match(self.buffer, pos)
-        if match:
-            chunk = match.group(0)
-            # Optimization: check if we need to translate
-            if not chunk.islower():
-                 chunk = chunk.translate(_ASCII_LOWER_TABLE)
-            
-            self.current_tag_name.append(chunk)
-            self.pos = match.end()
-            return True
-        return False
-
-    def _consume_attribute_name_run(self):
-        if self.reconsume:
-            return False
-        pos = self.pos
-        length = self.length
-        if pos >= length:
-            return False
-            
-        match = _ATTR_NAME_RUN_PATTERN.match(self.buffer, pos)
-        if match:
-            chunk = match.group(0)
-            if not chunk.islower():
-                chunk = chunk.translate(_ASCII_LOWER_TABLE)
-            self.current_attr_name.append(chunk)
-            self.pos = match.end()
-            return True
-        return False
-
     def _consume_comment_run(self):
         if self.reconsume:
             return False
