@@ -1893,13 +1893,6 @@ class TreeBuilder:
                         self._pop_current()
                         self.mode = InsertionMode.IN_TABLE
                         return ("reprocess", InsertionMode.IN_TABLE, token)
-                    if current and current.name == "template":
-                        # In template, reject duplicate colgroup
-                        return None
-                    if current and current.name != "html":
-                        self._pop_current()
-                        self.mode = InsertionMode.IN_TABLE
-                        return ("reprocess", InsertionMode.IN_TABLE, token)
                     return None
                 if (
                     self.fragment_context

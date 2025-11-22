@@ -1,4 +1,5 @@
 import argparse
+import os
 import re
 import signal
 import subprocess
@@ -220,7 +221,11 @@ class TestRunner:
 
     def _collect_test_files(self):
         """Collect and filter .dat files based on configuration."""
-        files = list(self.test_dir.rglob("*.dat"))
+        files = []
+        for root, _, filenames in os.walk(self.test_dir, followlinks=True):
+            for filename in filenames:
+                if filename.endswith(".dat"):
+                    files.append(Path(root) / filename)
 
         if self.config["exclude_files"]:
             files = [f for f in files if not any(exclude in f.name for exclude in self.config["exclude_files"])]
@@ -555,7 +560,7 @@ def parse_args():
 
 def main():
     config = parse_args()
-    test_dir = Path("tests/html5lib-tests")
+    test_dir = Path("tests")
 
     runner = TestRunner(test_dir, config)
     reporter = TestReporter(config)

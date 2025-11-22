@@ -1,0 +1,47 @@
+#data
+<path d="M0 0"/>
+#errors
+#document-fragment
+svg svg
+#document
+| <svg path>
+|   d="M0 0"
+
+#data
+<tr><td>foo</td></tr>
+#errors
+#document-fragment
+tbody
+#document
+| <tr>
+|   <td>
+|     "foo"
+
+#data
+<svg viewBox="0 0 10 10" xlink:href="foo"></svg>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       viewBox="0 0 10 10"
+|       xlink href="foo"
+
+#data
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+#errors
+#document
+| <!DOCTYPE html "-//W3C//DTD HTML 4.01 Transitional//EN" "">
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!DOCTYPE html><tbody><frameset>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <frameset>
