@@ -1,15 +1,7 @@
 import re
 
 from .entities import decode_entities_in_text
-from .tokens import (
-    CharacterTokens,
-    CommentToken,
-    Doctype,
-    DoctypeToken,
-    EOFToken,
-    ParseError,
-    Tag,
-)
+from .tokens import CharacterTokens, CommentToken, Doctype, DoctypeToken, EOFToken, Tag
 
 _ATTR_VALUE_DOUBLE_TERMINATORS = '"&\r\n\0'
 _ATTR_VALUE_SINGLE_TERMINATORS = "'&\r\n\0"
@@ -1644,8 +1636,7 @@ class Tokenizer:
             self.state = self.DATA
 
     def _emit_error(self, message):
-        if self.opts.exact_errors:
-            self._emit_token(ParseError(message))
+        return None
 
     def _consume_if(self, literal):
         end = self.pos + len(literal)

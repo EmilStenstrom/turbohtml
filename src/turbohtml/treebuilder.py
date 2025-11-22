@@ -27,7 +27,7 @@ from .constants import (
     TABLE_FOSTER_TARGETS,
     TABLE_SCOPE_TERMINATORS,
 )
-from .tokens import CharacterTokens, CommentToken, DoctypeToken, EOFToken, ParseError, Tag, TokenSinkResult
+from .tokens import CharacterTokens, CommentToken, DoctypeToken, EOFToken, Tag, TokenSinkResult
 
 
 class InsertionMode(enum.IntEnum):
@@ -405,9 +405,6 @@ class TreeBuilder:
         return False
 
     def process_token(self, token):
-        if isinstance(token, ParseError):
-            return TokenSinkResult.Continue
-
         if isinstance(token, DoctypeToken):
             return self._handle_doctype(token)
 
