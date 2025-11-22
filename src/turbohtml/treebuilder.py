@@ -214,25 +214,25 @@ def _as_attr_dict(attrs):
 
 
 class SimpleDomNode:
-    __slots__ = ("attrs", "children", "data", "name", "namespace", "parent", "template_content")
+    __slots__ = ("attrs", "children", "data", "name", "namespace", "parent")
 
     def __init__(self, name, attrs=None, data=None, namespace=None):
         self.name = name
-        self.attrs = attrs if attrs is not None else {}
-        self.children = []
         self.parent = None
         self.data = data
         
         if name.startswith("#") or name == "!doctype":
             self.namespace = namespace
-            self.template_content = None
+            if name == "#text" or name == "#comment" or name == "!doctype":
+                self.children = None
+                self.attrs = None
+            else:
+                self.children = []
+                self.attrs = attrs if attrs is not None else {}
         else:
             self.namespace = namespace or "html"
-            # Only HTML template elements have a document fragment for their content
-            if name == "template" and self.namespace == "html":
-                self.template_content = SimpleDomNode("#document-fragment")
-            else:
-                self.template_content = None
+            self.children = []
+            self.attrs = attrs if attrs is not None else {}
 
     def append_child(self, node):
         self.children.append(node)
@@ -266,17 +266,6 @@ class SimpleDomNode:
 
         line = f"| {' ' * indent}<{self._qualified_name()}>"
         attribute_lines = self._format_attributes(indent)
-
-        # Template elements output their content document fragment
-        if self.name == "template" and self.template_content:
-            content_line = f"| {' ' * (indent + 2)}content"
-            content_child_lines = [child.to_test_format(indent + 4) for child in self.template_content.children]
-            sections = [line]
-            if attribute_lines:
-                sections.extend(attribute_lines)
-            sections.append(content_line)
-            sections.extend(child for child in content_child_lines if child)
-            return "\n".join(sections)
 
         child_lines = [child.to_test_format(indent + 2) for child in self.children]
 
@@ -321,9 +310,9 @@ class SimpleDomNode:
         if not doctype:
             return "| <!DOCTYPE >"
 
-        name = getattr(doctype, "name", None) or ""
-        public_id = getattr(doctype, "public_id", None)
-        system_id = getattr(doctype, "system_id", None)
+        name = doctype.name or ""
+        public_id = doctype.public_id
+        system_id = doctype.system_id
 
         parts = ["| <!DOCTYPE"]
         if name:
@@ -339,6 +328,58 @@ class SimpleDomNode:
 
         parts.append(">")
         return "".join(parts)
+
+
+class ElementNode(SimpleDomNode):
+    __slots__ = ()
+    def __init__(self, name, attrs, namespace):
+        self.name = name
+        self.parent = None
+        self.data = None
+        self.namespace = namespace
+        self.children = []
+        self.attrs = attrs
+
+
+class TemplateNode(ElementNode):
+    __slots__ = ("template_content",)
+    
+    def __init__(self, name, attrs=None, data=None, namespace=None):
+        super().__init__(name, attrs, namespace)
+        if self.namespace == "html":
+            self.template_content = SimpleDomNode("#document-fragment")
+        else:
+            self.template_content = None
+
+    def to_test_format(self, indent=0):
+        line = f"| {' ' * indent}<{self._qualified_name()}>"
+        attribute_lines = self._format_attributes(indent)
+
+        sections = [line]
+        if attribute_lines:
+            sections.extend(attribute_lines)
+
+        if self.template_content:
+            content_line = f"| {' ' * (indent + 2)}content"
+            content_child_lines = [child.to_test_format(indent + 4) for child in self.template_content.children]
+            sections.append(content_line)
+            sections.extend(child for child in content_child_lines if child)
+            
+        return "\n".join(sections)
+
+
+class TextNode:
+    __slots__ = ("data", "parent", "name", "namespace")
+
+    def __init__(self, data):
+        self.data = data
+        self.parent = None
+        self.name = "#text"
+        self.namespace = None
+
+    def to_test_format(self, indent=0):
+        text = self.data or ""
+        return f'| {" " * indent}"{text}"'
 
 
 class TreeBuilder:
@@ -522,20 +563,69 @@ class TreeBuilder:
                     if token_type is Tag:
                         # Inline _handle_tag_in_body
                         if current_token.kind == 0: # Tag.START
-                            handler = self._BODY_START_HANDLERS.get(current_token.name)
-                            if handler:
-                                result = handler(self, current_token)
-                            else:
-                                # Inline _handle_body_start_default
+                            name = current_token.name
+                            if name == "div" or name == "ul" or name == "ol":
+                                # Inline _handle_body_start_block_with_p
+                                has_p = False
+                                for node in reversed(self.open_elements):
+                                    if node.name == "p":
+                                        has_p = True
+                                        break
+                                    if node.namespace in {None, "html"} and node.name in BUTTON_SCOPE_TERMINATORS:
+                                        break
+                                
+                                if has_p:
+                                    self._close_p_element()
+                                
+                                self._insert_element(current_token, push=True)
+                                result = None
+                            elif name == "p":
+                                result = self._handle_body_start_paragraph(current_token)
+                            elif name == "span":
                                 if self.active_formatting:
                                     self._reconstruct_active_formatting_elements()
                                 self._insert_element(current_token, push=True)
                                 if current_token.self_closing:
                                     self._parse_error("non-void-html-element-start-tag-with-trailing-solidus")
-                                name = current_token.name
-                                if name not in _BODY_START_FRAMESET_NEUTRAL and name not in FORMATTING_ELEMENTS:
-                                    self.frameset_ok = False
+                                self.frameset_ok = False
                                 result = None
+                            elif name == "a":
+                                result = self._handle_body_start_a(current_token)
+                            elif name == "br" or name == "img":
+                                if self.active_formatting:
+                                    self._reconstruct_active_formatting_elements()
+                                self._insert_element(current_token, push=False)
+                                self.frameset_ok = False
+                                result = None
+                            elif name == "hr":
+                                has_p = False
+                                for node in reversed(self.open_elements):
+                                    if node.name == "p":
+                                        has_p = True
+                                        break
+                                    if node.namespace in {None, "html"} and node.name in BUTTON_SCOPE_TERMINATORS:
+                                        break
+                                
+                                if has_p:
+                                    self._close_p_element()
+                                
+                                self._insert_element(current_token, push=False)
+                                self.frameset_ok = False
+                                result = None
+                            else:
+                                handler = self._BODY_START_HANDLERS.get(name)
+                                if handler:
+                                    result = handler(self, current_token)
+                                else:
+                                    # Inline _handle_body_start_default
+                                    if self.active_formatting:
+                                        self._reconstruct_active_formatting_elements()
+                                    self._insert_element(current_token, push=True)
+                                    if current_token.self_closing:
+                                        self._parse_error("non-void-html-element-start-tag-with-trailing-solidus")
+                                    if name not in _BODY_START_FRAMESET_NEUTRAL and name not in FORMATTING_ELEMENTS:
+                                        self.frameset_ok = False
+                                    result = None
                         else:
                             name = current_token.name
                             if name == "br":
@@ -553,7 +643,25 @@ class TreeBuilder:
                                     self._any_other_end_tag(name)
                                     result = None
                     elif token_type is CharacterTokens:
-                        result = self._handle_characters_in_body(current_token)
+                        # Inline _handle_characters_in_body
+                        data = current_token.data or ""
+                        if data:
+                            if "\x00" in data:
+                                self._parse_error("invalid-codepoint")
+                                data = data.replace("\x00", "")
+                            if "\x0c" in data:
+                                self._parse_error("invalid-codepoint")
+                                data = data.replace("\x0c", "")
+                            
+                            if data:
+                                if _is_all_whitespace(data):
+                                    self._reconstruct_active_formatting_elements()
+                                    self._append_text(data)
+                                else:
+                                    self._reconstruct_active_formatting_elements()
+                                    self.frameset_ok = False
+                                    self._append_text(data)
+                        result = None
                     elif token_type is CommentToken:
                         result = self._handle_comment_in_body(current_token)
                     elif token_type is EOFToken:
@@ -1331,7 +1439,7 @@ class TreeBuilder:
                 parent, position = self._appropriate_insertion_location(common_ancestor, foster_parenting=True)
                 self._insert_node_at(parent, position, last_node)
             else:
-                if common_ancestor.name == "template" and common_ancestor.template_content:
+                if type(common_ancestor) is TemplateNode and common_ancestor.template_content:
                     common_ancestor.template_content.append_child(last_node)
                 else:
                     common_ancestor.append_child(last_node)
@@ -2575,7 +2683,7 @@ class TreeBuilder:
     def _append_comment(self, text):
         parent = self._current_node_or_html()
         # If parent is a template, insert into its content fragment
-        if parent.name == "template" and parent.template_content:
+        if type(parent) is TemplateNode and parent.template_content:
             parent = parent.template_content
         node = SimpleDomNode("#comment", data=text)
         parent.append_child(node)
@@ -2598,14 +2706,17 @@ class TreeBuilder:
         else:
             target = self.document
 
-        if target.name not in TABLE_FOSTER_TARGETS and not target.template_content:
+        if target.name not in TABLE_FOSTER_TARGETS and type(target) is not TemplateNode:
              children = target.children
-             if children and children[-1].name == "#text":
-                 children[-1].data += text
-             else:
-                 node = SimpleDomNode("#text", data=text)
-                 children.append(node)
-                 node.parent = target
+             if children:
+                 last_child = children[-1]
+                 if type(last_child) is TextNode:
+                     last_child.data += text
+                     return
+             
+             node = TextNode(text)
+             children.append(node)
+             node.parent = target
              return
 
         target = self._current_node_or_html()
@@ -2628,7 +2739,7 @@ class TreeBuilder:
             parent.children[position].data = text + (parent.children[position].data or "")
             return
 
-        node = SimpleDomNode("#text", data=text)
+        node = TextNode(text)
         parent.children.insert(position, node)
         node.parent = parent
 
@@ -2652,7 +2763,10 @@ class TreeBuilder:
         return node
 
     def _insert_element(self, tag, *, push, namespace="html"):
-        node = SimpleDomNode(tag.name, attrs=tag.attrs, namespace=namespace)
+        if tag.name == "template" and namespace == "html":
+            node = TemplateNode(tag.name, attrs=tag.attrs, namespace=namespace)
+        else:
+            node = ElementNode(tag.name, attrs=tag.attrs, namespace=namespace)
         
         # Fast path for common case: not inserting from table
         if not self.insert_from_table:
@@ -2664,7 +2778,7 @@ class TreeBuilder:
                 target = self.document
             
             # Handle template content insertion
-            if target.name == "template" and target.template_content:
+            if type(target) is TemplateNode:
                 parent = target.template_content
             else:
                 parent = target
@@ -2709,7 +2823,9 @@ class TreeBuilder:
 
     def _create_element(self, name, namespace, attrs):
         ns = namespace or "html"
-        return SimpleDomNode(name, attrs=attrs, namespace=ns)
+        if name == "template" and ns == "html":
+            return TemplateNode(name, attrs=attrs, namespace=ns)
+        return ElementNode(name, attrs, ns)
 
     def _pop_current(self):
         if not self.open_elements:
@@ -3410,7 +3526,7 @@ class TreeBuilder:
                 last_table is None or self.open_elements.index(last_template) > self.open_elements.index(last_table)
             ):
                 # Insert into template's content document fragment
-                if last_template.template_content:
+                if type(last_template) is TemplateNode and last_template.template_content:
                     return last_template.template_content, len(last_template.template_content.children)
                 return last_template, len(last_template.children)
             if last_table is None:
@@ -3431,7 +3547,7 @@ class TreeBuilder:
             return self.document, len(self.document.children)
 
         # If target is a template element, insert into its content document fragment
-        if target.name == "template" and target.template_content:
+        if type(target) is TemplateNode and target.template_content:
             return target.template_content, len(target.template_content.children)
 
         return target, len(target.children)
@@ -3499,17 +3615,19 @@ class TreeBuilder:
 
     def _find_elements(self, node, name, result):
         """Recursively find all elements with given name."""
-        if hasattr(node, "name") and node.name == name:
+        if node.name == name:
             result.append(node)
-        if hasattr(node, "children"):
+        
+        if type(node) is not TextNode and node.children:
             for child in node.children:
                 self._find_elements(child, name, result)
 
     def _find_element(self, node, name):
         """Find first element with given name."""
-        if hasattr(node, "name") and node.name == name:
+        if node.name == name:
             return node
-        if hasattr(node, "children"):
+        
+        if type(node) is not TextNode and node.children:
             for child in node.children:
                 result = self._find_element(child, name)
                 if result:
@@ -3518,20 +3636,20 @@ class TreeBuilder:
 
     def _clone_children(self, source, target):
         """Deep clone all children from source to target."""
-        if not hasattr(source, "children"):
+        if type(source) is TextNode or not source.children:
             return
         for child in source.children:
-            if hasattr(child, "name") and child.name == "#text":
+            if type(child) is TextNode:
                 # Text node
-                cloned = SimpleDomNode("#text", data=child.data)
+                cloned = TextNode(child.data)
                 target.children.append(cloned)
                 cloned.parent = target
-            elif hasattr(child, "name"):
+            else:
                 # Element node
-                cloned = SimpleDomNode(
+                cloned = ElementNode(
                     child.name,
                     attrs=self._clone_attributes(child.attrs),
-                    namespace=getattr(child, "namespace", None),
+                    namespace=child.namespace,
                 )
                 self._clone_children(child, cloned)
                 target.children.append(cloned)

@@ -16,8 +16,8 @@ from .tokens import (
 _ATTR_VALUE_DOUBLE_TERMINATORS = '"&\r\n\0'
 _ATTR_VALUE_SINGLE_TERMINATORS = "'&\r\n\0"
 _ATTR_VALUE_UNQUOTED_TERMINATORS = "\t\n\f >&\"'<=`\r\0"
-_ATTR_NAME_TERMINATORS = "\t\n\f />=\0\"'<"
-_TAG_NAME_TERMINATORS = "\t\n\f />\0"
+_ATTR_NAME_TERMINATORS = "\t\n\f />=\0\"'<\r"
+_TAG_NAME_TERMINATORS = "\t\n\f />\0\r"
 _ASCII_LOWER_TABLE = str.maketrans({chr(code): chr(code + 32) for code in range(65, 91)})
 _RCDATA_ELEMENTS = {"title", "textarea"}
 _RAWTEXT_SWITCH_TAGS = {"script", "style", "xmp", "iframe", "noembed", "noframes", "noscript", "textarea", "title"}
@@ -28,8 +28,8 @@ _ATTR_VALUE_DOUBLE_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_DOUBLE_TERMINA
 _ATTR_VALUE_SINGLE_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_SINGLE_TERMINATORS_OPT)}]")
 _ATTR_VALUE_UNQUOTED_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_UNQUOTED_TERMINATORS)}]")
 
-_TAG_NAME_RUN_PATTERN = re.compile(r"[^\t\n\f />\0]+")
-_ATTR_NAME_RUN_PATTERN = re.compile(r"[^\t\n\f />=\0\"'<]+")
+_TAG_NAME_RUN_PATTERN = re.compile(r"[^\t\n\f />\0\r]+")
+_ATTR_NAME_RUN_PATTERN = re.compile(r"[^\t\n\f />=\0\"'<\r]+")
 _COMMENT_RUN_PATTERN = re.compile(r"[^-\0]+")
 
 
@@ -407,7 +407,7 @@ class Tokenizer:
 
         while True:
             # Inline _consume_tag_name_run
-            if not self.reconsume:
+            if not self.reconsume and not self.ignore_lf:
                 pos = self.pos
                 if pos < length:
                     match = _TAG_NAME_RUN_PATTERN.match(buffer, pos)
@@ -417,6 +417,24 @@ class Tokenizer:
                              chunk = chunk.translate(_ASCII_LOWER_TABLE)
                         append_tag_char(chunk)
                         self.pos = match.end()
+                        
+                        if self.pos < length:
+                            c = buffer[self.pos]
+                            if c in (" ", "\t", "\n", "\f"):
+                                self.pos += 1
+                                if c == "\n":
+                                    self.line += 1
+                                self.state = self.BEFORE_ATTRIBUTE_NAME
+                                return self._state_before_attribute_name()
+                            if c == ">":
+                                self.pos += 1
+                                if not self._emit_current_tag():
+                                    self.state = self.DATA
+                                return False
+                            if c == "/":
+                                self.pos += 1
+                                self.state = self.SELF_CLOSING_START_TAG
+                                return self._state_self_closing_start_tag()
 
             c = self._get_char()
             if c is None:
@@ -485,7 +503,7 @@ class Tokenizer:
 
         while True:
             # Inline _consume_attribute_name_run
-            if not self.reconsume:
+            if not self.reconsume and not self.ignore_lf:
                 pos = self.pos
                 if pos < length:
                     match = _ATTR_NAME_RUN_PATTERN.match(buffer, pos)
@@ -495,6 +513,31 @@ class Tokenizer:
                             chunk = chunk.translate(_ASCII_LOWER_TABLE)
                         append_attr_char(chunk)
                         self.pos = match.end()
+                        
+                        if self.pos < length:
+                            c = buffer[self.pos]
+                            if c == "=":
+                                self.pos += 1
+                                self.state = self.BEFORE_ATTRIBUTE_VALUE
+                                return self._state_before_attribute_value()
+                            if c in (" ", "\t", "\n", "\f"):
+                                self.pos += 1
+                                if c == "\n":
+                                    self.line += 1
+                                self._finish_attribute()
+                                self.state = self.AFTER_ATTRIBUTE_NAME
+                                return self._state_after_attribute_name()
+                            if c == ">":
+                                self.pos += 1
+                                self._finish_attribute()
+                                if not self._emit_current_tag():
+                                    self.state = self.DATA
+                                return False
+                            if c == "/":
+                                self.pos += 1
+                                self._finish_attribute()
+                                self.state = self.SELF_CLOSING_START_TAG
+                                return self._state_self_closing_start_tag()
 
             c = self._get_char()
             if c is None:
@@ -635,6 +678,30 @@ class Tokenizer:
             self.current_char = c
 
             if c == '"':
+                # Optimization: consume whitespace
+                while self.pos < length:
+                    next_c = buffer[self.pos]
+                    if next_c in (" ", "\t", "\f"):
+                        self.pos += 1
+                    elif next_c == "\n":
+                        self.pos += 1
+                        self.line += 1
+                    else:
+                        break
+                
+                if self.pos < length:
+                    next_c = buffer[self.pos]
+                    if next_c == ">":
+                        self.pos += 1
+                        self._finish_attribute()
+                        if not self._emit_current_tag():
+                            self.state = self.DATA
+                        return False
+                    if next_c == "/":
+                        self.pos += 1
+                        self.state = self.SELF_CLOSING_START_TAG
+                        return self._state_self_closing_start_tag()
+
                 self.state = self.AFTER_ATTRIBUTE_NAME
                 return self._state_after_attribute_name()
             if c == "&":
@@ -708,9 +775,24 @@ class Tokenizer:
     def _state_attribute_value_unquoted(self):
         replacement = "\ufffd"
         stop_pattern = _ATTR_VALUE_UNQUOTED_PATTERN
+        buffer = self.buffer
+        length = self.length
+
         while True:
-            if self._consume_attribute_value_run(stop_pattern):
-                continue
+            # Inline _consume_attribute_value_run
+            if not self.reconsume:
+                pos = self.pos
+                if pos < length:
+                    match = stop_pattern.search(buffer, pos)
+                    if match:
+                        end = match.start()
+                    else:
+                        end = length
+                    
+                    if end > pos:
+                        self.current_attr_value.append(buffer[pos:end])
+                        self.pos = end
+
             c = self._get_char()
             if c is None:
                 # Per HTML5 spec: EOF in attribute value is a parse error
