@@ -87,55 +87,56 @@ class Tokenizer:
     ATTRIBUTE_VALUE_DOUBLE = 8
     ATTRIBUTE_VALUE_SINGLE = 9
     ATTRIBUTE_VALUE_UNQUOTED = 10
-    SELF_CLOSING_START_TAG = 11
-    MARKUP_DECLARATION_OPEN = 12
-    COMMENT_START = 13
-    COMMENT_START_DASH = 14
-    COMMENT = 15
-    COMMENT_END_DASH = 16
-    COMMENT_END = 17
-    COMMENT_END_BANG = 18
-    BOGUS_COMMENT = 19
-    DOCTYPE = 20
-    BEFORE_DOCTYPE_NAME = 21
-    DOCTYPE_NAME = 22
-    AFTER_DOCTYPE_NAME = 23
-    BOGUS_DOCTYPE = 24
-    AFTER_DOCTYPE_PUBLIC_KEYWORD = 25
-    AFTER_DOCTYPE_SYSTEM_KEYWORD = 26
-    BEFORE_DOCTYPE_PUBLIC_IDENTIFIER = 27
-    DOCTYPE_PUBLIC_IDENTIFIER_DOUBLE_QUOTED = 28
-    DOCTYPE_PUBLIC_IDENTIFIER_SINGLE_QUOTED = 29
-    AFTER_DOCTYPE_PUBLIC_IDENTIFIER = 30
-    BETWEEN_DOCTYPE_PUBLIC_AND_SYSTEM_IDENTIFIERS = 31
-    BEFORE_DOCTYPE_SYSTEM_IDENTIFIER = 32
-    DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE_QUOTED = 33
-    DOCTYPE_SYSTEM_IDENTIFIER_SINGLE_QUOTED = 34
-    AFTER_DOCTYPE_SYSTEM_IDENTIFIER = 35
-    CDATA_SECTION = 36
-    CDATA_SECTION_BRACKET = 37
-    CDATA_SECTION_END = 38
-    RCDATA = 39
-    RCDATA_LESS_THAN_SIGN = 40
-    RCDATA_END_TAG_OPEN = 41
-    RCDATA_END_TAG_NAME = 42
-    RAWTEXT = 43
-    RAWTEXT_LESS_THAN_SIGN = 44
-    RAWTEXT_END_TAG_OPEN = 45
-    RAWTEXT_END_TAG_NAME = 46
-    PLAINTEXT = 47
-    SCRIPT_DATA_ESCAPED = 48
-    SCRIPT_DATA_ESCAPED_DASH = 49
-    SCRIPT_DATA_ESCAPED_DASH_DASH = 50
-    SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN = 51
-    SCRIPT_DATA_ESCAPED_END_TAG_OPEN = 52
-    SCRIPT_DATA_ESCAPED_END_TAG_NAME = 53
-    SCRIPT_DATA_DOUBLE_ESCAPE_START = 54
-    SCRIPT_DATA_DOUBLE_ESCAPED = 55
-    SCRIPT_DATA_DOUBLE_ESCAPED_DASH = 56
-    SCRIPT_DATA_DOUBLE_ESCAPED_DASH_DASH = 57
-    SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN = 58
-    SCRIPT_DATA_DOUBLE_ESCAPE_END = 59
+    AFTER_ATTRIBUTE_VALUE_QUOTED = 11
+    SELF_CLOSING_START_TAG = 12
+    MARKUP_DECLARATION_OPEN = 13
+    COMMENT_START = 14
+    COMMENT_START_DASH = 15
+    COMMENT = 16
+    COMMENT_END_DASH = 17
+    COMMENT_END = 18
+    COMMENT_END_BANG = 19
+    BOGUS_COMMENT = 20
+    DOCTYPE = 21
+    BEFORE_DOCTYPE_NAME = 22
+    DOCTYPE_NAME = 23
+    AFTER_DOCTYPE_NAME = 24
+    BOGUS_DOCTYPE = 25
+    AFTER_DOCTYPE_PUBLIC_KEYWORD = 26
+    AFTER_DOCTYPE_SYSTEM_KEYWORD = 27
+    BEFORE_DOCTYPE_PUBLIC_IDENTIFIER = 28
+    DOCTYPE_PUBLIC_IDENTIFIER_DOUBLE_QUOTED = 29
+    DOCTYPE_PUBLIC_IDENTIFIER_SINGLE_QUOTED = 30
+    AFTER_DOCTYPE_PUBLIC_IDENTIFIER = 31
+    BETWEEN_DOCTYPE_PUBLIC_AND_SYSTEM_IDENTIFIERS = 32
+    BEFORE_DOCTYPE_SYSTEM_IDENTIFIER = 33
+    DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE_QUOTED = 34
+    DOCTYPE_SYSTEM_IDENTIFIER_SINGLE_QUOTED = 35
+    AFTER_DOCTYPE_SYSTEM_IDENTIFIER = 36
+    CDATA_SECTION = 37
+    CDATA_SECTION_BRACKET = 38
+    CDATA_SECTION_END = 39
+    RCDATA = 40
+    RCDATA_LESS_THAN_SIGN = 41
+    RCDATA_END_TAG_OPEN = 42
+    RCDATA_END_TAG_NAME = 43
+    RAWTEXT = 44
+    RAWTEXT_LESS_THAN_SIGN = 45
+    RAWTEXT_END_TAG_OPEN = 46
+    RAWTEXT_END_TAG_NAME = 47
+    PLAINTEXT = 48
+    SCRIPT_DATA_ESCAPED = 49
+    SCRIPT_DATA_ESCAPED_DASH = 50
+    SCRIPT_DATA_ESCAPED_DASH_DASH = 51
+    SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN = 52
+    SCRIPT_DATA_ESCAPED_END_TAG_OPEN = 53
+    SCRIPT_DATA_ESCAPED_END_TAG_NAME = 54
+    SCRIPT_DATA_DOUBLE_ESCAPE_START = 55
+    SCRIPT_DATA_DOUBLE_ESCAPED = 56
+    SCRIPT_DATA_DOUBLE_ESCAPED_DASH = 57
+    SCRIPT_DATA_DOUBLE_ESCAPED_DASH_DASH = 58
+    SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN = 59
+    SCRIPT_DATA_DOUBLE_ESCAPE_END = 60
 
     __slots__ = (
         "_char_token",
@@ -505,7 +506,10 @@ class Tokenizer:
                 self.state = self.ATTRIBUTE_NAME
                 return self._state_attribute_name()
             self._start_attribute()
-            if "A" <= c <= "Z":
+            if c == "\0":
+                self._emit_error("Null in attribute name")
+                c = "\ufffd"
+            elif "A" <= c <= "Z":
                 c = chr(ord(c) + 32)
             self.current_attr_name.append(c)
             self.state = self.ATTRIBUTE_NAME
@@ -609,7 +613,10 @@ class Tokenizer:
                 return False
             self._finish_attribute()
             self._start_attribute()
-            if "A" <= c <= "Z":
+            if c == "\0":
+                self._emit_error("Null in attribute name")
+                c = "\ufffd"
+            elif "A" <= c <= "Z":
                 c = chr(ord(c) + 32)
             self.current_attr_name.append(c)
             self.state = self.ATTRIBUTE_NAME
@@ -687,8 +694,8 @@ class Tokenizer:
             self.current_char = c
 
             if c == '"':
-                self.state = self.AFTER_ATTRIBUTE_NAME
-                return self._state_after_attribute_name()
+                self.state = self.AFTER_ATTRIBUTE_VALUE_QUOTED
+                return self._state_after_attribute_value_quoted()
             if c == "&":
                 self._append_attr_value_char("&")
                 self.current_attr_value_has_amp = True
@@ -744,8 +751,8 @@ class Tokenizer:
             self.current_char = c
 
             if c == "'":
-                self.state = self.AFTER_ATTRIBUTE_NAME
-                return False
+                self.state = self.AFTER_ATTRIBUTE_VALUE_QUOTED
+                return self._state_after_attribute_value_quoted()
             if c == "&":
                 self._append_attr_value_char("&")
                 self.current_attr_value_has_amp = True
@@ -803,6 +810,34 @@ class Tokenizer:
                 self._append_attr_value_char(replacement)
                 continue
             self._append_attr_value_char(c)
+
+    def _state_after_attribute_value_quoted(self):
+        """After attribute value (quoted) state per HTML5 spec §13.2.5.42"""
+        c = self._get_char()
+        if c is None:
+            self._emit_error("EOF after attribute value")
+            self._flush_text()
+            self._emit_token(EOFToken())
+            return True
+        if c in ("\t", "\n", "\f", " "):
+            self._finish_attribute()
+            self.state = self.BEFORE_ATTRIBUTE_NAME
+            return False
+        if c == "/":
+            self._finish_attribute()
+            self.state = self.SELF_CLOSING_START_TAG
+            return False
+        if c == ">":
+            self._finish_attribute()
+            if not self._emit_current_tag():
+                self.state = self.DATA
+            return False
+        # Anything else: parse error, reconsume in before attribute name state
+        self._emit_error("Missing whitespace between attributes")
+        self._finish_attribute()
+        self._reconsume_current()
+        self.state = self.BEFORE_ATTRIBUTE_NAME
+        return False
 
     def _state_self_closing_start_tag(self):
         c = self._get_char()
@@ -2328,6 +2363,7 @@ Tokenizer._STATE_HANDLERS = [
     Tokenizer._state_attribute_value_double,
     Tokenizer._state_attribute_value_single,
     Tokenizer._state_attribute_value_unquoted,
+    Tokenizer._state_after_attribute_value_quoted,
     Tokenizer._state_self_closing_start_tag,
     Tokenizer._state_markup_declaration_open,
     Tokenizer._state_comment_start,

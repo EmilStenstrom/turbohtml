@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import os
 import re
 import signal
@@ -388,7 +389,7 @@ class TestReporter:
         Quiet mode still limits stdout to the header line.
         """
         total = passed + failed
-        percentage = round(passed * 100 / total, 1) if total else 0
+        percentage = math.floor(passed * 1000 / total) / 10 if total else 0
         result = "FAILED" if failed else "PASSED"
         header = f"{result}: {passed}/{total} passed ({percentage}%)"
         if skipped:
