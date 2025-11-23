@@ -191,12 +191,17 @@ class TestRunner:
         if self.config["test_specs"]:
             spec_match = False
             for spec in self.config["test_specs"]:
-                if ":" not in spec:
-                    continue
-                spec_file, indices = spec.split(":")
-                if filename == spec_file and str(index) in indices.split(","):
-                    spec_match = True
-                    break
+                if ":" in spec:
+                    # Format: file:indices (e.g., tests1.dat:0,1,2)
+                    spec_file, indices = spec.split(":")
+                    if filename == spec_file and str(index) in indices.split(","):
+                        spec_match = True
+                        break
+                else:
+                    # Just filename - match any test in that file
+                    if spec in filename:
+                        spec_match = True
+                        break
             if not spec_match:
                 return False
 
@@ -233,9 +238,6 @@ class TestRunner:
 
         if self.config["exclude_files"]:
             files = [f for f in files if not any(exclude in f.name for exclude in self.config["exclude_files"])]
-
-        if self.config["filter_files"]:
-            files = [f for f in files if any(filter_str in f.name for filter_str in self.config["filter_files"])]
 
         return sorted(files, key=self._natural_sort_key)
 
@@ -347,7 +349,6 @@ class TestReporter:
     def is_full_run(self):
         return not (
             self.config.get("test_specs")
-            or self.config.get("filter_files")
             or self.config.get("exclude_files")
             or self.config.get("exclude_errors")
             or self.config.get("filter_errors")
@@ -492,12 +493,6 @@ def parse_args():
         help="Space-separated list of test specs in format: file:indices (e.g., test1.dat:0,1,2 test2.dat:5,6)",
     )
     parser.add_argument(
-        "--filter-files",
-        type=str,
-        nargs="+",
-        help="Only run tests from files containing any of these strings (space-separated)",
-    )
-    parser.add_argument(
         "-v",
         "--verbose",
         action="count",
@@ -556,7 +551,6 @@ def parse_args():
     return {
         "fail_fast": args.fail_fast,
         "test_specs": test_specs,
-        "filter_files": args.filter_files,
         "quiet": args.quiet,
         "exclude_errors": exclude_errors,
         "exclude_files": exclude_files,
@@ -577,7 +571,7 @@ def main():
 
     tree_passed, tree_failed, skipped = runner.run()
 
-    tok_passed, tok_total, tok_file_results = _run_tokenizer_tests()
+    tok_passed, tok_total, tok_file_results = _run_tokenizer_tests(config)
 
     total_passed = tree_passed + tok_passed
     total_failed = tree_failed + (tok_total - tok_passed)
@@ -625,9 +619,7 @@ def _map_initial_state(name):
     mapping = {
         "Data state": (Tokenizer.DATA, None),
         "PLAINTEXT state": (Tokenizer.PLAINTEXT, None),
-        # Use last_start_tag when provided; otherwise fall back to defaults.
-        # "rcdata" marker indicates RCDATA behavior (decode entities)
-        "RCDATA state": (Tokenizer.RAWTEXT, "rcdata"),
+        "RCDATA state": (Tokenizer.RCDATA, None),
         "RAWTEXT state": (Tokenizer.RAWTEXT, None),
         "Script data state": (Tokenizer.RAWTEXT, "script"),
         "CDATA section state": (Tokenizer.CDATA_SECTION, None),
@@ -666,7 +658,7 @@ def _collapse_characters(tokens):
     return collapsed
 
 
-def _run_tokenizer_tests():
+def _run_tokenizer_tests(config):
     root = Path("tests/html5lib-tests-tokenizer")
     if not root.exists():
         print("Tokenizer test directory missing: tests/html5lib-tests-tokenizer")
@@ -675,14 +667,50 @@ def _run_tokenizer_tests():
     total = 0
     passed = 0
     file_results = {}
+    verbosity = config.get("verbosity", 0)
+    quiet = config.get("quiet", False)
+    test_specs = config.get("test_specs", [])
+    
     for path in sorted(root.glob("*.test")):
+        filename = path.name
+        rel_path = str(path.relative_to(Path("tests")))
+        
+        # Parse test_specs to determine which tests to run
+        should_run_file = False
+        specific_indices = None
+        
+        if test_specs:
+            for spec in test_specs:
+                if ":" in spec:
+                    # Format: file:indices (e.g., test2.test:5,10)
+                    spec_file, indices_str = spec.split(":", 1)
+                    if spec_file in rel_path or spec_file in filename:
+                        should_run_file = True
+                        specific_indices = set(int(i) for i in indices_str.split(","))
+                        break
+                else:
+                    # Just filename - match any test in that file
+                    if spec in rel_path or spec in filename:
+                        should_run_file = True
+                        break
+            
+            if not should_run_file:
+                continue
+        else:
+            should_run_file = True
+        
         data = json.loads(path.read_text())
         key = "tests" if "tests" in data else "xmlViolationTests"
         tests = data.get(key, [])
         file_passed = 0
         file_failed = 0
         test_indices = []
+        
         for idx, test in enumerate(tests):
+            # Skip if specific indices requested and this isn't one of them
+            if specific_indices is not None and idx not in specific_indices:
+                continue
+            
             total += 1
             ok = _run_single_tokenizer_test(test)
             status = "pass" if ok else "fail"
@@ -692,6 +720,9 @@ def _run_tokenizer_tests():
                 file_passed += 1
             else:
                 file_failed += 1
+                # Print verbose output for failures
+                if verbosity >= 1 and not quiet:
+                    _print_tokenizer_failure(test, path.name, idx)
         rel_name = str(path.relative_to(Path("tests")))
         file_results[rel_name] = {
             "passed": file_passed,
@@ -701,6 +732,68 @@ def _run_tokenizer_tests():
             "test_indices": test_indices,
         }
     return passed, total, file_results
+
+
+def _print_tokenizer_failure(test, filename, test_index):
+    """Print detailed tokenizer test failure output."""
+    input_text = test["input"]
+    expected_tokens = test["output"]
+    
+    if test.get("doubleEscaped"):
+        input_text = _unescape_unicode(input_text)
+        def recurse(val):
+            if isinstance(val, str):
+                return _unescape_unicode(val)
+            if isinstance(val, list):
+                return [recurse(v) for v in val]
+            if isinstance(val, dict):
+                return {k: recurse(v) for k, v in val.items()}
+            return val
+        expected_tokens = recurse(expected_tokens)
+
+    initial_states = test.get("initialStates") or ["Data state"]
+    last_start_tag = test.get("lastStartTag")
+
+    print(f"\nFAILED: {filename} test #{test_index}")
+    print(f"Description: {test.get('description', 'N/A')}")
+    print(f"Input: {repr(input_text)}")
+    print(f"Initial states: {initial_states}")
+    if last_start_tag:
+        print(f"Last start tag: {last_start_tag}")
+    
+    print(f"\n=== EXPECTED TOKENS ===")
+    for tok in expected_tokens:
+        print(f"  {tok}")
+
+    # Run the test and show actual output
+    for state_name in initial_states:
+        mapped = _map_initial_state(state_name)
+        if not mapped:
+            print(f"\n!!! State {state_name} not mapped !!!")
+            continue
+        initial_state, raw_tag = mapped
+        if last_start_tag:
+            raw_tag = last_start_tag
+        sink = RecordingTreeBuilder()
+        opts = TokenizerOpts(initial_state=initial_state, initial_rawtext_tag=raw_tag, discard_bom=False)
+        tok = Tokenizer(sink, opts)
+        tok.last_start_tag_name = last_start_tag
+        tok.run(input_text)
+        actual = [r for t in sink.tokens if (r := _token_to_list(t)) is not None]
+        actual = _collapse_characters(actual)
+
+        print(f"\n=== ACTUAL TOKENS (state: {state_name}) ===")
+        for t in actual:
+            print(f"  {t}")
+
+        if actual != expected_tokens:
+            print(f"\n=== DIFFERENCES ===")
+            max_len = max(len(expected_tokens), len(actual))
+            for i in range(max_len):
+                exp = expected_tokens[i] if i < len(expected_tokens) else "<missing>"
+                act = actual[i] if i < len(actual) else "<missing>"
+                if exp != act:
+                    print(f"  Token {i}: expected {exp}, got {act}")
 
 
 def _run_single_tokenizer_test(test):
@@ -728,7 +821,8 @@ def _run_single_tokenizer_test(test):
         if not mapped:
             return False
         initial_state, raw_tag = mapped
-        if initial_state == Tokenizer.RAWTEXT and last_start_tag:
+        # If last_start_tag is provided, use it as the tag to match in RAWTEXT/RCDATA states
+        if last_start_tag:
             raw_tag = last_start_tag
         sink = RecordingTreeBuilder()
         opts = TokenizerOpts(initial_state=initial_state, initial_rawtext_tag=raw_tag, discard_bom=False)
