@@ -955,11 +955,6 @@ class TreeBuilder:
         if "\x00" in data:
             self._parse_error("invalid-codepoint")
             data = data.replace("\x00", "")
-        if "\x0c" in data:
-            self._parse_error("invalid-codepoint")
-            data = data.replace("\x0c", "")
-        if not data:
-            return
         if _is_all_whitespace(data):
             self._reconstruct_active_formatting_elements()
             self._append_text(data)
@@ -1355,7 +1350,6 @@ class TreeBuilder:
             self._parse_error("Unexpected closing tag")
             return
         self._pop_until_any_inclusive({"dd", "dt"})
-        return
 
     def _handle_body_end_form(self, token):
         if self.form_element is None:
@@ -2097,20 +2091,7 @@ class TreeBuilder:
                     self._reconstruct_active_formatting_elements()
                     self._insert_element(token, push=not token.self_closing, namespace=name)
                     return None
-                if name == "a":
-                    if self._has_active_formatting_entry("a"):
-                        self._adoption_agency("a")
-                        self._remove_last_active_formatting_by_name("a")
-                        self._remove_last_open_element_by_name("a")
-                    self._reconstruct_active_formatting_elements()
-                    node = self._insert_element(token, push=True)
-                    self._append_active_formatting_entry(name, token.attrs, node)
-                    return None
                 if name in FORMATTING_ELEMENTS:
-                    if name == "nobr" and self._in_scope("nobr"):
-                        self._adoption_agency("nobr")
-                        self._remove_last_active_formatting_by_name("nobr")
-                        self._remove_last_open_element_by_name("nobr")
                     self._reconstruct_active_formatting_elements()
                     duplicate_index = self._find_active_formatting_duplicate(name, token.attrs)
                     if duplicate_index is not None:
