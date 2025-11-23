@@ -517,18 +517,10 @@ class TreeBuilder:
                         # Inline _handle_characters_in_body
                         data = current_token.data or ""
                         if data:
-                            if "\x00" in data:
-                                self._parse_error("invalid-codepoint")
-                                data = data.replace("\x00", "")
-                            if "\x0c" in data:
-                                self._parse_error("invalid-codepoint")
-                                data = data.replace("\x0c", "")
-
-                            if data:
-                                if not _is_all_whitespace(data):
-                                    self.frameset_ok = False
-                                self._reconstruct_active_formatting_elements()
-                                self._append_text(data)
+                            if not _is_all_whitespace(data):
+                                self.frameset_ok = False
+                            self._reconstruct_active_formatting_elements()
+                            self._append_text(data)
                         result = None
                     elif token_type is CommentToken:
                         result = self._handle_comment_in_body(current_token)
@@ -571,17 +563,12 @@ class TreeBuilder:
                             if "\x0c" in data:
                                 self._parse_error("invalid-codepoint")
                                 data = data.replace("\x0c", "")
-                            if not data:
-                                result = None
-                            elif _is_all_whitespace(data):
+                            if data:
+                                if not _is_all_whitespace(data):
+                                    self._reconstruct_active_formatting_elements()
+                                    self.frameset_ok = False
                                 self._append_text(data)
-                                result = None
-                            else:
-                                # Reconstruct active formatting elements for non-whitespace text
-                                self._reconstruct_active_formatting_elements()
-                                self.frameset_ok = False
-                                self._append_text(data)
-                                result = None
+                            result = None
                         else:
                             result = None
                     else:
@@ -1308,12 +1295,6 @@ class TreeBuilder:
         self._reconstruct_active_formatting_elements()
         self._insert_element(token, push=True)
         self._push_formatting_marker()
-        self.frameset_ok = False
-        return
-
-    def _handle_body_start_hr(self, token):
-        self._close_p_element()
-        self._insert_element(token, push=False)
         self.frameset_ok = False
         return
 
@@ -3382,7 +3363,6 @@ class TreeBuilder:
         "head": _handle_body_start_head,
         "header": _handle_body_start_block_with_p,
         "hgroup": _handle_body_start_block_with_p,
-        "hr": _handle_body_start_hr,
         "html": _handle_body_start_html,
         "i": _handle_body_start_formatting,
         "image": _handle_body_start_image,
