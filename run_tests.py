@@ -626,7 +626,8 @@ def _map_initial_state(name):
         "Data state": (Tokenizer.DATA, None),
         "PLAINTEXT state": (Tokenizer.PLAINTEXT, None),
         # Use last_start_tag when provided; otherwise fall back to defaults.
-        "RCDATA state": (Tokenizer.RAWTEXT, None),
+        # "rcdata" marker indicates RCDATA behavior (decode entities)
+        "RCDATA state": (Tokenizer.RAWTEXT, "rcdata"),
         "RAWTEXT state": (Tokenizer.RAWTEXT, None),
         "Script data state": (Tokenizer.RAWTEXT, "script"),
         "CDATA section state": (Tokenizer.CDATA_SECTION, None),

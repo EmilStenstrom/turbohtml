@@ -1461,19 +1461,18 @@ class Tokenizer:
             # - RCDATA elements (title, textarea) decode character references
             # - RAWTEXT elements (style, script, etc) do NOT decode
             # - PLAINTEXT state does NOT decode
+            # - CDATA sections do NOT decode
             # Our tokenizer uses RAWTEXT state for both RCDATA and RAWTEXT elements
             # so we check the tag name to determine the correct behavior
-            if self.state >= self.PLAINTEXT:
-                self._char_token.data = data
-                self._emit_token(self._char_token)
-            elif self.state >= self.RAWTEXT and self.rawtext_tag_name not in _RCDATA_ELEMENTS:
-                self._char_token.data = data
-                self._emit_token(self._char_token)
+            # Special marker "rcdata" indicates RCDATA behavior for tests
+            if self.state >= self.PLAINTEXT or self.CDATA_SECTION <= self.state <= self.CDATA_SECTION_END:
+                self._emit_token(CharacterTokens(data))
+            elif self.state >= self.RAWTEXT and self.rawtext_tag_name not in _RCDATA_ELEMENTS and self.rawtext_tag_name != "rcdata":
+                self._emit_token(CharacterTokens(data))
             else:
                 if "&" in data:
                     data = decode_entities_in_text(data)
-                self._char_token.data = data
-                self._emit_token(self._char_token)
+                self._emit_token(CharacterTokens(data))
 
     def _start_tag(self, kind):
         self.current_tag_kind = kind
