@@ -548,9 +548,6 @@ class TreeBuilder:
                         name_lower = current_token.name
                         if name_lower in {"svg", "math"}:
                             should_pop = False
-                    if should_pop:
-                        # At integration points or SVG/Math insertion, don't pop
-                        pass
 
                 # Special handling: text at integration points inserts directly, bypassing mode dispatch
                 if isinstance(current_token, CharacterTokens):
