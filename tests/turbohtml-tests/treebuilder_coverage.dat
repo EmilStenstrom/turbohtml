@@ -1,0 +1,32 @@
+#data
+<!DOCTYPE>
+#errors
+#document
+| <!DOCTYPE >
+| <html>
+|   <head>
+|   <body>
+
+#data
+<math><mi>x&#x0C;y</mi></math>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <math math>
+|       <math mi>
+|         "xy"
+
+#data
+<table><caption>test</caption><caption>nested</caption></table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <caption>
+|         "test"
+|       <caption>
+|         "nested"
