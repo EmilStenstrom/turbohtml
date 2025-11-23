@@ -65,7 +65,7 @@ def _contains_prefix(haystack, needle):
     return any(needle.startswith(prefix) for prefix in haystack)
 
 
-def _doctype_error_and_quirks(doctype, iframe_srcdoc):
+def _doctype_error_and_quirks(doctype, iframe_srcdoc=False):
     name = doctype.name.lower() if doctype.name else None
     public_id = doctype.public_id
     system_id = doctype.system_id
@@ -89,10 +89,10 @@ def _doctype_error_and_quirks(doctype, iframe_srcdoc):
 
     if doctype.force_quirks:
         quirks_mode = "quirks"
-    elif name != "html":
-        quirks_mode = "quirks"
     elif iframe_srcdoc:
         quirks_mode = "no-quirks"
+    elif name != "html":
+        quirks_mode = "quirks"
     elif public_lower in QUIRKY_PUBLIC_MATCHES:
         quirks_mode = "quirks"
     elif system_lower in QUIRKY_SYSTEM_MATCHES:
@@ -290,13 +290,16 @@ class TreeBuilder:
         "table_text_original_mode",
         "template_modes",
         "tokenizer_state_override",
+        "iframe_srcdoc",
     )
 
     def __init__(
         self,
         fragment_context=None,
+        iframe_srcdoc=False,
     ):
         self.fragment_context = fragment_context
+        self.iframe_srcdoc = iframe_srcdoc
         self.fragment_context_element = None
         if fragment_context is not None:
             self.document = SimpleDomNode("#document-fragment")
@@ -657,7 +660,7 @@ class TreeBuilder:
             return TokenSinkResult.Continue
 
         doctype = token.doctype
-        parse_error, quirks_mode = _doctype_error_and_quirks(doctype, False)
+        parse_error, quirks_mode = _doctype_error_and_quirks(doctype, self.iframe_srcdoc)
 
         node = SimpleDomNode("!doctype", data=doctype)
         self.document.append_child(node)

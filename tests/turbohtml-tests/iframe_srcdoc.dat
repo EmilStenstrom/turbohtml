@@ -1,0 +1,11 @@
+#data
+#iframe-srcdoc
+<!DOCTYPE foo><p><table></table>
+#errors
+#document
+| <!DOCTYPE foo>
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|     <table>

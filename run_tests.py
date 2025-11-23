@@ -13,7 +13,7 @@ from pathlib import Path
 from turbohtml import TurboHTML
 from turbohtml.context import FragmentContext
 from turbohtml.tokenizer import Tokenizer, TokenizerOpts
-from turbohtml.tokens import CharacterTokens, CommentToken, Doctype, DoctypeToken, EOFToken, Tag, TokenSinkResult
+from turbohtml.tokens import CharacterTokens, CommentToken, Doctype, DoctypeToken, EOFToken, Tag
 from turbohtml.treebuilder import InsertionMode, TreeBuilder
 
 # Minimal Unix-friendly fix: if stdout is a pipe and the reader (e.g. `head`) closes early,
@@ -39,6 +39,7 @@ class TestCase:
         "fragment_context",
         "script_directive",
         "xml_coercion",
+        "iframe_srcdoc",
     ]
 
     def __init__(
@@ -49,6 +50,7 @@ class TestCase:
         fragment_context=None,
         script_directive=None,
         xml_coercion=False,
+        iframe_srcdoc=False,
     ):
         self.data = data
         self.errors = errors
@@ -56,6 +58,7 @@ class TestCase:
         self.fragment_context = fragment_context
         self.script_directive = script_directive
         self.xml_coercion = xml_coercion
+        self.iframe_srcdoc = iframe_srcdoc
 
 
 class TestResult:
@@ -152,6 +155,7 @@ class TestRunner:
         fragment_context = None
         script_directive = None
         xml_coercion = False
+        iframe_srcdoc = False
         mode = None
 
         for line in lines:
@@ -161,6 +165,8 @@ class TestRunner:
                     script_directive = directive
                 elif directive == "xml-coercion":
                     xml_coercion = True
+                elif directive == "iframe-srcdoc":
+                    iframe_srcdoc = True
                 else:
                     mode = directive
             elif mode == "data":
@@ -187,6 +193,7 @@ class TestRunner:
                 fragment_context=fragment_context,
                 script_directive=script_directive,
                 xml_coercion=xml_coercion,
+                iframe_srcdoc=iframe_srcdoc,
             )
 
         return None
@@ -325,6 +332,7 @@ class TestRunner:
                     debug=True,
                     fragment_context=test.fragment_context,
                     tokenizer_opts=opts,
+                    iframe_srcdoc=test.iframe_srcdoc,
                 )
                 actual_tree = parser.root.to_test_format()
             debug_output = f.getvalue()
@@ -333,6 +341,7 @@ class TestRunner:
                 test.data,
                 fragment_context=test.fragment_context,
                 tokenizer_opts=opts,
+                iframe_srcdoc=test.iframe_srcdoc,
             )
             actual_tree = parser.root.to_test_format()
 

@@ -15,10 +15,11 @@ class TurboHTML:
         fragment_context=None,
         tokenizer_opts=None,
         tree_builder=None,
+        iframe_srcdoc=False,
     ):
         self.debug = bool(debug)
         self.fragment_context = fragment_context
-        self.tree_builder = tree_builder or TreeBuilder(fragment_context=fragment_context)
+        self.tree_builder = tree_builder or TreeBuilder(fragment_context=fragment_context, iframe_srcdoc=iframe_srcdoc)
         opts = tokenizer_opts or TokenizerOpts()
 
         # For RAWTEXT fragment contexts, set initial tokenizer state and rawtext tag
