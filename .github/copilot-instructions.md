@@ -1,7 +1,7 @@
 ## TurboHTML – Agent instructions
 
 ### Core Purpose
-TurboHTML is a HTML5 parser targeting 100% html5 spec compliance. It's faster than html5lib or beautifulsoup, and easier to install than C or Rust alternatives.
+TurboHTML is a HTML5 parser that is 100% HTML5 spec compliant, as measured by the W3C HTML5 tokenizer and treebuilder tests. It's faster than html5lib and beautifulsoup, uses about half the memory, and is easier to install than C or Rust alternatives.
 
 # Decision & Clarification Policy (Overrides)
 

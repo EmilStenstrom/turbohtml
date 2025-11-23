@@ -9,6 +9,7 @@ Decompresses at runtime (no disk writes) using html.dict for optimal performance
 from __future__ import annotations
 
 import argparse
+import multiprocessing
 import os  # MEMORY: added
 import pathlib
 import sys
@@ -34,17 +35,20 @@ except Exception:
 
 # MEMORY: lightweight RSS monitor using psutil
 class MemoryMonitor:
-    def __init__(self, sample_interval: float = 0.01):
+    def __init__(self, pid: int | None = None, sample_interval: float = 0.01):
         """
+        pid: process ID to monitor (default: current process).
         sample_interval: seconds between samples (default 10ms).
         """
         self.sample_interval = sample_interval
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._proc = psutil.Process(os.getpid()) if _PSUTIL_AVAILABLE else None
+        target_pid = pid if pid is not None else os.getpid()
+        self._proc = psutil.Process(target_pid) if _PSUTIL_AVAILABLE else None
         self.start_rss = None
         self.end_rss = None
         self.peak_rss = None
+        self.last_rss = None
         self.samples = 0
 
     def _get_rss(self) -> int | None:
@@ -68,6 +72,7 @@ class MemoryMonitor:
         while not self._stop.is_set():
             rss = self._get_rss()
             if rss is not None:
+                self.last_rss = rss
                 if self.peak_rss is None or rss > self.peak_rss:
                     self.peak_rss = rss
                 self.samples += 1
@@ -79,7 +84,13 @@ class MemoryMonitor:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=1.0)
-        self.end_rss = self._get_rss()
+
+        # Try to get current RSS, if fail (process dead), use last seen
+        current = self._get_rss()
+        if current and current > 0:
+            self.end_rss = current
+        else:
+            self.end_rss = self.last_rss
 
     def to_dict(self) -> dict:
         if not _PSUTIL_AVAILABLE:
@@ -420,22 +431,64 @@ def benchmark_selectolax(html_files: list, iterations: int = 1) -> dict:
     }
 
 
+def _benchmark_worker(bench_fn, html_files, iterations, queue):
+    """Worker function to run benchmark in a separate process."""
+    try:
+        res = bench_fn(html_files, iterations)
+        queue.put(res)
+    except Exception as e:
+        queue.put({"error": str(e)})
+
+
+def run_benchmark_isolated(bench_fn, html_files, iterations, args):
+    """Run benchmark in a separate process to isolate memory usage."""
+    if args.no_mem or not _PSUTIL_AVAILABLE:
+        return bench_fn(html_files, iterations)
+
+    # Force GC in parent to minimize COW overhead (though fork handles it)
+    import gc
+    gc.collect()
+
+    queue = multiprocessing.Queue()
+    p = multiprocessing.Process(
+        target=_benchmark_worker,
+        args=(bench_fn, html_files, iterations, queue)
+    )
+    p.start()
+
+    # Monitor the child process
+    mon = MemoryMonitor(pid=p.pid, sample_interval=max(0.0005, args.mem_sample_ms / 1000.0))
+    mon.start()
+
+    res = None
+    try:
+        res = queue.get()
+    finally:
+        mon.stop()
+        p.join()
+
+    if res and "error" not in res:
+        res.update(mon.to_dict())
+    return res
+
+
 def print_results(results: dict, file_count: int, iterations: int = 1):
     """Pretty print benchmark results."""
-    print("\n" + "=" * 80)
+    print("\n" + "=" * 100)
     if iterations > 1:
         print(f"BENCHMARK RESULTS ({file_count} HTML files x {iterations} iterations)")
     else:
         print(f"BENCHMARK RESULTS ({file_count} HTML files)")
-    print("=" * 80)
+    print("=" * 100)
     parsers = ["turbohtml", "turbohtml_rust", "html5lib", "lxml", "bs4", "html.parser", "selectolax"]
-    # Timing header
-    if iterations > 1:
-        print(f"\n{'Parser':<15} {'Total (s)':<12} {'Per iter (s)':<13} {'Mean (ms)':<12} {'Errors':<8}")
-    else:
-        print(f"\n{'Parser':<15} {'Total (s)':<12} {'Mean (ms)':<12} {'Min (ms)':<12} {'Max (ms)':<12} {'Errors':<8}")
-    print("-" * 80)
+
+    # Combined header
+    header = f"\n{'Parser':<15} {'Total (s)':<10} {'Mean (ms)':<10} {'Peak (MB)':<10} {'Delta (MB)':<10} {'Errors':<8}"
+    print(header)
+    print("-" * 100)
+
     turbohtml_time = results.get("turbohtml", {}).get("total_time", 0)
+
     for parser in parsers:
         if parser not in results:
             continue
@@ -443,41 +496,24 @@ def print_results(results: dict, file_count: int, iterations: int = 1):
         if "error" in result:
             print(f"{parser:<15} {result['error']}")
             continue
+
         total = result["total_time"]
         mean_ms = result["mean_time"] * 1000
-        min_ms = result["min_time"] * 1000
-        max_ms = result["max_time"] * 1000
         errors = result["errors"]
+
+        # Memory stats
+        peak_mb = result.get("rss_peak_mb", 0)
+        delta_mb = result.get("rss_delta_mb", 0)
+        mem_str = f"{peak_mb:>10.1f} {delta_mb:>10.1f}" if "rss_peak_mb" in result else f"{'n/a':>10} {'n/a':>10}"
+
         speedup = ""
         if parser != "turbohtml" and turbohtml_time > 0 and total > 0:
             speedup_factor = total / turbohtml_time
             speedup = f" ({speedup_factor:.2f}x)"
-        if iterations > 1:
-            per_iter = total / iterations
-            print(f"{parser:<15} {total:<12.3f} {per_iter:<13.3f} {mean_ms:<12.3f} {errors:<8}{speedup}")
-        else:
-            print(f"{parser:<15} {total:<12.3f} {mean_ms:<12.3f} {min_ms:<12.3f} {max_ms:<12.3f} {errors:<8}{speedup}")
-    print("\n" + "=" * 80)
 
-    # MEMORY: Memory summary table (RSS)
-    any_mem = any("rss_peak_mb" in results.get(p, {}) for p in parsers)
-    if any_mem:
-        print("\nMemory (RSS) summary (MB):")
-        print(f"\n{'Parser':<15} {'Start':>8} {'End':>8} {'Delta':>8} {'Peak':>8} {'Samples':>9}")
-        print("-" * 80)
-        for parser in parsers:
-            if parser not in results:
-                continue
-            r = results[parser]
-            if "rss_peak_mb" in r:
-                print(
-                    f"{parser:<15} {r['rss_start_mb']:>8.1f} {r['rss_end_mb']:>8.1f} {r['rss_delta_mb']:>8.1f} {r['rss_peak_mb']:>8.1f} {r['mem_samples']:>9}",
-                )
-            elif "error" in r:
-                print(f"{parser:<15} {'n/a':>8} {'n/a':>8} {'n/a':>8} {'n/a':>8} {'n/a':>9}  ({r['error']})")
-            else:
-                note = r.get("memory_note", "n/a")
-                print(f"{parser:<15} {'n/a':>8} {'n/a':>8} {'n/a':>8} {'n/a':>8} {'n/a':>9}  ({note})")
+        print(f"{parser:<15} {total:<10.3f} {mean_ms:<10.3f} {mem_str} {errors:<8}{speedup}")
+
+    print("\n" + "=" * 100)
 
     # Speedup summary
     if turbohtml_time > 0:
@@ -496,7 +532,7 @@ def print_results(results: dict, file_count: int, iterations: int = 1):
         result = results[parser]
         error_files = result.get("error_files", [])
         if error_files:
-            print(f"\n{parser} errors:")
+            print(f"\nErrors for {parser}:")
             for filename, error_msg in error_files:
                 print(f"  {filename}: {error_msg}")
             print()
@@ -572,16 +608,8 @@ def main():
 
     # Helper: run a benchmark with optional memory measurement
     def run_with_memory(bench_fn, *bargs, **bkwargs):
-        if args.no_mem or not _PSUTIL_AVAILABLE:
-            return bench_fn(*bargs, **bkwargs)
-        mon = MemoryMonitor(sample_interval=max(0.0005, args.mem_sample_ms / 1000.0))
-        mon.start()
-        try:
-            res = bench_fn(*bargs, **bkwargs)
-        finally:
-            mon.stop()
-        res.update(mon.to_dict())
-        return res
+        # Use isolated process runner
+        return run_benchmark_isolated(bench_fn, *bargs, args=args)
 
     # Run benchmarks
     results = {}
