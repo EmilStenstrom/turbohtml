@@ -388,7 +388,10 @@ class TestReporter:
         """
         total = passed + failed
         percentage = round(passed * 100 / total, 1) if total else 0
-        header = f"Tests passed: {passed}/{total} ({percentage}%) ({skipped} skipped)"
+        result = "FAILED" if failed else "PASSED"
+        header = f"{result}: {passed}/{total} passed ({percentage}%)"
+        if skipped:
+            header += f", {skipped} skipped"
         full_run = self.is_full_run()
 
         # Summary file
@@ -413,7 +416,7 @@ class TestReporter:
 
     def _generate_detailed_summary(self, overall_summary, file_results):
         """Generate a detailed summary with per-file breakdown."""
-        lines = [overall_summary, ""]
+        lines = []
 
         # Sort files naturally (tests1.dat, tests2.dat, etc.)
 
@@ -446,6 +449,9 @@ class TestReporter:
                 status_line += f" ({skipped_tests} skipped)"
 
             lines.append(status_line)
+
+        # Overall summary comes at the end
+        lines.extend(["", overall_summary])
 
         return "\n".join(lines)
 
@@ -584,10 +590,7 @@ def main():
     reporter.print_summary(total_passed, total_failed, skipped, combined_results)
 
     if total_failed:
-        print(f"\nAll tests: {total_passed}/{total_tests} passed ({total_failed} failed)")
         sys.exit(1)
-    else:
-        print(f"\nAll tests: {total_passed}/{total_tests} passed")
 
     # Integrated regression detection
     if config.get("regressions"):
@@ -622,8 +625,9 @@ def _map_initial_state(name):
     mapping = {
         "Data state": (Tokenizer.DATA, None),
         "PLAINTEXT state": (Tokenizer.PLAINTEXT, None),
-        "RCDATA state": (Tokenizer.RAWTEXT, "textarea"),  # decode entities
-        "RAWTEXT state": (Tokenizer.RAWTEXT, "script"),
+        # Use last_start_tag when provided; otherwise fall back to defaults.
+        "RCDATA state": (Tokenizer.RAWTEXT, None),
+        "RAWTEXT state": (Tokenizer.RAWTEXT, None),
         "Script data state": (Tokenizer.RAWTEXT, "script"),
         "CDATA section state": (Tokenizer.CDATA_SECTION, None),
     }
