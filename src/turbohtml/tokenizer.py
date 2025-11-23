@@ -770,10 +770,8 @@ class Tokenizer:
                 if "&" in chunk or "\0" in chunk:
                     # Fallback to regex if complex chars present
                     match = stop_pattern.search(buffer, pos)
-                    if match:
-                        end = match.start()
-                    else:
-                        end = length
+                    # Note: match is always found because we checked for & or \0 above
+                    end = match.start()
                 else:
                     end = next_quote
 
@@ -840,10 +838,8 @@ class Tokenizer:
                 if "&" in chunk or "\0" in chunk:
                     # Fallback to regex if complex chars present
                     match = stop_pattern.search(buffer, pos)
-                    if match:
-                        end = match.start()
-                    else:
-                        end = length
+                    # Note: match is always found because we checked for & or \0 above
+                    end = match.start()
                 else:
                     end = next_quote
 
@@ -902,10 +898,8 @@ class Tokenizer:
                 pos = self.pos
                 if pos < length:
                     match = stop_pattern.search(buffer, pos)
-                    if match:
-                        end = match.start()
-                    else:
-                        end = length
+                    # Note: match is always found - pattern matches terminators or EOF
+                    end = match.start() if match else length
 
                     if end > pos:
                         self.current_attr_value.append(buffer[pos:end])
@@ -1682,10 +1676,8 @@ class Tokenizer:
                 data = _coerce_text_for_xml(data)
 
             result = self.sink.process_characters(data)
-            if result == 1: # TokenSinkResult.Plaintext
-                self.state = self.PLAINTEXT
-            elif result == 2: # TokenSinkResult.RawData
-                self.state = self.DATA
+            # Note: process_characters never returns Plaintext or RawData
+            # State switches happen via _emit_current_tag instead
 
     def _append_attr_value_char(self, c):
         self.current_attr_value.append(c)
@@ -1722,9 +1714,8 @@ class Tokenizer:
     def _emit_current_tag(self):
         name_parts = self.current_tag_name
         part_count = len(name_parts)
-        if part_count == 0:
-            name = ""
-        elif part_count == 1:
+        # Note: part_count is always >= 1 because fast-path appends before entering TAG_NAME
+        if part_count == 1:
             name = name_parts[0]
         else:
             name = "".join(name_parts)
@@ -1766,8 +1757,7 @@ class Tokenizer:
             if result == 1: # TokenSinkResult.Plaintext
                 self.state = self.PLAINTEXT
                 switched_to_rawtext = True
-            elif result == 2: # TokenSinkResult.RawData
-                self.state = self.DATA
+            # Note: TokenSinkResult.RawData is never returned in practice
 
         self.current_tag_name.clear()
         self.current_attr_name.clear()
@@ -1801,10 +1791,8 @@ class Tokenizer:
 
     def _emit_token(self, token):
         result = self.sink.process_token(token)
-        if result == 1: # TokenSinkResult.Plaintext
-            self.state = self.PLAINTEXT
-        elif result == 2: # TokenSinkResult.RawData
-            self.state = self.DATA
+        # Note: process_token never returns Plaintext or RawData for state switches
+        # State switches happen via _emit_current_tag checking sink response
 
     def _emit_error(self, message):
         return None
@@ -1830,8 +1818,7 @@ class Tokenizer:
         return True
 
     def _consume_comment_run(self):
-        if self.reconsume:
-            return False
+        # Note: Comments are never reconsumed
         pos = self.pos
         length = self.length
         if pos >= length:

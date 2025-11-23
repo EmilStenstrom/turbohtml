@@ -144,5 +144,20 @@
         "input": "<div a<b>",
         "output": [["StartTag", "div", {"a<b": ""}]],
         "errors": [{"code": "unexpected-character-in-attribute-name", "line": 1, "col": 7}, {"code": "missing-attribute-value", "line": 1, "col": 9}]
+    },
+    {
+        "description": "CR in comment",
+        "input": "<!-- test\rcomment -->",
+        "output": [["Comment", " test\ncomment "]]
+    },
+    {
+        "description": "Script data escaped dash dash with less-than",
+        "input": "<script><!--a--<b</script>",
+        "output": [["StartTag", "script", {}], ["Character", "<!--a--<<b"], ["EndTag", "script"]]
+    },
+    {
+        "description": "Comment ending with ! followed by CRLF at EOF",
+        "input": "<!----!\r\n",
+        "output": [["Comment", "--!\n"]]
     }
 ]}
