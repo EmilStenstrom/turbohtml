@@ -1390,7 +1390,6 @@ class Tokenizer:
                 self.state = self.DATA
                 return False
             self._emit_error("Unexpected character after DOCTYPE system identifier")
-            self.current_doctype_force_quirks = True
             self._reconsume_current()
             self.state = self.BOGUS_DOCTYPE
             return False
