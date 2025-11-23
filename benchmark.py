@@ -470,7 +470,7 @@ def print_results(results, file_count, iterations=1):
     parsers = ["turbohtml", "turbohtml_rust", "html5lib", "lxml", "bs4", "html.parser", "selectolax"]
 
     # Combined header
-    header = f"\n{'Parser':<15} {'Total (s)':<10} {'Mean (ms)':<10} {'Peak (MB)':<10} {'Delta (MB)':<10} {'Errors':<8}"
+    header = f"\n{'Parser':<15} {'Total (s)':<10} {'Mean (ms)':<10} {'Peak (MB)':<10} {'Delta (MB)':<10}"
     print(header)
     print("-" * 100)
 
@@ -486,7 +486,6 @@ def print_results(results, file_count, iterations=1):
 
         total = result["total_time"]
         mean_ms = result["mean_time"] * 1000
-        errors = result["errors"]
 
         # Memory stats
         peak_mb = result.get("rss_peak_mb", 0)
@@ -495,23 +494,16 @@ def print_results(results, file_count, iterations=1):
 
         speedup = ""
         if parser != "turbohtml" and turbohtml_time > 0 and total > 0:
-            speedup_factor = total / turbohtml_time
-            speedup = f" ({speedup_factor:.2f}x)"
+            speedup_factor = turbohtml_time / total
+            if speedup_factor > 1:
+                speedup = f" ({speedup_factor:.2f}x faster)"
+            else:
+                speedup = f" ({1/speedup_factor:.2f}x slower)"
 
-        print(f"{parser:<15} {total:<10.3f} {mean_ms:<10.3f} {mem_str} {errors:<8}{speedup}")
+        print(f"{parser:<15} {total:<10.3f} {mean_ms:<10.3f} {mem_str} {speedup}")
 
     print("\n" + "=" * 100)
 
-    # Speedup summary
-    if turbohtml_time > 0:
-        print("\nTurboHTML vs other parsers:")
-        for parser in ["html5lib", "lxml", "bs4", "html.parser", "selectolax"]:
-            if parser in results and "error" not in results[parser]:
-                total = results[parser]["total_time"]
-                if total > 0:
-                    speedup = turbohtml_time / total
-                    print(f"  {parser:<15} {speedup:>6.2f}x {'slower' if speedup < 1 else 'faster'}")
-        print()
     # Error details
     for parser in parsers:
         if parser not in results:
@@ -616,11 +608,7 @@ def main():
         if "error" in res:
             print(f" SKIPPED ({res['error']})")
         else:
-            print(
-                f" DONE ({res['total_time']:.3f}s"
-                + (f", peak RSS {res.get('rss_peak_mb', 0):.1f} MB" if "rss_peak_mb" in res else "")
-                + ")",
-            )
+            print(f" DONE ({res['total_time']:.3f}s)")
 
     # Print results
     print_results(results, len(html_files), args.iterations)
