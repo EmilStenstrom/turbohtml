@@ -308,41 +308,12 @@ class Tokenizer:
             end = next_lt
 
             if end > pos:
-                # Check for null in the range
-                null_index = buffer.find("\0", pos, end)
-                if null_index != -1:
-                    # Found null, process up to null
-                    actual_end = null_index
-                    chunk = buffer[pos:actual_end]
-
-                    # Inline _append_text_chunk
-                    if chunk:
-                        if self.ignore_lf:
-                            if chunk.startswith("\n"):
-                                chunk = chunk[1:]
-                            self.ignore_lf = False
-
-                        if "\r" in chunk:
-                            chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
-
-                        self.line += chunk.count("\n")
-                        self.text_buffer.append(chunk)
-                        self.ignore_lf = chunk.endswith("\r")
-                    else:
-                        if self.ignore_lf:
-                            self.ignore_lf = False
-
-                    # Handle the null character
-                    self._emit_error("Null character in data state")
-                    self.text_buffer.append("\0")
-                    self.ignore_lf = False
-
-                    pos = actual_end + 1
-                    self.pos = pos
-                    continue
                 chunk = buffer[pos:end]
-                # Inline _append_text_chunk
-                # ignore_lf is always False here because it's cleared after null or <
+
+                if self.ignore_lf:
+                    if chunk.startswith("\n"):
+                        chunk = chunk[1:]
+                    self.ignore_lf = False
 
                 if "\r" in chunk:
                     chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
@@ -497,6 +468,15 @@ class Tokenizer:
         length = self.length
 
         while True:
+            # Optimization: Skip whitespace
+            if not self.reconsume:
+                if self.pos < length:
+                    match = _WHITESPACE_PATTERN.match(buffer, self.pos)
+                    if match:
+                        chunk = match.group(0)
+                        self.line += chunk.count("\n")
+                        self.pos = match.end()
+
             # Inline _get_char
             if self.reconsume:
                 self.reconsume = False
@@ -636,6 +616,15 @@ class Tokenizer:
         length = self.length
 
         while True:
+            # Optimization: Skip whitespace
+            if not self.reconsume and not self.ignore_lf:
+                if self.pos < length:
+                    match = _WHITESPACE_PATTERN.match(buffer, self.pos)
+                    if match:
+                        chunk = match.group(0)
+                        self.line += chunk.count("\n")
+                        self.pos = match.end()
+
             # Inline _get_char
             if self.reconsume:
                 self.reconsume = False
@@ -1601,6 +1590,11 @@ class Tokenizer:
         data = "".join(self.text_buffer)
         self.text_buffer.clear()
         if data:
+            if self.state == self.DATA and "\0" in data:
+                count = data.count("\0")
+                for _ in range(count):
+                    self._emit_error("Null character in data state")
+
             # Per HTML5 spec:
             # - RCDATA state (title, textarea): decode character references
             # - RAWTEXT state (style, script, etc): do NOT decode
