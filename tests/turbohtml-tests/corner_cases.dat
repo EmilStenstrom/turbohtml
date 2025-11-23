@@ -1,0 +1,48 @@
+#data
+<frameset><frame></frameset>text
+#errors
+#document
+| <html>
+|   <head>
+|   <frameset>
+|     <frame>
+
+#data
+<frameset><frame></frameset></frameset>
+#errors
+#document
+| <html>
+|   <head>
+|   <frameset>
+|     <frame>
+
+#data
+<template><p>in</template>out
+#errors
+#document
+| <html>
+|   <head>
+|     <template>
+|       content
+|         <p>
+|           "in"
+|   <body>
+|     "out"
+
+#data
+<?foo>
+#errors
+#document
+| <!-- ?foo -->
+| <html>
+|   <head>
+|   <body>
+
+#data
+<!foo>
+#errors
+#document
+| <!-- foo -->
+| <html>
+|   <head>
+|   <body>

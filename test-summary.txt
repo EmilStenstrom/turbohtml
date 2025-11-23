@@ -1,4 +1,4 @@
-Tests passed: 1765/1765 (100.0%) (39 skipped)
+Tests passed: 1770/1770 (100.0%) (39 skipped)
 
 html5lib-tests/adoption01.dat: 18/18 (100%) [..................]
 html5lib-tests/adoption02.dat: 2/2 (100%) [..]
@@ -59,6 +59,7 @@ html5lib-tests/tests_innerHTML_1.dat: 81/81 (100%) [............................
 html5lib-tests/tricky01.dat: 9/9 (100%) [.........]
 html5lib-tests/webkit01.dat: 52/52 (100%) [....................................................]
 html5lib-tests/webkit02.dat: 47/47 (100%) [.ss..............................................] (2 skipped)
+turbohtml-tests/corner_cases.dat: 5/5 (100%) [.....]
 turbohtml-tests/coverage_gaps.dat: 5/5 (100%) [.....]
 turbohtml-tests/doctypes.dat: 1/1 (100%) [.]
 turbohtml-tests/entities_edge_cases.dat: 6/6 (100%) [......]
