@@ -23,8 +23,9 @@ for key, value in _HTML5_ENTITIES.items():
 # Legacy named character references that can be used without semicolons
 # Per HTML5 spec, these are primarily ISO-8859-1 (Latin-1) entities from HTML4
 # Modern entities like "prod", "notin" etc. require semicolons
+# Note: Some have both uppercase and lowercase versions (e.g., COPY/copy, GT/gt)
 LEGACY_ENTITIES = {
-    "gt", "lt", "amp", "quot", "apos", "nbsp", "AMP",
+    "gt", "lt", "amp", "quot", "nbsp", "AMP", "QUOT", "GT", "LT", "COPY", "REG",
     "AElig", "Aacute", "Acirc", "Agrave", "Aring", "Atilde", "Auml",
     "Ccedil", "ETH", "Eacute", "Ecirc", "Egrave", "Euml",
     "Iacute", "Icirc", "Igrave", "Iuml",
@@ -234,13 +235,11 @@ def decode_entities_in_text(text, in_attribute=False):
             end_pos = i + 1 + best_match_len
             next_char = text[end_pos] if end_pos < length else None
             if in_attribute:
-                result.append("&")
-                i += 1
-                continue
-            if next_char and (next_char.islower() or next_char.isdigit()):
-                result.append("&")
-                i += 1
-                continue
+                # In attributes, don't decode if followed by alphanumeric or =
+                if next_char and (next_char.isalnum() or next_char == "="):
+                    result.append("&")
+                    i += 1
+                    continue
 
             result.append(best_match)
             i = i + 1 + best_match_len

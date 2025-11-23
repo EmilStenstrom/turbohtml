@@ -78,23 +78,27 @@ class Tokenizer:
     CDATA_SECTION = 36
     CDATA_SECTION_BRACKET = 37
     CDATA_SECTION_END = 38
-    RAWTEXT = 39
-    RAWTEXT_LESS_THAN_SIGN = 40
-    RAWTEXT_END_TAG_OPEN = 41
-    RAWTEXT_END_TAG_NAME = 42
-    PLAINTEXT = 43
-    SCRIPT_DATA_ESCAPED = 44
-    SCRIPT_DATA_ESCAPED_DASH = 45
-    SCRIPT_DATA_ESCAPED_DASH_DASH = 46
-    SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN = 47
-    SCRIPT_DATA_ESCAPED_END_TAG_OPEN = 48
-    SCRIPT_DATA_ESCAPED_END_TAG_NAME = 49
-    SCRIPT_DATA_DOUBLE_ESCAPE_START = 50
-    SCRIPT_DATA_DOUBLE_ESCAPED = 51
-    SCRIPT_DATA_DOUBLE_ESCAPED_DASH = 52
-    SCRIPT_DATA_DOUBLE_ESCAPED_DASH_DASH = 53
-    SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN = 54
-    SCRIPT_DATA_DOUBLE_ESCAPE_END = 55
+    RCDATA = 39
+    RCDATA_LESS_THAN_SIGN = 40
+    RCDATA_END_TAG_OPEN = 41
+    RCDATA_END_TAG_NAME = 42
+    RAWTEXT = 43
+    RAWTEXT_LESS_THAN_SIGN = 44
+    RAWTEXT_END_TAG_OPEN = 45
+    RAWTEXT_END_TAG_NAME = 46
+    PLAINTEXT = 47
+    SCRIPT_DATA_ESCAPED = 48
+    SCRIPT_DATA_ESCAPED_DASH = 49
+    SCRIPT_DATA_ESCAPED_DASH_DASH = 50
+    SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN = 51
+    SCRIPT_DATA_ESCAPED_END_TAG_OPEN = 52
+    SCRIPT_DATA_ESCAPED_END_TAG_NAME = 53
+    SCRIPT_DATA_DOUBLE_ESCAPE_START = 54
+    SCRIPT_DATA_DOUBLE_ESCAPED = 55
+    SCRIPT_DATA_DOUBLE_ESCAPED_DASH = 56
+    SCRIPT_DATA_DOUBLE_ESCAPED_DASH_DASH = 57
+    SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN = 58
+    SCRIPT_DATA_DOUBLE_ESCAPE_END = 59
 
     __slots__ = (
         "_char_token",
@@ -1458,16 +1462,13 @@ class Tokenizer:
         self.text_buffer.clear()
         if data:
             # Per HTML5 spec:
-            # - RCDATA elements (title, textarea) decode character references
-            # - RAWTEXT elements (style, script, etc) do NOT decode
-            # - PLAINTEXT state does NOT decode
-            # - CDATA sections do NOT decode
-            # Our tokenizer uses RAWTEXT state for both RCDATA and RAWTEXT elements
-            # so we check the tag name to determine the correct behavior
-            # Special marker "rcdata" indicates RCDATA behavior for tests
+            # - RCDATA state (title, textarea): decode character references
+            # - RAWTEXT state (style, script, etc): do NOT decode
+            # - PLAINTEXT state: do NOT decode
+            # - CDATA sections: do NOT decode
             if self.state >= self.PLAINTEXT or self.CDATA_SECTION <= self.state <= self.CDATA_SECTION_END:
                 self._emit_token(CharacterTokens(data))
-            elif self.state >= self.RAWTEXT and self.rawtext_tag_name not in _RCDATA_ELEMENTS and self.rawtext_tag_name != "rcdata":
+            elif self.state >= self.RAWTEXT:
                 self._emit_token(CharacterTokens(data))
             else:
                 if "&" in data:
@@ -1564,11 +1565,13 @@ class Tokenizer:
             name = "".join(name_parts)
         attrs = self.current_tag_attrs
         self.current_tag_attrs = {}
-        tag = self._tag_token
-        tag.kind = self.current_tag_kind
-        tag.name = name
-        tag.attrs = attrs
-        tag.self_closing = self.current_tag_self_closing
+        # Create a new Tag object instead of reusing to avoid reference issues
+        tag = Tag(
+            self.current_tag_kind,
+            name,
+            attrs,
+            self.current_tag_self_closing
+        )
         switched_to_rawtext = False
         if self.current_tag_kind == Tag.START:
             self.last_start_tag_name = name
@@ -1578,7 +1581,11 @@ class Tokenizer:
                 current_node = stack[-1] if stack else None
                 namespace = current_node.namespace if current_node else None
                 if namespace is None or namespace == "html":
-                    if name in _RAWTEXT_SWITCH_TAGS:
+                    if name in _RCDATA_ELEMENTS:
+                        self.state = self.RCDATA
+                        self.rawtext_tag_name = name
+                        switched_to_rawtext = True
+                    elif name in _RAWTEXT_SWITCH_TAGS:
                         self.state = self.RAWTEXT
                         self.rawtext_tag_name = name
                         switched_to_rawtext = True
@@ -1703,6 +1710,146 @@ class Tokenizer:
         self._reconsume_current()
         self.state = self.CDATA_SECTION
         return False
+
+    def _state_rcdata(self):
+        buffer = self.buffer
+        length = self.length
+        pos = self.pos
+        while True:
+            if self.reconsume:
+                self.reconsume = False
+                if self.current_char is None:
+                    self._flush_text()
+                    self._emit_token(EOFToken())
+                    return True
+                self.pos -= 1
+                pos = self.pos
+
+            # Optimized loop using find
+            lt_index = buffer.find("<", pos)
+            amp_index = buffer.find("&", pos)
+            null_index = buffer.find("\0", pos)
+
+            # Find the nearest special character
+            next_special = length
+            if lt_index != -1:
+                next_special = lt_index
+            if amp_index != -1 and amp_index < next_special:
+                next_special = amp_index
+            if null_index != -1 and null_index < next_special:
+                next_special = null_index
+
+            # Consume everything up to the special character
+            if next_special > pos:
+                chunk = buffer[pos:next_special]
+                self._append_text_chunk(chunk, ends_with_cr=chunk.endswith("\r"))
+                pos = next_special
+                self.pos = pos
+
+            # Handle EOF
+            if pos >= length:
+                self._flush_text()
+                self._emit_token(EOFToken())
+                return True
+
+            # Handle special characters
+            if null_index == pos:
+                self.ignore_lf = False
+                self._emit_error("Null character in RCDATA")
+                self.text_buffer.append("\ufffd")
+                pos += 1
+                self.pos = pos
+                continue
+
+            if amp_index == pos:
+                # Ampersand in RCDATA - will be decoded by _flush_text
+                self.text_buffer.append("&")
+                pos += 1
+                self.pos = pos
+                continue
+
+            if lt_index == pos:
+                # Less-than sign - might be start of end tag
+                pos += 1
+                self.pos = pos
+                self.state = self.RCDATA_LESS_THAN_SIGN
+                return False
+
+    def _state_rcdata_less_than_sign(self):
+        c = self._get_char()
+        if c == "/":
+            self.current_tag_name.clear()
+            self.state = self.RCDATA_END_TAG_OPEN
+            return False
+        self.text_buffer.append("<")
+        self._reconsume_current()
+        self.state = self.RCDATA
+        return False
+
+    def _state_rcdata_end_tag_open(self):
+        c = self._get_char()
+        if _is_ascii_alpha(c):
+            self.current_tag_name.append(c.lower())
+            self.original_tag_name.append(c)
+            self.state = self.RCDATA_END_TAG_NAME
+            return False
+        self.text_buffer.extend(("<", "/"))
+        self._reconsume_current()
+        self.state = self.RCDATA
+        return False
+
+    def _state_rcdata_end_tag_name(self):
+        # Check if this matches the opening tag name
+        while True:
+            c = self._get_char()
+            if _is_ascii_alpha(c):
+                self.current_tag_name.append(c.lower())
+                self.original_tag_name.append(c)
+                continue
+            # End of tag name - check if it matches
+            tag_name = "".join(self.current_tag_name)
+            if tag_name == self.rawtext_tag_name:
+                if c == ">":
+                    attrs = []
+                    tag = Tag(Tag.END, tag_name, attrs, False)
+                    self._flush_text()
+                    self._emit_token(tag)
+                    self.state = self.DATA
+                    self.rawtext_tag_name = None
+                    self.original_tag_name.clear()
+                    return False
+                if c in (" ", "\t", "\n", "\r", "\f"):
+                    # Whitespace after tag name - switch to BEFORE_ATTRIBUTE_NAME
+                    self.current_tag_kind = Tag.END
+                    self.current_tag_attrs = {}
+                    self.state = self.BEFORE_ATTRIBUTE_NAME
+                    return False
+                if c == "/":
+                    self._flush_text()
+                    self.current_tag_kind = Tag.END
+                    self.current_tag_attrs = {}
+                    self.state = self.SELF_CLOSING_START_TAG
+                    return False
+            # If we hit EOF or tag doesn't match, emit as text
+            if c is None:
+                # EOF - emit incomplete tag as text (preserve original case) then EOF
+                self.text_buffer.extend(("<", "/"))
+                for ch in self.original_tag_name:
+                    self.text_buffer.append(ch)
+                self.current_tag_name.clear()
+                self.original_tag_name.clear()
+                self._flush_text()
+                self._emit_token(EOFToken())
+                return True
+            # Not a matching end tag - emit as text (preserve original case)
+            self.text_buffer.extend(("<", "/"))
+            for ch in self.original_tag_name:
+                self.text_buffer.append(ch)
+            self.current_tag_name.clear()
+            self.original_tag_name.clear()
+            self._reconsume_current()
+            self.state = self.RCDATA
+            return False
 
     def _state_rawtext(self):
         buffer = self.buffer
@@ -2157,6 +2304,10 @@ Tokenizer._STATE_HANDLERS = [
     Tokenizer._state_cdata_section,
     Tokenizer._state_cdata_section_bracket,
     Tokenizer._state_cdata_section_end,
+    Tokenizer._state_rcdata,
+    Tokenizer._state_rcdata_less_than_sign,
+    Tokenizer._state_rcdata_end_tag_open,
+    Tokenizer._state_rcdata_end_tag_name,
     Tokenizer._state_rawtext,
     Tokenizer._state_rawtext_less_than_sign,
     Tokenizer._state_rawtext_end_tag_open,
