@@ -1542,11 +1542,6 @@ class TreeBuilder:
             name = token.name
             if token.kind == Tag.START:
                 if name == "caption":
-                    if self._has_in_table_scope("caption"):
-                        self._parse_error("unexpected-start-tag-implies-end-tag")
-                        if self._close_caption_element():
-                            return ("reprocess", InsertionMode.IN_TABLE, token)
-                        return None
                     self._clear_stack_until({"table", "template", "html"})
                     self._push_formatting_marker()
                     self._insert_element(token, push=True)
@@ -2458,12 +2453,7 @@ class TreeBuilder:
                     return
 
         # Fast path optimization for common case
-        if self.open_elements:
-            target = self.open_elements[-1]
-        elif self.document.children:
-            target = self.document.children[-1]
-        else:
-            target = self.document
+        target = self.open_elements[-1]
 
         if target.name not in TABLE_FOSTER_TARGETS and type(target) is not TemplateNode:
              children = target.children
@@ -2979,19 +2969,6 @@ class TreeBuilder:
         # use the fragment context element instead
         if not self.open_elements:
             return None
-        if self.fragment_context and len(self.open_elements) == 1 and self.open_elements[0].name == "html":
-            # Return a pseudo-node representing the fragment context
-            # We need something with .namespace, .name, and .attrs attributes
-            class PseudoNode:
-                def __init__(self, name, namespace):
-                    self.name = name
-                    self.namespace = namespace
-                    self.attrs = {}
-
-            return PseudoNode(
-                self.fragment_context.tag_name.lower(),
-                self.fragment_context.namespace,
-            )
         return self.open_elements[-1]
 
     def _should_use_foreign_content(self, token):
