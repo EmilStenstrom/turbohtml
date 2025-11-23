@@ -575,12 +575,16 @@ class Tokenizer:
                 return False
             if c == "=":
                 self._emit_error("Attribute name cannot start with '='")
-                self._start_attribute()
+                self.current_attr_name.clear()
+                self.current_attr_value.clear()
+                self.current_attr_value_has_amp = False
                 self.current_attr_name.append("=")
                 self.state = self.ATTRIBUTE_NAME
                 return self._state_attribute_name()
 
-            self._start_attribute()
+            self.current_attr_name.clear()
+            self.current_attr_value.clear()
+            self.current_attr_value_has_amp = False
             if c == "\0":
                 self._emit_error("Null in attribute name")
                 c = "\ufffd"
@@ -735,7 +739,9 @@ class Tokenizer:
                     self.state = self.DATA
                 return False
             self._finish_attribute()
-            self._start_attribute()
+            self.current_attr_name.clear()
+            self.current_attr_value.clear()
+            self.current_attr_value_has_amp = False
             if c == "\0":
                 self._emit_error("Null in attribute name")
                 c = "\ufffd"
@@ -1704,14 +1710,11 @@ class Tokenizer:
             if self.opts.xml_coercion:
                 data = _coerce_text_for_xml(data)
 
-            if False and hasattr(self.sink, "process_characters"):
-                result = self.sink.process_characters(data)
-                if result == 1: # TokenSinkResult.Plaintext
-                    self.state = self.PLAINTEXT
-                elif result == 2: # TokenSinkResult.RawData
-                    self.state = self.DATA
-            else:
-                self._emit_token(CharacterTokens(data))
+            result = self.sink.process_characters(data)
+            if result == 1: # TokenSinkResult.Plaintext
+                self.state = self.PLAINTEXT
+            elif result == 2: # TokenSinkResult.RawData
+                self.state = self.DATA
 
     def _start_tag(self, kind):
         self.current_tag_kind = kind
@@ -1721,11 +1724,6 @@ class Tokenizer:
         self.current_attr_value.clear()
         self.current_attr_value_has_amp = False
         self.current_tag_self_closing = False
-
-    def _start_attribute(self):
-        self.current_attr_name.clear()
-        self.current_attr_value.clear()
-        self.current_attr_value_has_amp = False
 
     def _append_attr_value_char(self, c):
         self.current_attr_value.append(c)

@@ -55,3 +55,14 @@ ignore = [
     "SLF001",
     "S105",
 ]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "def __init__",
+    "__slots__",
+]
