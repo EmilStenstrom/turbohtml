@@ -534,11 +534,6 @@ def parse_args():
         action="store_true",
         help="After a full (unfiltered) run, compare results to committed HEAD test-summary.txt and report new failures (exits 1 if regressions).",
     )
-    parser.add_argument(
-        "--tokenizer",
-        action="store_true",
-        help="Also run html5lib tokenizer tests (tests/html5lib-tests-tokenizer). Optional, slow.",
-    )
     args = parser.parse_args()
 
     # Preserve each provided spec exactly so patterns like 'tests1.dat:1,2,3' remain intact.
@@ -564,7 +559,6 @@ def parse_args():
         "filter_errors": filter_errors,
         "verbosity": args.verbose,
         "regressions": args.regressions,
-        "tokenizer": args.tokenizer,
     }
 
 
@@ -575,14 +569,25 @@ def main():
     runner = TestRunner(test_dir, config)
     reporter = TestReporter(config)
 
-    passed, failed, skipped = runner.run()
-    reporter.print_summary(passed, failed, skipped, runner.file_results)
+    tree_passed, tree_failed, skipped = runner.run()
 
-    if config.get("tokenizer"):
-        tok_passed, tok_total = _run_tokenizer_tests()
-        print(f"\nTokenizer tests: {tok_passed}/{tok_total} passed")
-        if tok_passed != tok_total:
-            sys.exit(1)
+    tok_passed, tok_total, tok_file_results = _run_tokenizer_tests()
+
+    total_passed = tree_passed + tok_passed
+    total_failed = tree_failed + (tok_total - tok_passed)
+    total_tests = (tree_passed + tree_failed) + tok_total
+
+    # Combine file results to show tokenizer files alongside tree tests
+    combined_results = dict(runner.file_results)
+    combined_results.update(tok_file_results)
+
+    reporter.print_summary(total_passed, total_failed, skipped, combined_results)
+
+    if total_failed:
+        print(f"\nAll tests: {total_passed}/{total_tests} passed ({total_failed} failed)")
+        sys.exit(1)
+    else:
+        print(f"\nAll tests: {total_passed}/{total_tests} passed")
 
     # Integrated regression detection
     if config.get("regressions"):
@@ -660,19 +665,37 @@ def _run_tokenizer_tests():
     root = Path("tests/html5lib-tests-tokenizer")
     if not root.exists():
         print("Tokenizer test directory missing: tests/html5lib-tests-tokenizer")
-        return 0, 0
+        return 0, 0, {}
 
     total = 0
     passed = 0
+    file_results = {}
     for path in sorted(root.glob("*.test")):
         data = json.loads(path.read_text())
         key = "tests" if "tests" in data else "xmlViolationTests"
         tests = data.get(key, [])
-        for test in tests:
+        file_passed = 0
+        file_failed = 0
+        test_indices = []
+        for idx, test in enumerate(tests):
             total += 1
-            if _run_single_tokenizer_test(test):
+            ok = _run_single_tokenizer_test(test)
+            status = "pass" if ok else "fail"
+            test_indices.append((status, idx))
+            if ok:
                 passed += 1
-    return passed, total
+                file_passed += 1
+            else:
+                file_failed += 1
+        rel_name = str(path.relative_to(Path("tests")))
+        file_results[rel_name] = {
+            "passed": file_passed,
+            "failed": file_failed,
+            "skipped": 0,
+            "total": file_passed + file_failed,
+            "test_indices": test_indices,
+        }
+    return passed, total, file_results
 
 
 def _run_single_tokenizer_test(test):
