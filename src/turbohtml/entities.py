@@ -186,22 +186,18 @@ def decode_entities_in_text(text, in_attribute=False):
             result.append(NAMED_ENTITIES[entity_name])
             i = j + 1
             continue
-
-        # If we have a semicolon but exact match failed, try prefix matching
-        # This handles &notit; -> ¬it; (decode &not, leave it;)
-        if has_semicolon:
+        # If semicolon present but no exact match, allow legacy prefix match in text
+        if has_semicolon and not in_attribute:
             best_match = None
             best_match_len = 0
             for k in range(len(entity_name), 0, -1):
                 prefix = entity_name[:k]
-                if prefix in NAMED_ENTITIES:
+                if prefix in LEGACY_ENTITIES and prefix in NAMED_ENTITIES:
                     best_match = NAMED_ENTITIES[prefix]
                     best_match_len = k
                     break
-
             if best_match:
                 result.append(best_match)
-                # Continue after the matched prefix, not after semicolon
                 i = i + 1 + best_match_len
                 continue
 
