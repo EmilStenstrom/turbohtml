@@ -1,0 +1,11 @@
+#data
+<textarea>Line 1
+Line 2</textarea>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <textarea>
+|       "Line 1
+Line 2"

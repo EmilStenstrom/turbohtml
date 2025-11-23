@@ -112,7 +112,8 @@ class TestRunner:
 
     def _parse_dat_file(self, path):
         """Parse a .dat file into a list of TestCase objects."""
-        content = path.read_text(encoding="utf-8")
+        with path.open("r", encoding="utf-8", newline="") as f:
+            content = f.read()
         tests = []
 
         # Split content into lines for proper parsing
