@@ -44,9 +44,6 @@ def _is_ascii_alpha(c):
 
 def _coerce_text_for_xml(text):
     """Apply XML coercion to text content."""
-    if not text:
-        return text
-
     # Fast path for ASCII
     if text.isascii():
         if "\f" in text:
