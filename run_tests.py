@@ -712,9 +712,12 @@ def _collapse_characters(tokens):
 
 
 def _run_tokenizer_tests(config):
-    root = Path("tests/html5lib-tests-tokenizer")
-    if not root.exists():
-        print("Tokenizer test directory missing: tests/html5lib-tests-tokenizer")
+    root = Path("tests")
+    # Use */*.test to match files in subdirectories, including symlinked ones (which ** skips)
+    test_files = list(root.glob("*/*.test"))
+
+    if not test_files:
+        print("No tokenizer tests found.")
         return 0, 0, {}
 
     total = 0
@@ -724,7 +727,7 @@ def _run_tokenizer_tests(config):
     quiet = config.get("quiet", False)
     test_specs = config.get("test_specs", [])
 
-    for path in sorted(root.glob("*.test")):
+    for path in sorted(test_files, key=lambda p: p.name):
         filename = path.name
         rel_path = str(path.relative_to(Path("tests")))
 
@@ -829,7 +832,8 @@ def _print_tokenizer_failure(test, filename, test_index, xml_coercion=False):
         if last_start_tag:
             raw_tag = last_start_tag
         sink = RecordingTreeBuilder()
-        opts = TokenizerOpts(initial_state=initial_state, initial_rawtext_tag=raw_tag, discard_bom=False, xml_coercion=xml_coercion)
+        discard_bom = test.get("discardBom", False)
+        opts = TokenizerOpts(initial_state=initial_state, initial_rawtext_tag=raw_tag, discard_bom=discard_bom, xml_coercion=xml_coercion)
         tok = Tokenizer(sink, opts)
         tok.last_start_tag_name = last_start_tag
         tok.run(input_text)
@@ -879,7 +883,8 @@ def _run_single_tokenizer_test(test, xml_coercion=False):
         if last_start_tag:
             raw_tag = last_start_tag
         sink = RecordingTreeBuilder()
-        opts = TokenizerOpts(initial_state=initial_state, initial_rawtext_tag=raw_tag, discard_bom=False, xml_coercion=xml_coercion)
+        discard_bom = test.get("discardBom", False)
+        opts = TokenizerOpts(initial_state=initial_state, initial_rawtext_tag=raw_tag, discard_bom=discard_bom, xml_coercion=xml_coercion)
         tok = Tokenizer(sink, opts)
         tok.last_start_tag_name = last_start_tag
         tok.run(input_text)
