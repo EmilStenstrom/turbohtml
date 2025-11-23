@@ -405,7 +405,9 @@ class TreeBuilder:
         return False
 
     def process_token(self, token):
-        if isinstance(token, DoctypeToken):
+        # Optimization: Use type() identity check instead of isinstance
+        token_type = type(token)
+        if token_type is DoctypeToken:
             return self._handle_doctype(token)
 
         reprocess = True
@@ -417,6 +419,8 @@ class TreeBuilder:
 
         while reprocess:
             reprocess = False
+            # Update token type for current token (it might have changed if reprocessed)
+            token_type = type(current_token)
 
             # Optimization: Check for HTML namespace first (common case)
             current_node = self.open_elements[-1] if self.open_elements else None
@@ -426,7 +430,6 @@ class TreeBuilder:
                 force_html_mode = False
                 if self.mode == InsertionMode.IN_BODY:
                     # Inline _mode_in_body for performance
-                    token_type = type(current_token)
                     if token_type is Tag:
                         # Inline _handle_tag_in_body
                         if current_token.kind == 0: # Tag.START

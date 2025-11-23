@@ -672,15 +672,15 @@ def _run_tokenizer_tests(config):
     verbosity = config.get("verbosity", 0)
     quiet = config.get("quiet", False)
     test_specs = config.get("test_specs", [])
-    
+
     for path in sorted(root.glob("*.test")):
         filename = path.name
         rel_path = str(path.relative_to(Path("tests")))
-        
+
         # Parse test_specs to determine which tests to run
         should_run_file = False
         specific_indices = None
-        
+
         if test_specs:
             for spec in test_specs:
                 if ":" in spec:
@@ -695,12 +695,12 @@ def _run_tokenizer_tests(config):
                     if spec in rel_path or spec in filename:
                         should_run_file = True
                         break
-            
+
             if not should_run_file:
                 continue
         else:
             should_run_file = True
-        
+
         data = json.loads(path.read_text())
         key = "tests" if "tests" in data else "xmlViolationTests"
         is_xml_violation = key == "xmlViolationTests"
@@ -708,12 +708,12 @@ def _run_tokenizer_tests(config):
         file_passed = 0
         file_failed = 0
         test_indices = []
-        
+
         for idx, test in enumerate(tests):
             # Skip if specific indices requested and this isn't one of them
             if specific_indices is not None and idx not in specific_indices:
                 continue
-            
+
             total += 1
             ok = _run_single_tokenizer_test(test, xml_coercion=is_xml_violation)
             status = "pass" if ok else "fail"
@@ -741,7 +741,7 @@ def _print_tokenizer_failure(test, filename, test_index):
     """Print detailed tokenizer test failure output."""
     input_text = test["input"]
     expected_tokens = test["output"]
-    
+
     if test.get("doubleEscaped"):
         input_text = _unescape_unicode(input_text)
         def recurse(val):
@@ -763,7 +763,7 @@ def _print_tokenizer_failure(test, filename, test_index):
     print(f"Initial states: {initial_states}")
     if last_start_tag:
         print(f"Last start tag: {last_start_tag}")
-    
+
     print(f"\n=== EXPECTED TOKENS ===")
     for tok in expected_tokens:
         print(f"  {tok}")
