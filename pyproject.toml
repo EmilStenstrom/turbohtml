@@ -11,6 +11,16 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 
+[project.optional-dependencies]
+benchmark = [
+    "psutil",
+    "zstandard",
+    "html5lib",
+    "lxml",
+    "beautifulsoup4",
+    "selectolax",
+]
+
 [project.urls]
 Homepage = "https://github.com/emilstenstrom/turbohtml"
 Issues = "https://github.com/emilstenstrom/turbohtml/issues"

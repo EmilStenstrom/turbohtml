@@ -22,14 +22,11 @@ except ImportError:
     print("ERROR: zstandard is required. Install with: pip install zstandard")
     sys.exit(1)
 
-# MEMORY: optional dependency for RSS sampling
 try:
     import psutil
-
-    _PSUTIL_AVAILABLE = True
-except Exception:
-    psutil = None
-    _PSUTIL_AVAILABLE = False
+except ImportError:
+    print("ERROR: psutil is required. Install with: pip install psutil")
+    sys.exit(1)
 
 
 # MEMORY: lightweight RSS monitor using psutil
@@ -43,7 +40,7 @@ class MemoryMonitor:
         self._stop = threading.Event()
         self._thread = None
         target_pid = pid if pid is not None else os.getpid()
-        self._proc = psutil.Process(target_pid) if _PSUTIL_AVAILABLE else None
+        self._proc = psutil.Process(target_pid)
         self.start_rss = None
         self.end_rss = None
         self.peak_rss = None
@@ -51,16 +48,12 @@ class MemoryMonitor:
         self.samples = 0
 
     def _get_rss(self):
-        if not self._proc:
-            return None
         try:
             return self._proc.memory_info().rss
         except Exception:
             return None
 
     def start(self):
-        if not _PSUTIL_AVAILABLE:
-            return
         self.start_rss = self._get_rss()
         self.peak_rss = self.start_rss
         self._stop.clear()
@@ -78,8 +71,6 @@ class MemoryMonitor:
             self._stop.wait(self.sample_interval)
 
     def stop(self):
-        if not _PSUTIL_AVAILABLE:
-            return
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=1.0)
@@ -92,9 +83,6 @@ class MemoryMonitor:
             self.end_rss = self.last_rss
 
     def to_dict(self):
-        if not _PSUTIL_AVAILABLE:
-            return {"memory_note": "psutil not installed; memory metrics skipped"}
-
         def mb(x):
             return (x or 0) / (1024 * 1024)
 
@@ -441,7 +429,7 @@ def _benchmark_worker(bench_fn, html_files, iterations, queue):
 
 def run_benchmark_isolated(bench_fn, html_files, iterations, args):
     """Run benchmark in a separate process to isolate memory usage."""
-    if args.no_mem or not _PSUTIL_AVAILABLE:
+    if args.no_mem:
         return bench_fn(html_files, iterations)
 
     # Force GC in parent to minimize COW overhead (though fork handles it)
@@ -620,8 +608,6 @@ def main():
         "html.parser": benchmark_html_parser,
         "selectolax": benchmark_selectolax,
     }
-    if not _PSUTIL_AVAILABLE and not args.no_mem:
-        print("Note: psutil not installed; memory metrics will be skipped. Install with: pip install psutil")
 
     for parser_name in args.parsers:
         print(f"\nBenchmarking {parser_name}...", end="", flush=True)
