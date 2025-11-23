@@ -161,8 +161,8 @@ class Tokenizer:
         self.current_tag_kind = Tag.START
         self.current_comment = []
         self.current_doctype_name = []
-        self.current_doctype_public = []
-        self.current_doctype_system = []
+        self.current_doctype_public = None  # None = not set, [] = empty string
+        self.current_doctype_system = None  # None = not set, [] = empty string
         self.current_doctype_force_quirks = False
         self.last_start_tag_name = None
         self.rawtext_tag_name = None
@@ -191,8 +191,8 @@ class Tokenizer:
         self.current_attr_value_has_amp = False
         self.current_comment.clear()
         self.current_doctype_name.clear()
-        self.current_doctype_public.clear()
-        self.current_doctype_system.clear()
+        self.current_doctype_public = None
+        self.current_doctype_system = None
         self.current_doctype_force_quirks = False
         self.current_tag_self_closing = False
         self.current_tag_kind = Tag.START
@@ -791,8 +791,8 @@ class Tokenizer:
             return False
         if self._consume_case_insensitive("DOCTYPE"):
             self.current_doctype_name.clear()
-            self.current_doctype_public.clear()
-            self.current_doctype_system.clear()
+            self.current_doctype_public = None
+            self.current_doctype_system = None
             self.current_doctype_force_quirks = False
             self.state = self.DOCTYPE
             return False
@@ -903,11 +903,7 @@ class Tokenizer:
             self.current_comment.extend(("-", replacement))
             self.state = self.COMMENT
             return False
-        if c == ">":
-            self._emit_error("Abrupt comment end")
-            self._emit_comment()
-            self.state = self.DATA
-            return False
+        # Per spec: append "-" and current char, switch to COMMENT state
         self.current_comment.extend(("-", c))
         self.state = self.COMMENT
         return False
@@ -1105,12 +1101,12 @@ class Tokenizer:
                 return False
             if c == '"':
                 self._emit_error("Missing whitespace before DOCTYPE public identifier")
-                self.current_doctype_public.clear()
+                self.current_doctype_public = []
                 self.state = self.DOCTYPE_PUBLIC_IDENTIFIER_DOUBLE_QUOTED
                 return False
             if c == "'":
                 self._emit_error("Missing whitespace before DOCTYPE public identifier")
-                self.current_doctype_public.clear()
+                self.current_doctype_public = []
                 self.state = self.DOCTYPE_PUBLIC_IDENTIFIER_SINGLE_QUOTED
                 return False
             if c == ">":
@@ -1139,12 +1135,12 @@ class Tokenizer:
                 return False
             if c == '"':
                 self._emit_error("Missing whitespace before DOCTYPE system identifier")
-                self.current_doctype_system.clear()
+                self.current_doctype_system = []
                 self.state = self.DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE_QUOTED
                 return False
             if c == "'":
                 self._emit_error("Missing whitespace before DOCTYPE system identifier")
-                self.current_doctype_system.clear()
+                self.current_doctype_system = []
                 self.state = self.DOCTYPE_SYSTEM_IDENTIFIER_SINGLE_QUOTED
                 return False
             if c == ">":
@@ -1171,11 +1167,11 @@ class Tokenizer:
             if c in ("\t", "\n", "\f", " "):
                 continue
             if c == '"':
-                self.current_doctype_public.clear()
+                self.current_doctype_public = []
                 self.state = self.DOCTYPE_PUBLIC_IDENTIFIER_DOUBLE_QUOTED
                 return False
             if c == "'":
-                self.current_doctype_public.clear()
+                self.current_doctype_public = []
                 self.state = self.DOCTYPE_PUBLIC_IDENTIFIER_SINGLE_QUOTED
                 return False
             if c == ">":
@@ -1256,12 +1252,12 @@ class Tokenizer:
                 return False
             if c == '"':
                 self._emit_error("Missing whitespace between DOCTYPE public and system identifiers")
-                self.current_doctype_system.clear()
+                self.current_doctype_system = []
                 self.state = self.DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE_QUOTED
                 return False
             if c == "'":
                 self._emit_error("Missing whitespace between DOCTYPE public and system identifiers")
-                self.current_doctype_system.clear()
+                self.current_doctype_system = []
                 self.state = self.DOCTYPE_SYSTEM_IDENTIFIER_SINGLE_QUOTED
                 return False
             self._emit_error("Unexpected character after DOCTYPE public identifier")
@@ -1286,11 +1282,11 @@ class Tokenizer:
                 self.state = self.DATA
                 return False
             if c == '"':
-                self.current_doctype_system.clear()
+                self.current_doctype_system = []
                 self.state = self.DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE_QUOTED
                 return False
             if c == "'":
-                self.current_doctype_system.clear()
+                self.current_doctype_system = []
                 self.state = self.DOCTYPE_SYSTEM_IDENTIFIER_SINGLE_QUOTED
                 return False
             self._emit_error("Unexpected character between DOCTYPE identifiers")
@@ -1311,11 +1307,11 @@ class Tokenizer:
             if c in ("\t", "\n", "\f", " "):
                 continue
             if c == '"':
-                self.current_doctype_system.clear()
+                self.current_doctype_system = []
                 self.state = self.DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE_QUOTED
                 return False
             if c == "'":
-                self.current_doctype_system.clear()
+                self.current_doctype_system = []
                 self.state = self.DOCTYPE_SYSTEM_IDENTIFIER_SINGLE_QUOTED
                 return False
             if c == ">":
@@ -1547,9 +1543,22 @@ class Tokenizer:
         if pos >= length:
             return False
 
+        # Handle ignore_lf for CRLF sequences
+        if self.ignore_lf and pos < length and self.buffer[pos] == "\n":
+            self.ignore_lf = False
+            pos += 1
+            self.pos = pos
+            if pos >= length:
+                return False
+
         match = _COMMENT_RUN_PATTERN.match(self.buffer, pos)
         if match:
-            self.current_comment.append(match.group(0))
+            chunk = match.group(0)
+            # Handle CRLF normalization for comments
+            if "\r" in chunk:
+                chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
+                self.ignore_lf = chunk.endswith("\r")
+            self.current_comment.append(chunk)
             self.pos = match.end()
             return True
         return False
@@ -1613,14 +1622,15 @@ class Tokenizer:
 
     def _emit_doctype(self):
         name = "".join(self.current_doctype_name) if self.current_doctype_name else None
-        public_id = "".join(self.current_doctype_public) if self.current_doctype_public else None
-        system_id = "".join(self.current_doctype_system) if self.current_doctype_system else None
+        # If public_id/system_id is a list (even empty), join it; if None, keep None
+        public_id = "".join(self.current_doctype_public) if self.current_doctype_public is not None else None
+        system_id = "".join(self.current_doctype_system) if self.current_doctype_system is not None else None
         doctype = Doctype(
             name=name, public_id=public_id, system_id=system_id, force_quirks=self.current_doctype_force_quirks,
         )
         self.current_doctype_name.clear()
-        self.current_doctype_public.clear()
-        self.current_doctype_system.clear()
+        self.current_doctype_public = None
+        self.current_doctype_system = None
         self.current_doctype_force_quirks = False
         self._emit_token(DoctypeToken(doctype))
 

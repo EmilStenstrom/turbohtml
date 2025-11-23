@@ -630,6 +630,7 @@ def _map_initial_state(name):
 def _token_to_list(token):
     if isinstance(token, DoctypeToken):
         d = token.doctype
+        # Test format uses "correctness" which is !force_quirks
         return ["DOCTYPE", d.name, d.public_id, d.system_id, not d.force_quirks]
     if isinstance(token, CommentToken):
         return ["Comment", token.data]
