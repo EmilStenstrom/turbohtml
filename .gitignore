@@ -171,4 +171,4 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 .python-version
-tests/html5lib-tests
+tests/html5lib-tests-*

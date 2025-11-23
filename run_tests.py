@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import re
 import signal
@@ -10,6 +11,9 @@ from pathlib import Path
 
 from turbohtml import TurboHTML
 from turbohtml.context import FragmentContext
+from turbohtml.tokenizer import Tokenizer, TokenizerOpts
+from turbohtml.tokens import CharacterTokens, CommentToken, DoctypeToken, EOFToken, Tag, TokenSinkResult
+from turbohtml.treebuilder import TreeBuilder
 
 # Minimal Unix-friendly fix: if stdout is a pipe and the reader (e.g. `head`) closes early,
 # writes would raise BrokenPipeError at interpreter shutdown. Reset SIGPIPE so the process
@@ -530,6 +534,11 @@ def parse_args():
         action="store_true",
         help="After a full (unfiltered) run, compare results to committed HEAD test-summary.txt and report new failures (exits 1 if regressions).",
     )
+    parser.add_argument(
+        "--tokenizer",
+        action="store_true",
+        help="Also run html5lib tokenizer tests (tests/html5lib-tests-tokenizer). Optional, slow.",
+    )
     args = parser.parse_args()
 
     # Preserve each provided spec exactly so patterns like 'tests1.dat:1,2,3' remain intact.
@@ -555,6 +564,7 @@ def parse_args():
         "filter_errors": filter_errors,
         "verbosity": args.verbose,
         "regressions": args.regressions,
+        "tokenizer": args.tokenizer,
     }
 
 
@@ -568,12 +578,140 @@ def main():
     passed, failed, skipped = runner.run()
     reporter.print_summary(passed, failed, skipped, runner.file_results)
 
+    if config.get("tokenizer"):
+        tok_passed, tok_total = _run_tokenizer_tests()
+        print(f"\nTokenizer tests: {tok_passed}/{tok_total} passed")
+        if tok_passed != tok_total:
+            sys.exit(1)
+
     # Integrated regression detection
     if config.get("regressions"):
         # Only meaningful for full unfiltered run
         if not reporter.is_full_run():
             return
         _run_regression_check(runner, reporter)
+
+
+# ---------------- Tokenizer test runner (html5lib tokenizer JSON) ----------------
+
+
+class RecordingTreeBuilder(TreeBuilder):
+    """TreeBuilder sink that also records emitted tokens."""
+
+    __slots__ = ("tokens",)
+
+    def __init__(self):
+        super().__init__()
+        self.tokens = []
+
+    def process_token(self, token):
+        self.tokens.append(token)
+        return super().process_token(token)
+
+
+def _unescape_unicode(text: str) -> str:
+    return re.sub(r"\\u([0-9A-Fa-f]{4})", lambda m: chr(int(m.group(1), 16)), text)
+
+
+def _map_initial_state(name):
+    mapping = {
+        "Data state": (Tokenizer.DATA, None),
+        "PLAINTEXT state": (Tokenizer.PLAINTEXT, None),
+        "RCDATA state": (Tokenizer.RAWTEXT, "textarea"),  # decode entities
+        "RAWTEXT state": (Tokenizer.RAWTEXT, "script"),
+        "Script data state": (Tokenizer.RAWTEXT, "script"),
+        "CDATA section state": (Tokenizer.CDATA_SECTION, None),
+    }
+    return mapping.get(name)
+
+
+def _token_to_list(token):
+    if isinstance(token, DoctypeToken):
+        d = token.doctype
+        return ["DOCTYPE", d.name, d.public_id, d.system_id, not d.force_quirks]
+    if isinstance(token, CommentToken):
+        return ["Comment", token.data]
+    if isinstance(token, CharacterTokens):
+        return ["Character", token.data]
+    if isinstance(token, Tag):
+        if token.kind == Tag.START:
+            attrs = token.attrs or {}
+            arr = ["StartTag", token.name, attrs]
+            if token.self_closing:
+                arr.append(True)
+            return arr
+        return ["EndTag", token.name]
+    if isinstance(token, EOFToken):
+        return None
+    return ["Unknown"]
+
+
+def _collapse_characters(tokens):
+    collapsed = []
+    for t in tokens:
+        if t and t[0] == "Character" and collapsed and collapsed[-1][0] == "Character":
+            collapsed[-1][1] += t[1]
+        else:
+            collapsed.append(t)
+    return collapsed
+
+
+def _run_tokenizer_tests():
+    root = Path("tests/html5lib-tests-tokenizer")
+    if not root.exists():
+        print("Tokenizer test directory missing: tests/html5lib-tests-tokenizer")
+        return 0, 0
+
+    total = 0
+    passed = 0
+    for path in sorted(root.glob("*.test")):
+        data = json.loads(path.read_text())
+        key = "tests" if "tests" in data else "xmlViolationTests"
+        tests = data.get(key, [])
+        for test in tests:
+            total += 1
+            if _run_single_tokenizer_test(test):
+                passed += 1
+    return passed, total
+
+
+def _run_single_tokenizer_test(test):
+    input_text = test["input"]
+    expected_tokens = test["output"]
+    if test.get("doubleEscaped"):
+        input_text = _unescape_unicode(input_text)
+
+        def recurse(val):
+            if isinstance(val, str):
+                return _unescape_unicode(val)
+            if isinstance(val, list):
+                return [recurse(v) for v in val]
+            if isinstance(val, dict):
+                return {k: recurse(v) for k, v in val.items()}
+            return val
+
+        expected_tokens = recurse(expected_tokens)
+
+    initial_states = test.get("initialStates") or ["Data state"]
+    last_start_tag = test.get("lastStartTag")
+
+    for state_name in initial_states:
+        mapped = _map_initial_state(state_name)
+        if not mapped:
+            return False
+        initial_state, raw_tag = mapped
+        if raw_tag is None and initial_state == Tokenizer.RAWTEXT and last_start_tag:
+            raw_tag = last_start_tag
+        sink = RecordingTreeBuilder()
+        opts = TokenizerOpts(initial_state=initial_state, initial_rawtext_tag=raw_tag, discard_bom=False)
+        tok = Tokenizer(sink, opts)
+        tok.last_start_tag_name = last_start_tag
+        tok.run(input_text)
+        actual = [r for t in sink.tokens if (r := _token_to_list(t)) is not None]
+        actual = _collapse_characters(actual)
+        if actual != expected_tokens:
+            return False
+    return True
 
 
 def _run_regression_check(runner, reporter):
