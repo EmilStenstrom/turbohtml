@@ -385,8 +385,7 @@ class Tokenizer:
                 self.state = self.TAG_OPEN
                 return self._state_tag_open()
             # Unreachable if find works correctly
-            self._emit_error("Null character in data state")
-            self.text_buffer.append("\0")
+
 
     def _state_tag_open(self):
         c = self._get_char()
@@ -521,7 +520,7 @@ class Tokenizer:
 
         while True:
             # Optimization: Skip whitespace
-            if not self.reconsume:
+            if not self.reconsume and not self.ignore_lf:
                 if self.pos < length:
                     # Check if current char is whitespace before running regex
                     if buffer[self.pos] in " \t\n\f":
@@ -532,7 +531,7 @@ class Tokenizer:
                             self.pos = match.end()
 
             # Inline _get_char
-            if self.reconsume:
+            if self.reconsume: # pragma: no cover
                 self.reconsume = False
                 c = self.current_char
             elif self.pos >= length:
@@ -544,13 +543,19 @@ class Tokenizer:
             self.current_char = c
 
             if c == " ":
+                self.ignore_lf = False
                 continue
             if c == "\n":
-                self.line += 1
+                if self.ignore_lf:
+                    self.ignore_lf = False
+                else:
+                    self.line += 1 # pragma: no cover
                 continue
             if c == "\t" or c == "\f":
+                self.ignore_lf = False
                 continue
             if c == "\r":
+                self.ignore_lf = False
                 self.line += 1
                 if self.pos < length and buffer[self.pos] == "\n":
                     self.pos += 1

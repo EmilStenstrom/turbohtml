@@ -1,0 +1,14 @@
+{
+    "xmlViolationTests": [
+        {
+            "description": "XML Coercion Form Feed",
+            "input": "\f",
+            "output": [["Character", " "]]
+        },
+        {
+            "description": "XML Coercion FDD0",
+            "input": "\uFDD0",
+            "output": [["Character", "\ufffd"]]
+        }
+    ]
+}
