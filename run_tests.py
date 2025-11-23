@@ -13,8 +13,8 @@ from pathlib import Path
 from turbohtml import TurboHTML
 from turbohtml.context import FragmentContext
 from turbohtml.tokenizer import Tokenizer, TokenizerOpts
-from turbohtml.tokens import CharacterTokens, CommentToken, DoctypeToken, EOFToken, Tag, TokenSinkResult
-from turbohtml.treebuilder import TreeBuilder
+from turbohtml.tokens import CharacterTokens, CommentToken, Doctype, DoctypeToken, EOFToken, Tag, TokenSinkResult
+from turbohtml.treebuilder import InsertionMode, TreeBuilder
 
 # Minimal Unix-friendly fix: if stdout is a pipe and the reader (e.g. `head`) closes early,
 # writes would raise BrokenPipeError at interpreter shutdown. Reset SIGPIPE so the process
@@ -608,8 +608,39 @@ class RecordingTreeBuilder(TreeBuilder):
         self.tokens = []
 
     def process_token(self, token):
-        self.tokens.append(token)
+        # Copy token because tokenizer might reuse it
+        if isinstance(token, Tag):
+            # Create a new Tag instance with the same data
+            # Note: attrs is already a new dict per token in tokenizer, so shallow copy of Tag is enough
+            # But to be safe and independent:
+            token_copy = Tag(token.kind, token.name, token.attrs, token.self_closing)
+            self.tokens.append(token_copy)
+        else:
+            # Other tokens (CharacterTokens, CommentToken, DoctypeToken) might also be reused?
+            # CharacterTokens is created new in _flush_text (currently).
+            # CommentToken is reused in tokenizer?
+            # Let's check tokenizer.
+            # For now, assume we need to copy everything if we want to be safe.
+            # But Tag is the main one.
+            # Let's use a generic copy if possible, or manual.
+            if isinstance(token, CharacterTokens):
+                self.tokens.append(CharacterTokens(token.data))
+            elif isinstance(token, CommentToken):
+                self.tokens.append(CommentToken(token.data))
+            elif isinstance(token, DoctypeToken):
+                d = token.doctype
+                self.tokens.append(DoctypeToken(Doctype(d.name, d.public_id, d.system_id, d.force_quirks)))
+            elif isinstance(token, EOFToken):
+                self.tokens.append(EOFToken())
+            else:
+                self.tokens.append(token)
+
         return super().process_token(token)
+
+    def process_characters(self, data):
+        if self.mode == InsertionMode.IN_BODY:
+            self.tokens.append(CharacterTokens(data))
+        return super().process_characters(data)
 
 
 def _unescape_unicode(text: str) -> str:

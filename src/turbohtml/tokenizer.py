@@ -333,9 +333,59 @@ class Tokenizer:
             self.current_char = c
             self.ignore_lf = False
             if c == "<":
+                # Optimization: Peek ahead for common tag starts
+                if pos < length:
+                    nc = buffer[pos]
+                    if ("a" <= nc <= "z") or ("A" <= nc <= "Z"):
+                        self._flush_text()
+                        # Inline _start_tag(Tag.START)
+                        self.current_tag_kind = Tag.START
+                        self.current_tag_name.clear()
+                        self.current_attr_name.clear()
+                        self.current_attr_value.clear()
+                        self.current_attr_value_has_amp = False
+                        self.current_tag_self_closing = False
+
+                        if "A" <= nc <= "Z":
+                            nc = chr(ord(nc) + 32)
+                        self.current_tag_name.append(nc)
+                        self.pos += 1
+                        self.state = self.TAG_NAME
+                        return self._state_tag_name()
+
+                    if nc == "!":
+                        # Optimization: Peek ahead for comments
+                        if pos + 2 < length and buffer[pos+1] == "-" and buffer[pos+2] == "-":
+                            self._flush_text()
+                            self.pos += 3 # Consume !--
+                            self.current_comment.clear()
+                            self.state = self.COMMENT_START
+                            return self._state_comment_start()
+
+                    if nc == "/":
+                        # Check next char for end tag
+                        if pos + 1 < length:
+                            nnc = buffer[pos + 1]
+                            if ("a" <= nnc <= "z") or ("A" <= nnc <= "Z"):
+                                self._flush_text()
+                                # Inline _start_tag(Tag.END)
+                                self.current_tag_kind = Tag.END
+                                self.current_tag_name.clear()
+                                self.current_attr_name.clear()
+                                self.current_attr_value.clear()
+                                self.current_attr_value_has_amp = False
+                                self.current_tag_self_closing = False
+
+                                if "A" <= nnc <= "Z":
+                                    nnc = chr(ord(nnc) + 32)
+                                self.current_tag_name.append(nnc)
+                                self.pos += 2 # Consume / and nnc
+                                self.state = self.TAG_NAME
+                                return self._state_tag_name()
+
                 self._flush_text()
                 self.state = self.TAG_OPEN
-                return False
+                return self._state_tag_open()
             # Unreachable if find works correctly
             self._emit_error("Null character in data state")
             self.text_buffer.append("\0")
@@ -412,7 +462,11 @@ class Tokenizer:
             if not self.reconsume and not self.ignore_lf:
                 pos = self.pos
                 if pos < length:
-                    match = _TAG_NAME_RUN_PATTERN.match(buffer, pos)
+                    # Optimization: Check for common terminators before regex
+                    match = None
+                    if buffer[pos] not in "\t\n\f />":
+                        match = _TAG_NAME_RUN_PATTERN.match(buffer, pos)
+
                     if match:
                         chunk = match.group(0)
                         if not chunk.islower():
@@ -471,11 +525,13 @@ class Tokenizer:
             # Optimization: Skip whitespace
             if not self.reconsume:
                 if self.pos < length:
-                    match = _WHITESPACE_PATTERN.match(buffer, self.pos)
-                    if match:
-                        chunk = match.group(0)
-                        self.line += chunk.count("\n")
-                        self.pos = match.end()
+                    # Check if current char is whitespace before running regex
+                    if buffer[self.pos] in " \t\n\f":
+                        match = _WHITESPACE_PATTERN.match(buffer, self.pos)
+                        if match:
+                            chunk = match.group(0)
+                            self.line += chunk.count("\n")
+                            self.pos = match.end()
 
             # Inline _get_char
             if self.reconsume:
@@ -545,7 +601,11 @@ class Tokenizer:
             if not self.reconsume and not self.ignore_lf:
                 pos = self.pos
                 if pos < length:
-                    match = _ATTR_NAME_RUN_PATTERN.match(buffer, pos)
+                    # Optimization: Check for common terminators before regex
+                    match = None
+                    if buffer[pos] not in " \t\n\f/>=":
+                        match = _ATTR_NAME_RUN_PATTERN.match(buffer, pos)
+
                     if match:
                         chunk = match.group(0)
                         if not chunk.islower():
@@ -1610,7 +1670,15 @@ class Tokenizer:
             # Apply XML coercion if enabled
             if self.opts.xml_coercion:
                 data = _coerce_text_for_xml(data)
-            self._emit_token(CharacterTokens(data))
+
+            if False and hasattr(self.sink, "process_characters"):
+                result = self.sink.process_characters(data)
+                if result == 1: # TokenSinkResult.Plaintext
+                    self.state = self.PLAINTEXT
+                elif result == 2: # TokenSinkResult.RawData
+                    self.state = self.DATA
+            else:
+                self._emit_token(CharacterTokens(data))
 
     def _start_tag(self, kind):
         self.current_tag_kind = kind
@@ -1670,7 +1738,11 @@ class Tokenizer:
         attrs = self.current_tag_attrs
         self.current_tag_attrs = {}
 
-        tag = Tag(self.current_tag_kind, name, attrs, self.current_tag_self_closing)
+        tag = self._tag_token
+        tag.kind = self.current_tag_kind
+        tag.name = name
+        tag.attrs = attrs
+        tag.self_closing = self.current_tag_self_closing
 
         switched_to_rawtext = False
         if self.current_tag_kind == Tag.START:
@@ -1694,10 +1766,16 @@ class Tokenizer:
                         switched_to_rawtext = True
         # Remember current state before emitting
         state_before_emit = self.state
-        self._emit_token(tag)
-        # Check if tree builder changed the state (e.g., for plaintext in HTML integration points)
-        if self.state != state_before_emit:
-            switched_to_rawtext = True
+
+        # Inline _emit_token
+        if self.sink:
+            result = self.sink.process_token(tag)
+            if result == 1: # TokenSinkResult.Plaintext
+                self.state = self.PLAINTEXT
+                switched_to_rawtext = True
+            elif result == 2: # TokenSinkResult.RawData
+                self.state = self.DATA
+
         self.current_tag_name.clear()
         self.current_attr_name.clear()
         self.current_attr_value.clear()

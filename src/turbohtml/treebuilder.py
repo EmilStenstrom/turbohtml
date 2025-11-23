@@ -2331,13 +2331,7 @@ class TreeBuilder:
                 return None
             return ("reprocess", InsertionMode.IN_BODY, token)
         if isinstance(token, CommentToken):
-            html_node = self._find_last_on_stack("html")
-            if html_node is None and self.fragment_context is not None and self.document.children:
-                html_node = next((child for child in self.document.children if child.name == "html"), None)
-            if html_node is not None:
-                html_node.append_child(SimpleDomNode("#comment", data=token.data))
-                return None
-            self._append_comment_to_document(token.data)
+            self._append_comment(token.data, parent=self.open_elements[0])
             return None
         if isinstance(token, Tag):
             if token.kind == Tag.START and token.name == "html":
@@ -2495,8 +2489,9 @@ class TreeBuilder:
         node = SimpleDomNode("#comment", data=text)
         self.document.append_child(node)
 
-    def _append_comment(self, text):
-        parent = self._current_node_or_html()
+    def _append_comment(self, text, parent=None):
+        if parent is None:
+            parent = self._current_node_or_html()
         # If parent is a template, insert into its content fragment
         if type(parent) is TemplateNode and parent.template_content:
             parent = parent.template_content
@@ -3533,3 +3528,38 @@ class TreeBuilder:
         Tag: _handle_tag_in_body,
         EOFToken: _handle_eof_in_body,
     }
+
+    def process_characters(self, data):
+        """Optimized path for character tokens."""
+        # Check for foreign content first
+        current_node = self.open_elements[-1] if self.open_elements else None
+        is_html_namespace = current_node is None or current_node.namespace in {None, "html"}
+
+        if not is_html_namespace:
+             return self.process_token(CharacterTokens(data))
+
+        if self.mode == InsertionMode.IN_BODY:
+            if not data:
+                return TokenSinkResult.Continue
+
+            if "\x00" in data:
+                self._parse_error("invalid-codepoint")
+                data = data.replace("\x00", "")
+            if "\x0c" in data:
+                self._parse_error("invalid-codepoint")
+                data = data.replace("\x0c", "")
+
+            if not data:
+                return TokenSinkResult.Continue
+
+            if _is_all_whitespace(data):
+                self._reconstruct_active_formatting_elements()
+                self._append_text(data)
+                return TokenSinkResult.Continue
+
+            self._reconstruct_active_formatting_elements()
+            self.frameset_ok = False
+            self._append_text(data)
+            return TokenSinkResult.Continue
+
+        return self.process_token(CharacterTokens(data))
