@@ -6,7 +6,6 @@ Decompresses at runtime (no disk writes) using html.dict for optimal performance
 """
 
 # ruff: noqa: PERF203, PLC0415, BLE001, S110
-from __future__ import annotations
 
 import argparse
 import multiprocessing
@@ -35,14 +34,14 @@ except Exception:
 
 # MEMORY: lightweight RSS monitor using psutil
 class MemoryMonitor:
-    def __init__(self, pid: int | None = None, sample_interval: float = 0.01):
+    def __init__(self, pid=None, sample_interval=0.01):
         """
         pid: process ID to monitor (default: current process).
         sample_interval: seconds between samples (default 10ms).
         """
         self.sample_interval = sample_interval
         self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
+        self._thread = None
         target_pid = pid if pid is not None else os.getpid()
         self._proc = psutil.Process(target_pid) if _PSUTIL_AVAILABLE else None
         self.start_rss = None
@@ -51,7 +50,7 @@ class MemoryMonitor:
         self.last_rss = None
         self.samples = 0
 
-    def _get_rss(self) -> int | None:
+    def _get_rss(self):
         if not self._proc:
             return None
         try:
@@ -92,7 +91,7 @@ class MemoryMonitor:
         else:
             self.end_rss = self.last_rss
 
-    def to_dict(self) -> dict:
+    def to_dict(self):
         if not _PSUTIL_AVAILABLE:
             return {"memory_note": "psutil not installed; memory metrics skipped"}
 
@@ -112,7 +111,7 @@ class MemoryMonitor:
         }
 
 
-def load_dict(dict_path: pathlib.Path) -> bytes:
+def load_dict(dict_path):
     """Load the zstd dictionary required for decompression."""
     if not dict_path.exists():
         print(f"ERROR: Dictionary not found at {dict_path}")
@@ -121,10 +120,10 @@ def load_dict(dict_path: pathlib.Path) -> bytes:
 
 
 def iter_html_from_batch(
-    batch_path: pathlib.Path,
-    dict_bytes: bytes,
-    limit: int | None = None,
-) -> list[tuple[str, str]]:
+    batch_path,
+    dict_bytes,
+    limit=None,
+):
     """
     Stream HTML files from a compressed batch without writing to disk.
     Returns list of (filename, html_content) tuples.
@@ -157,10 +156,10 @@ def iter_html_from_batch(
 
 
 def iter_html_from_downloaded(
-    downloaded_dir: pathlib.Path,
-    dict_bytes: bytes,
-    limit: int | None = None,
-) -> list[tuple[str, str]]:
+    downloaded_dir,
+    dict_bytes,
+    limit=None,
+):
     """
     Load HTML files from downloaded directory (*.html.zst files).
     Returns list of (filename, html_content) tuples.
@@ -187,10 +186,10 @@ def iter_html_from_downloaded(
 
 
 def iter_html_from_all_batches(
-    batches_dir: pathlib.Path,
-    dict_bytes: bytes,
-    limit: int | None = None,
-) -> list[tuple[str, str]]:
+    batches_dir,
+    dict_bytes,
+    limit=None,
+):
     """
     Load HTML files from all batch files in a directory.
     Returns list of (filename, html_content) tuples.
@@ -213,7 +212,7 @@ def iter_html_from_all_batches(
     return all_results
 
 
-def benchmark_turbohtml(html_files: list, iterations: int = 1) -> dict:
+def benchmark_turbohtml(html_files, iterations=1):
     """Benchmark TurboHTML parser with Rust tokenizer."""
     try:
         from turbohtml import TurboHTML
@@ -249,7 +248,7 @@ def benchmark_turbohtml(html_files: list, iterations: int = 1) -> dict:
     }
 
 
-def benchmark_html5lib(html_files: list, iterations: int = 1) -> dict:
+def benchmark_html5lib(html_files, iterations=1):
     """Benchmark html5lib parser."""
     try:
         import html5lib
@@ -282,7 +281,7 @@ def benchmark_html5lib(html_files: list, iterations: int = 1) -> dict:
     }
 
 
-def benchmark_lxml(html_files: list, iterations: int = 1) -> dict:
+def benchmark_lxml(html_files, iterations=1):
     """Benchmark lxml parser."""
     try:
         from lxml import html as lxml_html
@@ -315,7 +314,7 @@ def benchmark_lxml(html_files: list, iterations: int = 1) -> dict:
     }
 
 
-def benchmark_bs4(html_files: list, iterations: int = 1) -> dict:
+def benchmark_bs4(html_files, iterations=1):
     """Benchmark BeautifulSoup4 parser."""
     try:
         from bs4 import BeautifulSoup
@@ -348,7 +347,7 @@ def benchmark_bs4(html_files: list, iterations: int = 1) -> dict:
     }
 
 
-def benchmark_html_parser(html_files: list, iterations: int = 1) -> dict:
+def benchmark_html_parser(html_files, iterations=1):
     """Benchmark stdlib html.parser."""
     try:
         from html.parser import HTMLParser
@@ -398,7 +397,7 @@ def benchmark_html_parser(html_files: list, iterations: int = 1) -> dict:
     }
 
 
-def benchmark_selectolax(html_files: list, iterations: int = 1) -> dict:
+def benchmark_selectolax(html_files, iterations=1):
     """Benchmark selectolax parser."""
     try:
         from selectolax.parser import HTMLParser
@@ -472,7 +471,7 @@ def run_benchmark_isolated(bench_fn, html_files, iterations, args):
     return res
 
 
-def print_results(results: dict, file_count: int, iterations: int = 1):
+def print_results(results, file_count, iterations=1):
     """Pretty print benchmark results."""
     print("\n" + "=" * 100)
     if iterations > 1:
