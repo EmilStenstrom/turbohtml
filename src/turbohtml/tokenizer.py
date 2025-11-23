@@ -24,12 +24,13 @@ _COMMENT_RUN_PATTERN = re.compile(r"[^-\0]+")
 _WHITESPACE_PATTERN = re.compile(r"[ \t\n\f]+")
 
 # XML Coercion Regex
-_xml_invalid_parts = [r"\f", r"[\uFDD0-\uFDEF]"]
+_xml_invalid_single_chars = []
 for _plane in range(17):
     _base = _plane * 0x10000
-    _xml_invalid_parts.append(chr(_base + 0xFFFE))
-    _xml_invalid_parts.append(chr(_base + 0xFFFF))
-_XML_COERCION_PATTERN = re.compile("|".join(_xml_invalid_parts))
+    _xml_invalid_single_chars.append(chr(_base + 0xFFFE))
+    _xml_invalid_single_chars.append(chr(_base + 0xFFFF))
+
+_XML_COERCION_PATTERN = re.compile(r"[\f\uFDD0-\uFDEF" + "".join(_xml_invalid_single_chars) + "]")
 
 def _xml_coercion_callback(match):
     if match.group(0) == '\f':
@@ -45,14 +46,24 @@ def _coerce_text_for_xml(text):
     """Apply XML coercion to text content."""
     if not text:
         return text
+
+    # Fast path for ASCII
+    if text.isascii():
+        if "\f" in text:
+            return text.replace("\f", " ")
+        return text
+
+    if not _XML_COERCION_PATTERN.search(text):
+        return text
     return _XML_COERCION_PATTERN.sub(_xml_coercion_callback, text)
 
 
 def _coerce_comment_for_xml(text):
     """Apply XML coercion to comment content - handle double hyphens."""
     # Replace -- with - - (with space)
-    result = text.replace('--', '- -')
-    return result
+    if "--" in text:
+        return text.replace('--', '- -')
+    return text
 
 
 class TokenizerOpts:

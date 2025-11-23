@@ -72,5 +72,6 @@ html5lib-tests-tree/tricky01.dat: 9/9 (100%) [.........]
 html5lib-tests-tree/webkit01.dat: 52/52 (100%) [....................................................]
 html5lib-tests-tree/webkit02.dat: 47/47 (100%) [.ss..............................................] (2 skipped)
 turbohtml-tests/cr_handling.dat: 1/1 (100%) [.]
+turbohtml-tests/xml_coercion.dat: 2/2 (100%) [..]
 
-PASSED: 8554/8554 passed (100.0%), 39 skipped
+PASSED: 8556/8556 passed (100.0%), 39 skipped

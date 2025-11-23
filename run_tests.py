@@ -38,6 +38,7 @@ class TestCase:
         "errors",
         "fragment_context",
         "script_directive",
+        "xml_coercion",
     ]
 
     def __init__(
@@ -47,12 +48,14 @@ class TestCase:
         document,
         fragment_context=None,
         script_directive=None,
+        xml_coercion=False,
     ):
         self.data = data
         self.errors = errors
         self.document = document
         self.fragment_context = fragment_context
         self.script_directive = script_directive
+        self.xml_coercion = xml_coercion
 
 
 class TestResult:
@@ -148,6 +151,7 @@ class TestRunner:
         document = []
         fragment_context = None
         script_directive = None
+        xml_coercion = False
         mode = None
 
         for line in lines:
@@ -155,6 +159,8 @@ class TestRunner:
                 directive = line[1:]
                 if directive in ("script-on", "script-off"):
                     script_directive = directive
+                elif directive == "xml-coercion":
+                    xml_coercion = True
                 else:
                     mode = directive
             elif mode == "data":
@@ -180,6 +186,7 @@ class TestRunner:
                 document="\n".join(document),
                 fragment_context=fragment_context,
                 script_directive=script_directive,
+                xml_coercion=xml_coercion,
             )
 
         return None
@@ -259,7 +266,7 @@ class TestRunner:
                         file_test_indices.append(("skip", i))
                     continue
 
-                result = self._run_single_test(test)
+                result = self._run_single_test(test, xml_coercion=test.xml_coercion)
                 self.results.append(result)
 
                 if result.passed:
@@ -297,7 +304,7 @@ class TestRunner:
 
         return passed, failed, skipped
 
-    def _run_single_test(self, test):
+    def _run_single_test(self, test, xml_coercion=False):
         """Run a single test and return the result.
 
         Verbosity levels:
@@ -309,6 +316,7 @@ class TestRunner:
         verbosity = self.config["verbosity"]
         capture_debug = verbosity >= 2  # capture once (fast enough) when user wants debug
         debug_output = ""
+        opts = TokenizerOpts(xml_coercion=xml_coercion)
         if capture_debug:
             f = StringIO()
             with redirect_stdout(f):
@@ -316,6 +324,7 @@ class TestRunner:
                     test.data,
                     debug=True,
                     fragment_context=test.fragment_context,
+                    tokenizer_opts=opts,
                 )
                 actual_tree = parser.root.to_test_format()
             debug_output = f.getvalue()
@@ -323,6 +332,7 @@ class TestRunner:
             parser = TurboHTML(
                 test.data,
                 fragment_context=test.fragment_context,
+                tokenizer_opts=opts,
             )
             actual_tree = parser.root.to_test_format()
 
@@ -757,7 +767,7 @@ def _run_tokenizer_tests(config):
                 file_failed += 1
                 # Print verbose output for failures
                 if verbosity >= 1 and not quiet:
-                    _print_tokenizer_failure(test, path.name, idx)
+                    _print_tokenizer_failure(test, path.name, idx, xml_coercion=is_xml_violation)
         rel_name = str(path.relative_to(Path("tests")))
         file_results[rel_name] = {
             "passed": file_passed,
@@ -769,7 +779,7 @@ def _run_tokenizer_tests(config):
     return passed, total, file_results
 
 
-def _print_tokenizer_failure(test, filename, test_index):
+def _print_tokenizer_failure(test, filename, test_index, xml_coercion=False):
     """Print detailed tokenizer test failure output."""
     input_text = test["input"]
     expected_tokens = test["output"]
@@ -810,7 +820,7 @@ def _print_tokenizer_failure(test, filename, test_index):
         if last_start_tag:
             raw_tag = last_start_tag
         sink = RecordingTreeBuilder()
-        opts = TokenizerOpts(initial_state=initial_state, initial_rawtext_tag=raw_tag, discard_bom=False)
+        opts = TokenizerOpts(initial_state=initial_state, initial_rawtext_tag=raw_tag, discard_bom=False, xml_coercion=xml_coercion)
         tok = Tokenizer(sink, opts)
         tok.last_start_tag_name = last_start_tag
         tok.run(input_text)

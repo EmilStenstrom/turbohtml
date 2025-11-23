@@ -1,0 +1,20 @@
+#data
+#xml-coercion
+<!-- -- -->
+#errors
+#document
+| <!--  - -  -->
+| <html>
+|   <head>
+|   <body>
+
+#data
+#xml-coercion
+<div></div>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <div>
+|       " "
