@@ -265,9 +265,6 @@ class Tokenizer:
         return None
 
     def _append_text_chunk(self, chunk, *, ends_with_cr=False):
-        cr_index = chunk.find("\r")
-        if cr_index != -1:
-            chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
         self.line += chunk.count("\n")
         self.text_buffer.append(chunk)
         self.ignore_lf = ends_with_cr
@@ -282,11 +279,8 @@ class Tokenizer:
         pos = self.pos
         while True:
             if self.reconsume:
+                # Note: reconsume is never True at EOF in DATA state
                 self.reconsume = False
-                if self.current_char is None:
-                    self._flush_text()
-                    self._emit_token(EOFToken())
-                    return True
                 self.pos -= 1
                 pos = self.pos
 
@@ -307,11 +301,6 @@ class Tokenizer:
 
             if end > pos:
                 chunk = buffer[pos:end]
-
-                if self.ignore_lf:
-                    if chunk.startswith("\n"):
-                        chunk = chunk[1:]
-                    self.ignore_lf = False
 
                 if "\r" in chunk:
                     chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
@@ -407,13 +396,6 @@ class Tokenizer:
             self._reconsume_current()
             self.state = self.BOGUS_COMMENT
             return False
-        if _is_ascii_alpha(c):
-            self._start_tag(Tag.START)
-            if "A" <= c <= "Z":
-                c = chr(ord(c) + 32)
-            self.current_tag_name.append(c)
-            self.state = self.TAG_NAME
-            return self._state_tag_name()
 
         self._emit_error("Invalid first character of tag name")
         self.text_buffer.append("<")
@@ -430,13 +412,6 @@ class Tokenizer:
             self._flush_text()
             self._emit_token(EOFToken())
             return True
-        if _is_ascii_alpha(c):
-            self._start_tag(Tag.END)
-            if "A" <= c <= "Z":
-                c = chr(ord(c) + 32)
-            self.current_tag_name.append(c)
-            self.state = self.TAG_NAME
-            return False
         if c == ">":
             self._emit_error("Empty end tag")
             self.state = self.DATA
@@ -693,10 +668,7 @@ class Tokenizer:
                         self.pos = match.end()
 
             # Inline _get_char
-            if self.reconsume:
-                self.reconsume = False
-                c = self.current_char
-            elif self.pos >= length:
+            if self.pos >= length:
                 c = None
             else:
                 c = buffer[self.pos]
@@ -708,10 +680,9 @@ class Tokenizer:
                 self.ignore_lf = False
                 continue
             if c == "\n":
-                if self.ignore_lf:
-                    self.ignore_lf = False
-                    continue
-                self.line += 1
+                # Note: Only reachable when ignore_lf=True (CR-LF handling)
+                # Standalone \n is caught by whitespace optimization
+                self.ignore_lf = False
                 continue
             if c == "\r":
                 self.line += 1
@@ -1014,10 +985,8 @@ class Tokenizer:
         return False
 
     def _state_markup_declaration_open(self):
-        if self._consume_if("--"):
-            self.current_comment.clear()
-            self.state = self.COMMENT_START
-            return False
+        # Note: Comment handling (<!--) is optimized in DATA state fast-path
+        # This code only handles DOCTYPE and CDATA, or malformed markup
         if self._consume_case_insensitive("DOCTYPE"):
             self.current_doctype_name.clear()
             self.current_doctype_public = None
@@ -1717,15 +1686,6 @@ class Tokenizer:
                 self.state = self.PLAINTEXT
             elif result == 2: # TokenSinkResult.RawData
                 self.state = self.DATA
-
-    def _start_tag(self, kind):
-        self.current_tag_kind = kind
-        self.current_tag_name.clear()
-        # self.current_tag_attrs is already {} from _emit_current_tag or init
-        self.current_attr_name.clear()
-        self.current_attr_value.clear()
-        self.current_attr_value_has_amp = False
-        self.current_tag_self_closing = False
 
     def _append_attr_value_char(self, c):
         self.current_attr_value.append(c)

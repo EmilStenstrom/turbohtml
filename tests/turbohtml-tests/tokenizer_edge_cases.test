@@ -138,5 +138,11 @@
         "input": "<div \r\n attr>",
         "output": [["StartTag", "div", {"attr": ""}]],
         "errors": [{"code": "missing-attribute-value", "line": 2, "col": 7}]
+    },
+    {
+        "description": "Invalid char in attribute name",
+        "input": "<div a<b>",
+        "output": [["StartTag", "div", {"a<b": ""}]],
+        "errors": [{"code": "unexpected-character-in-attribute-name", "line": 1, "col": 7}, {"code": "missing-attribute-value", "line": 1, "col": 9}]
     }
 ]}
