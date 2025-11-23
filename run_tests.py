@@ -727,7 +727,7 @@ def _run_single_tokenizer_test(test):
         if not mapped:
             return False
         initial_state, raw_tag = mapped
-        if raw_tag is None and initial_state == Tokenizer.RAWTEXT and last_start_tag:
+        if initial_state == Tokenizer.RAWTEXT and last_start_tag:
             raw_tag = last_start_tag
         sink = RecordingTreeBuilder()
         opts = TokenizerOpts(initial_state=initial_state, initial_rawtext_tag=raw_tag, discard_bom=False)

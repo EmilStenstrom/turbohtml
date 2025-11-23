@@ -444,10 +444,7 @@ class Tokenizer:
             c = self._get_char()
             if c is None:
                 self._emit_error("EOF before attribute name")
-                # If this is an end tag for a RAWTEXT element, flush any pending text first
-                if self.current_tag_kind == Tag.END and self.rawtext_tag_name:
-                    self._flush_text()
-                self._emit_current_tag()
+                self._flush_text()
                 self._emit_token(EOFToken())
                 return True
             if c in ("\t", "\n", "\f", " "):
@@ -520,11 +517,7 @@ class Tokenizer:
             c = self._get_char()
             if c is None:
                 self._emit_error("EOF in attribute name")
-                self._finish_attribute()
-                # If this is an end tag for a RAWTEXT element, flush any pending text first
-                if self.current_tag_kind == Tag.END and self.rawtext_tag_name:
-                    self._flush_text()
-                self._emit_current_tag()
+                self._flush_text()
                 self._emit_token(EOFToken())
                 return True
             if c in ("\t", "\n", "\f", " "):
@@ -556,8 +549,7 @@ class Tokenizer:
             c = self._get_char()
             if c is None:
                 self._emit_error("EOF after attribute name")
-                self._finish_attribute()
-                self._emit_current_tag()
+                self._flush_text()
                 self._emit_token(EOFToken())
                 return True
             if c in ("\t", "\n", "\f", " "):
@@ -587,8 +579,7 @@ class Tokenizer:
             c = self._get_char()
             if c is None:
                 self._emit_error("EOF before attribute value")
-                self._finish_attribute()
-                self._emit_current_tag()
+                self._flush_text()
                 self._emit_token(EOFToken())
                 return True
             if c in ("\t", "\n", "\f", " "):
@@ -776,8 +767,7 @@ class Tokenizer:
         c = self._get_char()
         if c is None:
             self._emit_error("EOF in self-closing tag")
-            self._finish_attribute()
-            self._emit_current_tag()
+            self._flush_text()
             self._emit_token(EOFToken())
             return True
         if c == ">":
