@@ -1,70 +1,88 @@
 ## TurboHTML – Agent instructions
 
+### Core Purpose
+TurboHTML is a HTML5 parser targeting 100% html5 spec compliance. It's faster than html5lib or beautifulsoup, and easier to install than C or Rust alternatives.
+
 # Decision & Clarification Policy (Overrides)
 
-- Default to acting. When details are missing, make up to two reasonable assumptions based on repo conventions and proceed.
-- Ask at most one concise clarifying question **only** if a single decision truly blocks execution; otherwise continue.
-- Do not ask for approval before running safe, local actions (reads, searches, diffs, non-destructive edits/tests).
-- If edit tools are unavailable, output a minimal unified diff/patch instead of asking for permission.
-- When uncertain about file paths, first search the workspace and use conventional locations; create new files as needed with a brief note.
-- Replace “propose a follow-up” with “propose **and execute** the best alternative by default; ask only for destructive/irreversible choices.”
-- Keep preambles to a single declarative sentence (“I’m scanning the repo and then drafting a minimal fix.”) — no approval requests.
+- Replace "propose a follow-up" with "propose **and execute** the best alternative by default; ask only for destructive/irreversible choices."
+- Keep preambles to a single declarative sentence ("I'm scanning the repo and then drafting a minimal fix.") — no approval requests.
 
 ### Core Purpose
-TurboHTML is a HTML5 parser targeting 100% html5 spec compliance with handler modularity, speed (comparable to lxml), and lean memory (50% below BeautifulSoup).
+TurboHTML is a HTML5 parser targeting 100% html5 spec compliance with speed (comparable to lxml) and lean memory (50% below BeautifulSoup).
 
 ### Architecture Snapshot
-- Tokenizer (`tokenizer.py`): Spec state machines (incl. RAWTEXT). No exception-driven flow.
-- Parser + Handlers (`parser.py`, `handlers.py`): Ordered, specific→general dispatch. Pure `should_handle_*` predicates.
-- Node tree (`node.py`): DOM-like; always use `append_child()` / `insert_before()` (sibling links + cycle guard).
-- Context (`context.py`): `document_state` changed only via `parser.transition_to_state()`. Read `content_state` directly.
-- Adoption agency (`adoption.py`): Spec steps; table foster parenting safeguards.
-- Constants (`constants.py`): Ordered element category lists (ordering matters—don’t reshuffle).
+- Tokenizer (`tokenizer.py`): HTML5 spec state machine (~60 states). Handles RCDATA, RAWTEXT, CDATA, script escaping, comments, DOCTYPE, etc.
+- Tree builder (`treebuilder.py`): Token sink that constructs DOM tree following HTML5 construction rules.
+- Node tree (`node.py`): DOM-like structure. Always use `append_child()` / `insert_before()` for tree operations.
+- Entities (`entities.py`): HTML5 character reference decoding (named & numeric entities).
+- Constants (`constants.py`): HTML5 element categories, void elements, formatting elements, etc.
 
 ### Golden Rules
-1. Deterministic control flow: no try/except for normal branching or membership.
-2. Exceptions: none in hot paths unless truly unrecoverable.
-3. No reflective probing (`hasattr`, dynamic `getattr`) in performance paths.
-4. Persist only non-derivable state; infer the rest from stacks / tree.
-5. Handlers: early return for inapplicable modes (foreign content, template, frameset).
-6. Tree ops: never manual pointer hacks outside audited spots; no circular structures.
-7. Debug logging: structural/spec phrasing only; no test file name references.
-8. Minimal allocations: reuse locals; avoid per-token tiny objects.
-9. Formatting/adoption: follow spec steps; no heuristic “shortcuts”.
-10. Output determinism: attribute order only where tests require it (don’t gratuitously sort).
-11. Less code > more code: prefer removing/simplifying logic over adding layers; consolidate duplicate paths.
-12. Avoid one-off properties on `parser.py` / `context.py`: only add persistent fields after exhausting structural derivation (stacks, existing state) options.
-
-### Heuristics Policy
-No heuristics allowed, and if found remove and replace with spec-compliant code instead.
-
-### Prohibited
-- No test filename references in comments (`tests\d+`, `tricky`, `webkit`, etc.).
-- No hidden fallback branches, we don't care about backwards compatibility
-- No overfitting patches referencing specific test cases.
-- Caching “one-shot” flags that the structure (via parse tree or open elements) already implies.
-- No typing
-- No exceptions
-- No hasattr/getattr/delattr, we have full control of the code
+1. **Spec compliance first**: Follow WHATWG HTML5 spec exactly. No heuristics, no shortcuts.
+2. **No exceptions in hot paths**: Use deterministic control flow, not try/except for branching.
+3. **No reflective probing**: No `hasattr`, `getattr`, or `delattr` - all data structures used are deterministic.
+4. **Minimal allocations**: Reuse buffers, avoid per-token object creation in tokenizer.
+5. **No typing annotations**: Keep code clean and fast.
+6. **Token reuse**: Create new token objects when emitting (don't reuse references).
+7. **State machine purity**: Tokenizer state transitions follow spec state machine exactly.
+8. **No test-specific code**: No references to test files in comments or code.
 
 ### Testing Workflow
-1. Target failing areas first (use `--filter-files` or `--test-specs`).
-2. Use `-vv` to trace execution path through the parser.
-2. Iterate: fix → focused run → full run.
-3. Always check for regressions before continuing to the next test: run `python run_tests.py --regressions` to see regressions since the last git check-in.
-4. Never merge with net fewer passing tests unless justified.
-5. Quick snippet runner (full test suite never takes longer than 5s):
+1. **Target failures**: Use `--test-specs file:indices` to run specific tests
+   ```bash
+   python run_tests.py --test-specs test2.test:5,10 -v
    ```
-   python -c 'from turbohtml import TurboHTML; print(TurboHTML("<html>", debug=True).root.to_test_format())'
+
+2. **Check test output**: Use `-v` for diffs, `-vv` for debug output
+   ```bash
+   python run_tests.py --test-specs test3.test -vv
    ```
-6. Always use single quotes to avoid "bash: !doctype: event not found"
+
+3. **Run full suite**: Always check for regressions
+   ```bash
+   python run_tests.py -q  # Quick overview
+   python run_tests.py --regressions  # Check for new failures vs baseline
+   ```
+
+4. **Quick iteration**: Test snippet without full suite (full suite runs in ~1s)
+   ```bash
+   python -c 'from turbohtml import TurboHTML; print(TurboHTML("<html>").root.to_test_format())'
+   ```
+
+5. **Benchmark performance**: After changes, verify speed impact
+   ```bash
+   python benchmark.py --iterations 1 --parser turbohtml --no-mem
+   ```
+
+6. **Profile hotspots**: For performance optimization
+   ```bash
+   python profile_real.py  # Profiles on web100k dataset
+   ```
+
+### Test Runner Flags
+- `--test-specs FILE[:INDICES]`: Run specific test(s), e.g., `test2.test:5,10` or `tests1.dat`
+- `-v, -vv, -vvv`: Verbosity (diffs, debug output, full debug)
+- `-q, --quiet`: Summary only
+- `-x, --fail-fast`: Stop on first failure
+- `--regressions`: Compare against HEAD baseline
+- `--exclude-files`, `--exclude-errors`, `--exclude-html`: Skip tests matching patterns
+- `--filter-errors`, `--filter-html`: Only run tests matching patterns
+
+### Benchmark Flags (benchmark.py)
+- `--iterations 1`: Single run (default: 5 for averaging)
+- `--parser turbohtml`: Benchmark only TurboHTML (default: all parsers)
+- `--no-mem`: Disable memory profiling (faster)
+- `--limit N`: Test on N files (default: 100)
 
 ### Logging & Comments
-- Comments: current behavior + spec rationale (cite concept/step).
-- No historical notes ("Previously", "Removed"), prefer replacing old code with nothing.
-- Debug: use `self.debug()` / `parser.debug()`, no gating needed.
-- Be dilligent when determining consistent indentation.
+- Comments explain **why** (spec rationale), not **what** (code is self-documenting)
+- Cite spec sections when relevant (e.g., "Per §13.2.5.72")
+- No historical notes ("Previously", "Fixed", "Changed") - prefer removing old code
+- Debug calls: `self.debug()` / `parser.debug()` - no gating needed
 
 ### Performance Mindset
-- Keep tokenizer tight (no slicing churn, no exception rewinds).
-- Infer instead of storing (e.g., adoption state from stacks).
+- Tokenizer is hot path: minimize allocations, avoid string slicing
+- Use `str.find()` for scanning, not regex when possible
+- Reuse buffers: `text_buffer`, `current_tag_name`, etc.
+- Infer state from structure (stacks, tree) instead of storing flags
