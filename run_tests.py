@@ -702,6 +702,7 @@ def _run_tokenizer_tests(config):
         
         data = json.loads(path.read_text())
         key = "tests" if "tests" in data else "xmlViolationTests"
+        is_xml_violation = key == "xmlViolationTests"
         tests = data.get(key, [])
         file_passed = 0
         file_failed = 0
@@ -713,7 +714,7 @@ def _run_tokenizer_tests(config):
                 continue
             
             total += 1
-            ok = _run_single_tokenizer_test(test)
+            ok = _run_single_tokenizer_test(test, xml_coercion=is_xml_violation)
             status = "pass" if ok else "fail"
             test_indices.append((status, idx))
             if ok:
@@ -797,7 +798,7 @@ def _print_tokenizer_failure(test, filename, test_index):
                     print(f"  Token {i}: expected {exp}, got {act}")
 
 
-def _run_single_tokenizer_test(test):
+def _run_single_tokenizer_test(test, xml_coercion=False):
     input_text = test["input"]
     expected_tokens = test["output"]
     if test.get("doubleEscaped"):
@@ -826,7 +827,7 @@ def _run_single_tokenizer_test(test):
         if last_start_tag:
             raw_tag = last_start_tag
         sink = RecordingTreeBuilder()
-        opts = TokenizerOpts(initial_state=initial_state, initial_rawtext_tag=raw_tag, discard_bom=False)
+        opts = TokenizerOpts(initial_state=initial_state, initial_rawtext_tag=raw_tag, discard_bom=False, xml_coercion=xml_coercion)
         tok = Tokenizer(sink, opts)
         tok.last_start_tag_name = last_start_tag
         tok.run(input_text)

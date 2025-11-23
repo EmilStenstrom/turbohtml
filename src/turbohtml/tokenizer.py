@@ -27,15 +27,52 @@ def _is_ascii_alpha(c):
     return c is not None and (("A" <= c <= "Z") or ("a" <= c <= "z"))
 
 
+def _is_non_xml_char(c):
+    """Check if character is invalid in XML per spec's coercion rules."""
+    if not c:
+        return False
+    code = ord(c)
+    # Non-characters: U+FFFE, U+FFFF, U+1FFFE, U+1FFFF, etc.
+    if code == 0xFFFE or code == 0xFFFF:
+        return True
+    if code >= 0x1FFFE and code <= 0x10FFFF:
+        if code & 0xFFFF in (0xFFFE, 0xFFFF):
+            return True
+    # FDD0-FDEF range
+    if 0xFDD0 <= code <= 0xFDEF:
+        return True
+    return False
+
+
+def _coerce_text_for_xml(text):
+    """Apply XML coercion to text content."""
+    result = []
+    for c in text:
+        if _is_non_xml_char(c):
+            result.append('\ufffd')
+        elif c == '\f':  # Form feed → space for XML
+            result.append(' ')
+        else:
+            result.append(c)
+    return ''.join(result)
+
+
+def _coerce_comment_for_xml(text):
+    """Apply XML coercion to comment content - handle double hyphens."""
+    # Replace -- with - - (with space)
+    result = text.replace('--', '- -')
+    return result
+
 
 class TokenizerOpts:
-    __slots__ = ("discard_bom", "exact_errors", "initial_rawtext_tag", "initial_state")
+    __slots__ = ("discard_bom", "exact_errors", "initial_rawtext_tag", "initial_state", "xml_coercion")
 
-    def __init__(self, exact_errors=False, discard_bom=True, initial_state=None, initial_rawtext_tag=None):
+    def __init__(self, exact_errors=False, discard_bom=True, initial_state=None, initial_rawtext_tag=None, xml_coercion=False):
         self.exact_errors = bool(exact_errors)
         self.discard_bom = bool(discard_bom)
         self.initial_state = initial_state
         self.initial_rawtext_tag = initial_rawtext_tag
+        self.xml_coercion = bool(xml_coercion)
 
 
 class Tokenizer:
@@ -1462,13 +1499,16 @@ class Tokenizer:
             # - PLAINTEXT state: do NOT decode
             # - CDATA sections: do NOT decode
             if self.state >= self.PLAINTEXT or self.CDATA_SECTION <= self.state <= self.CDATA_SECTION_END:
-                self._emit_token(CharacterTokens(data))
+                pass
             elif self.state >= self.RAWTEXT:
-                self._emit_token(CharacterTokens(data))
+                pass
             else:
                 if "&" in data:
                     data = decode_entities_in_text(data)
-                self._emit_token(CharacterTokens(data))
+            # Apply XML coercion if enabled
+            if self.opts.xml_coercion:
+                data = _coerce_text_for_xml(data)
+            self._emit_token(CharacterTokens(data))
 
     def _start_tag(self, kind):
         self.current_tag_kind = kind
@@ -1616,6 +1656,9 @@ class Tokenizer:
     def _emit_comment(self):
         data = "".join(self.current_comment)
         self.current_comment.clear()
+        # Apply XML coercion if enabled
+        if self.opts.xml_coercion:
+            data = _coerce_comment_for_xml(data)
         self._comment_token.data = data
         self._emit_token(self._comment_token)
 

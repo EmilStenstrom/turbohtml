@@ -11,7 +11,7 @@ html5lib-tests-tokenizer/test3.test: 1585/1590 (100%) [.........................
 html5lib-tests-tokenizer/test4.test: 85/85 (100%) [.....................................................................................]
 html5lib-tests-tokenizer/unicodeChars.test: 323/323 (100%) [...................................................................................................................................................................................................................................................................................................................................]
 html5lib-tests-tokenizer/unicodeCharsProblematic.test: 5/5 (100%) [.....]
-html5lib-tests-tokenizer/xmlViolation.test: 1/4 (25%) [xxx.]
+html5lib-tests-tokenizer/xmlViolation.test: 4/4 (100%) [....]
 html5lib-tests-tree/adoption01.dat: 18/18 (100%) [..................]
 html5lib-tests-tree/adoption02.dat: 2/2 (100%) [..]
 html5lib-tests-tree/blocks.dat: 48/48 (100%) [................................................]
@@ -72,4 +72,4 @@ html5lib-tests-tree/tricky01.dat: 9/9 (100%) [.........]
 html5lib-tests-tree/webkit01.dat: 52/52 (100%) [....................................................]
 html5lib-tests-tree/webkit02.dat: 47/47 (100%) [.ss..............................................] (2 skipped)
 
-FAILED: 8545/8553 passed (99.9%), 39 skipped
+FAILED: 8548/8553 passed (99.9%), 39 skipped
