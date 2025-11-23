@@ -464,7 +464,7 @@ class Tokenizer:
                 if pos < length:
                     # Optimization: Check for common terminators before regex
                     match = None
-                    if buffer[pos] not in "\t\n\f />":
+                    if buffer[pos] not in "\t\n\f />\0\r":
                         match = _TAG_NAME_RUN_PATTERN.match(buffer, pos)
 
                     if match:
@@ -603,7 +603,7 @@ class Tokenizer:
                 if pos < length:
                     # Optimization: Check for common terminators before regex
                     match = None
-                    if buffer[pos] not in " \t\n\f/>=":
+                    if buffer[pos] not in "\t\n\f />=\0\"'<\r":
                         match = _ATTR_NAME_RUN_PATTERN.match(buffer, pos)
 
                     if match:
@@ -780,14 +780,27 @@ class Tokenizer:
             # Inline _consume_attribute_value_run
             pos = self.pos
             if pos < length:
-                match = stop_pattern.search(buffer, pos)
-                if match:
-                    end = match.start()
+                # Optimization: Optimistically look for quote
+                next_quote = buffer.find('"', pos)
+                if next_quote == -1:
+                    next_quote = length
+
+                # Check if we skipped other terminators
+                chunk = buffer[pos:next_quote]
+                if "&" in chunk or "\0" in chunk:
+                    # Fallback to regex if complex chars present
+                    match = stop_pattern.search(buffer, pos)
+                    if match:
+                        end = match.start()
+                    else:
+                        end = length
                 else:
-                    end = length
+                    end = next_quote
 
                 if end > pos:
-                    chunk = buffer[pos:end]
+                    # chunk is already valid if we took the fast path
+                    if end != next_quote:
+                        chunk = buffer[pos:end]
 
                     # Update line count based on RAW chunk
                     if "\n" in chunk or "\r" in chunk:
@@ -837,14 +850,27 @@ class Tokenizer:
             # Inline _consume_attribute_value_run
             pos = self.pos
             if pos < length:
-                match = stop_pattern.search(buffer, pos)
-                if match:
-                    end = match.start()
+                # Optimization: Optimistically look for quote
+                next_quote = buffer.find("'", pos)
+                if next_quote == -1:
+                    next_quote = length
+
+                # Check if we skipped other terminators
+                chunk = buffer[pos:next_quote]
+                if "&" in chunk or "\0" in chunk:
+                    # Fallback to regex if complex chars present
+                    match = stop_pattern.search(buffer, pos)
+                    if match:
+                        end = match.start()
+                    else:
+                        end = length
                 else:
-                    end = length
+                    end = next_quote
 
                 if end > pos:
-                    chunk = buffer[pos:end]
+                    # chunk is already valid if we took the fast path
+                    if end != next_quote:
+                        chunk = buffer[pos:end]
 
                     # Update line count based on RAW chunk
                     if "\n" in chunk or "\r" in chunk:
@@ -1647,7 +1673,13 @@ class Tokenizer:
     def _flush_text(self):
         if not self.text_buffer:
             return
-        data = "".join(self.text_buffer)
+
+        # Optimization: Avoid join for single chunk
+        if len(self.text_buffer) == 1:
+            data = self.text_buffer[0]
+        else:
+            data = "".join(self.text_buffer)
+
         self.text_buffer.clear()
         if data:
             if self.state == self.DATA and "\0" in data:
