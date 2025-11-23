@@ -257,16 +257,6 @@ class Tokenizer:
         return None
 
     def _append_text_chunk(self, chunk, *, ends_with_cr=False):
-        if not chunk:
-            self.ignore_lf = ends_with_cr
-            return
-        if self.ignore_lf:
-            if chunk[0] == "\n":
-                chunk = chunk[1:]
-                if not chunk:
-                    self.ignore_lf = ends_with_cr
-                    return
-            self.ignore_lf = False
         cr_index = chunk.find("\r")
         if cr_index != -1:
             chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
