@@ -458,8 +458,6 @@ class TreeBuilder:
                                 if self.active_formatting:
                                     self._reconstruct_active_formatting_elements()
                                 self._insert_element(current_token, push=True)
-                                if current_token.self_closing:
-                                    self._parse_error("non-void-html-element-start-tag-with-trailing-solidus")
                                 self.frameset_ok = False
                                 result = None
                             elif name == "a":
@@ -527,13 +525,10 @@ class TreeBuilder:
                                 data = data.replace("\x0c", "")
 
                             if data:
-                                if _is_all_whitespace(data):
-                                    self._reconstruct_active_formatting_elements()
-                                    self._append_text(data)
-                                else:
-                                    self._reconstruct_active_formatting_elements()
+                                if not _is_all_whitespace(data):
                                     self.frameset_ok = False
-                                    self._append_text(data)
+                                self._reconstruct_active_formatting_elements()
+                                self._append_text(data)
                         result = None
                     elif token_type is CommentToken:
                         result = self._handle_comment_in_body(current_token)
@@ -562,16 +557,8 @@ class TreeBuilder:
                         if name_lower in {"svg", "math"}:
                             should_pop = False
                     if should_pop:
-                        # Pop foreign elements above integration points, but not the integration point itself
-                        while self.open_elements and self.open_elements[-1].namespace not in {None, "html"}:
-                            node = self.open_elements[-1]
-                            # Stop if we reach an integration point - don't pop it
-                            if self._is_html_integration_point(node) or self._is_mathml_text_integration_point(
-                                node,
-                            ):
-                                break
-                            self.open_elements.pop()
-                        self._reset_insertion_mode()
+                        # At integration points or SVG/Math insertion, don't pop
+                        pass
 
                 # Special handling: text at integration points inserts directly, bypassing mode dispatch
                 if isinstance(current_token, CharacterTokens):
