@@ -827,17 +827,14 @@ class TreeBuilder:
             self._pop_current()
             self.mode = self.original_mode or InsertionMode.IN_BODY
             return ("reprocess", self.mode, token)
-        if isinstance(token, Tag) and token.kind == Tag.END:
-            self._pop_current()
-            self.mode = self.original_mode or InsertionMode.IN_BODY
-            return None
+        # End tag
+        self._pop_current()
+        self.mode = self.original_mode or InsertionMode.IN_BODY
         return None
 
     def _mode_in_body(self, token):
         handler = self._BODY_TOKEN_HANDLERS.get(type(token))
-        if handler:
-            return handler(self, token)
-        return None
+        return handler(self, token) if handler else None
 
     def _handle_characters_in_body(self, token):
         data = token.data or ""

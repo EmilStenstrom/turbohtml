@@ -148,6 +148,37 @@ class TestRunner:
 
         return tests
 
+    def _decode_escapes(self, text):
+        """Decode escape sequences like \\x00, \\n, \\t in test data."""
+        # Only process if there are escape sequences
+        if "\\x" not in text and "\\u" not in text:
+            return text
+        # Use codecs to decode unicode_escape, but preserve valid UTF-8
+        import codecs
+        # Replace \\xNN with actual bytes
+        result = []
+        i = 0
+        while i < len(text):
+            if text[i:i+2] == "\\x" and i + 3 < len(text):
+                try:
+                    byte_val = int(text[i+2:i+4], 16)
+                    result.append(chr(byte_val))
+                    i += 4
+                    continue
+                except ValueError:
+                    pass
+            elif text[i:i+2] == "\\u" and i + 5 < len(text):
+                try:
+                    code_point = int(text[i+2:i+6], 16)
+                    result.append(chr(code_point))
+                    i += 6
+                    continue
+                except ValueError:
+                    pass
+            result.append(text[i])
+            i += 1
+        return "".join(result)
+
     def _parse_single_test(self, lines):
         """Parse a single test from a list of lines."""
         data = []
@@ -187,8 +218,9 @@ class TestRunner:
                     fragment_context = FragmentContext(fragment_str)
 
         if data or document:
+            raw_data = "\n".join(data)
             return TestCase(
-                data="\n".join(data),
+                data=self._decode_escapes(raw_data),
                 errors=errors,
                 document="\n".join(document),
                 fragment_context=fragment_context,

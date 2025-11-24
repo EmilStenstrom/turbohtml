@@ -1,14 +1,40 @@
 #data
-<!DOCTYPE>
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//" "http://www.w3.org/TR/html4/loose.dtd">
 #errors
 #document
-| <!DOCTYPE >
+| <!DOCTYPE html "-//W3C//DTD HTML 4.01 Transitional//" "http://www.w3.org/TR/html4/loose.dtd">
 | <html>
 |   <head>
 |   <body>
 
 #data
-<math><mi>x&#x0C;y</mi></math>
+\x00\x00\x00
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+
+#data
+<head></head>\x00text
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     "text"
+
+#data
+<head></head>\x0ctext
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     "text"
+
+#data
+<math><mi>\x00text</mi></math>
 #errors
 #document
 | <html>
@@ -16,17 +42,53 @@
 |   <body>
 |     <math math>
 |       <math mi>
-|         "xy"
+|         "text"
 
 #data
-<table><caption>test</caption><caption>nested</caption></table>
+<math><mi>\x0ctext</mi></math>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <math math>
+|       <math mi>
+|         "text"
+
+
+#data
+  text
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     "text"
+
+#data
+<table>\x00\x00</table>
 #errors
 #document
 | <html>
 |   <head>
 |   <body>
 |     <table>
-|       <caption>
-|         "test"
-|       <caption>
-|         "nested"
+
+#data
+<head></head></template>text
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     "text"
+
+#data
+<title></title>
+#errors
+#document
+| <html>
+|   <head>
+|     <title>
+|   <body>
+
