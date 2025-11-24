@@ -15,6 +15,7 @@ from turbohtml.context import FragmentContext
 from turbohtml.tokenizer import Tokenizer, TokenizerOpts
 from turbohtml.tokens import CharacterTokens, CommentToken, Doctype, DoctypeToken, EOFToken, Tag
 from turbohtml.treebuilder import InsertionMode, TreeBuilder
+from tests.test_format import node_to_test_format
 
 # Minimal Unix-friendly fix: if stdout is a pipe and the reader (e.g. `head`) closes early,
 # writes would raise BrokenPipeError at interpreter shutdown. Reset SIGPIPE so the process
@@ -334,7 +335,7 @@ class TestRunner:
                     tokenizer_opts=opts,
                     iframe_srcdoc=test.iframe_srcdoc,
                 )
-                actual_tree = parser.root.to_test_format()
+                actual_tree = node_to_test_format(parser.root)
             debug_output = f.getvalue()
         else:
             parser = TurboHTML(
@@ -343,7 +344,7 @@ class TestRunner:
                 tokenizer_opts=opts,
                 iframe_srcdoc=test.iframe_srcdoc,
             )
-            actual_tree = parser.root.to_test_format()
+            actual_tree = node_to_test_format(parser.root)
 
         passed = compare_outputs(test.document, actual_tree)
 

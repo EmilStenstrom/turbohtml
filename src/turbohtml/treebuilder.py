@@ -139,81 +139,6 @@ class SimpleDomNode:
             self.children.remove(node)
             node.parent = None
 
-    def to_test_format(self, indent=0):
-        if self.name in {"#document", "#document-fragment"}:
-            parts = [child.to_test_format(0) for child in self.children]
-            return "\n".join(part for part in parts if part)
-        if self.name == "#comment":
-            comment = self.data or ""
-            return f"| {' ' * indent}<!-- {comment} -->"
-        if self.name == "!doctype":
-            return self._format_doctype()
-
-        line = f"| {' ' * indent}<{self._qualified_name()}>"
-        attribute_lines = self._format_attributes(indent)
-
-        child_lines = [child.to_test_format(indent + 2) for child in self.children]
-
-        sections = [line]
-        if attribute_lines:
-            sections.extend(attribute_lines)
-        sections.extend(child for child in child_lines if child)
-        return "\n".join(sections)
-
-    def _qualified_name(self):
-        if self.namespace and self.namespace not in {"html", None}:
-            return f"{self.namespace} {self.name}"
-        return self.name
-
-    def _format_attributes(self, indent):
-        if not self.attrs:
-            return []
-        formatted = []
-        padding = " " * (indent + 2)
-
-        # Prepare display names for sorting
-        display_attrs = []
-        namespace = self.namespace
-        for attr_name, attr_value in self.attrs.items():
-            value = attr_value or ""
-            display_name = attr_name
-            if namespace and namespace not in {None, "html"}:
-                lower_name = attr_name.lower()
-                if lower_name in FOREIGN_ATTRIBUTE_ADJUSTMENTS:
-                    display_name = attr_name.replace(":", " ")
-            display_attrs.append((display_name, value))
-
-        # Sort by display name for canonical test output
-        display_attrs.sort(key=lambda x: x[0])
-
-        for display_name, value in display_attrs:
-            formatted.append(f'| {padding}{display_name}="{value}"')
-        return formatted
-
-    def _format_doctype(self):
-        doctype = self.data
-        if not doctype:
-            return "| <!DOCTYPE >"
-
-        name = doctype.name or ""
-        public_id = doctype.public_id
-        system_id = doctype.system_id
-
-        parts = ["| <!DOCTYPE"]
-        if name:
-            parts.append(f" {name}")
-        else:
-            parts.append(" ")
-
-        if public_id is not None or system_id is not None:
-            pub = public_id if public_id is not None else ""
-            sys = system_id if system_id is not None else ""
-            parts.append(f' "{pub}"')
-            parts.append(f' "{sys}"')
-
-        parts.append(">")
-        return "".join(parts)
-
 
 class ElementNode(SimpleDomNode):
     __slots__ = ()
@@ -236,22 +161,6 @@ class TemplateNode(ElementNode):
         else:
             self.template_content = None
 
-    def to_test_format(self, indent=0):
-        line = f"| {' ' * indent}<{self._qualified_name()}>"
-        attribute_lines = self._format_attributes(indent)
-
-        sections = [line]
-        if attribute_lines:
-            sections.extend(attribute_lines)
-
-        if self.template_content:
-            content_line = f"| {' ' * (indent + 2)}content"
-            content_child_lines = [child.to_test_format(indent + 4) for child in self.template_content.children]
-            sections.append(content_line)
-            sections.extend(child for child in content_child_lines if child)
-
-        return "\n".join(sections)
-
 
 class TextNode:
     __slots__ = ("data", "name", "namespace", "parent")
@@ -261,10 +170,6 @@ class TextNode:
         self.parent = None
         self.name = "#text"
         self.namespace = None
-
-    def to_test_format(self, indent=0):
-        text = self.data or ""
-        return f'| {" " * indent}"{text}"'
 
 
 class TreeBuilder:
