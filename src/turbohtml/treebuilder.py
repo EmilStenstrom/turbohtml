@@ -510,21 +510,14 @@ class TreeBuilder:
                 result_to_return = self.tokenizer_state_override or TokenSinkResult.Continue
                 self.tokenizer_state_override = None
                 return result_to_return
-            # Result can be (instruction, mode, token) or (instruction, mode, token, force_html)
-            if isinstance(result, tuple) and len(result) >= 3:
-                instruction, mode, token_override = result[0], result[1], result[2]
-                if len(result) == 4:
-                    force_html_mode = result[3]
-            else:
-                instruction, mode, token_override = result
-            if instruction == "reprocess":
-                self.mode = mode
-                current_token = token_override
-                reprocess = True
-
-        result = self.tokenizer_state_override or TokenSinkResult.Continue
-        self.tokenizer_state_override = None
-        return result
+            # Result is (instruction, mode, token) or (instruction, mode, token, force_html)
+            instruction, mode, token_override = result[0], result[1], result[2]
+            if len(result) == 4:
+                force_html_mode = result[3]
+            # All mode handlers that return a tuple use "reprocess" instruction
+            self.mode = mode
+            current_token = token_override
+            reprocess = True
 
     def _handle_doctype(self, token):
         if self.mode != InsertionMode.INITIAL:
