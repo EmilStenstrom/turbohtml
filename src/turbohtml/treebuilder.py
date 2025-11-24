@@ -429,10 +429,8 @@ class TreeBuilder:
                         result = None
                     elif token_type is CommentToken:
                         result = self._handle_comment_in_body(current_token)
-                    elif token_type is EOFToken:
+                    else:  # EOFToken
                         result = self._handle_eof_in_body(current_token)
-                    else:
-                        result = None
                 else:
                     result = mode_handlers[self.mode](self, current_token)
             elif self._should_use_foreign_content(current_token):
@@ -470,8 +468,6 @@ class TreeBuilder:
                                     self._reconstruct_active_formatting_elements()
                                     self.frameset_ok = False
                                 self._append_text(data)
-                            result = None
-                        else:
                             result = None
                     else:
                         result = mode_handlers[self.mode](self, current_token)
@@ -570,9 +566,6 @@ class TreeBuilder:
         return self.document
 
     # Insertion mode dispatch ------------------------------------------------
-
-    def _dispatch(self, token):
-        return self._MODE_HANDLERS[self.mode](self, token)
 
     def _mode_initial(self, token):
         if isinstance(token, CharacterTokens):
