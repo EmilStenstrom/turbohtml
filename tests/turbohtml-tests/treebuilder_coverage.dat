@@ -55,7 +55,6 @@
 |       <math mi>
 |         "text"
 
-
 #data
   text
 #errors
@@ -91,4 +90,56 @@
 |   <head>
 |     <title>
 |   <body>
+
+#data
+<dl><dd>x</dd></dl>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <dl>
+|       <dd>
+|         "x"
+
+#data
+<select><optgroup><optgroup></select>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <select>
+|       <optgroup>
+|       <optgroup>
+
+#data
+<body>\x00</body>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+
+#data
+<a><table><a>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <a>
+|       <a>
+|       <table>
+
+#data
+<nobr><nobr>x</nobr></nobr>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <nobr>
+|     <nobr>
+|       "x"
 
