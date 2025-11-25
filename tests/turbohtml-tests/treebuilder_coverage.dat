@@ -143,3 +143,217 @@
 |     <nobr>
 |       "x"
 
+
+#data
+<select><option><optgroup></select>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <select>
+|       <option>
+|       <optgroup>
+
+#data
+<table><caption><!--comment--></caption></table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <caption>
+|         <!-- comment -->
+
+#data
+<table><colgroup></colgroup><div>x</div></table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <div>
+|       "x"
+|     <table>
+|       <colgroup>
+
+#data
+<table><colgroup></col></colgroup></table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <colgroup>
+
+#data
+<table><tbody><tr></tbody></table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|         <tr>
+
+#data
+<table><tr></tr></table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|         <tr>
+
+#data
+<table><tr><td></tr></table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|         <tr>
+|           <td>
+
+#data
+<select><option></option></select>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <select>
+|       <option>
+
+#data
+<select><optgroup></optgroup></select>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <select>
+|       <optgroup>
+
+#data
+<select></optgroup></select>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <select>
+
+
+#data
+<table><caption></tbody></caption></table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <caption>
+
+#data
+<table><caption></table></caption>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <caption>
+
+#data
+<table><tr><td></tbody></td></tr></table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|         <tr>
+|           <td>
+
+#data
+<select>\x00text</select>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <select>
+|       "text"
+
+#data
+<select>\x0ctext</select>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <select>
+|       "text"
+
+#data
+<select><!--comment--></select>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <select>
+|       <!-- comment -->
+
+#data
+<select><option><select></select>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <select>
+|       <option>
+
+#data
+<template><td></template>
+#errors
+#document
+| <html>
+|   <head>
+|     <template>
+|       content
+|         <td>
+|   <body>
+
+#data
+<template><caption></template>
+#errors
+#document
+| <html>
+|   <head>
+|     <template>
+|       content
+|         <caption>
+|   <body>
+
+#data
+<template><colgroup></template>
+#errors
+#document
+| <html>
+|   <head>
+|     <template>
+|       content
+|         <colgroup>
+|   <body>
+
