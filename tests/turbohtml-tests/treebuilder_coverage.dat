@@ -357,3 +357,157 @@
 |         <colgroup>
 |   <body>
 
+
+#data
+<frameset><frameset></frameset></frameset>
+#errors
+#document
+| <html>
+|   <head>
+|   <frameset>
+|     <frameset>
+
+#data
+<frameset></frameset><noframes>x</noframes>
+#errors
+#document
+| <html>
+|   <head>
+|   <frameset>
+|   <noframes>
+|     "x"
+
+#data
+</body></html><!--after-->
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+| <!-- after -->
+
+#data
+</body></html><div>x</div>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <div>
+|       "x"
+
+#data
+<table><tbody></tr></tbody></table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+
+#data
+<table><tr></td></tr></table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|         <tr>
+
+#data
+<table><tr><td></th></td></tr></table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|         <tr>
+|           <td>
+
+#data
+<html class="x"><body class="y">
+#errors
+#document
+| <html>
+|   class="x"
+|   <head>
+|   <body>
+|     class="y"
+
+#data
+<table>   </table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       "   "
+
+#data
+text
+#errors
+#document-fragment
+td
+#document
+| "text"
+
+#data
+<tr><td>x</td></tr>
+#errors
+#document-fragment
+tbody
+#document
+| <tr>
+|   <td>
+|     "x"
+
+#data
+<td>x</td>
+#errors
+#document-fragment
+tr
+#document
+| <td>
+|   "x"
+
+#data
+<option>x</option>
+#errors
+#document-fragment
+select
+#document
+| <option>
+|   "x"
+
+#data
+<col>
+#errors
+#document-fragment
+colgroup
+#document
+| <col>
+
+#data
+text
+#errors
+#document-fragment
+table
+#document
+| "text"
+
+#data
+<svg><path></path></svg>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       <svg path>
+

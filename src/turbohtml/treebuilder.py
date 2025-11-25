@@ -603,8 +603,6 @@ class TreeBuilder:
 
         if isinstance(token, CharacterTokens):
             stripped = token.data.lstrip("\t\n\f\r ")
-            if not stripped:
-                return None
             if len(stripped) != len(token.data):
                 token = CharacterTokens(stripped)
 
@@ -615,8 +613,6 @@ class TreeBuilder:
     def _mode_before_head(self, token):
         if isinstance(token, CharacterTokens):
             data = token.data or ""
-            if not data:
-                return None
             if "\x00" in data:
                 self._parse_error("invalid-codepoint-before-head")
                 data = data.replace("\x00", "")
@@ -672,8 +668,6 @@ class TreeBuilder:
                 current = self.open_elements[-1] if self.open_elements else None
                 if current is not None and current.children:
                     self._append_text(leading_ws)
-            if not remaining:
-                return None
             self._pop_current()
             self.mode = InsertionMode.AFTER_HEAD
             return ("reprocess", InsertionMode.AFTER_HEAD, CharacterTokens(remaining))
@@ -838,8 +832,6 @@ class TreeBuilder:
 
     def _handle_characters_in_body(self, token):
         data = token.data or ""
-        if not data:
-            return
         if "\x00" in data:
             self._parse_error("invalid-codepoint")
             data = data.replace("\x00", "")
@@ -1377,8 +1369,6 @@ class TreeBuilder:
     def _handle_body_start_optgroup(self, token):
         if self.open_elements and self.open_elements[-1].name == "option":
             self.open_elements.pop()
-        if self.open_elements and self.open_elements[-1].name == "optgroup":
-            self.open_elements.pop()
         self._reconstruct_active_formatting_elements()
         self._insert_element(token, push=True)
         return
@@ -1411,8 +1401,6 @@ class TreeBuilder:
     def _mode_in_table(self, token):
         if isinstance(token, CharacterTokens):
             data = token.data or ""
-            if not data:
-                return None
             if "\x00" in data:
                 self._parse_error("Unexpected null character")
                 data = data.replace("\x00", "")
@@ -1521,19 +1509,10 @@ class TreeBuilder:
             if self._has_in_table_scope("table"):
                 self._parse_error("eof-in-table")
             return None
-        return None
 
     def _mode_in_table_text(self, token):
         if isinstance(token, CharacterTokens):
             data = token.data or ""
-            if not data:
-                return None
-            if "\x00" in data:
-                self._parse_error("invalid-codepoint")
-                data = data.replace("\x00", "")
-            if "\x0c" in data:
-                self._parse_error("invalid-codepoint-in-table-text")
-                data = data.replace("\x0c", "")
             if data:
                 self.pending_table_text.append(data)
             return None
@@ -1705,7 +1684,6 @@ class TreeBuilder:
                 # In template, delegate EOF handling to IN_TEMPLATE
                 return self._mode_in_template(token)
             return None
-        return None
 
     def _mode_in_table_body(self, token):
         if isinstance(token, CharacterTokens) or isinstance(token, CommentToken):
@@ -1778,7 +1756,6 @@ class TreeBuilder:
             return self._mode_in_table(token)
         if isinstance(token, EOFToken):
             return self._mode_in_table(token)
-        return None
 
     def _mode_in_row(self, token):
         if isinstance(token, CharacterTokens) or isinstance(token, CommentToken):
@@ -1900,7 +1877,6 @@ class TreeBuilder:
             if self._close_table_cell():
                 return ("reprocess", self.mode, token)
             return self._mode_in_table(token)
-        return None
 
     def _mode_in_select(self, token):
         if isinstance(token, CharacterTokens):
@@ -2075,7 +2051,6 @@ class TreeBuilder:
             return None
         if isinstance(token, EOFToken):
             return self._mode_in_body(token)
-        return None
 
     def _mode_in_template(self, token):
         # § The "in template" insertion mode
@@ -2174,7 +2149,6 @@ class TreeBuilder:
             return ("reprocess", InsertionMode.IN_BODY, token)
         if isinstance(token, EOFToken):
             return None
-        return None
 
     def _mode_after_after_body(self, token):
         if isinstance(token, CharacterTokens):
@@ -2204,7 +2178,6 @@ class TreeBuilder:
             return ("reprocess", InsertionMode.IN_BODY, token)
         if isinstance(token, EOFToken):
             return None
-        return None
 
     def _mode_in_frameset(self, token):
         # Per HTML5 spec §13.2.6.4.16: In frameset insertion mode
@@ -2714,8 +2687,6 @@ class TreeBuilder:
             return
         data = "".join(self.pending_table_text)
         self.pending_table_text.clear()
-        if not data:
-            return
         if _is_all_whitespace(data):
             self._append_text(data)
             return
@@ -3352,9 +3323,6 @@ class TreeBuilder:
              return self.process_token(CharacterTokens(data))
 
         if self.mode == InsertionMode.IN_BODY:
-            if not data:
-                return TokenSinkResult.Continue
-
             if "\x00" in data:
                 self._parse_error("invalid-codepoint")
                 data = data.replace("\x00", "")
