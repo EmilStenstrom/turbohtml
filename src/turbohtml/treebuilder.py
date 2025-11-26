@@ -1805,7 +1805,6 @@ class TreeBuilder:
                     self.insert_from_table = previous
         if isinstance(token, EOFToken):
             return self._mode_in_table(token)
-        return None
 
     def _end_tr_element(self):
         self._clear_stack_until({"tr", "template", "html"})
@@ -2048,7 +2047,6 @@ class TreeBuilder:
                     self._reset_insertion_mode()
                     return ("reprocess", self.mode, token)
                 return None
-            return None
         if isinstance(token, EOFToken):
             return self._mode_in_body(token)
 
@@ -2746,8 +2744,6 @@ class TreeBuilder:
         self.mode = InsertionMode.IN_BODY
 
     def _should_foster_parenting(self, target, *, for_tag=None, is_text=False):
-        if target is None:
-            return False
         if not self.insert_from_table:
             return False
         if target.name not in TABLE_FOSTER_TARGETS:
@@ -2801,8 +2797,6 @@ class TreeBuilder:
         return None
 
     def _is_html_integration_point(self, node):
-        if node is None:
-            return False
         if node.namespace in {None, "html"}:
             return False
         # annotation-xml is an HTML integration point only with specific encoding values
@@ -2817,24 +2811,16 @@ class TreeBuilder:
         return (node.namespace, node.name) in HTML_INTEGRATION_POINT_SET
 
     def _is_mathml_text_integration_point(self, node):
-        if node is None:
-            return False
         if node.namespace != "math":
             return False
         return (node.namespace, node.name) in MATHML_TEXT_INTEGRATION_POINT_SET
 
     def _adjusted_current_node(self):
-        # Per HTML5 spec: for fragment parsing, if stack has only html element,
-        # use the fragment context element instead
-        if not self.open_elements:
-            return None
         return self.open_elements[-1]
 
     def _should_use_foreign_content(self, token):
-        if not self.open_elements:
-            return False
         current = self._adjusted_current_node()
-        if current is None or current.namespace in {None, "html"}:
+        if current.namespace in {None, "html"}:
             return False
 
         if isinstance(token, EOFToken):
@@ -2874,8 +2860,6 @@ class TreeBuilder:
                 break
             if self._is_html_integration_point(node):
                 break
-            if self._is_mathml_text_integration_point(node):
-                break
             if self.fragment_context_element is not None and node is self.fragment_context_element:
                 break
             self.open_elements.pop()
@@ -2885,8 +2869,6 @@ class TreeBuilder:
 
         if isinstance(token, CharacterTokens):
             raw = token.data or ""
-            if not raw:
-                return None
             cleaned = []
             has_non_null_non_ws = False
             for ch in raw:
@@ -2894,15 +2876,9 @@ class TreeBuilder:
                     self._parse_error("invalid-codepoint-in-foreign-content")
                     cleaned.append("\ufffd")
                     continue
-                if ch == "\x0c":
-                    self._parse_error("invalid-codepoint-in-foreign-content")
-                    cleaned.append("\ufffd")
-                    continue
                 cleaned.append(ch)
                 if ch not in "\t\n\f\r ":
                     has_non_null_non_ws = True
-            if not cleaned:
-                return None
             data = "".join(cleaned)
             if has_non_null_non_ws:
                 self.frameset_ok = False
@@ -2911,10 +2887,6 @@ class TreeBuilder:
 
         if isinstance(token, CommentToken):
             self._append_comment(token.data)
-            return None
-
-        if isinstance(token, DoctypeToken):
-            self._parse_error("Unexpected DOCTYPE in foreign content")
             return None
 
         if isinstance(token, Tag):
@@ -2977,24 +2949,15 @@ class TreeBuilder:
                     if is_html:
                         return ("reprocess", self.mode, token, True)
 
-                    # If we reached the root (and it wasn't HTML or matched), ignore the token
-                    if idx == 0:
-                        return None
-
                     idx -= 1
-
-                # Reached here means we scanned entire stack without match - ignore tag
-                return None
 
 
 
     def _appropriate_insertion_location(self, override_target=None, *, foster_parenting=False):
         if override_target is not None:
             target = override_target
-        elif self.open_elements:
-            target = self.open_elements[-1]
         else:
-            target = self.document
+            target = self.open_elements[-1]
 
         if foster_parenting and target.name in {"table", "tbody", "tfoot", "thead", "tr"}:
             last_template = self._find_last_on_stack("template")
@@ -3002,26 +2965,10 @@ class TreeBuilder:
             if last_template is not None and (
                 last_table is None or self.open_elements.index(last_template) > self.open_elements.index(last_table)
             ):
-                # Insert into template's content document fragment
-                if type(last_template) is TemplateNode and last_template.template_content:
-                    return last_template.template_content, len(last_template.template_content.children)
-                return last_template, len(last_template.children)
-            if last_table is None:
-                if self.open_elements:
-                    return self.open_elements[0], len(self.open_elements[0].children)
-                return self.document, len(self.document.children)
-            if last_table.parent is not None:
-                parent = last_table.parent
-                try:
-                    position = parent.children.index(last_table)
-                except ValueError:
-                    position = len(parent.children)
-                return parent, position
-            table_index = self.open_elements.index(last_table)
-            if table_index > 0:
-                parent = self.open_elements[table_index - 1]
-                return parent, len(parent.children)
-            return self.document, len(self.document.children)
+                return last_template.template_content, len(last_template.template_content.children)
+            parent = last_table.parent
+            position = parent.children.index(last_table)
+            return parent, position
 
         # If target is a template element, insert into its content document fragment
         if type(target) is TemplateNode and target.template_content:
@@ -3048,8 +2995,6 @@ class TreeBuilder:
             # Find all option elements
             options = []
             self._find_elements(select, "option", options)
-            if not options:
-                continue
 
             # Find selected option or use first one
             selected_option = None
@@ -3091,8 +3036,6 @@ class TreeBuilder:
 
     def _clone_children(self, source, target):
         """Deep clone all children from source to target."""
-        if type(source) is TextNode or not source.children:
-            return
         for child in source.children:
             if type(child) is TextNode:
                 # Text node
@@ -3126,9 +3069,6 @@ class TreeBuilder:
                 return True
             if node.namespace in {None, "html"} and node.name in terminators:
                 return False
-            if node.namespace not in {None, "html"}:
-                return False
-        return False
 
     _BODY_START_HANDLERS = {
         "a": _handle_body_start_a,
@@ -3326,9 +3266,6 @@ class TreeBuilder:
             if "\x00" in data:
                 self._parse_error("invalid-codepoint")
                 data = data.replace("\x00", "")
-            if "\x0c" in data:
-                self._parse_error("invalid-codepoint")
-                data = data.replace("\x0c", "")
 
             if not data:
                 return TokenSinkResult.Continue
