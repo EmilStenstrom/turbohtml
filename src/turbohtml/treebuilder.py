@@ -316,6 +316,12 @@ class TreeBuilder:
         # Optimization: Use type() identity check instead of isinstance
         token_type = type(token)
         if token_type is DoctypeToken:
+            # Check for foreign content first - DOCTYPE in SVG/MathML is a parse error
+            if self.open_elements:
+                current = self.open_elements[-1]
+                if current.namespace not in {None, "html"}:
+                    self._parse_error("Unexpected DOCTYPE in foreign content")
+                    return TokenSinkResult.Continue
             return self._handle_doctype(token)
 
         reprocess = True
@@ -1514,7 +1520,14 @@ class TreeBuilder:
         if isinstance(token, CharacterTokens):
             data = token.data or ""
             if data:
-                self.pending_table_text.append(data)
+                if "\x00" in data:
+                    self._parse_error("invalid-codepoint")
+                    data = data.replace("\x00", "")
+                if "\x0c" in data:
+                    self._parse_error("invalid-codepoint-in-table-text")
+                    data = data.replace("\x0c", "")
+                if data:
+                    self.pending_table_text.append(data)
             return None
         self._flush_pending_table_text()
         original = self.table_text_original_mode or InsertionMode.IN_TABLE
@@ -1565,7 +1578,6 @@ class TreeBuilder:
             return self._mode_in_body(token)
         if isinstance(token, EOFToken):
             return self._mode_in_body(token)
-        return None
 
     def _close_caption_element(self):
         if not self._has_in_table_scope("caption"):
@@ -1683,7 +1695,6 @@ class TreeBuilder:
             if current and current.name == "template":
                 # In template, delegate EOF handling to IN_TEMPLATE
                 return self._mode_in_template(token)
-            return None
 
     def _mode_in_table_body(self, token):
         if isinstance(token, CharacterTokens) or isinstance(token, CommentToken):
@@ -2196,7 +2207,6 @@ class TreeBuilder:
                 return None
             if token.kind == Tag.END and token.name == "frameset":
                 if self.open_elements and self.open_elements[-1].name == "html":
-                    # Root frameset, ignore end tag
                     self._parse_error("Unexpected frameset end tag")
                     return None
                 self.open_elements.pop()
@@ -2247,9 +2257,6 @@ class TreeBuilder:
                 self.mode = InsertionMode.TEXT
                 return None
         if isinstance(token, EOFToken):
-            # If we're in a template, handle EOF in template mode first
-            if self.template_modes:
-                return self._mode_in_template(token)
             return None
         self._parse_error("Unexpected token after frameset")
         self.mode = InsertionMode.IN_FRAMESET
@@ -2277,11 +2284,7 @@ class TreeBuilder:
                 self.mode = InsertionMode.TEXT
                 return None
         elif isinstance(token, EOFToken):
-            # If we're in a template, handle EOF in template mode first
-            if self.template_modes:
-                return self._mode_in_template(token)
             return None
-
         self._parse_error("Unexpected token after after frameset")
         self.mode = InsertionMode.IN_FRAMESET
         return ("reprocess", InsertionMode.IN_FRAMESET, token)
@@ -2302,8 +2305,6 @@ class TreeBuilder:
         parent.append_child(node)
 
     def _append_text(self, text):
-        if not text:
-            return
         if self.ignore_lf:
             self.ignore_lf = False
             if text.startswith("\n"):
@@ -2336,15 +2337,10 @@ class TreeBuilder:
 
         # Always use appropriate insertion location to handle templates
         parent, position = self._appropriate_insertion_location(foster_parenting=foster_parenting)
-        if parent is None:
-            return
 
         # Coalesce with adjacent text node if possible
         if position > 0 and parent.children[position - 1].name == "#text":
             parent.children[position - 1].data = (parent.children[position - 1].data or "") + text
-            return
-        if position < len(parent.children) and parent.children[position].name == "#text":
-            parent.children[position].data = text + (parent.children[position].data or "")
             return
 
         node = TextNode(text)
@@ -2352,19 +2348,9 @@ class TreeBuilder:
         node.parent = parent
 
     def _current_node_or_html(self):
-        if self.open_elements:
-            return self.open_elements[-1]
-        if self.document.children:
-            return self.document.children[-1]
-        return self.document
+        return self.open_elements[-1]
 
     def _create_root(self, attrs):
-        for child in self.document.children:
-            if child.name == "html":
-                if child not in self.open_elements:
-                    self.open_elements.append(child)
-                return child
-
         node = SimpleDomNode("html", attrs=attrs, namespace="html")
         self.document.append_child(node)
         self.open_elements.append(node)
@@ -2378,12 +2364,7 @@ class TreeBuilder:
 
         # Fast path for common case: not inserting from table
         if not self.insert_from_table:
-            if self.open_elements:
-                target = self.open_elements[-1]
-            elif self.document.children:
-                target = self.document.children[-1]
-            else:
-                target = self.document
+            target = self.open_elements[-1]
 
             # Handle template content insertion
             if type(target) is TemplateNode:
@@ -2415,19 +2396,13 @@ class TreeBuilder:
             if element.name == "body":
                 return
         html_node = self._find_last_on_stack("html")
-        if html_node is None:
-            html_node = self._create_root({})
         node = SimpleDomNode("body", namespace="html")
         html_node.append_child(node)
         node.parent = html_node
         self.open_elements.append(node)
 
     def _appropriate_insertion_parent(self):
-        if self.open_elements:
-            return self.open_elements[-1]
-        if self.document.children:
-            return self.document.children[-1]
-        return self.document
+        return self.open_elements[-1]
 
     def _create_element(self, name, namespace, attrs):
         ns = namespace or "html"
@@ -2436,8 +2411,6 @@ class TreeBuilder:
         return ElementNode(name, attrs, ns)
 
     def _pop_current(self):
-        if not self.open_elements:
-            return None
         return self.open_elements.pop()
 
     def _in_scope(self, name):
@@ -2479,8 +2452,7 @@ class TreeBuilder:
         for index in range(len(self.open_elements) - 1, -1, -1):
             if self.open_elements[index] is node:
                 del self.open_elements[index:]
-                return True
-        return False
+                return
 
     def _add_missing_attributes(self, node, attrs):
         if not attrs:
@@ -2573,17 +2545,6 @@ class TreeBuilder:
     def _append_active_formatting_entry(self, name, attrs, node):
         entry_attrs = self._clone_attributes(attrs)
         signature = self._attrs_signature(entry_attrs)
-        duplicates = 0
-        for index in range(len(self.active_formatting) - 1, -1, -1):
-            entry = self.active_formatting[index]
-            if entry is FORMAT_MARKER:
-                break
-            existing_signature = entry["signature"]
-            if entry["name"] == name and existing_signature == signature:
-                duplicates += 1
-                if duplicates >= 3:
-                    del self.active_formatting[index]
-                    break
         self.active_formatting.append(
             {
                 "name": name,
@@ -2681,8 +2642,6 @@ class TreeBuilder:
         self.mode = InsertionMode.IN_ROW
 
     def _flush_pending_table_text(self):
-        if not self.pending_table_text:
-            return
         data = "".join(self.pending_table_text)
         self.pending_table_text.clear()
         if _is_all_whitespace(data):
@@ -2777,10 +2736,7 @@ class TreeBuilder:
             foreign_adjustment = FOREIGN_ATTRIBUTE_ADJUSTMENTS.get(lower_name)
             if foreign_adjustment is not None:
                 prefix, local, _ = foreign_adjustment
-                if prefix:
-                    name = f"{prefix}:{local}"
-                else:
-                    name = local
+                name = f"{prefix}:{local}"
 
             if name not in adjusted:
                 adjusted[name] = value
@@ -2788,10 +2744,7 @@ class TreeBuilder:
 
     def _node_attribute_value(self, node, name):
         target = self._lower_ascii(name)
-        attrs = node.attrs
-        if not attrs:
-            return None
-        for attr_name, attr_value in attrs.items():
+        for attr_name, attr_value in node.attrs.items():
             if self._lower_ascii(attr_name) == target:
                 return attr_value or ""
         return None

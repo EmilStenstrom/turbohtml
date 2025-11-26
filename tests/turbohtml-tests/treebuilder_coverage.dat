@@ -511,3 +511,55 @@ table
 |     <svg svg>
 |       <svg path>
 
+
+#data
+<table>\x00text</table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     "text"
+|     <table>
+
+#data
+<table>\x0ctext</table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     "text"
+|     <table>
+
+#data
+<frameset></frameset>
+#errors
+#document
+| <html>
+|   <head>
+|   <frameset>
+
+#data
+<svg><!DOCTYPE html></svg>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+
+#data
+</frameset>
+#errors
+#document-fragment
+frameset
+#document
+
+#data
+<frameset></frameset></frameset>
+#errors
+#document
+| <html>
+|   <head>
+|   <frameset>
