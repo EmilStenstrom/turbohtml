@@ -563,3 +563,48 @@ frameset
 | <html>
 |   <head>
 |   <frameset>
+
+
+#data
+<table>\x00</table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+
+#data
+<tr>
+#errors
+#document-fragment
+caption
+#document
+
+#data
+<table>
+#errors
+#document-fragment
+caption
+#document
+| <table>
+
+#data
+<table><caption><table></table></caption></table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <caption>
+|     <table>
+
+#data
+<table>\x00</table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
