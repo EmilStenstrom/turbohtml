@@ -608,3 +608,16 @@ caption
 |   <head>
 |   <body>
 |     <table>
+
+#data
+<table><td><!-- comment in cell --></td></table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|         <tr>
+|           <td>
+|             <!--  comment in cell  -->

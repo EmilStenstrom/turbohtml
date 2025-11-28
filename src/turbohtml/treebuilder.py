@@ -1827,6 +1827,9 @@ class TreeBuilder:
                 return self._mode_in_body(token)
             finally:
                 self.insert_from_table = previous
+        if isinstance(token, CommentToken):
+            self._append_comment(token.data)
+            return None
         if isinstance(token, Tag):
             name = token.name
             if token.kind == Tag.START:
