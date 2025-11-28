@@ -709,3 +709,160 @@ caption
 |     <input>
 |       name="bar"
 |     <table>
+
+#data
+<body>   </body>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     "   "
+
+#data
+<math><mi>   </mi></math>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <math math>
+|       <math mi>
+|         "   "
+
+#data
+<math><mi></mi></math>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <math math>
+|       <math mi>
+
+#data
+<math><mi>\x00</mi></math>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <math math>
+|       <math mi>
+
+#data
+<svg><foreignObject><table>x</table></foreignObject></svg>
+#errors
+#document-fragment
+td
+#document
+| <svg svg>
+|   <svg foreignObject>
+|     "x"
+|     <table>
+
+#data
+<head></template></head>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+
+#data
+<head></head>\x00
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+
+#data
+<table>\x0c</table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+
+#data
+<td>x</td>
+#errors
+#document-fragment
+caption
+#document
+| "x"
+
+#data
+<table><caption><table><tbody></tbody></table></caption></table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <caption>
+|     <table>
+|       <tbody>
+
+#data
+<template><colgroup><div></div></colgroup></template>
+#errors
+#document
+| <html>
+|   <head>
+|     <template>
+|       content
+|         <colgroup>
+|         <div>
+|   <body>
+
+#data
+<select></select></select>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <select>
+
+#data
+<select></regularitem>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <select>
+
+#data
+<div><select><div><span></div></select>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <div>
+|       <select>
+|         <div>
+|           <span>
+
+#data
+<div><select></div>text
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <div>
+|       <select>
+|         "text"
+
+#data
+</select>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>

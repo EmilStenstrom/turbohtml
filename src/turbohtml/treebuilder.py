@@ -430,12 +430,10 @@ class TreeBuilder:
                                     result = None
                     elif token_type is CharacterTokens:
                         # Inline _handle_characters_in_body
-                        data = current_token.data or ""
-                        if data:
-                            if not _is_all_whitespace(data):
-                                self.frameset_ok = False
-                            self._reconstruct_active_formatting_elements()
-                            self._append_text(data)
+                        # Only non-whitespace data reaches here (whitespace handled in process_characters)
+                        self.frameset_ok = False
+                        self._reconstruct_active_formatting_elements()
+                        self._append_text(current_token.data)
                         result = None
                     elif token_type is CommentToken:
                         result = self._handle_comment_in_body(current_token)
@@ -465,20 +463,20 @@ class TreeBuilder:
                 # Special handling: text at integration points inserts directly, bypassing mode dispatch
                 if isinstance(current_token, CharacterTokens):
                     if self._is_mathml_text_integration_point(current):
-                        data = current_token.data or ""
+                        # Tokenizer guarantees non-empty data
+                        data = current_token.data
+                        if "\x00" in data:
+                            self._parse_error("invalid-codepoint")
+                            data = data.replace("\x00", "")
+                        if "\x0c" in data:
+                            self._parse_error("invalid-codepoint")
+                            data = data.replace("\x0c", "")
                         if data:
-                            if "\x00" in data:
-                                self._parse_error("invalid-codepoint")
-                                data = data.replace("\x00", "")
-                            if "\x0c" in data:
-                                self._parse_error("invalid-codepoint")
-                                data = data.replace("\x0c", "")
-                            if data:
-                                if not _is_all_whitespace(data):
-                                    self._reconstruct_active_formatting_elements()
-                                    self.frameset_ok = False
-                                self._append_text(data)
-                            result = None
+                            if not _is_all_whitespace(data):
+                                self._reconstruct_active_formatting_elements()
+                                self.frameset_ok = False
+                            self._append_text(data)
+                        result = None
                     else:
                         result = mode_handlers[self.mode](self, current_token)
                 else:
@@ -708,8 +706,8 @@ class TreeBuilder:
                 self._generate_implied_end_tags()
                 self._pop_until_inclusive("template")
                 self._clear_active_formatting_up_to_marker()
-                if self.template_modes:
-                    self.template_modes.pop()
+                # template_modes always non-empty here since we passed has_template check
+                self.template_modes.pop()
                 self._reset_insertion_mode()
                 return None
             if token.kind == Tag.START and token.name in {"title", "style", "script", "noscript", "noframes"}:
@@ -1297,8 +1295,8 @@ class TreeBuilder:
         self._generate_implied_end_tags()
         self._pop_until_inclusive("template")
         self._clear_active_formatting_up_to_marker()
-        if self.template_modes:
-            self.template_modes.pop()
+        # template_modes always non-empty here since has_template check passed
+        self.template_modes.pop()
         self._reset_insertion_mode()
         return
 
@@ -1522,13 +1520,13 @@ class TreeBuilder:
 
     def _mode_in_table_text(self, token):
         if isinstance(token, CharacterTokens):
-            data = token.data or ""
+            # IN_TABLE mode guarantees non-empty data
+            data = token.data
+            if "\x0c" in data:
+                self._parse_error("invalid-codepoint-in-table-text")
+                data = data.replace("\x0c", "")
             if data:
-                if "\x0c" in data:
-                    self._parse_error("invalid-codepoint-in-table-text")
-                    data = data.replace("\x0c", "")
-                if data:
-                    self.pending_table_text.append(data)
+                self.pending_table_text.append(data)
             return None
         self._flush_pending_table_text()
         original = self.table_text_original_mode or InsertionMode.IN_TABLE
@@ -1549,9 +1547,8 @@ class TreeBuilder:
                     self._parse_error("unexpected-start-tag-implies-end-tag")
                     if self._close_caption_element():
                         return ("reprocess", InsertionMode.IN_TABLE, token)
-                    # In fragment parsing with caption context, ignore table structure elements (but not table itself)
-                    if self.fragment_context and self.fragment_context.tag_name.lower() == "caption":
-                        return None
+                    # Fragment parsing with caption context: caption not on stack, ignore table structure elements
+                    return None
                 if name == "table":
                     self._parse_error("unexpected-start-tag-implies-end-tag")
                     if self._close_caption_element():
@@ -1604,10 +1601,10 @@ class TreeBuilder:
             # Continue processing non-whitespace with a new token
             non_ws_token = CharacterTokens(stripped)
             if current and current.name == "html":
-                # In fragment parsing with colgroup context, drop non-whitespace characters
-                if self.fragment_context and self.fragment_context.tag_name.lower() == "colgroup":
-                    self._parse_error("unexpected-characters-in-column-group")
-                    return None
+                # Fragment parsing with colgroup context: drop non-whitespace characters
+                # (This is the only way html can be current in IN_COLUMN_GROUP mode)
+                self._parse_error("unexpected-characters-in-column-group")
+                return None
             # In a template, non-whitespace characters are parse errors - ignore them
             if current and current.name == "template":
                 self._parse_error("unexpected-characters-in-template-column-group")
@@ -1982,6 +1979,10 @@ class TreeBuilder:
                     self._parse_error("Unexpected </option>")
                 return None
             if name == "select":
+                # Per HTML5 spec: If there's no select in select scope, parse error and ignore
+                if not any(node.name == "select" for node in self.open_elements):
+                    self._parse_error("Unexpected </select>")
+                    return None
                 self._pop_until_any_inclusive({"select"})
                 self._reset_insertion_mode()
                 return None
@@ -2001,19 +2002,24 @@ class TreeBuilder:
                 self._adoption_agency(name)
                 return None
             if name in {"p", "div", "span", "button", "datalist", "selectedcontent"}:
-                # Pop elements until we find the matching element (or give up)
-                found = False
-                for node in reversed(self.open_elements):
+                # Per HTML5 spec: these end tags in select mode close the element if it's on the stack.
+                # But we must not pop across the select boundary (i.e., don't pop elements BEFORE select).
+                select_idx = None
+                target_idx = None
+                for i, node in enumerate(self.open_elements):
+                    if node.name == "select" and select_idx is None:
+                        select_idx = i
                     if node.name == name:
-                        found = True
-                        break
-                if found:
-                    # Pop elements until we've popped the target
-                    # found flag guarantees element is on stack
+                        target_idx = i  # Track the LAST occurrence
+                # Only pop if target exists and is AFTER (or at same level as) select
+                # i.e., the target is inside the select or there's no select
+                if target_idx is not None and (select_idx is None or target_idx > select_idx):
                     while True:
                         popped = self.open_elements.pop()
                         if popped.name == name:
                             break
+                else:
+                    self._parse_error(f"Unexpected </{name}> in select")
                 return None
             if name in {"caption", "col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr", "table"}:
                 self._parse_error(f"Unexpected </{name}> in select")
@@ -2021,6 +2027,9 @@ class TreeBuilder:
                     self._pop_until_any_inclusive({"select"})
                     self._reset_insertion_mode()
                 return ("reprocess", self.mode, token)
+            # Any other end tag: parse error, ignore
+            self._parse_error(f"Unexpected </{name}> in select")
+            return None
         assert isinstance(token, EOFToken), f"Unexpected token type: {type(token)}"
         return self._mode_in_body(token)
 
@@ -2593,6 +2602,8 @@ class TreeBuilder:
     def _flush_pending_table_text(self):
         data = "".join(self.pending_table_text)
         self.pending_table_text.clear()
+        if not data:
+            return
         if _is_all_whitespace(data):
             self._append_text(data)
             return

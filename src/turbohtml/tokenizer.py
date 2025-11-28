@@ -1647,37 +1647,37 @@ class Tokenizer:
             return
 
         # Optimization: Avoid join for single chunk
+        # text_buffer is never populated with empty strings
         if len(self.text_buffer) == 1:
             data = self.text_buffer[0]
         else:
             data = "".join(self.text_buffer)
 
         self.text_buffer.clear()
-        if data:
-            if self.state == self.DATA and "\0" in data:
-                count = data.count("\0")
-                for _ in range(count):
-                    self._emit_error("Null character in data state")
+        if self.state == self.DATA and "\0" in data:
+            count = data.count("\0")
+            for _ in range(count):
+                self._emit_error("Null character in data state")
 
-            # Per HTML5 spec:
-            # - RCDATA state (title, textarea): decode character references
-            # - RAWTEXT state (style, script, etc): do NOT decode
-            # - PLAINTEXT state: do NOT decode
-            # - CDATA sections: do NOT decode
-            if self.state >= self.PLAINTEXT or self.CDATA_SECTION <= self.state <= self.CDATA_SECTION_END:
-                pass
-            elif self.state >= self.RAWTEXT:
-                pass
-            else:
-                if "&" in data:
-                    data = decode_entities_in_text(data)
-            # Apply XML coercion if enabled
-            if self.opts.xml_coercion:
-                data = _coerce_text_for_xml(data)
+        # Per HTML5 spec:
+        # - RCDATA state (title, textarea): decode character references
+        # - RAWTEXT state (style, script, etc): do NOT decode
+        # - PLAINTEXT state: do NOT decode
+        # - CDATA sections: do NOT decode
+        if self.state >= self.PLAINTEXT or self.CDATA_SECTION <= self.state <= self.CDATA_SECTION_END:
+            pass
+        elif self.state >= self.RAWTEXT:
+            pass
+        else:
+            if "&" in data:
+                data = decode_entities_in_text(data)
+        # Apply XML coercion if enabled
+        if self.opts.xml_coercion:
+            data = _coerce_text_for_xml(data)
 
-            result = self.sink.process_characters(data)
-            # Note: process_characters never returns Plaintext or RawData
-            # State switches happen via _emit_current_tag instead
+        result = self.sink.process_characters(data)
+        # Note: process_characters never returns Plaintext or RawData
+        # State switches happen via _emit_current_tag instead
 
     def _append_attr_value_char(self, c):
         self.current_attr_value.append(c)
