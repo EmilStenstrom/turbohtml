@@ -75,8 +75,8 @@ turbohtml-tests/cr_handling.dat: 1/1 (100%) [.]
 turbohtml-tests/iframe_srcdoc.dat: 1/1 (100%) [.]
 turbohtml-tests/plaintext_element.dat: 1/1 (100%) [.]
 turbohtml-tests/tokenizer_edge_cases.test: 29/29 (100%) [.............................]
-turbohtml-tests/treebuilder_coverage.dat: 63/63 (100%) [...............................................................]
+turbohtml-tests/treebuilder_coverage.dat: 72/72 (100%) [........................................................................]
 turbohtml-tests/xml_coercion.dat: 7/7 (100%) [.......]
 turbohtml-tests/xml_coercion_coverage.test: 2/2 (100%) [..]
 
-PASSED: 8657/8657 passed (100.0%), 39 skipped
+PASSED: 8666/8666 passed (100.0%), 39 skipped

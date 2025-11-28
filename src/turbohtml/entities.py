@@ -235,11 +235,12 @@ def decode_entities_in_text(text, in_attribute=False):
             end_pos = i + 1 + best_match_len
             next_char = text[end_pos] if end_pos < length else None
             if in_attribute:
-                # In attributes, don't decode if followed by alphanumeric or =
-                if next_char and (next_char.isalnum() or next_char == "="):
-                    result.append("&")
-                    i += 1
-                    continue
+                # In attributes with prefix match, the next char is always alphanumeric
+                # (since entity_name was built from alphanumerics only)
+                # Per HTML5 spec, don't decode if followed by alphanumeric or =
+                result.append("&")
+                i += 1
+                continue
 
             result.append(best_match)
             i = i + 1 + best_match_len

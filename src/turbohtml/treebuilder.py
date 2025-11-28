@@ -404,13 +404,13 @@ class TreeBuilder:
                                     result = handler(self, current_token)
                                 else:
                                     # Inline _handle_body_start_default
+                                    # Elements here have no special handler - never in FRAMESET_NEUTRAL/FORMATTING_ELEMENTS
                                     if self.active_formatting:
                                         self._reconstruct_active_formatting_elements()
                                     self._insert_element(current_token, push=True)
                                     if current_token.self_closing:
                                         self._parse_error("non-void-html-element-start-tag-with-trailing-solidus")
-                                    if name not in _BODY_START_FRAMESET_NEUTRAL and name not in FORMATTING_ELEMENTS:
-                                        self.frameset_ok = False
+                                    self.frameset_ok = False
                                     result = None
                         else:
                             name = current_token.name
@@ -550,18 +550,18 @@ class TreeBuilder:
     def finish(self):
         if self.fragment_context is not None:
             # For fragments, remove the html wrapper and promote its children
-            if self.document.children and self.document.children[0].name == "html":
-                root = self.document.children[0]
-                context_elem = self.fragment_context_element
-                if context_elem is not None and context_elem.parent is root:
-                    for child in list(context_elem.children):
-                        context_elem.remove_child(child)
-                        root.append_child(child)
-                    root.remove_child(context_elem)
-                for child in list(root.children):
-                    root.remove_child(child)
-                    self.document.append_child(child)
-                self.document.remove_child(root)
+            # Note: html element is always created in fragment setup, so children[0] is always "html"
+            root = self.document.children[0]
+            context_elem = self.fragment_context_element
+            if context_elem is not None and context_elem.parent is root:
+                for child in list(context_elem.children):
+                    context_elem.remove_child(child)
+                    root.append_child(child)
+                root.remove_child(context_elem)
+            for child in list(root.children):
+                root.remove_child(child)
+                self.document.append_child(child)
+            self.document.remove_child(root)
 
         # Populate selectedcontent elements per HTML5 spec
         self._populate_selectedcontent(self.document)
@@ -637,9 +637,9 @@ class TreeBuilder:
         if isinstance(token, Tag):
             if token.kind == Tag.START and token.name == "html":
                 # Duplicate html tag - add attributes to existing html element
-                if self.open_elements:
-                    html = self.open_elements[0]
-                    self._add_missing_attributes(html, token.attrs)
+                # Note: open_elements[0] is always html at this point (created in BEFORE_HTML mode)
+                html = self.open_elements[0]
+                self._add_missing_attributes(html, token.attrs)
                 return None
             if token.kind == Tag.START and token.name == "head":
                 head = self._insert_element(token, push=True)
@@ -897,9 +897,9 @@ class TreeBuilder:
         if self.template_modes:
             self._parse_error("Unexpected <html> in template")
             return
-        if self.open_elements:
-            html = self.open_elements[0]
-            self._add_missing_attributes(html, token.attrs)
+        # In IN_BODY mode, html element is always at open_elements[0]
+        html = self.open_elements[0]
+        self._add_missing_attributes(html, token.attrs)
         return
 
     def _handle_body_start_body(self, token):
@@ -1192,15 +1192,14 @@ class TreeBuilder:
         if not self.frameset_ok:
             self._parse_error("unexpected-start-tag-ignored")
             return
-        # In body mode, body element is always on the stack
+        # In body mode, body element is always on the stack with a parent (html)
         body_index = 0
         while True:
             if self.open_elements[body_index].name == "body":
                 break
             body_index += 1
         body_elem = self.open_elements[body_index]
-        if body_elem.parent:
-            body_elem.parent.remove_child(body_elem)
+        body_elem.parent.remove_child(body_elem)
         self.open_elements = self.open_elements[:body_index]
         self._insert_element(token, push=True)
         self.mode = InsertionMode.IN_FRAMESET
@@ -1406,9 +1405,8 @@ class TreeBuilder:
         self._insert_element(token, push=True)
         if token.self_closing:
             self._parse_error("non-void-html-element-start-tag-with-trailing-solidus")
-        name = token.name
-        if name not in _BODY_START_FRAMESET_NEUTRAL and name not in FORMATTING_ELEMENTS:
-            self.frameset_ok = False
+        # Elements reaching here have no handler - never in FRAMESET_NEUTRAL/FORMATTING_ELEMENTS
+        self.frameset_ok = False
         return
 
     def _mode_in_table(self, token):
@@ -1482,17 +1480,15 @@ class TreeBuilder:
                             break
                     if input_type == "hidden":
                         self._parse_error("unexpected-hidden-input-in-table")
-                        node = self._insert_element(token, push=True)
-                        if self.open_elements and self.open_elements[-1] is node:
-                            self.open_elements.pop()
+                        self._insert_element(token, push=True)
+                        self.open_elements.pop()  # push=True always adds to stack
                         return None
                 if name == "form":
                     self._parse_error("unexpected-form-in-table")
                     if self.form_element is None:
                         node = self._insert_element(token, push=True)
                         self.form_element = node
-                        if self.open_elements and self.open_elements[-1] is node:
-                            self.open_elements.pop()
+                        self.open_elements.pop()  # push=True always adds to stack
                     return None
                 self._parse_error("unexpected-start-tag-implies-table-voodoo")
                 previous = self.insert_from_table
@@ -1629,9 +1625,8 @@ class TreeBuilder:
                 if name == "html":
                     return self._mode_in_body(token)
                 if name == "col":
-                    node = self._insert_element(token, push=True)
-                    if self.open_elements and self.open_elements[-1] is node:
-                        self.open_elements.pop()
+                    self._insert_element(token, push=True)
+                    self.open_elements.pop()  # push=True always adds to stack
                     return None
                 if name == "template":
                     # Template is handled by delegating to IN_HEAD

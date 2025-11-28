@@ -621,3 +621,91 @@ caption
 |         <tr>
 |           <td>
 |             <!--  comment in cell  -->
+
+#data
+<xyz/>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <xyz>
+
+#data
+<div data-x="&amp!">text</div>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <div>
+|       data-x="&!"
+|       "text"
+
+#data
+<div bar="x&gt y">
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <div>
+|       bar="x> y"
+
+#data
+<div bar="x&not! y">
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <div>
+|       bar="x¬! y"
+
+#data
+<input type="hidden">
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+
+#data
+<body><input type="hidden">
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <input>
+|       type="hidden"
+
+#data
+<head></head><input>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <input>
+
+#data
+<head></head><input name="foo">
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <input>
+|       name="foo"
+
+#data
+<table><input name="bar"></table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <input>
+|       name="bar"
+|     <table>
