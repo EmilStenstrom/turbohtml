@@ -472,6 +472,10 @@ def _benchmark_worker(bench_fn, html_files, iterations, queue):
 
 def run_benchmark_isolated(bench_fn, html_files, iterations, args):
     """Run benchmark in a separate process to isolate memory usage."""
+    # Materialize generator to list (required for multiprocessing pickling)
+    if not isinstance(html_files, list):
+        html_files = list(html_files)
+
     if args.no_mem:
         return bench_fn(html_files, iterations)
 
