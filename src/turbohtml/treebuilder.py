@@ -2913,7 +2913,13 @@ class TreeBuilder:
                 last_table is None or self.open_elements.index(last_template) > self.open_elements.index(last_table)
             ):
                 return last_template.template_content, len(last_template.template_content.children)
+            # No table on stack - fall back to inserting in target
+            if last_table is None:
+                return target, len(target.children)
             parent = last_table.parent
+            # Table has no parent (e.g., detached) - fall back to target
+            if parent is None:  # pragma: no cover
+                return target, len(target.children)
             position = parent.children.index(last_table)
             return parent, position
 
