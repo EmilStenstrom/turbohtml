@@ -114,12 +114,11 @@ def iter_html_from_batch(
 ):
     """
     Stream HTML files from a compressed batch without writing to disk.
-    Returns list of (filename, html_content) tuples.
+    Yields (filename, html_content) tuples.
     """
     if not batch_path.exists():
         print(f"ERROR: Batch file not found at {batch_path}")
         sys.exit(1)
-    results = []
     tar_dctx = zstd.ZstdDecompressor()
     with batch_path.open("rb") as batch_file:
         with tar_dctx.stream_reader(batch_file) as reader:
@@ -132,15 +131,14 @@ def iter_html_from_batch(
                     if not member.isfile() or not member.name.endswith(".html.zst"):
                         continue
                     if limit and count >= limit:
-                        break
+                        return
                     compressed_html = tar.extractfile(member).read()
                     html_content = html_dctx.decompress(compressed_html).decode(
                         "utf-8",
                         errors="replace",
                     )
-                    results.append((member.name, html_content))
+                    yield (member.name, html_content)
                     count += 1
-    return results
 
 
 def iter_html_from_downloaded(
@@ -150,12 +148,11 @@ def iter_html_from_downloaded(
 ):
     """
     Load HTML files from downloaded directory (*.html.zst files).
-    Returns list of (filename, html_content) tuples.
+    Yields (filename, html_content) tuples.
     """
     if not downloaded_dir.exists():
         print(f"ERROR: Downloaded directory not found at {downloaded_dir}")
         sys.exit(1)
-    results = []
     html_dctx = zstd.ZstdDecompressor(
         dict_data=zstd.ZstdCompressionDict(dict_bytes),
     )
@@ -166,11 +163,10 @@ def iter_html_from_downloaded(
         try:
             compressed = file_path.read_bytes()
             html_content = html_dctx.decompress(compressed).decode("utf-8", errors="replace")
-            results.append((file_path.name, html_content))
+            yield (file_path.name, html_content)
         except Exception as e:
             print(f"Warning: Failed to decompress {file_path.name}: {e}")
             continue
-    return results
 
 
 def iter_html_from_all_batches(
@@ -179,8 +175,8 @@ def iter_html_from_all_batches(
     limit=None,
 ):
     """
-    Load HTML files from all batch files in a directory.
-    Returns list of (filename, html_content) tuples.
+    Stream HTML files from all batch files in a directory.
+    Yields (filename, html_content) tuples.
     """
     if not batches_dir.exists():
         print(f"ERROR: Batches directory not found at {batches_dir}")
@@ -189,18 +185,17 @@ def iter_html_from_all_batches(
     if not batch_files:
         print(f"ERROR: No batch files found in {batches_dir}")
         sys.exit(1)
-    all_results = []
+    count = 0
     for batch_file in batch_files:
         print(f"  Loading {batch_file.name}...")
-        batch_results = iter_html_from_batch(batch_file, dict_bytes, limit=None)
-        all_results.extend(batch_results)
-        if limit and len(all_results) >= limit:
-            all_results = all_results[:limit]
-            break
-    return all_results
+        for item in iter_html_from_batch(batch_file, dict_bytes, limit=None):
+            yield item
+            count += 1
+            if limit and count >= limit:
+                return
 
 
-def benchmark_turbohtml(html_files, iterations=1):
+def benchmark_turbohtml(html_source, iterations=1):
     """Benchmark TurboHTML parser with Rust tokenizer."""
     try:
         from turbohtml import TurboHTML
@@ -209,13 +204,19 @@ def benchmark_turbohtml(html_files, iterations=1):
     all_times = []
     errors = 0
     error_files = []
-    if html_files:
-        try:
-            TurboHTML(html_files[0][1])
-        except Exception:
-            pass
-    for _ in range(iterations):
-        for filename, html in html_files:
+    total_bytes = 0
+    file_count = 0
+    warmup_done = False
+    for filename, html in html_source:
+        if not warmup_done:
+            try:
+                TurboHTML(html)
+            except Exception:
+                pass
+            warmup_done = True
+        total_bytes += len(html)
+        file_count += 1
+        for _ in range(iterations):
             try:
                 start = time.perf_counter()
                 result = TurboHTML(html)
@@ -233,10 +234,12 @@ def benchmark_turbohtml(html_files, iterations=1):
         "errors": errors,
         "success_count": len(all_times),
         "error_files": error_files,
+        "file_count": file_count,
+        "total_bytes": total_bytes,
     }
 
 
-def benchmark_html5lib(html_files, iterations=1):
+def benchmark_html5lib(html_source, iterations=1):
     """Benchmark html5lib parser."""
     try:
         import html5lib
@@ -244,13 +247,19 @@ def benchmark_html5lib(html_files, iterations=1):
         return {"error": "html5lib not installed (pip install html5lib)"}
     all_times = []
     errors = 0
-    if html_files:
-        try:
-            html5lib.parse(html_files[0][1])
-        except Exception:
-            pass
-    for _ in range(iterations):
-        for _, html in html_files:
+    total_bytes = 0
+    file_count = 0
+    warmup_done = False
+    for _, html in html_source:
+        if not warmup_done:
+            try:
+                html5lib.parse(html)
+            except Exception:
+                pass
+            warmup_done = True
+        total_bytes += len(html)
+        file_count += 1
+        for _ in range(iterations):
             try:
                 start = time.perf_counter()
                 result = html5lib.parse(html)
@@ -266,10 +275,12 @@ def benchmark_html5lib(html_files, iterations=1):
         "max_time": max(all_times) if all_times else 0,
         "errors": errors,
         "success_count": len(all_times),
+        "file_count": file_count,
+        "total_bytes": total_bytes,
     }
 
 
-def benchmark_lxml(html_files, iterations=1):
+def benchmark_lxml(html_source, iterations=1):
     """Benchmark lxml parser."""
     try:
         from lxml import html as lxml_html
@@ -277,13 +288,19 @@ def benchmark_lxml(html_files, iterations=1):
         return {"error": "lxml not installed (pip install lxml)"}
     times = []
     errors = 0
-    if html_files:
-        try:
-            lxml_html.fromstring(html_files[0][1])
-        except Exception:
-            pass
-    for _ in range(iterations):
-        for _, content in html_files:
+    total_bytes = 0
+    file_count = 0
+    warmup_done = False
+    for _, content in html_source:
+        if not warmup_done:
+            try:
+                lxml_html.fromstring(content)
+            except Exception:
+                pass
+            warmup_done = True
+        total_bytes += len(content)
+        file_count += 1
+        for _ in range(iterations):
             try:
                 start = time.perf_counter()
                 result = lxml_html.fromstring(content)
@@ -299,10 +316,12 @@ def benchmark_lxml(html_files, iterations=1):
         "max_time": max(times) if times else 0,
         "errors": errors,
         "success_count": len(times),
+        "file_count": file_count,
+        "total_bytes": total_bytes,
     }
 
 
-def benchmark_bs4(html_files, iterations=1):
+def benchmark_bs4(html_source, iterations=1):
     """Benchmark BeautifulSoup4 parser."""
     try:
         from bs4 import BeautifulSoup
@@ -310,13 +329,19 @@ def benchmark_bs4(html_files, iterations=1):
         return {"error": "beautifulsoup4 not installed (pip install beautifulsoup4)"}
     times = []
     errors = 0
-    if html_files:
-        try:
-            BeautifulSoup(html_files[0][1], "html.parser")
-        except Exception:
-            pass
-    for _ in range(iterations):
-        for _, html in html_files:
+    total_bytes = 0
+    file_count = 0
+    warmup_done = False
+    for _, html in html_source:
+        if not warmup_done:
+            try:
+                BeautifulSoup(html, "html.parser")
+            except Exception:
+                pass
+            warmup_done = True
+        total_bytes += len(html)
+        file_count += 1
+        for _ in range(iterations):
             try:
                 start = time.perf_counter()
                 result = BeautifulSoup(html, "html.parser")
@@ -332,10 +357,12 @@ def benchmark_bs4(html_files, iterations=1):
         "max_time": max(times) if times else 0,
         "errors": errors,
         "success_count": len(times),
+        "file_count": file_count,
+        "total_bytes": total_bytes,
     }
 
 
-def benchmark_html_parser(html_files, iterations=1):
+def benchmark_html_parser(html_source, iterations=1):
     """Benchmark stdlib html.parser."""
     try:
         from html.parser import HTMLParser
@@ -358,14 +385,20 @@ def benchmark_html_parser(html_files, iterations=1):
 
     times = []
     errors = 0
-    if html_files:
-        try:
-            parser = SimpleHTMLParser()
-            parser.feed(html_files[0][1])
-        except Exception:
-            pass
-    for _ in range(iterations):
-        for _, html in html_files:
+    total_bytes = 0
+    file_count = 0
+    warmup_done = False
+    for _, html in html_source:
+        if not warmup_done:
+            try:
+                parser = SimpleHTMLParser()
+                parser.feed(html)
+            except Exception:
+                pass
+            warmup_done = True
+        total_bytes += len(html)
+        file_count += 1
+        for _ in range(iterations):
             try:
                 start = time.perf_counter()
                 parser = SimpleHTMLParser()
@@ -382,10 +415,12 @@ def benchmark_html_parser(html_files, iterations=1):
         "max_time": max(times) if times else 0,
         "errors": errors,
         "success_count": len(times),
+        "file_count": file_count,
+        "total_bytes": total_bytes,
     }
 
 
-def benchmark_selectolax(html_files, iterations=1):
+def benchmark_selectolax(html_source, iterations=1):
     """Benchmark selectolax parser."""
     try:
         from selectolax.parser import HTMLParser
@@ -393,13 +428,19 @@ def benchmark_selectolax(html_files, iterations=1):
         return {"error": "selectolax not installed (pip install selectolax)"}
     times = []
     errors = 0
-    if html_files:
-        try:
-            HTMLParser(html_files[0][1])
-        except Exception:
-            pass
-    for _ in range(iterations):
-        for _, html in html_files:
+    total_bytes = 0
+    file_count = 0
+    warmup_done = False
+    for _, html in html_source:
+        if not warmup_done:
+            try:
+                HTMLParser(html)
+            except Exception:
+                pass
+            warmup_done = True
+        total_bytes += len(html)
+        file_count += 1
+        for _ in range(iterations):
             try:
                 start = time.perf_counter()
                 result = HTMLParser(html)
@@ -415,6 +456,8 @@ def benchmark_selectolax(html_files, iterations=1):
         "max_time": max(times) if times else 0,
         "errors": errors,
         "success_count": len(times),
+        "file_count": file_count,
+        "total_bytes": total_bytes,
     }
 
 
@@ -562,33 +605,30 @@ def main():
     print(f"Loading dictionary from {args.dict}...")
     dict_bytes = load_dict(args.dict)
 
-    # Load HTML files into memory
+    # Create a factory function that returns fresh generators for each benchmark
     limit = args.limit if args.limit > 0 else None
     if args.downloaded:
-        print(f"Loading HTML files from {args.downloaded}...")
-        html_files = iter_html_from_downloaded(args.downloaded, dict_bytes, limit)
+        print(f"Will stream HTML files from {args.downloaded}...")
+        def html_source_factory():
+            return iter_html_from_downloaded(args.downloaded, dict_bytes, limit)
     elif args.all_batches:
-        print(f"Loading HTML files from all batches in {args.batches_dir}...")
-        html_files = iter_html_from_all_batches(args.batches_dir, dict_bytes, limit)
+        print(f"Will stream HTML files from all batches in {args.batches_dir}...")
+        def html_source_factory():
+            return iter_html_from_all_batches(args.batches_dir, dict_bytes, limit)
     elif args.batch:
-        print(f"Loading HTML files from {args.batch}...")
-        html_files = iter_html_from_batch(args.batch, dict_bytes, limit)
+        print(f"Will stream HTML files from {args.batch}...")
+        def html_source_factory():
+            return iter_html_from_batch(args.batch, dict_bytes, limit)
     else:
         default_batch = args.batches_dir / "web100k-batch-001.tar.zst"
-        print(f"Loading HTML files from {default_batch}...")
-        html_files = iter_html_from_batch(default_batch, dict_bytes, limit)
-    if not html_files:
-        print("ERROR: No HTML files loaded")
-        sys.exit(1)
-    print(f"Loaded {len(html_files)} HTML files")
-
-    total_bytes = sum(len(html) for _, html in html_files)
-    print(f"Total HTML size: {total_bytes / 1024 / 1024:.2f} MB")
+        print(f"Will stream HTML files from {default_batch}...")
+        def html_source_factory():
+            return iter_html_from_batch(default_batch, dict_bytes, limit)
 
     # Helper: run a benchmark with optional memory measurement
-    def run_with_memory(bench_fn, *bargs, **bkwargs):
+    def run_with_memory(bench_fn, html_source_factory, iterations):
         # Use isolated process runner
-        return run_benchmark_isolated(bench_fn, *bargs, args=args)
+        return run_benchmark_isolated(bench_fn, html_source_factory(), iterations, args=args)
 
     # Run benchmarks
     results = {}
@@ -601,17 +641,26 @@ def main():
         "selectolax": benchmark_selectolax,
     }
 
+    file_count = 0
+    total_bytes = 0
     for parser_name in args.parsers:
         print(f"\nBenchmarking {parser_name}...", end="", flush=True)
-        res = run_with_memory(benchmarks[parser_name], html_files, args.iterations)
+        res = run_with_memory(benchmarks[parser_name], html_source_factory, args.iterations)
         results[parser_name] = res
         if "error" in res:
             print(f" SKIPPED ({res['error']})")
         else:
             print(f" DONE ({res['total_time']:.3f}s)")
+            # Track file count and bytes from first successful benchmark
+            if file_count == 0:
+                file_count = res.get("file_count", 0)
+                total_bytes = res.get("total_bytes", 0)
+
+    if file_count > 0:
+        print(f"\nProcessed {file_count} HTML files ({total_bytes / 1024 / 1024:.2f} MB)")
 
     # Print results
-    print_results(results, len(html_files), args.iterations)
+    print_results(results, file_count, args.iterations)
 
 
 if __name__ == "__main__":
