@@ -1191,12 +1191,16 @@ class TreeBuilder:
         if not self.frameset_ok:
             self._parse_error("unexpected-start-tag-ignored")
             return
-        # In body mode, body element is always on the stack with a parent (html)
-        body_index = 0
-        while True:
-            if self.open_elements[body_index].name == "body":
+        # Find body element on the stack (may not exist if already in frameset)
+        body_index = None
+        for i, elem in enumerate(self.open_elements):
+            if elem.name == "body":
+                body_index = i
                 break
-            body_index += 1
+        if body_index is None:
+            # No body on stack (e.g., nested frameset after mode reset), ignore
+            self._parse_error("unexpected-start-tag-ignored")
+            return
         body_elem = self.open_elements[body_index]
         body_elem.parent.remove_child(body_elem)
         self.open_elements = self.open_elements[:body_index]

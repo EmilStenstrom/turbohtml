@@ -559,7 +559,7 @@ class Tokenizer:
                 self.current_attr_value_has_amp = False
                 self.current_attr_name.append("=")
                 self.state = self.ATTRIBUTE_NAME
-                return self._state_attribute_name()
+                return False  # Let main loop dispatch to avoid recursion
 
             self.current_attr_name.clear()
             self.current_attr_value.clear()
@@ -572,7 +572,7 @@ class Tokenizer:
 
             self.current_attr_name.append(c)
             self.state = self.ATTRIBUTE_NAME
-            return self._state_attribute_name()
+            return False  # Let main loop dispatch to avoid recursion
 
     def _state_attribute_name(self):
         replacement = "\ufffd"
@@ -612,7 +612,7 @@ class Tokenizer:
                                     self.ignore_lf = True
                                 self._finish_attribute()
                                 self.state = self.AFTER_ATTRIBUTE_NAME
-                                return self._state_after_attribute_name()
+                                return False  # Let main loop dispatch to avoid recursion
                             if c == ">":
                                 self.pos += 1
                                 self._finish_attribute()
@@ -634,7 +634,7 @@ class Tokenizer:
             if c in ("\t", "\n", "\f", " "):
                 self._finish_attribute()
                 self.state = self.AFTER_ATTRIBUTE_NAME
-                return self._state_after_attribute_name()
+                return False  # Let main loop dispatch to avoid recursion
             if c == "/":
                 self._finish_attribute()
                 self.state = self.SELF_CLOSING_START_TAG
@@ -724,7 +724,7 @@ class Tokenizer:
                 c = chr(ord(c) + 32)
             self.current_attr_name.append(c)
             self.state = self.ATTRIBUTE_NAME
-            return self._state_attribute_name()
+            return False  # Let main loop dispatch to avoid recursion
 
     def _state_before_attribute_value(self):
         while True:
