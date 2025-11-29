@@ -866,3 +866,116 @@ caption
 | <html>
 |   <head>
 |   <body>
+
+#data
+<frameset></frameset> X
+#errors
+#document
+| <html>
+|   <head>
+|   <frameset>
+|   " "
+
+#data
+<frameset></frameset></html> Y
+#errors
+#document
+| <html>
+|   <head>
+|   <frameset>
+|   " "
+
+#data
+<table><colgroup><template></template></colgroup></table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <colgroup>
+|         <template>
+|           content
+
+#data
+<table><colgroup></col></colgroup></table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <colgroup>
+
+#data
+<select><button><selectedcontent></button><option value="x">A<option>B</option>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <select>
+|       <button>
+|         <selectedcontent>
+|           "A"
+|       <option>
+|         value="x"
+|         "A"
+|       <option>
+|         "B"
+
+#data
+<select><button><selectedcontent></button><option class="foo" selected>A<option>B</option>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <select>
+|       <button>
+|         <selectedcontent>
+|           "A"
+|       <option>
+|         class="foo"
+|         selected=""
+|         "A"
+|       <option>
+|         "B"
+
+#data
+<frameset></frameset>X
+#errors
+#document
+| <html>
+|   <head>
+|   <frameset>
+
+#data
+<frameset></frameset></html>Y
+#errors
+#document
+| <html>
+|   <head>
+|   <frameset>
+
+#data
+<tr>
+#errors
+#document-fragment
+td
+#document
+
+#data
+<tr>
+#errors
+#document-fragment
+th
+#document
+
+#data
+<tr>
+#errors
+#document-fragment
+tbody
+#document
+| <tr>
