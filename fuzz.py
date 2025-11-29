@@ -1247,6 +1247,439 @@ def fuzz_ruby_elements():
     return random.choice(variants)
 
 
+def fuzz_adoption_agency_complex():
+    """Fuzz complex adoption agency scenarios."""
+    content = random_string(1, 5)
+    fmt = random.choice(["b", "i", "em", "strong", "a", "font", "nobr"])
+    fmt2 = random.choice(["b", "i", "em", "strong", "a", "font", "nobr"])
+    block = random.choice(["div", "p", "article", "section", "aside"])
+    
+    variants = [
+        # Deep nesting with misnested formatting
+        f"<{fmt}><{fmt2}><{block}><p>{content}</{fmt2}></{fmt}></{block}>",
+        # Multiple formatting elements across blocks
+        f"<{fmt}><{block}><{fmt2}>{content}</{block}></{fmt2}></{fmt}>",
+        # Formatting across table cells
+        f"<{fmt}><table><tr><td>{content}</{fmt}></td></tr></table>",
+        # Three-level misnesting
+        f"<{fmt}><{fmt2}><div><span>{content}</span></{fmt}></{fmt2}></div>",
+        # Formatting with nested identical tags
+        f"<{fmt}><{fmt}><{fmt}>{content}</{fmt}></{fmt}></{fmt}>",
+        # Adoption agency with implicit tags
+        f"<{fmt}><li>{content}<li>{content}</{fmt}>",
+        f"<{fmt}><p>{content}<p>{content}</{fmt}>",
+        # Formatting across caption
+        f"<{fmt}><table><caption>{content}</{fmt}></caption></table>",
+        # Multiple adoption agency triggers in sequence
+        f"<{fmt}><div></{fmt}><{fmt2}><div></{fmt2}>",
+        # 8+ iteration edge case
+        f"<{fmt}><div><div><div><div><div><div><div><div>{content}</{fmt}>",
+        # Formatting with link
+        f"<a href='#'><a href='#'>{content}</a></a>",
+        f"<a><b><a>{content}</a></b></a>",
+    ]
+    return random.choice(variants)
+
+
+def fuzz_template_in_table():
+    """Fuzz template inside table structures."""
+    content = random_string(1, 10)
+    
+    variants = [
+        # Template in various table positions
+        f"<table><template><tr><td>{content}</td></tr></template></table>",
+        f"<table><tr><template><td>{content}</td></template></tr></table>",
+        f"<table><tbody><template></template></tbody></table>",
+        f"<table><colgroup><template></template></colgroup></table>",
+        # Template with foster parenting trigger
+        f"<table><template>{content}<div>foster</div></template></table>",
+        # Nested template in table
+        f"<table><template><template><tr></tr></template></template></table>",
+        # Template end tag in table context
+        f"<table><tr><td></template></td></tr></table>",
+        # Template with caption
+        f"<table><template><caption>{content}</caption></template></table>",
+        # Template mode switching
+        f"<template><table><tr><td></td></tr></table></template>",
+        f"<template><select><option></option></select></template>",
+        # Template with unclosed table elements
+        f"<table><template><tr><td>{content}</template></table>",
+    ]
+    return random.choice(variants)
+
+
+def fuzz_colgroup_handling():
+    """Fuzz colgroup edge cases."""
+    content = random_string(1, 10)
+    
+    variants = [
+        # Implicit colgroup close
+        f"<table><colgroup><tr><td>{content}</td></tr></table>",
+        # Multiple colgroups
+        f"<table><colgroup><col><colgroup><col></table>",
+        # Colgroup with content
+        f"<table><colgroup>{content}</colgroup></table>",
+        # Colgroup after tbody
+        f"<table><tbody></tbody><colgroup></colgroup></table>",
+        # Col outside colgroup
+        f"<table><col><col><tr><td>{content}</td></tr></table>",
+        # Colgroup with template
+        f"<table><colgroup><template><col></template></colgroup></table>",
+        # Empty colgroup
+        f"<table><colgroup></colgroup><colgroup></colgroup></table>",
+        # Colgroup with unexpected content
+        f"<table><colgroup><div>{content}</div></colgroup></table>",
+        # End colgroup without start
+        f"<table></colgroup><tr><td>{content}</td></tr></table>",
+    ]
+    return random.choice(variants)
+
+
+def fuzz_scope_terminators():
+    """Fuzz elements that terminate scopes."""
+    content = random_string(1, 10)
+    fmt = random.choice(["b", "i", "em", "strong"])
+    terminator = random.choice(["applet", "caption", "html", "table", "td", "th", "marquee", "object", "template"])
+    
+    variants = [
+        # Formatting across scope terminator
+        f"<{fmt}><{terminator}>{content}</{terminator}></{fmt}>",
+        # Nested terminators
+        f"<{terminator}><{terminator}>{content}</{terminator}></{terminator}>",
+        # End tag for element not in scope
+        f"<{terminator}><div></{terminator}></div>",
+        # Button scope
+        f"<button><button>{content}</button></button>",
+        f"<{fmt}><button>{content}</button></{fmt}>",
+        # List item scope
+        f"<ol><li><ul><li>{content}</ul></li></ol>",
+        # Table scope
+        f"<table><tr><td><table><tr><td>{content}</td></tr></table></td></tr></table>",
+        # Multiple scope terminators
+        f"<{terminator}><table><caption>{content}</caption></table></{terminator}>",
+    ]
+    return random.choice(variants)
+
+
+def fuzz_mode_switching():
+    """Fuzz parser mode transitions."""
+    content = random_string(1, 10)
+    
+    variants = [
+        # In head to in body
+        f"<head><body>{content}",
+        f"<head><div>{content}</div></head>",
+        # After head to in body
+        f"<head></head><div>{content}</div><body>",
+        # In body to in table
+        f"<body><table><tr><td>{content}</td></tr></table>",
+        # In table to in caption
+        f"<table><caption><div>{content}</div></caption></table>",
+        # In select to in select in table
+        f"<table><tr><td><select><option>{content}</option></select></td></tr></table>",
+        # After body to after after body
+        f"<html><body></body></html>{content}",
+        f"<html><body></body><!-- comment --></html>",
+        # Frameset mode
+        f"<html><head></head><frameset><frame></frameset>",
+        # Text mode
+        f"<script>{content}</script><style>{content}</style>",
+        # Template mode resets
+        f"<template><table></table></template><template><select></select></template>",
+    ]
+    return random.choice(variants)
+
+
+def fuzz_isindex_handling():
+    """Fuzz isindex (deprecated but still handled)."""
+    content = random_string(1, 10)
+    
+    variants = [
+        # Basic isindex
+        f"<isindex>",
+        f"<isindex prompt='{content}'>",
+        f"<isindex action='submit'>",
+        # Isindex with attributes
+        f"<isindex name='{content}' id='idx'>",
+        # Isindex in various contexts
+        f"<form><isindex></form>",
+        f"<div><isindex></div>",
+        f"<table><tr><td><isindex></td></tr></table>",
+        # Multiple isindex
+        f"<isindex><isindex>",
+    ]
+    return random.choice(variants)
+
+
+def fuzz_image_element():
+    """Fuzz image element (converted to img)."""
+    content = random_string(1, 10)
+    
+    variants = [
+        f"<image src='{content}'>",
+        f"<image>{content}</image>",
+        f"<div><image src='a'></div>",
+        f"<image src='a' alt='{content}'>",
+        f"<svg><image href='{content}'></svg>",  # SVG image is different
+    ]
+    return random.choice(variants)
+
+
+def fuzz_menuitem_handling():
+    """Fuzz menuitem element (deprecated)."""
+    content = random_string(1, 10)
+    
+    variants = [
+        f"<menu><menuitem>{content}</menuitem></menu>",
+        f"<menuitem label='{content}'>",
+        f"<menuitem><menuitem>{content}</menuitem></menuitem>",
+        f"<div><menuitem>{content}</menuitem></div>",
+    ]
+    return random.choice(variants)
+
+
+def fuzz_body_start_variations():
+    """Fuzz body start tag in various contexts."""
+    content = random_string(1, 10)
+    
+    variants = [
+        # Body with attributes after body exists
+        f"<body><body class='{content}'>",
+        f"<body id='a'><div><body id='b'>{content}</div>",
+        # Body in frameset mode
+        f"<frameset><body>{content}</body></frameset>",
+        # Body after frameset
+        f"<frameset></frameset><body>{content}</body>",
+        # Multiple body end tags
+        f"<body>{content}</body></body></body>",
+        # Body with all content
+        f"<body onload='alert(1)'>{content}</body>",
+    ]
+    return random.choice(variants)
+
+
+def fuzz_html_start_variations():
+    """Fuzz html start tag in various contexts."""
+    content = random_string(1, 10)
+    
+    variants = [
+        # Html with attributes after html exists
+        f"<html><html lang='en'><body>{content}</body></html>",
+        # Html in body
+        f"<html><body><html>{content}</html></body></html>",
+        # Html after body
+        f"<html><body></body><html></html>",
+        # Html with template
+        f"<html><template><html>{content}</html></template></html>",
+        # Multiple html end tags
+        f"<html></html></html></html>",
+    ]
+    return random.choice(variants)
+
+
+def fuzz_noscript_handling():
+    """Fuzz noscript element (scripting-dependent)."""
+    content = random_string(1, 10)
+    
+    variants = [
+        # Noscript in head
+        f"<head><noscript><link></noscript></head>",
+        f"<head><noscript><style>{content}</style></noscript></head>",
+        # Noscript in body
+        f"<body><noscript><div>{content}</div></noscript></body>",
+        # Nested noscript
+        f"<noscript><noscript>{content}</noscript></noscript>",
+        # Noscript with unexpected content
+        f"<head><noscript><div>{content}</div></noscript></head>",
+    ]
+    return random.choice(variants)
+
+
+def fuzz_object_embed():
+    """Fuzz object and embed elements."""
+    content = random_string(1, 10)
+    
+    variants = [
+        # Object with param
+        f"<object><param name='a' value='{content}'></object>",
+        # Nested object
+        f"<object><object>{content}</object></object>",
+        # Object with fallback
+        f"<object><div>{content}</div></object>",
+        # Embed variations
+        f"<embed src='{content}'>",
+        f"<embed><div>{content}</div></embed>",
+        # Object in table (foster parenting)
+        f"<table><object>{content}</object></table>",
+    ]
+    return random.choice(variants)
+
+
+def fuzz_plaintext_mode():
+    """Fuzz plaintext element (everything after is text)."""
+    content = random_string(1, 10)
+    
+    variants = [
+        f"<plaintext>{content}<div>not a div</div>",
+        f"<div><plaintext>{content}</plaintext></div>",
+        f"<plaintext><script>not script</script>",
+        f"<plaintext></plaintext>{content}",  # End tag has no effect
+        f"<body><plaintext>{content}",
+    ]
+    return random.choice(variants)
+
+
+def fuzz_math_annotation():
+    """Fuzz MathML annotation elements."""
+    content = random_string(1, 10)
+    
+    variants = [
+        # Various annotation encodings
+        f"<math><annotation-xml encoding='text/html'><div>{content}</div></annotation-xml></math>",
+        f"<math><annotation-xml encoding='application/xhtml+xml'><div>{content}</div></annotation-xml></math>",
+        f"<math><annotation-xml encoding='TEXT/HTML'><div>{content}</div></annotation-xml></math>",
+        # Without encoding (not integration point)
+        f"<math><annotation-xml><div>{content}</div></annotation-xml></math>",
+        # Other annotation types
+        f"<math><annotation>{content}</annotation></math>",
+        f"<math><semantics><mi>x</mi><annotation>{content}</annotation></semantics></math>",
+        # Nested math
+        f"<math><mtext><math>{content}</math></mtext></math>",
+    ]
+    return random.choice(variants)
+
+
+def fuzz_foreign_self_closing():
+    """Fuzz self-closing tags in foreign content."""
+    content = random_string(1, 10)
+    
+    variants = [
+        # Self-closing in SVG
+        f"<svg><rect/><circle/>{content}</svg>",
+        f"<svg><path d='M0 0'/></svg>",
+        # Self-closing in MathML
+        f"<math><mi/><mo/>{content}</math>",
+        # Self-closing foreign that's not void in HTML
+        f"<svg><div/>{content}</svg>",
+        f"<svg><g/>{content}</svg>",
+        # Mixed
+        f"<svg><foreignObject><div>{content}</div/></foreignObject></svg>",
+        # Self-closing at integration point
+        f"<svg><title/>{content}</svg>",
+    ]
+    return random.choice(variants)
+
+
+def fuzz_quirks_doctype():
+    """Fuzz doctypes that trigger quirks mode."""
+    
+    variants = [
+        # Full quirks
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN">',
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 3.2//EN">',
+        '<!DOCTYPE html PUBLIC "-//IETF//DTD HTML//EN">',
+        '<!DOCTYPE HTML SYSTEM "http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd">',
+        # Limited quirks
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Frameset//EN">',
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN">',
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Frameset//EN" "http://www.w3.org/TR/html4/frameset.dtd">',
+        # Edge cases
+        '<!DOCTYPE html PUBLIC "" "">',
+        '<!DOCTYPE html PUBLIC>',
+        '<!DOCTYPE html SYSTEM "">',
+    ]
+    return random.choice(variants)
+
+
+def fuzz_after_after_modes():
+    """Fuzz after body and after frameset modes."""
+    content = random_string(1, 10)
+    
+    variants = [
+        # Content after body end
+        f"<html><body></body>{content}</html>",
+        f"<html><body></body><div>{content}</div></html>",
+        # Comment after body
+        f"<html><body></body><!--{content}--></html>",
+        # Content after html end
+        f"<html><body></body></html>{content}",
+        f"<html><body></body></html><div>{content}</div>",
+        f"<html><body></body></html><!--{content}-->",
+        # After frameset
+        f"<html><frameset></frameset>{content}</html>",
+        f"<html><frameset></frameset><noframes>{content}</noframes></html>",
+        # After after frameset
+        f"<html><frameset></frameset></html>{content}",
+        f"<html><frameset></frameset></html><!--{content}-->",
+    ]
+    return random.choice(variants)
+
+
+def fuzz_xmp_listing_pre():
+    """Fuzz xmp, listing, pre (rawtext handling)."""
+    content = random_string(1, 10)
+    
+    variants = [
+        # XMP (rawtext)
+        f"<xmp><div>{content}</div></xmp>",
+        f"<xmp>&lt;script&gt;{content}&lt;/script&gt;</xmp>",
+        # Listing (like pre)
+        f"<listing>{content}</listing>",
+        f"<listing>\n{content}</listing>",  # Leading newline stripped
+        # Pre
+        f"<pre>\n{content}</pre>",
+        f"<pre>  {content}  </pre>",  # Whitespace preserved
+        # Nesting
+        f"<pre><code>{content}</code></pre>",
+        f"<xmp><xmp>{content}</xmp></xmp>",
+    ]
+    return random.choice(variants)
+
+
+def fuzz_unclosed_formatting():
+    """Fuzz many unclosed formatting elements."""
+    content = random_string(1, 5)
+    fmts = ["b", "i", "em", "strong", "a", "font", "nobr", "s", "u", "code", "tt"]
+    
+    # Generate sequence of unclosed formatting tags
+    parts = []
+    for _ in range(random.randint(5, 15)):
+        f = random.choice(fmts)
+        parts.append(f"<{f}>")
+    parts.append(content)
+    
+    variants = [
+        "".join(parts),  # Many unclosed
+        "".join(parts) + "</div>",  # Close with wrong tag
+        f"<div>{''.join(parts)}</div>",  # Inside div
+        f"<p>{''.join(parts)}",  # Inside p, unclosed
+    ]
+    return random.choice(variants)
+
+
+def fuzz_empty_elements():
+    """Fuzz empty/void elements in wrong contexts."""
+    content = random_string(1, 10)
+    void = random.choice(["br", "hr", "img", "input", "meta", "link", "area", "base", "col", "embed", "keygen", "param", "source", "track", "wbr"])
+    
+    variants = [
+        # Void with end tag
+        f"<{void}></{void}>",
+        f"<{void}>{content}</{void}>",
+        # Void with content
+        f"<{void}>{content}",
+        # Nested void
+        f"<{void}><{void}>",
+        # Void in wrong place
+        f"<table><{void}></table>",
+        f"<select><{void}></select>",
+        # Self-closing void
+        f"<{void}/>",
+        f"<{void} />",
+    ]
+    return random.choice(variants)
+
+
 def generate_fuzzed_html():
     """Generate a complete fuzzed HTML document."""
     parts = []
@@ -1280,7 +1713,7 @@ def generate_fuzzed_html():
                 fuzz_many_attributes,
                 fuzz_implicit_tags,
                 fuzz_document_structure,
-                # New strategies
+                # New strategies (batch 1)
                 fuzz_script_escaping,
                 fuzz_integration_points,
                 fuzz_table_scoping,
@@ -1299,11 +1732,34 @@ def generate_fuzzed_html():
                 fuzz_heading_nesting,
                 fuzz_form_nesting,
                 fuzz_ruby_elements,
+                # New strategies (batch 2)
+                fuzz_adoption_agency_complex,
+                fuzz_template_in_table,
+                fuzz_colgroup_handling,
+                fuzz_scope_terminators,
+                fuzz_mode_switching,
+                fuzz_isindex_handling,
+                fuzz_image_element,
+                fuzz_menuitem_handling,
+                fuzz_body_start_variations,
+                fuzz_html_start_variations,
+                fuzz_noscript_handling,
+                fuzz_object_embed,
+                fuzz_plaintext_mode,
+                fuzz_math_annotation,
+                fuzz_foreign_self_closing,
+                fuzz_quirks_doctype,
+                fuzz_after_after_modes,
+                fuzz_xmp_listing_pre,
+                fuzz_unclosed_formatting,
+                fuzz_empty_elements,
             ],
             weights=[
                 20, 10, 8, 15, 4, 4, 3, 8, 5, 5, 4, 3, 3, 5, 2, 2, 1, 1, 3, 2,
-                # New strategy weights
+                # Batch 1 weights
                 4, 4, 5, 4, 2, 4, 5, 4, 3, 3, 2, 4, 3, 4, 3, 2, 3, 2,
+                # Batch 2 weights
+                5, 4, 3, 4, 4, 2, 2, 2, 3, 3, 2, 2, 2, 3, 3, 2, 3, 3, 4, 3,
             ],
         )[0]
         parts.append(element_type())
