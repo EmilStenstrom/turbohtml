@@ -101,3 +101,47 @@
 |           <svg title>
 |             a=""
 |             <select>
+
+#data
+<template><td><table><td></table><svg><table><td></table><math/n></n>
+#errors
+#document
+| <html>
+|   <head>
+|     <template>
+|       content
+|         <td>
+|           <table>
+|             <tbody>
+|               <tr>
+|                 <td>
+|         <svg svg>
+|         <td>
+|           <math math>
+|             n=""
+|   <body>
+
+#data
+<template><td><math><td><table><td></table><svg><table><td></table><math><div><table><td></table>
+#errors
+#document
+| <html>
+|   <head>
+|     <template>
+|       content
+|         <td>
+|           <math math>
+|             <math td>
+|           <table>
+|             <tbody>
+|               <tr>
+|                 <td>
+|         <svg svg>
+|         <td>
+|           <math math>
+|           <div>
+|             <table>
+|               <tbody>
+|                 <tr>
+|                   <td>
+|   <body>
