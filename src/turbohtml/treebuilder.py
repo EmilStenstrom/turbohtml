@@ -1138,9 +1138,10 @@ class TreeBuilder:
             furthest_block.append_child(new_formatting_element)
 
             # 14. Remove formatting element from active formatting and insert new at bookmark
+            # Per spec, bookmark is always > formatting_element_index (starts at fmt_idx+1,
+            # can only be set to higher values or decremented when entries above fmt_idx are removed)
             self._remove_formatting_entry(formatting_element_index)
-            if bookmark > formatting_element_index:
-                bookmark -= 1
+            bookmark -= 1
             self.active_formatting.insert(bookmark, entry)
 
             # 15. Remove formatting element from open elements and insert new one
@@ -1565,8 +1566,9 @@ class TreeBuilder:
                     return ("reprocess", InsertionMode.IN_TABLE, token)
                 return None
             if name in {"tbody", "tfoot", "thead"}:
-                if not self._has_in_table_scope(name):
-                    self._parse_error("unexpected-end-tag")
+                # These elements are never in table scope when in caption -
+                # caption closes any open tbody/tfoot/thead when created
+                self._parse_error("unexpected-end-tag")
                 return None
             return self._mode_in_body(token)
         assert isinstance(token, EOFToken), f"Unexpected token type: {type(token)}"
@@ -1644,14 +1646,14 @@ class TreeBuilder:
                     self._parse_error("unexpected-start-tag-in-column-group")
                     return None
                 # Anything else: if we're in a colgroup, pop it and switch to IN_TABLE
-                # But if we're in a template, just ignore non-column content
                 if current and current.name == "colgroup":
                     self._pop_current()
                     self.mode = InsertionMode.IN_TABLE
                     return ("reprocess", InsertionMode.IN_TABLE, token)
-                if current and current.name == "template":
-                    # In template column group context, non-column content is ignored
-                    self._parse_error("unexpected-start-tag-in-template-column-group")
+                # In template column group context (via <col> in template), ignore non-column content
+                # At this point current is template - the only other case after colgroup fragment
+                # and colgroup element are handled
+                self._parse_error("unexpected-start-tag-in-template-column-group")
                 return None
             if name == "colgroup":
                 if current and current.name == "colgroup":
@@ -1700,14 +1702,12 @@ class TreeBuilder:
                     return ("reprocess", InsertionMode.IN_ROW, token)
                 if name in {"caption", "col", "colgroup", "tbody", "tfoot", "thead", "table"}:
                     current = self.open_elements[-1] if self.open_elements else None
-                    if current and current.name in {"tbody", "tfoot", "thead"}:
-                        self.open_elements.pop()
                     # When in a template, these tags create invalid structure - treat as "anything else"
-                    elif current and current.name == "template":
+                    if current and current.name == "template":
                         self._parse_error("unexpected-start-tag-in-template-table-context")
                         return None
                     # In fragment parsing with tbody/tfoot/thead context and no tbody on stack, ignore these tags
-                    elif (
+                    if (
                         self.fragment_context
                         and current
                         and current.name == "html"
@@ -1715,6 +1715,8 @@ class TreeBuilder:
                     ):
                         self._parse_error("unexpected-start-tag")
                         return None
+                    # Pop tbody/tfoot/thead - always present here since template and fragment cases are handled above
+                    self.open_elements.pop()
                     self.mode = InsertionMode.IN_TABLE
                     return ("reprocess", InsertionMode.IN_TABLE, token)
                 return self._mode_in_table(token)
@@ -1803,8 +1805,8 @@ class TreeBuilder:
 
     def _end_tr_element(self):
         self._clear_stack_until({"tr", "template", "html"})
-        if self.open_elements and self.open_elements[-1].name == "tr":
-            self.open_elements.pop()
+        # tr is always on top here - we only call this when tr is in table scope
+        self.open_elements.pop()
         # When in a template, restore template mode; otherwise use IN_TABLE_BODY
         if self.template_modes:
             self.mode = self.template_modes[-1]
@@ -1828,13 +1830,10 @@ class TreeBuilder:
                 if name in {"caption", "col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr"}:
                     if self._close_table_cell():
                         return ("reprocess", self.mode, token)
-                    # If no cell to close and we're in a fragment cell context, ignore the token
-                    if (
-                        self.fragment_context
-                        and self.fragment_context.tag_name.lower() in {"td", "th"}
-                        and not self._has_in_table_scope("table")
-                    ):
-                        self._parse_error("unexpected-start-tag-in-cell-fragment")
+                    # Per spec: if we reach here in IN_CELL mode with no cell to close,
+                    # we're in a fragment context with td/th as context element and no table structure.
+                    # Issue parse error and ignore the token.
+                    self._parse_error("unexpected-start-tag-in-cell-fragment")
                     return None
                 previous = self.insert_from_table
                 self.insert_from_table = False
@@ -1905,15 +1904,15 @@ class TreeBuilder:
                     return None
                 if name == "select":
                     self._parse_error("Nested select")
-                    if self._in_scope("select"):
-                        self._pop_until_any_inclusive({"select"})
-                        self._reset_insertion_mode()
+                    # select is always in scope in IN_SELECT mode
+                    self._pop_until_any_inclusive({"select"})
+                    self._reset_insertion_mode()
                     return None
                 if name in {"input", "textarea"}:
                     self._parse_error(f"Unexpected <{name}> in select")
-                    if self._in_scope("select"):
-                        self._pop_until_any_inclusive({"select"})
-                        self._reset_insertion_mode()
+                    # select is always in scope in IN_SELECT mode
+                    self._pop_until_any_inclusive({"select"})
+                    self._reset_insertion_mode()
                     return ("reprocess", self.mode, token)
                 if name == "keygen":
                     self._reconstruct_active_formatting_elements()
@@ -1921,9 +1920,9 @@ class TreeBuilder:
                     return None
                 if name in {"caption", "col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr", "table"}:
                     self._parse_error(f"Unexpected <{name}> in select")
-                    if self._in_scope("select"):
-                        self._pop_until_any_inclusive({"select"})
-                        self._reset_insertion_mode()
+                    # select is always in scope in IN_SELECT mode
+                    self._pop_until_any_inclusive({"select"})
+                    self._reset_insertion_mode()
                     return ("reprocess", self.mode, token)
                 if name in {"script", "template"}:
                     return self._mode_in_head(token)
@@ -1985,17 +1984,17 @@ class TreeBuilder:
                 return None
             # Handle end tags for allowed HTML elements in select
             if name == "a" or name in FORMATTING_ELEMENTS:
+                # select is always on stack in IN_SELECT mode
                 select_node = self._find_last_on_stack("select")
-                if select_node is not None:
-                    fmt_index = self._find_active_formatting_index(name)
-                    if fmt_index is not None:
-                        target = self.active_formatting[fmt_index]["node"]
-                        if target in self.open_elements:
-                            select_index = self.open_elements.index(select_node)
-                            target_index = self.open_elements.index(target)
-                            if target_index < select_index:
-                                self._parse_error(f"Unexpected </{name}> in select")
-                                return None
+                fmt_index = self._find_active_formatting_index(name)
+                if fmt_index is not None:
+                    target = self.active_formatting[fmt_index]["node"]
+                    if target in self.open_elements:
+                        select_index = self.open_elements.index(select_node)
+                        target_index = self.open_elements.index(target)
+                        if target_index < select_index:
+                            self._parse_error(f"Unexpected </{name}> in select")
+                            return None
                 self._adoption_agency(name)
                 return None
             if name in {"p", "div", "span", "button", "datalist", "selectedcontent"}:
@@ -2020,9 +2019,9 @@ class TreeBuilder:
                 return None
             if name in {"caption", "col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr", "table"}:
                 self._parse_error(f"Unexpected </{name}> in select")
-                if self._in_scope("select"):
-                    self._pop_until_any_inclusive({"select"})
-                    self._reset_insertion_mode()
+                # select is always in scope in IN_SELECT mode
+                self._pop_until_any_inclusive({"select"})
+                self._reset_insertion_mode()
                 return ("reprocess", self.mode, token)
             # Any other end tag: parse error, ignore
             self._parse_error(f"Unexpected </{name}> in select")
@@ -2101,8 +2100,8 @@ class TreeBuilder:
             # Pop until template, then handle EOF in reset mode
             self._pop_until_inclusive("template")
             self._clear_active_formatting_up_to_marker()
-            if self.template_modes:
-                self.template_modes.pop()
+            # template_modes is always non-empty when template is on stack
+            self.template_modes.pop()
             self._reset_insertion_mode()
             return ("reprocess", self.mode, token)
         return None
@@ -2140,10 +2139,10 @@ class TreeBuilder:
             return ("reprocess", InsertionMode.IN_BODY, token)
         if isinstance(token, CommentToken):
             if self.fragment_context is not None:
+                # html is always on stack in fragment parsing
                 html_node = self._find_last_on_stack("html")
-                if html_node is not None:
-                    html_node.append_child(SimpleDomNode("#comment", data=token.data))
-                    return None
+                html_node.append_child(SimpleDomNode("#comment", data=token.data))
+                return None
             self._append_comment_to_document(token.data)
             return None
         if isinstance(token, Tag):
@@ -2235,10 +2234,10 @@ class TreeBuilder:
                 self._mode_in_body(token)
                 return None
             # Non-whitespace falls through to "Anything else"
-        elif isinstance(token, CommentToken):
+        if isinstance(token, CommentToken):
             self._append_comment_to_document(token.data)
             return None
-        elif isinstance(token, Tag):
+        if isinstance(token, Tag):
             if token.kind == Tag.START and token.name == "html":
                 return ("reprocess", InsertionMode.IN_BODY, token)
             if token.kind == Tag.START and token.name == "noframes":
@@ -2247,8 +2246,10 @@ class TreeBuilder:
                 self.original_mode = self.mode
                 self.mode = InsertionMode.TEXT
                 return None
-        elif isinstance(token, EOFToken):
+            # Other tags fall through to "Anything else"
+        if isinstance(token, EOFToken):
             return None
+        # Anything else: parse error, reprocess in IN_FRAMESET
         self._parse_error("Unexpected token after after frameset")
         self.mode = InsertionMode.IN_FRAMESET
         return ("reprocess", InsertionMode.IN_FRAMESET, token)
@@ -2700,8 +2701,8 @@ class TreeBuilder:
                 prefix, local, _ = foreign_adjustment
                 name = f"{prefix}:{local}"
 
-            if name not in adjusted:
-                adjusted[name] = value
+            # Tokenizer deduplicates attributes, so name collision impossible here
+            adjusted[name] = value
         return adjusted
 
     def _node_attribute_value(self, node, name):

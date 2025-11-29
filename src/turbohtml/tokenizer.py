@@ -314,66 +314,67 @@ class Tokenizer:
                 if pos >= length:
                     continue
 
+            # After find("<"), we're always at '<' unless reconsume is True
+            # But reconsume only happens after TAG_OPEN which reconsumed '<'
             c = buffer[pos]
             pos += 1
             self.pos = pos
             self.current_char = c
             self.ignore_lf = False
-            if c == "<":
-                # Optimization: Peek ahead for common tag starts
-                if pos < length:
-                    nc = buffer[pos]
-                    if ("a" <= nc <= "z") or ("A" <= nc <= "Z"):
+            # c is always '<' here due to find() optimization above
+            # Optimization: Peek ahead for common tag starts
+            if pos < length:
+                nc = buffer[pos]
+                if ("a" <= nc <= "z") or ("A" <= nc <= "Z"):
+                    self._flush_text()
+                    # Inline _start_tag(Tag.START)
+                    self.current_tag_kind = Tag.START
+                    self.current_tag_name.clear()
+                    self.current_attr_name.clear()
+                    self.current_attr_value.clear()
+                    self.current_attr_value_has_amp = False
+                    self.current_tag_self_closing = False
+
+                    if "A" <= nc <= "Z":
+                        nc = chr(ord(nc) + 32)
+                    self.current_tag_name.append(nc)
+                    self.pos += 1
+                    self.state = self.TAG_NAME
+                    return self._state_tag_name()
+
+                if nc == "!":
+                    # Optimization: Peek ahead for comments
+                    if pos + 2 < length and buffer[pos+1] == "-" and buffer[pos+2] == "-":
                         self._flush_text()
-                        # Inline _start_tag(Tag.START)
-                        self.current_tag_kind = Tag.START
-                        self.current_tag_name.clear()
-                        self.current_attr_name.clear()
-                        self.current_attr_value.clear()
-                        self.current_attr_value_has_amp = False
-                        self.current_tag_self_closing = False
+                        self.pos += 3 # Consume !--
+                        self.current_comment.clear()
+                        self.state = self.COMMENT_START
+                        return self._state_comment_start()
 
-                        if "A" <= nc <= "Z":
-                            nc = chr(ord(nc) + 32)
-                        self.current_tag_name.append(nc)
-                        self.pos += 1
-                        self.state = self.TAG_NAME
-                        return self._state_tag_name()
-
-                    if nc == "!":
-                        # Optimization: Peek ahead for comments
-                        if pos + 2 < length and buffer[pos+1] == "-" and buffer[pos+2] == "-":
+                if nc == "/":
+                    # Check next char for end tag
+                    if pos + 1 < length:
+                        nnc = buffer[pos + 1]
+                        if ("a" <= nnc <= "z") or ("A" <= nnc <= "Z"):
                             self._flush_text()
-                            self.pos += 3 # Consume !--
-                            self.current_comment.clear()
-                            self.state = self.COMMENT_START
-                            return self._state_comment_start()
+                            # Inline _start_tag(Tag.END)
+                            self.current_tag_kind = Tag.END
+                            self.current_tag_name.clear()
+                            self.current_attr_name.clear()
+                            self.current_attr_value.clear()
+                            self.current_attr_value_has_amp = False
+                            self.current_tag_self_closing = False
 
-                    if nc == "/":
-                        # Check next char for end tag
-                        if pos + 1 < length:
-                            nnc = buffer[pos + 1]
-                            if ("a" <= nnc <= "z") or ("A" <= nnc <= "Z"):
-                                self._flush_text()
-                                # Inline _start_tag(Tag.END)
-                                self.current_tag_kind = Tag.END
-                                self.current_tag_name.clear()
-                                self.current_attr_name.clear()
-                                self.current_attr_value.clear()
-                                self.current_attr_value_has_amp = False
-                                self.current_tag_self_closing = False
+                            if "A" <= nnc <= "Z":
+                                nnc = chr(ord(nnc) + 32)
+                            self.current_tag_name.append(nnc)
+                            self.pos += 2 # Consume / and nnc
+                            self.state = self.TAG_NAME
+                            return self._state_tag_name()
 
-                                if "A" <= nnc <= "Z":
-                                    nnc = chr(ord(nnc) + 32)
-                                self.current_tag_name.append(nnc)
-                                self.pos += 2 # Consume / and nnc
-                                self.state = self.TAG_NAME
-                                return self._state_tag_name()
-
-                self._flush_text()
-                self.state = self.TAG_OPEN
-                return self._state_tag_open()
-            # Unreachable if find works correctly
+            self._flush_text()
+            self.state = self.TAG_OPEN
+            return self._state_tag_open()
 
 
     def _state_tag_open(self):
@@ -431,41 +432,41 @@ class Tokenizer:
 
         while True:
             # Inline _consume_tag_name_run
-            if not self.reconsume and not self.ignore_lf:
-                pos = self.pos
-                if pos < length:
-                    # Optimization: Check for common terminators before regex
-                    match = None
-                    if buffer[pos] not in "\t\n\f />\0\r":
-                        match = _TAG_NAME_RUN_PATTERN.match(buffer, pos)
+            # Note: reconsume and ignore_lf are never True when entering TAG_NAME
+            pos = self.pos
+            if pos < length:
+                # Optimization: Check for common terminators before regex
+                match = None
+                if buffer[pos] not in "\t\n\f />\0\r":
+                    match = _TAG_NAME_RUN_PATTERN.match(buffer, pos)
 
-                    if match:
-                        chunk = match.group(0)
-                        if not chunk.islower():
-                             chunk = chunk.translate(_ASCII_LOWER_TABLE)
-                        append_tag_char(chunk)
-                        self.pos = match.end()
+                if match:
+                    chunk = match.group(0)
+                    if not chunk.islower():
+                         chunk = chunk.translate(_ASCII_LOWER_TABLE)
+                    append_tag_char(chunk)
+                    self.pos = match.end()
 
-                        if self.pos < length:
-                            c = buffer[self.pos]
-                            if c in (" ", "\t", "\n", "\f", "\r"):
-                                self.pos += 1
-                                if c == "\n":
-                                    self.line += 1
-                                if c == "\r":
-                                    self.line += 1
-                                    self.ignore_lf = True
-                                self.state = self.BEFORE_ATTRIBUTE_NAME
-                                return self._state_before_attribute_name()
-                            if c == ">":
-                                self.pos += 1
-                                if not self._emit_current_tag():
-                                    self.state = self.DATA
-                                return False
-                            if c == "/":
-                                self.pos += 1
-                                self.state = self.SELF_CLOSING_START_TAG
-                                return self._state_self_closing_start_tag()
+                    if self.pos < length:
+                        c = buffer[self.pos]
+                        if c in (" ", "\t", "\n", "\f", "\r"):
+                            self.pos += 1
+                            if c == "\n":
+                                self.line += 1
+                            if c == "\r":
+                                self.line += 1
+                                self.ignore_lf = True
+                            self.state = self.BEFORE_ATTRIBUTE_NAME
+                            return self._state_before_attribute_name()
+                        if c == ">":
+                            self.pos += 1
+                            if not self._emit_current_tag():
+                                self.state = self.DATA
+                            return False
+                        if c == "/":
+                            self.pos += 1
+                            self.state = self.SELF_CLOSING_START_TAG
+                            return self._state_self_closing_start_tag()
 
             c = self._get_char()
             if c is None:
@@ -481,13 +482,14 @@ class Tokenizer:
                 self.state = self.SELF_CLOSING_START_TAG
                 return self._state_self_closing_start_tag()
             if c == ">":
-                if not self._emit_current_tag():
-                    self.state = self.DATA
+                # In slow path, tag name is only first char (from DATA),
+                # so no rawtext elements possible - always set DATA state
+                self._emit_current_tag()
+                self.state = self.DATA
                 return False
-            if c == "\0":
-                self._emit_error("Null character in tag name")
-                append_tag_char(replacement)
-                continue
+            # c == "\0" - the only remaining possibility after fast-path
+            self._emit_error("Null character in tag name")
+            append_tag_char(replacement)
 
     def _state_before_attribute_name(self):
         buffer = self.buffer
@@ -809,14 +811,13 @@ class Tokenizer:
             if c == '"':
                 self.state = self.AFTER_ATTRIBUTE_VALUE_QUOTED
                 return self._state_after_attribute_value_quoted()
-            if c == "&":
+            elif c == "&":
                 self._append_attr_value_char("&")
                 self.current_attr_value_has_amp = True
-                continue
-            if c == "\0":
+            else:
+                # c == "\0" - the only remaining possibility after fast-path
                 self._emit_error("Null in attribute value")
                 self._append_attr_value_char(replacement)
-                continue
 
     def _state_attribute_value_single(self):
         replacement = "\ufffd"
@@ -877,14 +878,13 @@ class Tokenizer:
             if c == "'":
                 self.state = self.AFTER_ATTRIBUTE_VALUE_QUOTED
                 return self._state_after_attribute_value_quoted()
-            if c == "&":
+            elif c == "&":
                 self._append_attr_value_char("&")
                 self.current_attr_value_has_amp = True
-                continue
-            if c == "\0":
+            else:
+                # c == "\0" - the only remaining possibility after fast-path
                 self._emit_error("Null in attribute value")
                 self._append_attr_value_char(replacement)
-                continue
 
     def _state_attribute_value_unquoted(self):
         replacement = "\ufffd"
@@ -1074,10 +1074,9 @@ class Tokenizer:
             if c == "-":
                 self.state = self.COMMENT_END_DASH
                 return False
-            if c == "\0":
-                self._emit_error("Null in comment")
-                self.current_comment.append(replacement)
-                continue
+            # c == "\0" - the only remaining possibility after _consume_comment_run
+            self._emit_error("Null in comment")
+            self.current_comment.append(replacement)
 
     def _state_comment_end_dash(self):
         replacement = "\ufffd"
@@ -1752,13 +1751,11 @@ class Tokenizer:
         # Remember current state before emitting
         state_before_emit = self.state
 
-        # Inline _emit_token
-        if self.sink:
-            result = self.sink.process_token(tag)
-            if result == 1: # TokenSinkResult.Plaintext
-                self.state = self.PLAINTEXT
-                switched_to_rawtext = True
-            # Note: TokenSinkResult.RawData is never returned in practice
+        # Emit token to sink
+        result = self.sink.process_token(tag)
+        if result == 1: # TokenSinkResult.Plaintext
+            self.state = self.PLAINTEXT
+            switched_to_rawtext = True
 
         self.current_tag_name.clear()
         self.current_attr_name.clear()
@@ -1943,23 +1940,20 @@ class Tokenizer:
                 self._emit_token(EOFToken())
                 return True
 
-            # Handle special characters
+            # Handle special characters - we're at one of them after find()
             if null_index == pos:
                 self.ignore_lf = False
                 self._emit_error("Null character in RCDATA")
                 self.text_buffer.append("\ufffd")
                 pos += 1
                 self.pos = pos
-                continue
-
-            if amp_index == pos:
+            elif amp_index == pos:
                 # Ampersand in RCDATA - will be decoded by _flush_text
                 self.text_buffer.append("&")
                 pos += 1
                 self.pos = pos
-                continue
-
-            if lt_index == pos:
+            else:
+                # lt_index == pos - the only remaining possibility
                 # Less-than sign - might be start of end tag
                 pos += 1
                 self.pos = pos

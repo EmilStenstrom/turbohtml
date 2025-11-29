@@ -1106,7 +1106,8 @@ tbody
 
 
 #data
-<script>code</script>
+<script
+>code</script>
 #errors
 #document
 | <html>
@@ -1116,7 +1117,8 @@ tbody
 |   <body>
 
 #data
-<script foo>code</script>
+<script foo
+>code</script>
 #errors
 #document
 | <html>
@@ -1157,3 +1159,190 @@ tbody
 |   <body>
 |     <table>
 |       <caption>
+
+#data
+<caption>test
+#errors
+#document-fragment
+tbody
+#document
+| "test"
+
+
+#data
+<table><tbody><caption>text</table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|       <caption>
+|         "text"
+
+
+#data
+<tbody><caption>test
+#errors
+#document-fragment
+table
+#document
+| <tbody>
+| <caption>
+|   "test"
+
+
+#data
+<caption>test
+#errors
+#document-fragment
+td
+#document
+| "test"
+
+#data
+<caption>test
+#errors
+#document-fragment
+th
+#document
+| "test"
+
+#data
+</div>
+#errors
+#document-fragment
+colgroup
+#document
+
+
+#data
+<select></b></select>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <select>
+
+#data
+<select><b></b></select>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <select>
+|       <b>
+
+
+#data
+<frameset></frameset></html><!DOCTYPE html>
+#errors
+#document
+| <html>
+|   <head>
+|   <frameset>
+
+
+#data
+<frameset></frameset></html>X
+#errors
+#document
+| <html>
+|   <head>
+|   <frameset>
+
+
+#data
+<frameset></frameset></html><div>
+#errors
+#document
+| <html>
+|   <head>
+|   <frameset>
+
+
+#data
+<table><tbody></tbody><caption></tbody></caption></table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|       <caption>
+
+
+#data
+<template><col><div>
+#errors
+#document
+| <html>
+|   <head>
+|     <template>
+|       content
+|         <col>
+|   <body>
+
+
+#data
+<select><plaintext>test</select>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <select>
+|       <plaintext>
+|         "test</select>"
+
+
+#data
+<select><address>test
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <select>
+|       "test"
+
+
+#data
+<tr>text
+#errors
+#document-fragment
+td
+#document
+| "text"
+
+
+#data
+<select><div><b></div></b>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <select>
+|       <div>
+|         <b>
+
+#data
+<math><annotation-xml class="foo" id="bar" encoding="text/html"><div>test</div></annotation-xml></math>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <math math>
+|       <math annotation-xml>
+|         class="foo"
+|         encoding="text/html"
+|         id="bar"
+|         <div>
+|           "test"
+

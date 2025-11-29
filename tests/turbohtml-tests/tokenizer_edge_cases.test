@@ -179,6 +179,12 @@
         "errors": [{"code": "eof-in-tag", "line": 1, "col": 11}]
     },
     {
+        "description": "EOF immediately in single quoted attr value",
+        "input": "<div foo='",
+        "output": [],
+        "errors": [{"code": "eof-in-tag", "line": 1, "col": 11}]
+    },
+    {
         "description": "Null in double quoted attr value",
         "input": "<div foo=\"a\u0000b\">",
         "output": [["StartTag", "div", {"foo": "a\ufffdb"}]],
