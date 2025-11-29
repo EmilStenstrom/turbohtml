@@ -1979,10 +1979,7 @@ class TreeBuilder:
                     self._parse_error("Unexpected </option>")
                 return None
             if name == "select":
-                # Per HTML5 spec: If there's no select in select scope, parse error and ignore
-                if not any(node.name == "select" for node in self.open_elements):
-                    self._parse_error("Unexpected </select>")
-                    return None
+                # In IN_SELECT mode, select is always in scope - pop to it
                 self._pop_until_any_inclusive({"select"})
                 self._reset_insertion_mode()
                 return None

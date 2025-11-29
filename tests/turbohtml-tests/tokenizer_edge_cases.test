@@ -159,5 +159,35 @@
         "description": "Comment ending with ! followed by CRLF at EOF",
         "input": "<!----!\r\n",
         "output": [["Comment", "--!\n"]]
+    },
+    {
+        "description": "CR before = in attr (ignore_lf keeps slow path for normal char)",
+        "input": "<div\r=abc>",
+        "output": [["StartTag", "div", {"=abc": ""}]],
+        "errors": [{"code": "unexpected-equals-sign-before-attribute-name", "line": 2, "col": 2}, {"code": "missing-attribute-value", "line": 2, "col": 6}]
+    },
+    {
+        "description": "Null in script tag name (slow path rawtext emit)",
+        "input": "<script\u0000>x</script>",
+        "output": [["StartTag", "script\ufffd", {}], ["Character", "x"], ["EndTag", "script"]],
+        "errors": [{"code": "unexpected-null-character", "line": 1, "col": 8}]
+    },
+    {
+        "description": "EOF immediately in double quoted attr value",
+        "input": "<div foo=\"",
+        "output": [],
+        "errors": [{"code": "eof-in-tag", "line": 1, "col": 11}]
+    },
+    {
+        "description": "Null in double quoted attr value",
+        "input": "<div foo=\"a\u0000b\">",
+        "output": [["StartTag", "div", {"foo": "a\ufffdb"}]],
+        "errors": [{"code": "unexpected-null-character", "line": 1, "col": 13}]
+    },
+    {
+        "description": "Null in single quoted attr value",
+        "input": "<div foo='a\u0000b'>",
+        "output": [["StartTag", "div", {"foo": "a\ufffdb"}]],
+        "errors": [{"code": "unexpected-null-character", "line": 1, "col": 13}]
     }
 ]}

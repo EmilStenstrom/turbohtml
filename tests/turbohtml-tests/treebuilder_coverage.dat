@@ -979,3 +979,181 @@ th
 tbody
 #document
 | <tr>
+
+#data
+<textarea readonly>content</textarea>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <textarea>
+|       readonly=""
+|       "content"
+
+#data
+<style type="text/css">body{}</style>
+#errors
+#document
+| <html>
+|   <head>
+|     <style>
+|       type="text/css"
+|       "body{}"
+|   <body>
+
+#data
+<script async>code</script>
+#errors
+#document
+| <html>
+|   <head>
+|     <script>
+|       async=""
+|       "code"
+|   <body>
+
+#data
+<script  >code</script>
+#errors
+#document
+| <html>
+|   <head>
+|     <script>
+|       "code"
+|   <body>
+
+#data
+<textarea  >text</textarea>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <textarea>
+|       "text"
+
+#data
+<xmp>raw content</xmp>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <xmp>
+|       "raw content"
+
+#data
+<iframe>content</iframe>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <iframe>
+|       "content"
+
+#data
+<svg viewBox="0 0 100 100" width="100" height="100"><rect/></svg>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       height="100"
+|       viewBox="0 0 100 100"
+|       width="100"
+|       <svg rect>
+
+#data
+<table><tbody><table><tr><td>X
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <tbody>
+|     <table>
+|       <tbody>
+|         <tr>
+|           <td>
+|             "X"
+
+#data
+<table><template><colgroup></colgroup></template>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <template>
+|         content
+|           <colgroup>
+
+#data
+<table><caption>text</caption></table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <caption>
+|         "text"
+
+
+#data
+<script>code</script>
+#errors
+#document
+| <html>
+|   <head>
+|     <script>
+|       "code"
+|   <body>
+
+#data
+<script foo>code</script>
+#errors
+#document
+| <html>
+|   <head>
+|     <script>
+|       foo=""
+|       "code"
+|   <body>
+
+#data
+<script foo=>code</script>
+#errors
+#document
+| <html>
+|   <head>
+|     <script>
+|       foo=""
+|       "code"
+|   <body>
+
+#data
+<script f >code</script>
+#errors
+#document
+| <html>
+|   <head>
+|     <script>
+|       f�=""
+|       "code"
+|   <body>
+
+#data
+<table><caption></tbody></caption></table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <caption>

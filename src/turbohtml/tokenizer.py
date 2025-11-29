@@ -1745,7 +1745,8 @@ class Tokenizer:
                         self.state = self.RAWTEXT
                         self.rawtext_tag_name = name
                         switched_to_rawtext = True
-                    elif name == "plaintext":
+                    else:
+                        # Must be "plaintext" - the only other way needs_rawtext_check can be True
                         self.state = self.PLAINTEXT
                         switched_to_rawtext = True
         # Remember current state before emitting
