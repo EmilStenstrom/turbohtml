@@ -2281,6 +2281,10 @@ class TreeBuilder:
                 if not text:
                     return
 
+        # Guard against empty stack
+        if not self.open_elements:
+            return
+
         # Fast path optimization for common case
         target = self.open_elements[-1]
 
@@ -2317,7 +2321,10 @@ class TreeBuilder:
         node.parent = parent
 
     def _current_node_or_html(self):
-        return self.open_elements[-1]
+        if self.open_elements:
+            return self.open_elements[-1]
+        # Stack empty - html element is always first child in document
+        return self.document.children[0]
 
     def _create_root(self, attrs):
         node = SimpleDomNode("html", attrs=attrs, namespace="html")
@@ -2333,7 +2340,7 @@ class TreeBuilder:
 
         # Fast path for common case: not inserting from table
         if not self.insert_from_table:
-            target = self.open_elements[-1]
+            target = self._current_node_or_html()
 
             # Handle template content insertion
             if type(target) is TemplateNode:
@@ -2565,7 +2572,7 @@ class TreeBuilder:
 
     def _clear_stack_until(self, names):
         # All callers include "html" in names, so this always terminates via break
-        while True:
+        while self.open_elements:
             node = self.open_elements[-1]
             if node.name in names and node.namespace in {None, "html"}:
                 break
@@ -2881,7 +2888,7 @@ class TreeBuilder:
         if override_target is not None:
             target = override_target
         else:
-            target = self.open_elements[-1]
+            target = self._current_node_or_html()
 
         if foster_parenting and target.name in {"table", "tbody", "tfoot", "thead", "tr"}:
             last_template = self._find_last_on_stack("template")

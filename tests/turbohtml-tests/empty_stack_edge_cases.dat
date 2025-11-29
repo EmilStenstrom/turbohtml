@@ -1,0 +1,27 @@
+#data
+<svg><td><title><select></tr><xmp></select></td><
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       <svg td>
+|         <svg title>
+|           <select>
+|           <xmp>
+
+#data
+<svg><th><title><section><table></table><td>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       <svg th>
+|         <svg title>
+|           <section>
+|             <table>
+|   <td>
+

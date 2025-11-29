@@ -72,6 +72,7 @@ html5lib-tests-tree/tricky01.dat: 9/9 (100%) [.........]
 html5lib-tests-tree/webkit01.dat: 52/52 (100%) [....................................................]
 html5lib-tests-tree/webkit02.dat: 47/47 (100%) [.ss..............................................] (2 skipped)
 turbohtml-tests/cr_handling.dat: 1/1 (100%) [.]
+turbohtml-tests/empty_stack_edge_cases.dat: 2/2 (100%) [..]
 turbohtml-tests/iframe_srcdoc.dat: 1/1 (100%) [.]
 turbohtml-tests/plaintext_element.dat: 1/1 (100%) [.]
 turbohtml-tests/tokenizer_edge_cases.test: 35/35 (100%) [...................................]
@@ -79,4 +80,4 @@ turbohtml-tests/treebuilder_coverage.dat: 135/135 (100%) [......................
 turbohtml-tests/xml_coercion.dat: 7/7 (100%) [.......]
 turbohtml-tests/xml_coercion_coverage.test: 2/2 (100%) [..]
 
-PASSED: 8735/8735 passed (100.0%), 39 skipped
+PASSED: 8737/8737 passed (100.0%), 39 skipped
