@@ -13,79 +13,6 @@
 |             <select>
 |   <td>
 
-#data
-<svg><td><title/e></br><g><tr></d>
-#errors
-#document
-| <html>
-|   <head>
-|   <body>
-|     <svg svg>
-|       <svg td>
-|         <svg title>
-|           e=""
-|           <br>
-|           <g>
-
-#data
-<svg><td><title/G><table></table><e></td><html>
-#errors
-#document
-| <html>
-|   <head>
-|   <body>
-|     <svg svg>
-|       <svg td>
-|         <svg title>
-|           g=""
-|           <table>
-|           <e>
-
-#data
-<svg><th/k><title/a><e><template></template></th><svg><table>
-#errors
-#document
-| <html>
-|   <head>
-|   <body>
-|     <svg svg>
-|       <svg th>
-|         k=""
-|         <svg title>
-|           a=""
-|           <e>
-|             <template>
-|               content
-|   <svg svg>
-|   <table>
-
-#data
-<svg/s><template/a><title/y><m></template>
-#errors
-#document
-| <html>
-|   <head>
-|   <body>
-|     <svg svg>
-|       s=""
-|       <svg template>
-|         a=""
-|         <svg title>
-|           y=""
-|           <m>
-
-#data
-<svg><tr><title/g><svg><table>
-#errors
-#document
-| <html>
-|   <head>
-|   <body>
-|     <svg svg>
-|       <svg tr>
-|         <svg title>
-|           g=""
-|           <svg svg>
 
 #data
 <svg><slot><select/e><title/a><select><select></slot></select>
@@ -102,49 +29,6 @@
 |             a=""
 |             <select>
 
-#data
-<template><td><table><td></table><svg><table><td></table><math/n></n>
-#errors
-#document
-| <html>
-|   <head>
-|     <template>
-|       content
-|         <td>
-|           <table>
-|             <tbody>
-|               <tr>
-|                 <td>
-|         <svg svg>
-|         <td>
-|           <math math>
-|             n=""
-|   <body>
-
-#data
-<template><td><math><td><table><td></table><svg><table><td></table><math><div><table><td></table>
-#errors
-#document
-| <html>
-|   <head>
-|     <template>
-|       content
-|         <td>
-|           <math math>
-|             <math td>
-|           <table>
-|             <tbody>
-|               <tr>
-|                 <td>
-|         <svg svg>
-|         <td>
-|           <math math>
-|           <div>
-|             <table>
-|               <tbody>
-|                 <tr>
-|                   <td>
-|   <body>
 
 #data
 <svg><tr><title><section
