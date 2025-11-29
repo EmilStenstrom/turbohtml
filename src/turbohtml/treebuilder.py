@@ -297,10 +297,11 @@ class TreeBuilder:
                 break
 
     def _pop_until_any_inclusive(self, names):
-        while True:
+        # Pop elements until we find one in names (callers ensure element exists)
+        while self.open_elements:
             node = self.open_elements.pop()
             if node.name in names:
-                break
+                return
 
     def _close_p_element(self):
         if self._has_element_in_button_scope("p"):
@@ -896,8 +897,9 @@ class TreeBuilder:
             self._parse_error("Unexpected <html> in template")
             return
         # In IN_BODY mode, html element is always at open_elements[0]
-        html = self.open_elements[0]
-        self._add_missing_attributes(html, token.attrs)
+        if self.open_elements:
+            html = self.open_elements[0]
+            self._add_missing_attributes(html, token.attrs)
         return
 
     def _handle_body_start_body(self, token):
@@ -1260,7 +1262,7 @@ class TreeBuilder:
             self._parse_error("Unexpected closing tag")
             return
         # Element verified in scope above
-        while True:
+        while self.open_elements:  # pragma: no branch
             popped = self.open_elements.pop()
             if popped.name == name:
                 break
@@ -1276,7 +1278,7 @@ class TreeBuilder:
         if self.open_elements and self.open_elements[-1].name != name:
             self._parse_error(f"Mismatched heading end tag </{name}>")
         # Heading verified in scope by caller
-        while True:
+        while self.open_elements:  # pragma: no branch
             popped = self.open_elements.pop()
             if popped.name in HEADING_ELEMENTS:
                 break
@@ -1300,8 +1302,9 @@ class TreeBuilder:
         self._generate_implied_end_tags()
         self._pop_until_inclusive("template")
         self._clear_active_formatting_up_to_marker()
-        # template_modes always non-empty here since has_template check passed
-        self.template_modes.pop()
+        # Pop template mode if available
+        if self.template_modes:
+            self.template_modes.pop()
         self._reset_insertion_mode()
         return
 
@@ -1584,7 +1587,7 @@ class TreeBuilder:
             return False
         self._generate_implied_end_tags()
         # Caption verified in scope above
-        while True:
+        while self.open_elements:  # pragma: no branch
             node = self.open_elements.pop()
             if node.name == "caption":
                 break
@@ -1719,10 +1722,14 @@ class TreeBuilder:
                     ):
                         self._parse_error("unexpected-start-tag")
                         return None
-                    # Pop tbody/tfoot/thead - always present here since template and fragment cases are handled above
-                    self.open_elements.pop()
+                    # Pop tbody/tfoot/thead (stack always has elements here in normal parsing)
+                    if self.open_elements:
+                        self.open_elements.pop()
+                        self.mode = InsertionMode.IN_TABLE
+                        return ("reprocess", InsertionMode.IN_TABLE, token)
+                    # Empty stack edge case - go directly to IN_TABLE without reprocess
                     self.mode = InsertionMode.IN_TABLE
-                    return ("reprocess", InsertionMode.IN_TABLE, token)
+                    return None
                 return self._mode_in_table(token)
             if name in {"tbody", "tfoot", "thead"}:
                 if not self._has_in_table_scope(name):
@@ -2282,7 +2289,7 @@ class TreeBuilder:
                     return
 
         # Guard against empty stack
-        if not self.open_elements:
+        if not self.open_elements:  # pragma: no cover
             return
 
         # Fast path optimization for common case
@@ -2323,8 +2330,13 @@ class TreeBuilder:
     def _current_node_or_html(self):
         if self.open_elements:
             return self.open_elements[-1]
-        # Stack empty - html element is always first child in document
-        return self.document.children[0]
+        # Stack empty - find html element in document children
+        # (may not be first if there are comments/doctype before it)
+        for child in self.document.children:
+            if child.name == "html":
+                return child
+        # Edge case: no html found, return first child or None
+        return self.document.children[0] if self.document.children else None  # pragma: no cover
 
     def _create_root(self, attrs):
         node = SimpleDomNode("html", attrs=attrs, namespace="html")
@@ -2397,28 +2409,27 @@ class TreeBuilder:
 
     def _any_other_end_tag(self, name):
         # Spec: "Any other end tag" in IN_BODY mode
-        # Step 1: Initialize node to current node (last in stack)
-        # Step 2: Loop through stack backwards (always terminates: html is special)
+        # Loop through stack backwards (always terminates: html is special)
         index = len(self.open_elements) - 1
-        while True:
+        while index >= 0:
             node = self.open_elements[index]
 
-            # Step 2.1: If node's name matches the end tag name
+            # If node's name matches the end tag name
             if node.name == name:
-                # Step 2.2: Generate implied end tags (except for this name)
-                # Step 2.3: If current node is not this node, parse error
+                # Generate implied end tags (except for this name)
+                # If current node is not this node, parse error
                 if index != len(self.open_elements) - 1:
                     self._parse_error(f"Unexpected end tag </{name}>")
-                # Step 2.4: Pop all elements from this node onwards
+                # Pop all elements from this node onwards
                 del self.open_elements[index:]
                 return
 
-            # Step 2.5: If node is a special element, parse error and ignore the tag
+            # If node is a special element, parse error and ignore the tag
             if self._is_special_element(node):
                 self._parse_error(f"Unexpected end tag </{name}>")
                 return  # Ignore the end tag
 
-            # Step 2.6: Continue to next node (previous in stack)
+            # Continue to next node (previous in stack)
             index -= 1
 
     def _add_missing_attributes(self, node, attrs):
@@ -2580,7 +2591,7 @@ class TreeBuilder:
 
     def _generate_implied_end_tags(self, exclude=None):
         # Always terminates: html is not in IMPLIED_END_TAGS
-        while True:
+        while self.open_elements:  # pragma: no branch
             node = self.open_elements[-1]
             if node.name in IMPLIED_END_TAGS and node.name != exclude:
                 self.open_elements.pop()
@@ -2631,7 +2642,7 @@ class TreeBuilder:
             return False
         self._generate_implied_end_tags()
         # Table verified in scope above
-        while True:
+        while self.open_elements:  # pragma: no branch
             node = self.open_elements.pop()
             if node.name == "table":
                 break
@@ -2641,7 +2652,7 @@ class TreeBuilder:
     def _reset_insertion_mode(self):
         # Walk stack backwards - html element always terminates
         idx = len(self.open_elements) - 1
-        while True:
+        while idx >= 0:
             node = self.open_elements[idx]
             name = node.name
             if name == "select":
@@ -2672,8 +2683,10 @@ class TreeBuilder:
                 self.mode = InsertionMode.IN_HEAD
                 return
             if name == "html":
-                break
+                self.mode = InsertionMode.IN_BODY
+                return
             idx -= 1
+        # Empty stack fallback
         self.mode = InsertionMode.IN_BODY
 
     def _should_foster_parenting(self, target, *, for_tag=None, is_text=False):
@@ -2782,14 +2795,14 @@ class TreeBuilder:
 
     def _pop_until_html_or_integration_point(self):
         # Always terminates: html element has html namespace
-        while True:
+        while self.open_elements:
             node = self.open_elements[-1]
             if node.namespace in {None, "html"}:
-                break
+                return
             if self._is_html_integration_point(node):
-                break
+                return
             if self.fragment_context_element is not None and node is self.fragment_context_element:
-                break
+                return
             self.open_elements.pop()
 
     def _process_foreign_content(self, token):
@@ -2997,13 +3010,14 @@ class TreeBuilder:
         # Always terminates: html is in DEFAULT_SCOPE_TERMINATORS
         terminators = DEFAULT_SCOPE_TERMINATORS
         idx = len(self.open_elements) - 1
-        while True:
+        while idx >= 0:
             node = self.open_elements[idx]
             if node.name in names:
                 return True
             if node.namespace in {None, "html"} and node.name in terminators:
                 return False
             idx -= 1
+        return False  # pragma: no cover - html always terminates
 
     _BODY_START_HANDLERS = {
         "a": _handle_body_start_a,

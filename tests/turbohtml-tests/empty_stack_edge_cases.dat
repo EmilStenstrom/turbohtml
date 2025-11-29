@@ -1,5 +1,20 @@
 #data
-<svg><td><title><select></tr><xmp></select></td><
+<!><svg><th><title><n><select><td>
+#errors
+#document
+| <!--  -->
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       <svg th>
+|         <svg title>
+|           <n>
+|             <select>
+|   <td>
+
+#data
+<svg><td><title/e></br><g><tr></d>
 #errors
 #document
 | <html>
@@ -8,11 +23,26 @@
 |     <svg svg>
 |       <svg td>
 |         <svg title>
-|           <select>
-|           <xmp>
+|           e=""
+|           <br>
+|           <g>
 
 #data
-<svg><th><title><section><table></table><td>
+<svg><td><title/G><table></table><e></td><html>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       <svg td>
+|         <svg title>
+|           g=""
+|           <table>
+|           <e>
+
+#data
+<svg><th/k><title/a><e><template></template></th><svg><table>
 #errors
 #document
 | <html>
@@ -20,8 +50,54 @@
 |   <body>
 |     <svg svg>
 |       <svg th>
+|         k=""
 |         <svg title>
-|           <section>
-|             <table>
-|   <td>
+|           a=""
+|           <e>
+|             <template>
+|               content
+|   <svg svg>
+|   <table>
 
+#data
+<svg/s><template/a><title/y><m></template>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       s=""
+|       <svg template>
+|         a=""
+|         <svg title>
+|           y=""
+|           <m>
+
+#data
+<svg><tr><title/g><svg><table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       <svg tr>
+|         <svg title>
+|           g=""
+|           <svg svg>
+
+#data
+<svg><slot><select/e><title/a><select><select></slot></select>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       <svg slot>
+|         <svg select>
+|           e=""
+|           <svg title>
+|             a=""
+|             <select>
