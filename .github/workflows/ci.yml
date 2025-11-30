@@ -49,38 +49,49 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install Pyodide and dependencies
+      - name: Build wheel
         run: |
-          pip install pyodide-py pytest-pyodide
-          pip install -e .
+          pip install build
+          python -m build --wheel
 
-      - name: Test import in Pyodide
+      - name: Test in Pyodide
         run: |
-          python -c "
-          import asyncio
-          from pyodide_py import loadPyodide
+          npm install pyodide
+          node --experimental-vm-modules << 'EOF'
+          const { loadPyodide } = require("pyodide");
 
-          async def main():
-              pyodide = await loadPyodide()
-              await pyodide.loadPackage('micropip')
-              micropip = pyodide.pyimport('micropip')
+          async function main() {
+            const pyodide = await loadPyodide();
+            await pyodide.loadPackage("micropip");
+            const micropip = pyodide.pyimport("micropip");
 
-              # Install justhtml from local wheel or source
-              await micropip.install('justhtml')
+            // Install from local wheel
+            const fs = require("fs");
+            const wheel = fs.readdirSync("dist").find(f => f.endsWith(".whl"));
+            const wheelData = fs.readFileSync(`dist/${wheel}`);
+            await micropip.install([pyodide.toPy(wheelData)]);
 
-              # Test basic parsing
-              result = pyodide.runPython('''
+            // Test basic parsing
+            const result = pyodide.runPython(`
           from justhtml import JustHTML
-          doc = JustHTML(\"<html><body><p>Hello</p></body></html>\")
+          doc = JustHTML("<html><body><p>Hello</p></body></html>")
           doc.root.children[0].name
-          ''')
-              assert result == 'html', f'Expected html, got {result}'
-              print('Pyodide test passed!')
+          `);
+            if (result !== "html") {
+              throw new Error(`Expected 'html', got '${result}'`);
+            }
+            console.log("Pyodide test passed!");
+          }
 
-          asyncio.run(main())
-          "
+          main().catch(e => { console.error(e); process.exit(1); });
+          EOF
