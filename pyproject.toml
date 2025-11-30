@@ -62,6 +62,8 @@ ignore = [
     "ERA001",
     "SLF001",
     "S105",
+    "COM812",
+    "ISC001",
 ]
 
 [tool.coverage.report]

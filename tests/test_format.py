@@ -1,9 +1,13 @@
+# ruff: noqa: INP001
+
 """
 HTML5 test format serialization.
 
 This module converts DOM trees into the HTML5 test format used by html5lib tests.
 The test format uses '| ' prefixes and specific indentation rules.
 """
+
+from justhtml.constants import FOREIGN_ATTRIBUTE_ADJUSTMENTS
 
 
 def node_to_test_format(node, indent=0):
@@ -70,8 +74,6 @@ def _format_attributes(node, indent):
     """Format element attributes for test output."""
     if not node.attrs:
         return []
-
-    from justhtml.constants import FOREIGN_ATTRIBUTE_ADJUSTMENTS
 
     formatted = []
     padding = " " * (indent + 2)

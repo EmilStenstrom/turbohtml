@@ -1,3 +1,5 @@
+# ruff: noqa: PLC0415, S101, PLW2901, RUF012
+
 import enum
 
 from .constants import (
@@ -141,11 +143,13 @@ class SimpleDomNode:
     def to_html(self, indent=0, indent_size=2):
         """Convert node to pretty-printed HTML string."""
         from .serialize import to_html
+
         return to_html(self, indent, indent_size)
 
 
 class ElementNode(SimpleDomNode):
     __slots__ = ()
+
     def __init__(self, name, attrs, namespace):
         self.name = name
         self.parent = None
@@ -189,6 +193,7 @@ class TreeBuilder:
         "fragment_context_element",
         "frameset_ok",
         "head_element",
+        "iframe_srcdoc",
         "ignore_lf",
         "insert_from_table",
         "mode",
@@ -199,7 +204,6 @@ class TreeBuilder:
         "table_text_original_mode",
         "template_modes",
         "tokenizer_state_override",
-        "iframe_srcdoc",
     )
 
     def __init__(
@@ -288,7 +292,9 @@ class TreeBuilder:
             if ns == "html" or ns is None:
                 if node.name in terminators:
                     return False
-            elif check_integration_points and (self._is_html_integration_point(node) or self._is_mathml_text_integration_point(node)):
+            elif check_integration_points and (
+                self._is_html_integration_point(node) or self._is_mathml_text_integration_point(node)
+            ):
                 return False
         return False
 
@@ -350,7 +356,7 @@ class TreeBuilder:
                     # Inline _mode_in_body for performance
                     if token_type is Tag:
                         # Inline _handle_tag_in_body
-                        if current_token.kind == 0: # Tag.START
+                        if current_token.kind == 0:  # Tag.START
                             name = current_token.name
                             if name == "div" or name == "ul" or name == "ol":
                                 # Inline _handle_body_start_block_with_p
@@ -456,16 +462,15 @@ class TreeBuilder:
                 # Only pop foreign elements if we're NOT at an HTML/MathML integration point
                 # and NOT about to insert a new foreign element (svg/math)
                 if not isinstance(current_token, EOFToken):
-                    should_pop = True
                     # Don't pop at integration points - they stay on stack to receive content
                     if self._is_html_integration_point(current) or self._is_mathml_text_integration_point(current):
-                        should_pop = False
+                        pass
                     # Don't pop when inserting new svg/math elements
                     if isinstance(current_token, Tag) and current_token.kind == Tag.START:
                         # Optimization: Tokenizer already lowercases tag names
                         name_lower = current_token.name
                         if name_lower in {"svg", "math"}:
-                            should_pop = False
+                            pass
 
                 # Special handling: text at integration points inserts directly, bypassing mode dispatch
                 if isinstance(current_token, CharacterTokens):
@@ -489,10 +494,7 @@ class TreeBuilder:
                 else:
                     # At integration points inside foreign content, check if table tags make sense.
                     if (
-                        (
-                            self._is_mathml_text_integration_point(current)
-                            or self._is_html_integration_point(current)
-                        )
+                        (self._is_mathml_text_integration_point(current) or self._is_html_integration_point(current))
                         and isinstance(current_token, Tag)
                         and current_token.kind == Tag.START
                         and self.mode not in {InsertionMode.IN_BODY}
@@ -526,7 +528,7 @@ class TreeBuilder:
                 self.tokenizer_state_override = None
                 return result_to_return
             # Result is (instruction, mode, token) or (instruction, mode, token, force_html)
-            instruction, mode, token_override = result[0], result[1], result[2]
+            _instruction, mode, token_override = result[0], result[1], result[2]
             if len(result) == 4:
                 force_html_mode = result[3]
             # All mode handlers that return a tuple use "reprocess" instruction
@@ -1693,6 +1695,7 @@ class TreeBuilder:
         if current and current.name == "template":
             # In template, delegate EOF handling to IN_TEMPLATE
             return self._mode_in_template(token)
+        return None
         # Per spec: EOF when current is html - implicit None return
 
     def _mode_in_table_body(self, token):
@@ -2303,17 +2306,17 @@ class TreeBuilder:
         target = self.open_elements[-1]
 
         if target.name not in TABLE_FOSTER_TARGETS and type(target) is not TemplateNode:
-             children = target.children
-             if children:
-                 last_child = children[-1]
-                 if type(last_child) is TextNode:
-                     last_child.data += text
-                     return
+            children = target.children
+            if children:
+                last_child = children[-1]
+                if type(last_child) is TextNode:
+                    last_child.data += text
+                    return
 
-             node = TextNode(text)
-             children.append(node)
-             node.parent = target
-             return
+            node = TextNode(text)
+            children.append(node)
+            node.parent = target
+            return
 
         target = self._current_node_or_html()
         foster_parenting = self._should_foster_parenting(target, is_text=True)
@@ -2795,7 +2798,7 @@ class TreeBuilder:
         return True
 
     def _foreign_breakout_font(self, tag):
-        for name, _ in tag.attrs.items():
+        for name in tag.attrs.keys():
             if self._lower_ascii(name) in {"color", "face", "size"}:
                 return True
         return False
@@ -2903,8 +2906,6 @@ class TreeBuilder:
         # Stack exhausted without finding match - ignore tag (defensive, html always terminates)
         return None  # pragma: no cover
 
-
-
     def _appropriate_insertion_location(self, override_target=None, *, foster_parenting=False):
         if override_target is not None:
             target = override_target
@@ -2958,7 +2959,7 @@ class TreeBuilder:
             selected_option = None
             for opt in options:
                 if opt.attrs:
-                    for attr_name, _ in opt.attrs.items():
+                    for attr_name in opt.attrs.keys():
                         if attr_name == "selected":
                             selected_option = opt
                             break
@@ -3223,7 +3224,7 @@ class TreeBuilder:
         is_html_namespace = current_node is None or current_node.namespace in {None, "html"}
 
         if not is_html_namespace:
-             return self.process_token(CharacterTokens(data))
+            return self.process_token(CharacterTokens(data))
 
         if self.mode == InsertionMode.IN_BODY:
             if "\x00" in data:

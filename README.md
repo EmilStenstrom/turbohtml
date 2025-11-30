@@ -37,7 +37,7 @@ But for most use cases, JustHTML is **fast enough**. It parses the Wikipedia hom
 | `lxml` | ❌ No | ❌ No | 🚀 Very Fast | C-based. Fast but not spec-compliant (different output than browsers). |
 | `html5lib` | ✅ Yes | ✅ Yes | 🐢 Slow | The reference implementation. Very correct but very slow. |
 | `BeautifulSoup` | N/A | N/A | 🐢 Slow | Wrapper around other parsers. Slower and more memory hungry than the underlying parser. |
-| `gumbo` / `html5ever` | ✅ Yes | ❌ No | 🚀 Very Fast | C/Rust based. Fast and correct, but requires compiling extensions. | 
+| `gumbo` / `html5ever` | ✅ Yes | ❌ No | 🚀 Very Fast | C/Rust based. Fast and correct, but requires compiling extensions. |
 
 ## Installation
 

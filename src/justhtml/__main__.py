@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Command-line interface for JustHTML."""
 
+# ruff: noqa: PTH123
+
 import sys
+
 from . import JustHTML
 
 

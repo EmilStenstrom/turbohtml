@@ -1,10 +1,26 @@
 """HTML serialization utilities for JustHTML DOM nodes."""
 
+# ruff: noqa: PERF401
+
 # HTML5 void elements (no closing tag)
-VOID_ELEMENTS = frozenset({
-    "area", "base", "br", "col", "embed", "hr", "img", "input",
-    "link", "meta", "param", "source", "track", "wbr",
-})
+VOID_ELEMENTS = frozenset(
+    {
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "img",
+        "input",
+        "link",
+        "meta",
+        "param",
+        "source",
+        "track",
+        "wbr",
+    },
+)
 
 
 def to_html(node, indent=0, indent_size=2):
@@ -15,8 +31,7 @@ def to_html(node, indent=0, indent_size=2):
         for child in node.children or []:
             parts.append(_node_to_html(child, indent, indent_size))
         return "\n".join(parts)
-    else:
-        return _node_to_html(node, indent, indent_size)
+    return _node_to_html(node, indent, indent_size)
 
 
 def _node_to_html(node, indent=0, indent_size=2):
@@ -75,10 +90,7 @@ def _node_to_html(node, indent=0, indent_size=2):
         return f"{prefix}<{name}{attr_str}></{name}>"
 
     # Check if all children are text-only (inline rendering)
-    all_text = all(
-        hasattr(c, "name") and c.name == "#text"
-        for c in children
-    )
+    all_text = all(hasattr(c, "name") and c.name == "#text" for c in children)
 
     if all_text:
         text = "".join(c.data or "" for c in children)

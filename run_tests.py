@@ -1,3 +1,5 @@
+# ruff: noqa: PERF401, S603
+
 import argparse
 import json
 import math
@@ -15,6 +17,7 @@ from justhtml.context import FragmentContext
 from justhtml.tokenizer import Tokenizer, TokenizerOpts
 from justhtml.tokens import CharacterTokens, CommentToken, Doctype, DoctypeToken, EOFToken, Tag
 from justhtml.treebuilder import InsertionMode, TreeBuilder
+
 from tests.test_format import node_to_test_format
 
 # Minimal Unix-friendly fix: if stdout is a pipe and the reader (e.g. `head`) closes early,
@@ -38,9 +41,9 @@ class TestCase:
         "document",
         "errors",
         "fragment_context",
+        "iframe_srcdoc",
         "script_directive",
         "xml_coercion",
-        "iframe_srcdoc",
     ]
 
     def __init__(
@@ -154,22 +157,21 @@ class TestRunner:
         if "\\x" not in text and "\\u" not in text:
             return text
         # Use codecs to decode unicode_escape, but preserve valid UTF-8
-        import codecs
         # Replace \\xNN with actual bytes
         result = []
         i = 0
         while i < len(text):
-            if text[i:i+2] == "\\x" and i + 3 < len(text):
+            if text[i : i + 2] == "\\x" and i + 3 < len(text):
                 try:
-                    byte_val = int(text[i+2:i+4], 16)
+                    byte_val = int(text[i + 2 : i + 4], 16)
                     result.append(chr(byte_val))
                     i += 4
                     continue
                 except ValueError:
                     pass
-            elif text[i:i+2] == "\\u" and i + 5 < len(text):
+            elif text[i : i + 2] == "\\u" and i + 5 < len(text):
                 try:
-                    code_point = int(text[i+2:i+6], 16)
+                    code_point = int(text[i + 2 : i + 6], 16)
                     result.append(chr(code_point))
                     i += 6
                     continue
@@ -629,7 +631,7 @@ def main():
 
     total_passed = tree_passed + tok_passed
     total_failed = tree_failed + (tok_total - tok_passed)
-    total_tests = (tree_passed + tree_failed) + tok_total
+    (tree_passed + tree_failed) + tok_total
 
     # Combine file results to show tokenizer files alongside tree tests
     combined_results = dict(runner.file_results)
@@ -831,6 +833,7 @@ def _print_tokenizer_failure(test, filename, test_index, xml_coercion=False):
 
     if test.get("doubleEscaped"):
         input_text = _unescape_unicode(input_text)
+
         def recurse(val):
             if isinstance(val, str):
                 return _unescape_unicode(val)
@@ -839,6 +842,7 @@ def _print_tokenizer_failure(test, filename, test_index, xml_coercion=False):
             if isinstance(val, dict):
                 return {k: recurse(v) for k, v in val.items()}
             return val
+
         expected_tokens = recurse(expected_tokens)
 
     initial_states = test.get("initialStates") or ["Data state"]
@@ -846,12 +850,12 @@ def _print_tokenizer_failure(test, filename, test_index, xml_coercion=False):
 
     print(f"\nFAILED: {filename} test #{test_index}")
     print(f"Description: {test.get('description', 'N/A')}")
-    print(f"Input: {repr(input_text)}")
+    print(f"Input: {input_text!r}")
     print(f"Initial states: {initial_states}")
     if last_start_tag:
         print(f"Last start tag: {last_start_tag}")
 
-    print(f"\n=== EXPECTED TOKENS ===")
+    print("\n=== EXPECTED TOKENS ===")
     for tok in expected_tokens:
         print(f"  {tok}")
 
@@ -866,7 +870,12 @@ def _print_tokenizer_failure(test, filename, test_index, xml_coercion=False):
             raw_tag = last_start_tag
         sink = RecordingTreeBuilder()
         discard_bom = test.get("discardBom", False)
-        opts = TokenizerOpts(initial_state=initial_state, initial_rawtext_tag=raw_tag, discard_bom=discard_bom, xml_coercion=xml_coercion)
+        opts = TokenizerOpts(
+            initial_state=initial_state,
+            initial_rawtext_tag=raw_tag,
+            discard_bom=discard_bom,
+            xml_coercion=xml_coercion,
+        )
         tok = Tokenizer(sink, opts)
         tok.last_start_tag_name = last_start_tag
         tok.run(input_text)
@@ -878,7 +887,7 @@ def _print_tokenizer_failure(test, filename, test_index, xml_coercion=False):
             print(f"  {t}")
 
         if actual != expected_tokens:
-            print(f"\n=== DIFFERENCES ===")
+            print("\n=== DIFFERENCES ===")
             max_len = max(len(expected_tokens), len(actual))
             for i in range(max_len):
                 exp = expected_tokens[i] if i < len(expected_tokens) else "<missing>"
@@ -917,7 +926,12 @@ def _run_single_tokenizer_test(test, xml_coercion=False):
             raw_tag = last_start_tag
         sink = RecordingTreeBuilder()
         discard_bom = test.get("discardBom", False)
-        opts = TokenizerOpts(initial_state=initial_state, initial_rawtext_tag=raw_tag, discard_bom=discard_bom, xml_coercion=xml_coercion)
+        opts = TokenizerOpts(
+            initial_state=initial_state,
+            initial_rawtext_tag=raw_tag,
+            discard_bom=discard_bom,
+            xml_coercion=xml_coercion,
+        )
         tok = Tokenizer(sink, opts)
         tok.last_start_tag_name = last_start_tag
         tok.run(input_text)
@@ -942,7 +956,7 @@ def _run_regression_check(runner, reporter):
     baseline_file = "test-summary.txt"
 
     try:
-        proc = subprocess.run(  # noqa: S603
+        proc = subprocess.run(
             ["git", "show", f"HEAD:{baseline_file}"],  # noqa: S607
             capture_output=True,
             text=True,

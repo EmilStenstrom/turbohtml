@@ -32,10 +32,11 @@ for _plane in range(17):
 
 _XML_COERCION_PATTERN = re.compile(r"[\f\uFDD0-\uFDEF" + "".join(_xml_invalid_single_chars) + "]")
 
+
 def _xml_coercion_callback(match):
-    if match.group(0) == '\f':
-        return ' '
-    return '\ufffd'
+    if match.group(0) == "\f":
+        return " "
+    return "\ufffd"
 
 
 def _is_ascii_alpha(c):
@@ -59,14 +60,21 @@ def _coerce_comment_for_xml(text):
     """Apply XML coercion to comment content - handle double hyphens."""
     # Replace -- with - - (with space)
     if "--" in text:
-        return text.replace('--', '- -')
+        return text.replace("--", "- -")
     return text
 
 
 class TokenizerOpts:
     __slots__ = ("discard_bom", "exact_errors", "initial_rawtext_tag", "initial_state", "xml_coercion")
 
-    def __init__(self, exact_errors=False, discard_bom=True, initial_state=None, initial_rawtext_tag=None, xml_coercion=False):
+    def __init__(
+        self,
+        exact_errors=False,
+        discard_bom=True,
+        initial_state=None,
+        initial_rawtext_tag=None,
+        xml_coercion=False,
+    ):
         self.exact_errors = bool(exact_errors)
         self.discard_bom = bool(discard_bom)
         self.initial_state = initial_state
@@ -172,7 +180,6 @@ class Tokenizer:
     )
 
     # _STATE_HANDLERS is defined at the end of the file
-
 
     def __init__(self, sink, opts=None):
         self.sink = sink
@@ -344,9 +351,9 @@ class Tokenizer:
 
                 if nc == "!":
                     # Optimization: Peek ahead for comments
-                    if pos + 2 < length and buffer[pos+1] == "-" and buffer[pos+2] == "-":
+                    if pos + 2 < length and buffer[pos + 1] == "-" and buffer[pos + 2] == "-":
                         self._flush_text()
-                        self.pos += 3 # Consume !--
+                        self.pos += 3  # Consume !--
                         self.current_comment.clear()
                         self.state = self.COMMENT_START
                         return self._state_comment_start()
@@ -368,14 +375,13 @@ class Tokenizer:
                             if "A" <= nnc <= "Z":
                                 nnc = chr(ord(nnc) + 32)
                             self.current_tag_name.append(nnc)
-                            self.pos += 2 # Consume / and nnc
+                            self.pos += 2  # Consume / and nnc
                             self.state = self.TAG_NAME
                             return self._state_tag_name()
 
             self._flush_text()
             self.state = self.TAG_OPEN
             return self._state_tag_open()
-
 
     def _state_tag_open(self):
         c = self._get_char()
@@ -443,7 +449,7 @@ class Tokenizer:
                 if match:
                     chunk = match.group(0)
                     if not chunk.islower():
-                         chunk = chunk.translate(_ASCII_LOWER_TABLE)
+                        chunk = chunk.translate(_ASCII_LOWER_TABLE)
                     append_tag_char(chunk)
                     self.pos = match.end()
 
@@ -508,7 +514,7 @@ class Tokenizer:
                             self.pos = match.end()
 
             # Inline _get_char
-            if self.reconsume: # pragma: no cover
+            if self.reconsume:  # pragma: no cover
                 self.reconsume = False
                 c = self.current_char
             elif self.pos >= length:
@@ -526,7 +532,7 @@ class Tokenizer:
                 if self.ignore_lf:
                     self.ignore_lf = False
                 else:
-                    self.line += 1 # pragma: no cover
+                    self.line += 1  # pragma: no cover
                 continue
             if c == "\t" or c == "\f":
                 self.ignore_lf = False
@@ -811,7 +817,7 @@ class Tokenizer:
             if c == '"':
                 self.state = self.AFTER_ATTRIBUTE_VALUE_QUOTED
                 return self._state_after_attribute_value_quoted()
-            elif c == "&":
+            if c == "&":
                 self._append_attr_value_char("&")
                 self.current_attr_value_has_amp = True
             else:
@@ -878,7 +884,7 @@ class Tokenizer:
             if c == "'":
                 self.state = self.AFTER_ATTRIBUTE_VALUE_QUOTED
                 return self._state_after_attribute_value_quoted()
-            elif c == "&":
+            if c == "&":
                 self._append_attr_value_char("&")
                 self.current_attr_value_has_amp = True
             else:
@@ -1674,7 +1680,7 @@ class Tokenizer:
         if self.opts.xml_coercion:
             data = _coerce_text_for_xml(data)
 
-        result = self.sink.process_characters(data)
+        self.sink.process_characters(data)
         # Note: process_characters never returns Plaintext or RawData
         # State switches happen via _emit_current_tag instead
 
@@ -1749,11 +1755,10 @@ class Tokenizer:
                         self.state = self.PLAINTEXT
                         switched_to_rawtext = True
         # Remember current state before emitting
-        state_before_emit = self.state
 
         # Emit token to sink
         result = self.sink.process_token(tag)
-        if result == 1: # TokenSinkResult.Plaintext
+        if result == 1:  # TokenSinkResult.Plaintext
             self.state = self.PLAINTEXT
             switched_to_rawtext = True
 
@@ -1779,7 +1784,10 @@ class Tokenizer:
         public_id = "".join(self.current_doctype_public) if self.current_doctype_public is not None else None
         system_id = "".join(self.current_doctype_system) if self.current_doctype_system is not None else None
         doctype = Doctype(
-            name=name, public_id=public_id, system_id=system_id, force_quirks=self.current_doctype_force_quirks,
+            name=name,
+            public_id=public_id,
+            system_id=system_id,
+            force_quirks=self.current_doctype_force_quirks,
         )
         self.current_doctype_name.clear()
         self.current_doctype_public = None
@@ -1788,7 +1796,7 @@ class Tokenizer:
         self._emit_token(DoctypeToken(doctype))
 
     def _emit_token(self, token):
-        result = self.sink.process_token(token)
+        self.sink.process_token(token)
         # Note: process_token never returns Plaintext or RawData for state switches
         # State switches happen via _emit_current_tag checking sink response
 

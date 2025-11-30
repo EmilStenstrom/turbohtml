@@ -522,12 +522,13 @@ def run_benchmark_isolated(bench_fn, html_files, iterations, args):
 
     # Force GC in parent to minimize COW overhead (though fork handles it)
     import gc
+
     gc.collect()
 
     queue = multiprocessing.Queue()
     p = multiprocessing.Process(
         target=_benchmark_worker,
-        args=(bench_fn, html_files, iterations, queue)
+        args=(bench_fn, html_files, iterations, queue),
     )
     p.start()
 
@@ -626,10 +627,16 @@ def main():
         help="Path to html.dict file",
     )
     parser.add_argument(
-        "--limit", type=int, default=100, help="Limit number of files to test (default: 100, use 0 for all)",
+        "--limit",
+        type=int,
+        default=100,
+        help="Limit number of files to test (default: 100, use 0 for all)",
     )
     parser.add_argument(
-        "--iterations", type=int, default=5, help="Number of iterations to run for averaging (default: 5)",
+        "--iterations",
+        type=int,
+        default=5,
+        help="Number of iterations to run for averaging (default: 5)",
     )
     parser.add_argument(
         "--parsers",
@@ -641,7 +648,10 @@ def main():
     # MEMORY: options
     parser.add_argument("--no-mem", action="store_true", help="Disable memory measurement (RSS sampling)")
     parser.add_argument(
-        "--mem-sample-ms", type=float, default=10.0, help="Memory sampling interval in milliseconds (default: 10ms)",
+        "--mem-sample-ms",
+        type=float,
+        default=10.0,
+        help="Memory sampling interval in milliseconds (default: 10ms)",
     )
 
     args = parser.parse_args()
@@ -654,19 +664,23 @@ def main():
     limit = args.limit if args.limit > 0 else None
     if args.downloaded:
         print(f"Will stream HTML files from {args.downloaded}...")
+
         def html_source_factory():
             return iter_html_from_downloaded(args.downloaded, dict_bytes, limit)
     elif args.all_batches:
         print(f"Will stream HTML files from all batches in {args.batches_dir}...")
+
         def html_source_factory():
             return iter_html_from_all_batches(args.batches_dir, dict_bytes, limit)
     elif args.batch:
         print(f"Will stream HTML files from {args.batch}...")
+
         def html_source_factory():
             return iter_html_from_batch(args.batch, dict_bytes, limit)
     else:
         default_batch = args.batches_dir / "web100k-batch-001.tar.zst"
         print(f"Will stream HTML files from {default_batch}...")
+
         def html_source_factory():
             return iter_html_from_batch(default_batch, dict_bytes, limit)
 

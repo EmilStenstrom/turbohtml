@@ -166,9 +166,7 @@ QUIRKY_PUBLIC_MATCHES = (
     "html",
 )
 
-QUIRKY_SYSTEM_MATCHES = (
-    "http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd",
-)
+QUIRKY_SYSTEM_MATCHES = ("http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd",)
 
 LIMITED_QUIRKY_PUBLIC_PREFIXES = (
     "-//w3c//dtd xhtml 1.0 frameset//",
