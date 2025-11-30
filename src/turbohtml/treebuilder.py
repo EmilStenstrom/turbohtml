@@ -138,6 +138,11 @@ class SimpleDomNode:
         self.children.remove(node)
         node.parent = None
 
+    def to_html(self, indent=0, indent_size=2):
+        """Convert node to pretty-printed HTML string."""
+        from .serialize import to_html
+        return to_html(self, indent, indent_size)
+
 
 class ElementNode(SimpleDomNode):
     __slots__ = ()
