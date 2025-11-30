@@ -99,9 +99,9 @@ curl -s https://example.com | python -m justhtml -
    cd justhtml
    ```
 
-2. Install the library locally (there's no dependencies!):
+2. Install the library locally:
    ```bash
-   pip install -e .
+   pip install -e ".[dev]"
    ```
 
 3. Run the tests:

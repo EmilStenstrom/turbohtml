@@ -21,6 +21,12 @@ benchmark = [
     "selectolax",
     "html5-parser",
 ]
+dev = [
+    "ruff",
+    "coverage",
+    "build",
+    "twine",
+]
 
 [project.urls]
 Homepage = "https://github.com/emilstenstrom/justhtml"
