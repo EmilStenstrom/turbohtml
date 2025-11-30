@@ -41,6 +41,8 @@ But for most use cases, JustHTML is **fast enough**. It parses the Wikipedia hom
 
 ## Installation
 
+Requires Python 3.10 or later.
+
 ```bash
 pip install justhtml
 ```
