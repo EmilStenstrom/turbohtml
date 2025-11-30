@@ -1,9 +1,9 @@
-# html5ever → TurboHTML Python Port Plan
+# html5ever → JustHTML Python Port Plan
 
 ## Goals
 - Deliver a pure-Python HTML5 parser that mirrors html5ever semantics and stays 100% spec compliant.
 - Achieve performance ahead of existing Python parsers (BeautifulSoup, html5lib, selectolax-python binding excluded) by prioritizing tight loops and low-allocation data structures.
-- Preserve TurboHTML's modular structure so tokenizer, tree builder, and sink handlers can evolve without cross-module rewrites.
+- Preserve JustHTML's modular structure so tokenizer, tree builder, and sink handlers can evolve without cross-module rewrites.
 
 ## Key References
 - html5ever repo: https://github.com/servo/html5ever
@@ -39,12 +39,12 @@
    - Expose optional C accelerator hooks later (drop-in) but keep core pure Python.
 5. **Testing & Compliance**
    - Continue using `html5lib-tests`; port harness to feed tokenizer/tree builder combos with pythonic buffer objects.
-   - Create microbenchmarks comparing html5lib, BeautifulSoup, current TurboHTML, and the port.
+   - Create microbenchmarks comparing html5lib, BeautifulSoup, current JustHTML, and the port.
    - Add regression guard using `python run_tests.py --regressions` before merging states.
 
 ## Implementation Phases
 1. **Scaffolding**
-   - Create `turbohtml/html5ever/` namespace with modules mirroring upstream layout.
+   - Create `justhtml/html5ever/` namespace with modules mirroring upstream layout.
    - Stub interfaces (`tokenizer.py`, `tree_builder.py`, `buffer_queue.py`, `tokens.py`, `tendril.py`).
 2. **Tokenizer Core**
    - Implement data structures and main loop for `Data` state; add incremental support for other states following spec order.
@@ -60,12 +60,12 @@
    - Hook up html5lib fixtures; ensure parity with existing parser before enabling new code path.
    - Benchmark using `benchmark.py`, add dedicated script for tokenizer throughput.
 6. **Migration Plan**
-   - Keep existing TurboHTML parser intact while new port matures behind feature flag.
+   - Keep existing JustHTML parser intact while new port matures behind feature flag.
    - Document API parity and migration steps in `README.md`.
 
 ## Current Status
 - Legacy handler/handler-stack implementation removed from the branch.
-- Minimal scaffolding in place: `buffer.py`, `smallset.py`, `tokenizer.py`, `tokens.py`, `treebuilder.py`, and a thin `TurboHTML` façade.
+- Minimal scaffolding in place: `buffer.py`, `smallset.py`, `tokenizer.py`, `tokens.py`, `treebuilder.py`, and a thin `JustHTML` façade.
 - Tokenizer currently emits a single text run placeholder; tree builder records tokens into a simple DOM skeleton pending spec-accurate logic.
 
 ## Open Questions / Research Tasks
