@@ -39,7 +39,6 @@ jobs:
           ln -s ../../html5lib-tests/tree-construction html5lib-tests-tree
 
       - name: Run pre-commit
-        if: matrix.python-version == '3.15-dev'
         uses: pre-commit/action@v3.0.1
 
       - name: Run tests
