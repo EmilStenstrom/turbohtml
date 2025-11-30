@@ -1,15 +1,13 @@
 # JustHTML
 
-> It's just HTML.
+A pure Python HTML5 parser that just works. No C extensions to compile. No system dependencies to install. No complex API to learn.
 
-**JustHTML** is a pure Python HTML5 parser that just works. No C extensions to compile. No system dependencies to install. No complex API to learn.
-
-## Why JustHTML?
+## Why us this?
 
 ### 1. Just... Correct ✅
 It implements the official WHATWG HTML5 specification exactly. If a browser can parse it, JustHTML can parse it. It handles all the complex error-handling rules that browsers use.
 
-- **Verified Compliance**: Passes all 8,500+ tests in the official `html5lib-tests` suite (used by browser vendors) (see /tests/).
+- **Verified Compliance**: Passes all 8,500+ tests in the official [html5lib-tests](https://github.com/html5lib/html5lib-tests) suite (used by browser vendors).
 - **100% Coverage**: Every single line and branch of code is covered by integration tests.
 - **Fuzz Tested**: Has parsed 3 million randomized broken HTML documents to ensure it never crashes or hangs (see fuzz.py).
 - **Living Standard**: It tracks the living standard, not a snapshot from 2012.
@@ -17,7 +15,7 @@ It implements the official WHATWG HTML5 specification exactly. If a browser can 
 ### 2. Just... Python 🐍
 JustHTML has **zero dependencies**. It's pure Python.
 
-- **Just Install**: No C extensions to compile, no system libraries (like libxml2) required. Works on PyPy, WASM (Pyodide), and anywhere Python runs.
+- **Just Install**: No C extensions to compile, no system libraries (like libxml2) required. Works on PyPy, WASM (Pyodide) (yes, it's in the test matrix), and anywhere Python runs.
 - **No dependency upgrade hassle**: Some libraries depend on a large set of libraries, all which require upgrades to avoid security issues.
 - **Debuggable**: It's just Python code. You can step through it with a debugger to understand exactly how your HTML is being parsed.
 - **Returns plain python objects**: Other parsers return lxml or etree trees which means you have another API to learn. JustHTML returns a set of nested objects you can iterate over. Simple.
@@ -35,7 +33,7 @@ But for most use cases, JustHTML is **fast enough**. It parses the Wikipedia hom
 | **JustHTML** | ✅ Yes | ✅ Yes | ⚡ Fast | It just works. Correct, easy to install, and fast enough. |
 | `html.parser` | ❌ No | ✅ Yes | ⚡ Fast | Standard library. Chokes on malformed HTML. |
 | `lxml` | ❌ No | ❌ No | 🚀 Very Fast | C-based. Fast but not spec-compliant (different output than browsers). |
-| `html5lib` | ✅ Yes | ✅ Yes | 🐢 Slow | The reference implementation. Very correct but very slow. |
+| `html5lib` | ✅ Yes | ✅ Yes | 🐢 Slow | The reference implementation. Very correct but quite slow. |
 | `BeautifulSoup` | N/A | N/A | 🐢 Slow | Wrapper around other parsers. Slower and more memory hungry than the underlying parser. |
 | `gumbo` / `html5ever` | ✅ Yes | ❌ No | 🚀 Very Fast | C/Rust based. Fast and correct, but requires compiling extensions. |
 
