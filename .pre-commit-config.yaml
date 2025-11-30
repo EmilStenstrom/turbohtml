@@ -20,7 +20,7 @@ repos:
     hooks:
       - id: tests-coverage
         name: Tests & Coverage
-        entry: bash -c 'coverage run run_tests.py && coverage run -a -m unittest tests/test_serialize.py && coverage report'
+        entry: bash -c 'coverage run run_tests.py && coverage report'
         language: system
         pass_filenames: false
         always_run: true

@@ -41,7 +41,7 @@
 
 4. **Quick iteration**: Test snippet without full suite (full suite runs in ~1s)
    ```bash
-   python -c 'from justhtml import JustHTML; print(JustHTML("<html>").root.to_test_format())'
+   python -c 'from justhtml import JustHTML, to_test_format; print(to_test_format(JustHTML("<html>").root))'
    ```
 
 5. **Benchmark performance**: After changes, verify speed impact

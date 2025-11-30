@@ -1,8 +1,9 @@
 import unittest
 
 from justhtml import JustHTML
-from justhtml.serialize import to_html
+from justhtml.serialize import to_html, to_test_format
 from justhtml.treebuilder import SimpleDomNode as Node
+from justhtml.treebuilder import TemplateNode
 
 
 class TestSerialize(unittest.TestCase):
@@ -110,6 +111,24 @@ class TestSerialize(unittest.TestCase):
         node.append_child(text_node)
         output = to_html(node)
         assert output == "<div>hello</div>"
+
+    def test_to_test_format_single_element(self):
+        # Test to_test_format on non-document node (line 102)
+        node = Node("div")
+        output = to_test_format(node)
+        assert output == "| <div>"
+
+    def test_to_test_format_template_with_attributes(self):
+        # Test template with attributes (line 126)
+        template = TemplateNode("template", namespace="html")
+        template.attrs = {"id": "t1"}
+        child = Node("p")
+        template.template_content.append_child(child)
+        output = to_test_format(template)
+        assert "| <template>" in output
+        assert '|   id="t1"' in output
+        assert "|   content" in output
+        assert "|     <p>" in output
 
 
 if __name__ == "__main__":

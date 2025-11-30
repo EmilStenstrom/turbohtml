@@ -79,5 +79,6 @@ justhtml-tests/tokenizer_edge_cases.test: 35/35 (100%) [........................
 justhtml-tests/treebuilder_coverage.dat: 15/15 (100%) [...............]
 justhtml-tests/xml_coercion.dat: 4/4 (100%) [....]
 justhtml-tests/xml_coercion_coverage.test: 2/2 (100%) [..]
+test_serialize.py: 16/16 (100%) [................]
 
-PASSED: 8650/8650 passed (100.0%), 39 skipped
+PASSED: 8666/8666 passed (100.0%), 39 skipped

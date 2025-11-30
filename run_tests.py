@@ -8,16 +8,16 @@ import re
 import signal
 import subprocess
 import sys
+import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 
-from justhtml import JustHTML
+from justhtml import JustHTML, to_test_format
 from justhtml.context import FragmentContext
 from justhtml.tokenizer import Tokenizer, TokenizerOpts
 from justhtml.tokens import CharacterTokens, CommentToken, Doctype, DoctypeToken, EOFToken, Tag
 from justhtml.treebuilder import InsertionMode, TreeBuilder
-from tests.test_format import node_to_test_format
 
 # Minimal Unix-friendly fix: if stdout is a pipe and the reader (e.g. `head`) closes early,
 # writes would raise BrokenPipeError at interpreter shutdown. Reset SIGPIPE so the process
@@ -368,7 +368,7 @@ class TestRunner:
                     tokenizer_opts=opts,
                     iframe_srcdoc=test.iframe_srcdoc,
                 )
-                actual_tree = node_to_test_format(parser.root)
+                actual_tree = to_test_format(parser.root)
             debug_output = f.getvalue()
         else:
             parser = JustHTML(
@@ -377,7 +377,7 @@ class TestRunner:
                 tokenizer_opts=opts,
                 iframe_srcdoc=test.iframe_srcdoc,
             )
-            actual_tree = node_to_test_format(parser.root)
+            actual_tree = to_test_format(parser.root)
 
         passed = compare_outputs(test.document, actual_tree)
 
@@ -617,6 +617,84 @@ def parse_args():
     }
 
 
+# ---------------- Python unittest runner ----------------
+
+
+def _run_unit_tests(config):
+    """Discover and run Python unittest files in tests/ directory."""
+    test_dir = Path("tests")
+    test_specs = config.get("test_specs", [])
+    quiet = config.get("quiet", False)
+    verbosity = config.get("verbosity", 0)
+
+    # Find all test_*.py files
+    test_files = sorted(test_dir.glob("test_*.py"))
+
+    if not test_files:
+        return 0, 0, {}
+
+    # Filter by test_specs if provided
+    if test_specs:
+        filtered_files = []
+        for tf in test_files:
+            for spec in test_specs:
+                spec_file = spec.split(":")[0] if ":" in spec else spec
+                if spec_file in tf.name or tf.name in spec_file:
+                    filtered_files.append(tf)
+                    break
+        test_files = filtered_files
+
+    if not test_files:
+        return 0, 0, {}
+
+    total_passed = 0
+    total_failed = 0
+    file_results = {}
+
+    for test_file in test_files:
+        # Load tests from file
+        loader = unittest.TestLoader()
+        suite = loader.discover(str(test_dir), pattern=test_file.name)
+
+        # Run tests
+        stream = StringIO() if quiet or verbosity < 1 else sys.stdout
+        runner = unittest.TextTestRunner(stream=stream, verbosity=0 if quiet else verbosity)
+        result = runner.run(suite)
+
+        file_passed = result.testsRun - len(result.failures) - len(result.errors)
+        file_failed = len(result.failures) + len(result.errors)
+
+        total_passed += file_passed
+        total_failed += file_failed
+
+        # Build test indices for pattern display
+        test_indices = []
+        test_count = result.testsRun
+
+        for i in range(test_count):
+            # We can't easily map index to test name, so just use pass/fail counts
+            if i < file_passed:
+                test_indices.append(("pass", i))
+            else:
+                test_indices.append(("fail", i))
+
+        file_results[test_file.name] = {
+            "passed": file_passed,
+            "failed": file_failed,
+            "skipped": 0,
+            "total": result.testsRun,
+            "test_indices": test_indices,
+        }
+
+        # Print failures if verbose
+        if verbosity >= 1 and not quiet and (result.failures or result.errors):
+            for test, traceback in result.failures + result.errors:
+                print(f"\nFAILED: {test}")
+                print(traceback)
+
+    return total_passed, total_failed, file_results
+
+
 def main():
     config = parse_args()
     test_dir = Path("tests")
@@ -628,13 +706,15 @@ def main():
 
     tok_passed, tok_total, tok_file_results = _run_tokenizer_tests(config)
 
-    total_passed = tree_passed + tok_passed
-    total_failed = tree_failed + (tok_total - tok_passed)
-    (tree_passed + tree_failed) + tok_total
+    unit_passed, unit_failed, unit_file_results = _run_unit_tests(config)
+
+    total_passed = tree_passed + tok_passed + unit_passed
+    total_failed = tree_failed + (tok_total - tok_passed) + unit_failed
 
     # Combine file results to show tokenizer files alongside tree tests
     combined_results = dict(runner.file_results)
     combined_results.update(tok_file_results)
+    combined_results.update(unit_file_results)
 
     reporter.print_summary(total_passed, total_failed, skipped, combined_results)
 
