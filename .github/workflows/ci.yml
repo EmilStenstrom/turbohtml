@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15-dev"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15-dev", "pypy3.10"]
 
     steps:
       - uses: actions/checkout@v4
@@ -39,7 +39,49 @@ jobs:
           ln -s ../../html5lib-tests/tree-construction html5lib-tests-tree
 
       - name: Run pre-commit
+        if: matrix.python-version == '3.15-dev'
         uses: pre-commit/action@v3.0.1
 
       - name: Run tests
         run: python run_tests.py
+
+  test-pyodide:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Pyodide and dependencies
+        run: |
+          pip install pyodide-py pytest-pyodide
+          pip install -e .
+
+      - name: Test import in Pyodide
+        run: |
+          python -c "
+          import asyncio
+          from pyodide_py import loadPyodide
+
+          async def main():
+              pyodide = await loadPyodide()
+              await pyodide.loadPackage('micropip')
+              micropip = pyodide.pyimport('micropip')
+
+              # Install justhtml from local wheel or source
+              await micropip.install('justhtml')
+
+              # Test basic parsing
+              result = pyodide.runPython('''
+          from justhtml import JustHTML
+          doc = JustHTML(\"<html><body><p>Hello</p></body></html>\")
+          doc.root.children[0].name
+          ''')
+              assert result == 'html', f'Expected html, got {result}'
+              print('Pyodide test passed!')
+
+          asyncio.run(main())
+          "
