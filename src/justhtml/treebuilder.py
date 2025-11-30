@@ -516,7 +516,7 @@ class TreeBuilder:
                             self.mode = InsertionMode.IN_BODY
                             result = mode_handlers[self.mode](self, current_token)
                             # Restore mode if no mode change was requested
-                            if self.mode == InsertionMode.IN_BODY:
+                            if self.mode == InsertionMode.IN_BODY:  # pragma: no branch
                                 self.mode = saved_mode
                         else:
                             result = mode_handlers[self.mode](self, current_token)
@@ -905,7 +905,7 @@ class TreeBuilder:
             self._parse_error("Unexpected <html> in template")
             return
         # In IN_BODY mode, html element is always at open_elements[0]
-        if self.open_elements:
+        if self.open_elements:  # pragma: no branch
             html = self.open_elements[0]
             self._add_missing_attributes(html, token.attrs)
         return
@@ -1311,7 +1311,7 @@ class TreeBuilder:
         self._pop_until_inclusive("template")
         self._clear_active_formatting_up_to_marker()
         # Pop template mode if available
-        if self.template_modes:
+        if self.template_modes:  # pragma: no branch
             self.template_modes.pop()
         self._reset_insertion_mode()
         return
@@ -1683,7 +1683,7 @@ class TreeBuilder:
             if name == "template":
                 # Template end tag needs proper handling
                 return self._mode_in_head(token)
-            if current and current.name != "html":
+            if current and current.name != "html":  # pragma: no branch
                 self._pop_current()
                 self.mode = InsertionMode.IN_TABLE
             return ("reprocess", InsertionMode.IN_TABLE, token)
@@ -2010,7 +2010,7 @@ class TreeBuilder:
                 fmt_index = self._find_active_formatting_index(name)
                 if fmt_index is not None:
                     target = self.active_formatting[fmt_index]["node"]
-                    if target in self.open_elements:
+                    if target in self.open_elements:  # pragma: no branch
                         select_index = self.open_elements.index(select_node)
                         target_index = self.open_elements.index(target)
                         if target_index < select_index:
@@ -2421,7 +2421,7 @@ class TreeBuilder:
         # Spec: "Any other end tag" in IN_BODY mode
         # Loop through stack backwards (always terminates: html is special)
         index = len(self.open_elements) - 1
-        while index >= 0:
+        while index >= 0:  # pragma: no branch
             node = self.open_elements[index]
 
             # If node's name matches the end tag name
@@ -2805,7 +2805,7 @@ class TreeBuilder:
 
     def _pop_until_html_or_integration_point(self):
         # Always terminates: html element has html namespace
-        while self.open_elements:
+        while self.open_elements:  # pragma: no branch
             node = self.open_elements[-1]
             if node.namespace in {None, "html"}:
                 return

@@ -71,6 +71,8 @@ html5lib-tests-tree/tests_innerHTML_1.dat: 81/81 (100%) [.......................
 html5lib-tests-tree/tricky01.dat: 9/9 (100%) [.........]
 html5lib-tests-tree/webkit01.dat: 52/52 (100%) [....................................................]
 html5lib-tests-tree/webkit02.dat: 47/47 (100%) [.ss..............................................] (2 skipped)
+justhtml-tests/branch_coverage.dat: 28/28 (100%) [............................]
+justhtml-tests/coverage_gaps.test: 9/9 (100%) [.........]
 justhtml-tests/empty_stack_edge_cases.dat: 3/3 (100%) [...]
 justhtml-tests/iframe_srcdoc.dat: 1/1 (100%) [.]
 justhtml-tests/tokenizer_edge_cases.test: 35/35 (100%) [...................................]
@@ -78,4 +80,4 @@ justhtml-tests/treebuilder_coverage.dat: 15/15 (100%) [...............]
 justhtml-tests/xml_coercion.dat: 4/4 (100%) [....]
 justhtml-tests/xml_coercion_coverage.test: 2/2 (100%) [..]
 
-PASSED: 8613/8613 passed (100.0%), 39 skipped
+PASSED: 8650/8650 passed (100.0%), 39 skipped

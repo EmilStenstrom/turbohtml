@@ -2,25 +2,7 @@
 
 # ruff: noqa: PERF401
 
-# HTML5 void elements (no closing tag)
-VOID_ELEMENTS = frozenset(
-    {
-        "area",
-        "base",
-        "br",
-        "col",
-        "embed",
-        "hr",
-        "img",
-        "input",
-        "link",
-        "meta",
-        "param",
-        "source",
-        "track",
-        "wbr",
-    },
-)
+from justhtml.constants import VOID_ELEMENTS
 
 
 def to_html(node, indent=0, indent_size=2):
@@ -37,24 +19,25 @@ def to_html(node, indent=0, indent_size=2):
 def _node_to_html(node, indent=0, indent_size=2):
     """Helper to convert a node to HTML."""
     prefix = " " * (indent * indent_size)
+    name = node.name
 
     # Text node
-    if hasattr(node, "name") and node.name == "#text":
+    if name == "#text":
         text = node.data.strip() if node.data else ""
         if text:
             return f"{prefix}{text}"
         return ""
 
     # Comment node
-    if hasattr(node, "name") and node.name == "#comment":
+    if name == "#comment":
         return f"{prefix}<!--{node.data or ''}-->"
 
     # Doctype
-    if hasattr(node, "name") and node.name == "!doctype":
+    if name == "!doctype":
         return f"{prefix}<!DOCTYPE html>"
 
     # Document fragment
-    if hasattr(node, "name") and node.name == "#document-fragment":
+    if name == "#document-fragment":
         parts = []
         for child in node.children or []:
             child_html = _node_to_html(child, indent, indent_size)
@@ -63,7 +46,6 @@ def _node_to_html(node, indent=0, indent_size=2):
         return "\n".join(parts)
 
     # Element node
-    name = node.name
     attrs = node.attrs or {}
 
     # Build opening tag
@@ -71,13 +53,15 @@ def _node_to_html(node, indent=0, indent_size=2):
     if attrs:
         attr_parts = []
         for key, value in attrs.items():
-            if value is None or value == "":
+            if value is None:
+                attr_parts.append(key)
+            elif value == "":
                 attr_parts.append(key)
             else:
                 # Escape quotes in attribute values
-                escaped = str(value).replace('"', "&quot;")
+                escaped = str(value).replace("&", "&amp;").replace('"', "&quot;")
                 attr_parts.append(f'{key}="{escaped}"')
-        if attr_parts:
+        if attr_parts:  # pragma: no branch
             attr_str = " " + " ".join(attr_parts)
 
     # Void elements

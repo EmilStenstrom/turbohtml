@@ -449,3 +449,22 @@ TABLE_SCOPE_TERMINATORS = {"html", "table", "template"}
 TABLE_BODY_SCOPE_TERMINATORS = TABLE_SCOPE_TERMINATORS | {"tbody", "tfoot", "thead"}
 TABLE_ROW_SCOPE_TERMINATORS = TABLE_SCOPE_TERMINATORS | {"tr"}
 IMPLIED_END_TAGS = {"dd", "dt", "li", "option", "optgroup", "p", "rb", "rp", "rt", "rtc"}
+
+VOID_ELEMENTS = frozenset(
+    {
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "img",
+        "input",
+        "link",
+        "meta",
+        "param",
+        "source",
+        "track",
+        "wbr",
+    },
+)

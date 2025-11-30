@@ -67,7 +67,16 @@ ignore = [
     "EXE001",
 ]
 
+[tool.ruff.lint.extend-per-file-ignores]
+"tests/**/*.py" = ["S101"]
+
+[tool.coverage.run]
+branch = true
+source = ["src/justhtml"]
+omit = ["src/justhtml/__main__.py"]
+
 [tool.coverage.report]
+fail_under = 100
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",

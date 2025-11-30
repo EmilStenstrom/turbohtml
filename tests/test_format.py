@@ -1,5 +1,3 @@
-# ruff: noqa: INP001
-
 """
 HTML5 test format serialization.
 

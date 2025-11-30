@@ -7,5 +7,5 @@ trap 'echo; echo "Interrupted, exiting."; exit 130' INT
 while sleep 0.1; do
   # When entr or the test command is interrupted, entr should exit non‑zero.
   # In that case, we break out of the loop.
-  find . -type f -name '*.py' -o -name '*.test' -o -name '*.dat' | entr -crd python run_tests.py -q --regressions || continue
+  find . -type f -name '*.py' -o -name '*.test' -o -name '*.dat' | entr -crd bash -c 'coverage run run_tests.py -q && coverage run -a -m unittest tests/test_serialize.py && coverage report'
 done

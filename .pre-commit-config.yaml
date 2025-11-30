@@ -3,6 +3,7 @@ repos:
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
+        exclude: '\.dat$'
       - id: end-of-file-fixer
       - id: check-yaml
       - id: check-added-large-files
@@ -14,3 +15,12 @@ repos:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: tests-coverage
+        name: Tests & Coverage
+        entry: bash -c 'coverage run run_tests.py && coverage run -a -m unittest tests/test_serialize.py && coverage report'
+        language: system
+        pass_filenames: false
+        always_run: true

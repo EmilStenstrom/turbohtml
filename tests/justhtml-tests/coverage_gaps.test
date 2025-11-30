@@ -1,0 +1,49 @@
+{
+  "tests": [
+    {
+      "description": "Null in attribute name",
+      "input": "<div a\u0000b='c'>",
+      "output": [["StartTag", "div", {"a\ufffdb": "c"}]]
+    },
+    {
+      "description": "Null in attribute value (double quoted)",
+      "input": "<div a=\"b\u0000c\">",
+      "output": [["StartTag", "div", {"a": "b\ufffdc"}]]
+    },
+    {
+      "description": "Null in attribute value (single quoted)",
+      "input": "<div a='b\u0000c'>",
+      "output": [["StartTag", "div", {"a": "b\ufffdc"}]]
+    },
+    {
+      "description": "Missing attribute value (before attribute value state)",
+      "input": "<div a=>",
+      "output": [["StartTag", "div", {"a": ""}]]
+    },
+    {
+      "description": "Switch to RCDATA from BEFORE_ATTRIBUTE_NAME",
+      "input": "<title >",
+      "output": [["StartTag", "title", {}]]
+    },
+    {
+      "description": "Switch to RCDATA from ATTRIBUTE_NAME (fast path)",
+      "input": "<title id>",
+      "output": [["StartTag", "title", {"id": ""}]]
+    },
+    {
+      "description": "Switch to RCDATA from ATTRIBUTE_NAME (slow path)",
+      "input": "<title id\\\">",
+      "output": [["StartTag", "title", {"id\\\"": ""}]]
+    },
+    {
+      "description": "Switch to RCDATA from AFTER_ATTRIBUTE_NAME",
+      "input": "<title id >",
+      "output": [["StartTag", "title", {"id": ""}]]
+    },
+    {
+      "description": "Switch to RCDATA from BEFORE_ATTRIBUTE_VALUE",
+      "input": "<title id=>",
+      "output": [["StartTag", "title", {"id": ""}]]
+    }
+  ]
+}
