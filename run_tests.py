@@ -17,7 +17,6 @@ from justhtml.context import FragmentContext
 from justhtml.tokenizer import Tokenizer, TokenizerOpts
 from justhtml.tokens import CharacterTokens, CommentToken, Doctype, DoctypeToken, EOFToken, Tag
 from justhtml.treebuilder import InsertionMode, TreeBuilder
-
 from tests.test_format import node_to_test_format
 
 # Minimal Unix-friendly fix: if stdout is a pipe and the reader (e.g. `head`) closes early,
