@@ -26,6 +26,7 @@ dev = [
     "coverage",
     "build",
     "twine",
+    "pre-commit",
 ]
 
 [project.urls]
