@@ -22,7 +22,7 @@ benchmark = [
     "html5-parser",
 ]
 dev = [
-    "ruff",
+    "ruff==0.14.7",
     "coverage",
     "build",
     "twine",
