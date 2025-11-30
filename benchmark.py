@@ -461,6 +461,47 @@ def benchmark_selectolax(html_source, iterations=1):
     }
 
 
+def benchmark_gumbo(html_source, iterations=1):
+    """Benchmark Gumbo parser (via html5-parser)."""
+    try:
+        import html5_parser
+    except ImportError:
+        return {"error": "html5-parser not installed (pip install html5-parser)"}
+    times = []
+    errors = 0
+    total_bytes = 0
+    file_count = 0
+    warmup_done = False
+    for _, html in html_source:
+        if not warmup_done:
+            try:
+                html5_parser.parse(html)
+            except Exception:
+                pass
+            warmup_done = True
+        total_bytes += len(html)
+        file_count += 1
+        for _ in range(iterations):
+            try:
+                start = time.perf_counter()
+                result = html5_parser.parse(html)
+                elapsed = time.perf_counter() - start
+                times.append(elapsed)
+                _ = result.tag
+            except Exception:
+                errors += 1
+    return {
+        "total_time": sum(times),
+        "mean_time": sum(times) / len(times) if times else 0,
+        "min_time": min(times) if times else 0,
+        "max_time": max(times) if times else 0,
+        "errors": errors,
+        "success_count": len(times),
+        "file_count": file_count,
+        "total_bytes": total_bytes,
+    }
+
+
 def _benchmark_worker(bench_fn, html_files, iterations, queue):
     """Worker function to run benchmark in a separate process."""
     try:
@@ -514,7 +555,7 @@ def print_results(results, file_count, iterations=1):
     else:
         print(f"BENCHMARK RESULTS ({file_count} HTML files)")
     print("=" * 100)
-    parsers = ["turbohtml", "turbohtml_rust", "html5lib", "lxml", "bs4", "html.parser", "selectolax"]
+    parsers = ["turbohtml", "turbohtml_rust", "html5lib", "lxml", "bs4", "html.parser", "selectolax", "gumbo"]
 
     # Combined header
     header = f"\n{'Parser':<15} {'Total (s)':<10} {'Mean (ms)':<10} {'Peak (MB)':<10} {'Delta (MB)':<10}"
@@ -593,8 +634,8 @@ def main():
     parser.add_argument(
         "--parsers",
         nargs="+",
-        choices=["turbohtml", "html5lib", "lxml", "bs4", "html.parser", "selectolax"],
-        default=["turbohtml", "html5lib", "lxml", "bs4", "html.parser", "selectolax"],
+        choices=["turbohtml", "html5lib", "lxml", "bs4", "html.parser", "selectolax", "gumbo"],
+        default=["turbohtml", "html5lib", "lxml", "bs4", "html.parser", "selectolax", "gumbo"],
         help="Parsers to benchmark (default: all)",
     )
     # MEMORY: options
@@ -643,6 +684,7 @@ def main():
         "bs4": benchmark_bs4,
         "html.parser": benchmark_html_parser,
         "selectolax": benchmark_selectolax,
+        "gumbo": benchmark_gumbo,
     }
 
     file_count = 0

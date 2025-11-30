@@ -19,6 +19,7 @@ benchmark = [
     "lxml",
     "beautifulsoup4",
     "selectolax",
+    "html5-parser",
 ]
 
 [project.urls]
