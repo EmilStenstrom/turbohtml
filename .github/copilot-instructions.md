@@ -1,15 +1,9 @@
-## TurboHTML – Agent instructions
-
-### Core Purpose
-TurboHTML is a HTML5 parser that is 100% HTML5 spec compliant, as measured by the W3C HTML5 tokenizer and treebuilder tests. It's faster than html5lib and beautifulsoup, uses about half the memory, and is easier to install than C or Rust alternatives.
+## JustHTML – Agent instructions
 
 # Decision & Clarification Policy (Overrides)
 
 - Replace "propose a follow-up" with "propose **and execute** the best alternative by default; ask only for destructive/irreversible choices."
 - Keep preambles to a single declarative sentence ("I'm scanning the repo and then drafting a minimal fix.") — no approval requests.
-
-### Core Purpose
-TurboHTML is a HTML5 parser targeting 100% html5 spec compliance with speed (comparable to lxml) and lean memory (50% below BeautifulSoup).
 
 ### Architecture Snapshot
 - Tokenizer (`tokenizer.py`): HTML5 spec state machine (~60 states). Handles RCDATA, RAWTEXT, CDATA, script escaping, comments, DOCTYPE, etc.
@@ -47,12 +41,12 @@ TurboHTML is a HTML5 parser targeting 100% html5 spec compliance with speed (com
 
 4. **Quick iteration**: Test snippet without full suite (full suite runs in ~1s)
    ```bash
-   python -c 'from turbohtml import TurboHTML; print(TurboHTML("<html>").root.to_test_format())'
+   python -c 'from justhtml import JustHTML; print(JustHTML("<html>").root.to_test_format())'
    ```
 
 5. **Benchmark performance**: After changes, verify speed impact
    ```bash
-   python benchmark.py --iterations 1 --parser turbohtml --no-mem
+   python benchmark.py --iterations 1 --parser justhtml --no-mem
    ```
 
 6. **Profile hotspots**: For performance optimization
@@ -71,7 +65,7 @@ TurboHTML is a HTML5 parser targeting 100% html5 spec compliance with speed (com
 
 ### Benchmark Flags (benchmark.py)
 - `--iterations 1`: Single run (default: 5 for averaging)
-- `--parser turbohtml`: Benchmark only TurboHTML (default: all parsers)
+- `--parser justhtml`: Benchmark only JustHTML (default: all parsers)
 - `--no-mem`: Disable memory profiling (faster)
 - `--limit N`: Test on N files (default: 100)
 

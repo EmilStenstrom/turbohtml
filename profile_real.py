@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Profile TurboHTML on real-world HTML."""
+"""Profile JustHTML on real-world HTML."""
 
 import cProfile
 import pathlib
@@ -8,7 +8,7 @@ import tarfile
 
 import zstandard as zstd
 
-from turbohtml import TurboHTML
+from justhtml import JustHTML
 
 
 def load_dict(dict_path: pathlib.Path) -> bytes:
@@ -61,7 +61,7 @@ profiler = cProfile.Profile()
 profiler.enable()
 
 for _filename, html in html_files:
-    parser = TurboHTML(html)
+    parser = JustHTML(html)
     _ = parser.root
 
 profiler.disable()

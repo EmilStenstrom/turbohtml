@@ -10,11 +10,11 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 
-from turbohtml import TurboHTML
-from turbohtml.context import FragmentContext
-from turbohtml.tokenizer import Tokenizer, TokenizerOpts
-from turbohtml.tokens import CharacterTokens, CommentToken, Doctype, DoctypeToken, EOFToken, Tag
-from turbohtml.treebuilder import InsertionMode, TreeBuilder
+from justhtml import JustHTML
+from justhtml.context import FragmentContext
+from justhtml.tokenizer import Tokenizer, TokenizerOpts
+from justhtml.tokens import CharacterTokens, CommentToken, Doctype, DoctypeToken, EOFToken, Tag
+from justhtml.treebuilder import InsertionMode, TreeBuilder
 from tests.test_format import node_to_test_format
 
 # Minimal Unix-friendly fix: if stdout is a pipe and the reader (e.g. `head`) closes early,
@@ -360,7 +360,7 @@ class TestRunner:
         if capture_debug:
             f = StringIO()
             with redirect_stdout(f):
-                parser = TurboHTML(
+                parser = JustHTML(
                     test.data,
                     debug=True,
                     fragment_context=test.fragment_context,
@@ -370,7 +370,7 @@ class TestRunner:
                 actual_tree = node_to_test_format(parser.root)
             debug_output = f.getvalue()
         else:
-            parser = TurboHTML(
+            parser = JustHTML(
                 test.data,
                 fragment_context=test.fragment_context,
                 tokenizer_opts=opts,

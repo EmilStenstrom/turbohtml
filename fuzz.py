@@ -1772,9 +1772,9 @@ def run_fuzzer(parser_name, num_tests, seed=None, verbose=False, save_failures=F
     if seed is not None:
         random.seed(seed)
     
-    if parser_name == "turbohtml":
-        from turbohtml import TurboHTML
-        parse_fn = lambda html: TurboHTML(html)
+    if parser_name == "justhtml":
+        from justhtml import JustHTML
+        parse_fn = lambda html: JustHTML(html)
     elif parser_name == "html5lib":
         import html5lib
         parse_fn = lambda html: html5lib.parse(html)
@@ -1885,9 +1885,9 @@ def main():
     parser = argparse.ArgumentParser(description="Fuzz HTML5 parsers with invalid input")
     parser.add_argument(
         "--parser", "-p",
-        choices=["turbohtml", "html5lib", "lxml", "bs4"],
-        default="turbohtml",
-        help="Parser to fuzz (default: turbohtml)",
+        choices=["justhtml", "html5lib", "lxml", "bs4"],
+        default="justhtml",
+        help="Parser to fuzz (default: justhtml)",
     )
     parser.add_argument(
         "--num-tests", "-n",

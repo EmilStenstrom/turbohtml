@@ -1,4 +1,4 @@
-"""HTML serialization utilities for TurboHTML DOM nodes."""
+"""HTML serialization utilities for JustHTML DOM nodes."""
 
 # HTML5 void elements (no closing tag)
 VOID_ELEMENTS = frozenset({

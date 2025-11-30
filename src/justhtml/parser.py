@@ -1,10 +1,10 @@
-"""Minimal TurboHTML parser entry point."""
+"""Minimal JustHTML parser entry point."""
 
 from .tokenizer import Tokenizer, TokenizerOpts
 from .treebuilder import TreeBuilder
 
 
-class TurboHTML:
+class JustHTML:
     __slots__ = ("debug", "fragment_context", "root", "tokenizer", "tree_builder")
 
     def __init__(

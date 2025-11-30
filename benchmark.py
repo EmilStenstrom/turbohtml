@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Performance benchmark for TurboHTML against other HTML parsers.
+Performance benchmark for JustHTML against other HTML parsers.
 Uses web100k dataset from /home/emilstenstrom/Projects/web100k/batches/
 Decompresses at runtime (no disk writes) using html.dict for optimal performance.
 """
@@ -195,12 +195,12 @@ def iter_html_from_all_batches(
                 return
 
 
-def benchmark_turbohtml(html_source, iterations=1):
-    """Benchmark TurboHTML parser with Rust tokenizer."""
+def benchmark_justhtml(html_source, iterations=1):
+    """Benchmark JustHTML parser with Rust tokenizer."""
     try:
-        from turbohtml import TurboHTML
+        from justhtml import JustHTML
     except ImportError:
-        return {"error": "TurboHTML not importable"}
+        return {"error": "JustHTML not importable"}
     all_times = []
     errors = 0
     error_files = []
@@ -210,7 +210,7 @@ def benchmark_turbohtml(html_source, iterations=1):
     for filename, html in html_source:
         if not warmup_done:
             try:
-                TurboHTML(html)
+                JustHTML(html)
             except Exception:
                 pass
             warmup_done = True
@@ -219,7 +219,7 @@ def benchmark_turbohtml(html_source, iterations=1):
         for _ in range(iterations):
             try:
                 start = time.perf_counter()
-                result = TurboHTML(html)
+                result = JustHTML(html)
                 elapsed = time.perf_counter() - start
                 all_times.append(elapsed)
                 _ = result.root
@@ -555,14 +555,14 @@ def print_results(results, file_count, iterations=1):
     else:
         print(f"BENCHMARK RESULTS ({file_count} HTML files)")
     print("=" * 100)
-    parsers = ["turbohtml", "turbohtml_rust", "html5lib", "lxml", "bs4", "html.parser", "selectolax", "gumbo"]
+    parsers = ["justhtml", "html5lib", "lxml", "bs4", "html.parser", "selectolax", "gumbo"]
 
     # Combined header
     header = f"\n{'Parser':<15} {'Total (s)':<10} {'Mean (ms)':<10} {'Peak (MB)':<10} {'Delta (MB)':<10}"
     print(header)
     print("-" * 100)
 
-    turbohtml_time = results.get("turbohtml", {}).get("total_time", 0)
+    justhtml_time = results.get("justhtml", {}).get("total_time", 0)
 
     for parser in parsers:
         if parser not in results:
@@ -581,8 +581,8 @@ def print_results(results, file_count, iterations=1):
         mem_str = f"{peak_mb:>10.1f} {delta_mb:>10.1f}" if "rss_peak_mb" in result else f"{'n/a':>10} {'n/a':>10}"
 
         speedup = ""
-        if parser != "turbohtml" and turbohtml_time > 0 and total > 0:
-            speedup_factor = turbohtml_time / total
+        if parser != "justhtml" and justhtml_time > 0 and total > 0:
+            speedup_factor = justhtml_time / total
             if speedup_factor > 1:
                 speedup = f" ({speedup_factor:.2f}x faster)"
             else:
@@ -634,8 +634,8 @@ def main():
     parser.add_argument(
         "--parsers",
         nargs="+",
-        choices=["turbohtml", "html5lib", "lxml", "bs4", "html.parser", "selectolax", "gumbo"],
-        default=["turbohtml", "html5lib", "lxml", "bs4", "html.parser", "selectolax", "gumbo"],
+        choices=["justhtml", "html5lib", "lxml", "bs4", "html.parser", "selectolax", "gumbo"],
+        default=["justhtml", "html5lib", "lxml", "bs4", "html.parser", "selectolax", "gumbo"],
         help="Parsers to benchmark (default: all)",
     )
     # MEMORY: options
@@ -678,7 +678,7 @@ def main():
     # Run benchmarks
     results = {}
     benchmarks = {
-        "turbohtml": benchmark_turbohtml,
+        "justhtml": benchmark_justhtml,
         "html5lib": benchmark_html5lib,
         "lxml": benchmark_lxml,
         "bs4": benchmark_bs4,

@@ -71,7 +71,7 @@ def _format_attributes(node, indent):
     if not node.attrs:
         return []
 
-    from turbohtml.constants import FOREIGN_ATTRIBUTE_ADJUSTMENTS
+    from justhtml.constants import FOREIGN_ATTRIBUTE_ADJUSTMENTS
 
     formatted = []
     padding = " " * (indent + 2)
