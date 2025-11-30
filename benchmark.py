@@ -587,7 +587,7 @@ def print_results(results, file_count, iterations=1):
             if speedup_factor > 1:
                 speedup = f" ({speedup_factor:.2f}x faster)"
             else:
-                speedup = f" ({1/speedup_factor:.2f}x slower)"
+                speedup = f" ({1 / speedup_factor:.2f}x slower)"
 
         print(f"{parser:<15} {total:<10.3f} {mean_ms:<10.3f} {mem_str} {speedup}")
 

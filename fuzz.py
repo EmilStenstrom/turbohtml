@@ -898,7 +898,7 @@ def fuzz_script_escaping():
         f"<script>{inner}</SCRIPT>",
         f"<script>{inner}</script >",
         f"<script>{inner}</ script>",
-        f"<script>{inner}</script/{random_string(1,5)}>",
+        f"<script>{inner}</script/{random_string(1, 5)}>",
     ]
     return random.choice(variants)
 
@@ -1134,8 +1134,8 @@ def fuzz_attribute_states():
         # Duplicate attributes
         f"<div {name}='{value}' {name}='other'>",
         # Very long attribute name/value
-        f"<div {'x'*500}='{value}'>",
-        f"<div {name}='{'x'*500}'>",
+        f"<div {'x' * 500}='{value}'>",
+        f"<div {name}='{'x' * 500}'>",
         # Null in attribute
         f"<div {name}='\x00{value}'>",
         f"<div \x00{name}='{value}'>",
@@ -2090,20 +2090,20 @@ def run_fuzzer(parser_name, num_tests, seed=None, verbose=False, save_failures=F
     elapsed_total = time.time() - start_time
 
     # Report results
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"FUZZING RESULTS: {parser_name}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Total tests:    {num_tests}")
     print(f"Successes:      {successes}")
     print(f"Crashes:        {len(crashes)}")
     print(f"Hangs (>5s):    {len(hangs)}")
     print(f"Total time:     {elapsed_total:.2f}s")
-    print(f"Tests/second:   {num_tests/elapsed_total:.1f}")
+    print(f"Tests/second:   {num_tests / elapsed_total:.1f}")
 
     if crashes:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("CRASH DETAILS:")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         for crash in crashes[:10]:  # Show first 10
             print(f"\nTest #{crash['test_num']}:")
             print(f"  HTML: {crash['html'][:200]!r}...")
@@ -2112,9 +2112,9 @@ def run_fuzzer(parser_name, num_tests, seed=None, verbose=False, save_failures=F
             print(f"\n... and {len(crashes) - 10} more crashes")
 
     if hangs:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("HANG DETAILS:")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         for hang in hangs[:5]:
             print(f"\nTest #{hang['test_num']} ({hang['time']:.2f}s):")
             print(f"  HTML: {hang['html'][:200]!r}...")
@@ -2184,7 +2184,7 @@ def main():
         if args.seed:
             random.seed(args.seed)
         for i in range(args.sample):
-            print(f"=== Sample {i+1} ===")
+            print(f"=== Sample {i + 1} ===")
             print(generate_fuzzed_html())
             print()
         return
