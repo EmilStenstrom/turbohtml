@@ -4,7 +4,7 @@ authors = [{ name = "Emil Stenström", email = "emil@emilstenstrom.se" }]
 version = "0.1.0"
 description = "A pure Python HTML5 parser that just works."
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
@@ -41,7 +41,7 @@ build-backend = "hatchling.build"
 packages = ["src/justhtml"]
 
 [tool.ruff]
-target-version = "py38" # adjust to your lowest supported Python version
+target-version = "py39" # adjust to your lowest supported Python version
 line-length = 119
 
 [tool.ruff.lint]
