@@ -46,12 +46,12 @@
 
 5. **Benchmark performance**: After changes, verify speed impact
    ```bash
-   python benchmark.py --iterations 1 --parser justhtml --no-mem
+   python benchmarks/performance.py --iterations 1 --parser justhtml --no-mem
    ```
 
 6. **Profile hotspots**: For performance optimization
    ```bash
-   python profile_real.py  # Profiles on web100k dataset
+   python benchmarks/profile.py  # Profiles on web100k dataset
    ```
 
 ### Test Runner Flags
@@ -63,7 +63,7 @@
 - `--exclude-files`, `--exclude-errors`, `--exclude-html`: Skip tests matching patterns
 - `--filter-errors`, `--filter-html`: Only run tests matching patterns
 
-### Benchmark Flags (benchmark.py)
+### Benchmark Flags (benchmarks/performance.py)
 - `--iterations 1`: Single run (default: 5 for averaging)
 - `--parser justhtml`: Benchmark only JustHTML (default: all parsers)
 - `--no-mem`: Disable memory profiling (faster)
