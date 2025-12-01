@@ -1579,5 +1579,20 @@ class TestAdditionalCoverage(SelectorTestCase):
         div.children = original_children
 
 
+class TestJustHTMLMethods(unittest.TestCase):
+    """Test JustHTML convenience methods that delegate to root."""
+
+    def test_doc_query(self):
+        doc = JustHTML("<html><body><div id='main'><p>Hello</p></div></body></html>")
+        result = doc.query("#main")
+        assert len(result) == 1
+        assert result[0].attrs["id"] == "main"
+
+    def test_doc_to_html(self):
+        doc = JustHTML("<html><body><p>Test</p></body></html>")
+        html = doc.to_html(indent=False)
+        assert "<p>Test</p>" in html
+
+
 if __name__ == "__main__":
     unittest.main()

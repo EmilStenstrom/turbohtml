@@ -24,9 +24,9 @@ JustHTML has **zero dependencies**. It's pure Python.
 Find elements with CSS selectors. Just one method to learn - `query()` - and it uses CSS syntax you already know.
 
 ```python
-doc.root.query("div.container > p.intro")  # Familiar CSS syntax
-doc.root.query("#main, .sidebar")          # Selector groups
-doc.root.query("li:nth-child(2n+1)")       # Pseudo-classes
+doc.query("div.container > p.intro")  # Familiar CSS syntax
+doc.query("#main, .sidebar")          # Selector groups
+doc.query("li:nth-child(2n+1)")       # Pseudo-classes
 ```
 
 ### 4. Just... Fast Enough ⚡
@@ -80,9 +80,9 @@ print(f"Attributes: {div.attrs}")
 
 # 2. Query with CSS selectors
 # Find elements using familiar CSS selector syntax
-paragraphs = doc.root.query("p")           # All <p> elements
-main_div = doc.root.query("#main")[0]      # Element with id="main"
-bold = doc.root.query("div > p b")         # <b> inside <p> inside <div>
+paragraphs = doc.query("p")           # All <p> elements
+main_div = doc.query("#main")[0]      # Element with id="main"
+bold = doc.query("div > p b")         # <b> inside <p> inside <div>
 
 # 3. Pretty-print HTML
 # You can serialize any node back to HTML

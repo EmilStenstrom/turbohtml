@@ -35,3 +35,11 @@ class JustHTML:
         self.tokenizer = Tokenizer(self.tree_builder, opts)
         self.tokenizer.run(html or "")
         self.root = self.tree_builder.finish()
+
+    def query(self, selector):
+        """Query the document using a CSS selector. Delegates to root.query()."""
+        return self.root.query(selector)
+
+    def to_html(self, indent=True, indent_size=2):
+        """Serialize the document to HTML. Delegates to root.to_html()."""
+        return self.root.to_html(indent, indent_size)
