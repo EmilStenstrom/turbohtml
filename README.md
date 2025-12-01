@@ -31,8 +31,8 @@ But for most use cases, JustHTML is **fast enough**. It parses the Wikipedia hom
 | Parser | HTML5 Compliance | Pure Python? | Speed | Notes |
 |--------|:----------------:|:------------:|-------|-------|
 | **JustHTML** | ✅ **100%** | ✅ Yes | ⚡ Fast | It just works. Correct, easy to install, and fast enough. |
-| `html5lib` | 🟢 88% | ✅ Yes | 🐢 Slow | The reference implementation. Very correct but quite slow. |
-| `html5_parser` | 🟢 84% | ❌ No | 🚀 Very Fast | C-based (Gumbo). Fast and mostly correct. |
+| `html5lib` | � 88% | ✅ Yes | 🐢 Slow | The reference implementation. Very correct but quite slow. |
+| `html5_parser` | 🟡 84% | ❌ No | 🚀 Very Fast | C-based (Gumbo). Fast and mostly correct. |
 | `selectolax` | 🟡 68% | ❌ No | 🚀 Very Fast | C-based (Lexbor). Very fast but less compliant. |
 | `BeautifulSoup` | 🔴 4% | ✅ Yes | 🐢 Slow | Wrapper around `html.parser`. Not spec compliant. |
 | `html.parser` | 🔴 4% | ✅ Yes | ⚡ Fast | Standard library. Chokes on malformed HTML. |
