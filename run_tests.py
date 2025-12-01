@@ -699,6 +699,24 @@ def main():
     config = parse_args()
     test_dir = Path("tests")
 
+    # Check that html5lib-tests symlinks exist
+    tree_tests = test_dir / "html5lib-tests-tree"
+    tokenizer_tests = test_dir / "html5lib-tests-tokenizer"
+    missing = []
+    if not tree_tests.exists():
+        missing.append(str(tree_tests))
+    if not tokenizer_tests.exists():
+        missing.append(str(tokenizer_tests))
+    if missing:
+        print("ERROR: html5lib-tests not found. Please create symlinks:", file=sys.stderr)
+        for path in missing:
+            print(f"  {path}", file=sys.stderr)
+        print("\nTo set up, clone html5lib-tests and create symlinks:", file=sys.stderr)
+        print("  git clone https://github.com/html5lib/html5lib-tests.git ../html5lib-tests", file=sys.stderr)
+        print("  ln -s ../../html5lib-tests/tree-construction tests/html5lib-tests-tree", file=sys.stderr)
+        print("  ln -s ../../html5lib-tests/tokenizer tests/html5lib-tests-tokenizer", file=sys.stderr)
+        sys.exit(1)
+
     runner = TestRunner(test_dir, config)
     reporter = TestReporter(config)
 
