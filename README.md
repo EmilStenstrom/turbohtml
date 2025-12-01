@@ -69,7 +69,13 @@ div = body.children[0]       # div
 print(f"Tag: {div.name}")
 print(f"Attributes: {div.attrs}")
 
-# 2. Pretty-print HTML
+# 2. Query with CSS selectors
+# Find elements using familiar CSS selector syntax
+paragraphs = doc.root.query("p")           # All <p> elements
+main_div = doc.root.query("#main")[0]      # Element with id="main"
+bold = doc.root.query("div > p b")         # <b> inside <p> inside <div>
+
+# 3. Pretty-print HTML
 # You can serialize any node back to HTML
 print(div.to_html())
 # Output:
@@ -81,6 +87,31 @@ print(div.to_html())
 #   </p>
 # </div>
 ```
+
+### Supported CSS Selectors
+
+JustHTML supports a comprehensive subset of CSS selectors:
+
+| Selector | Example | Description |
+|----------|---------|-------------|
+| Tag | `div` | Elements by tag name |
+| Class | `.intro` | Elements with class |
+| ID | `#main` | Element with ID |
+| Universal | `*` | All elements |
+| Attribute | `[href]` | Elements with attribute |
+| Attr value | `[type="text"]` | Exact attribute match |
+| Attr prefix | `[href^="https"]` | Attribute starts with |
+| Attr suffix | `[href$=".pdf"]` | Attribute ends with |
+| Attr contains | `[href*="example"]` | Attribute contains |
+| Descendant | `div p` | `<p>` inside `<div>` |
+| Child | `div > p` | Direct child |
+| Adjacent | `h1 + p` | Immediately after |
+| Sibling | `h1 ~ p` | Any sibling after |
+| First child | `:first-child` | First child element |
+| Last child | `:last-child` | Last child element |
+| Nth child | `:nth-child(2n+1)` | Nth child (odd, even, formula) |
+| Not | `:not(.hidden)` | Negation |
+| Groups | `h1, h2, h3` | Multiple selectors |
 
 ### Command Line Interface
 

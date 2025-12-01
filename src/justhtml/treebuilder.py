@@ -146,6 +146,23 @@ class SimpleDomNode:
 
         return to_html(self, indent, indent_size)
 
+    def query(self, selector):
+        """
+        Query this subtree using a CSS selector.
+
+        Args:
+            selector: A CSS selector string
+
+        Returns:
+            A list of matching nodes
+
+        Raises:
+            ValueError: If the selector is invalid
+        """
+        from .selector import query
+
+        return query(self, selector)
+
 
 class ElementNode(SimpleDomNode):
     __slots__ = ()
