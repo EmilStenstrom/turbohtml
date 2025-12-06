@@ -10,7 +10,17 @@ _ATTR_NAME_TERMINATORS = "\t\n\f />=\0\"'<\r"
 _TAG_NAME_TERMINATORS = "\t\n\f />\0\r"
 _ASCII_LOWER_TABLE = str.maketrans({chr(code): chr(code + 32) for code in range(65, 91)})
 _RCDATA_ELEMENTS = {"title", "textarea"}
-_RAWTEXT_SWITCH_TAGS = {"script", "style", "xmp", "iframe", "noembed", "noframes", "noscript", "textarea", "title"}
+_RAWTEXT_SWITCH_TAGS = {
+    "script",
+    "style",
+    "xmp",
+    "iframe",
+    "noembed",
+    "noframes",
+    "noscript",
+    "textarea",
+    "title",
+}
 
 _ATTR_VALUE_DOUBLE_TERMINATORS_OPT = '"&\0'
 _ATTR_VALUE_SINGLE_TERMINATORS_OPT = "'&\0"
