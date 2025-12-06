@@ -222,7 +222,7 @@ class Tokenizer:
         self._char_token = CharacterTokens("")
         self._comment_token = CommentToken("")
 
-    def run(self, html):
+    def initialize(self, html):
         if html and html[0] == "\ufeff" and self.opts.discard_bom:
             html = html[1:]
 
@@ -260,10 +260,15 @@ class Tokenizer:
         else:
             self.state = self.DATA
 
-        handlers = self._STATE_HANDLERS
+    def step(self):
+        """Run one step of the tokenizer state machine. Returns True if EOF reached."""
+        handler = self._STATE_HANDLERS[self.state]
+        return handler(self)
+
+    def run(self, html):
+        self.initialize(html)
         while True:
-            handler = handlers[self.state]
-            if handler(self):
+            if self.step():
                 break
 
     # ---------------------

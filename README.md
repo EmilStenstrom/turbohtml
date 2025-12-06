@@ -95,6 +95,21 @@ print(div.to_html())
 #     !
 #   </p>
 # </div>
+
+# 4. Streaming API (extremely fast and memory efficient)
+# For massive files or when you don't need the full DOM tree.
+# NOTE: Does not build a tree and _only_ runs the html5-compatible tokenizer
+
+from justhtml import stream
+
+for event, data in stream(html):
+    if event == "start":
+        tag, attrs = data
+        print(f"Start: {tag} with {attrs}")
+    elif event == "text":
+        print(f"Text: {data}")
+    elif event == "end":
+        print(f"End: {data}")
 ```
 
 ### Supported CSS Selectors
@@ -164,4 +179,4 @@ curl -s https://example.com | python -m justhtml -
 
 ## License
 
-MIT. Free to use for commercial and non-commercial use.
+MIT. Free to use both for commercial and non-commercial use.
