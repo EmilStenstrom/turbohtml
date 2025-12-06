@@ -81,8 +81,7 @@ def _node_to_html(node, indent=0, indent_size=2, pretty=True):
     all_text = all(hasattr(c, "name") and c.name == "#text" for c in children)
 
     if all_text and pretty:
-        text = "".join(c.data or "" for c in children)
-        return f"{prefix}<{name}{attr_str}>{text}</{name}>"
+        return f"{prefix}<{name}{attr_str}>{node.text}</{name}>"
 
     # Render with child indentation
     parts = [f"{prefix}<{name}{attr_str}>"]

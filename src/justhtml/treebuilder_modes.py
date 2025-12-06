@@ -139,7 +139,7 @@ class TreeBuilderModesMixin:
             remaining = data[i:]
             if leading_ws:
                 current = self.open_elements[-1] if self.open_elements else None
-                if current is not None and current.children:
+                if current is not None and current.has_child_nodes():
                     self._append_text(leading_ws)
             self._pop_current()
             self.mode = InsertionMode.AFTER_HEAD
@@ -596,7 +596,7 @@ class TreeBuilderModesMixin:
             entry["node"] = new_formatting_element
 
             # 13. Move children of furthest block
-            while furthest_block.children:
+            while furthest_block.has_child_nodes():
                 child = furthest_block.children[0]
                 furthest_block.remove_child(child)
                 new_formatting_element.append_child(child)

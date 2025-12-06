@@ -665,7 +665,7 @@ class SelectorMatcher:
             return self._is_first_child(node) and self._is_last_child(node)
 
         if name == "empty":
-            if not hasattr(node, "children") or not node.children:
+            if not node.has_child_nodes():
                 return True
             # Check if all children are empty text nodes
             for child in node.children:
@@ -701,14 +701,14 @@ class SelectorMatcher:
 
     def _get_element_children(self, parent):
         """Get only element children (exclude text, comments, etc.)."""
-        if not parent or not hasattr(parent, "children") or not parent.children:
+        if not parent or not parent.has_child_nodes():
             return []
         return [c for c in parent.children if hasattr(c, "name") and not c.name.startswith("#")]
 
     def _get_previous_sibling(self, node):
         """Get the previous element sibling. Returns None if node is first or not found."""
         parent = node.parent
-        if not parent or not hasattr(parent, "children"):
+        if not parent:
             return None
 
         prev = None
@@ -896,7 +896,7 @@ def query(root, selector_string):
 def _query_descendants(node, selector, results):
     """Recursively search for matching nodes in descendants."""
     # Only recurse into children (not the node itself)
-    if hasattr(node, "children") and node.children:
+    if node.has_child_nodes():
         for child in node.children:
             # Check if this child matches
             if hasattr(child, "name") and not child.name.startswith("#"):

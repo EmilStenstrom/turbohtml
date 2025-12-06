@@ -466,8 +466,8 @@ class TreeBuilder(TreeBuilderModesMixin):
             return
 
         node = TextNode(text)
-        parent.children.insert(position, node)
-        node.parent = parent
+        reference_node = parent.children[position] if position < len(parent.children) else None
+        parent.insert_before(node, reference_node)
 
     def _current_node_or_html(self):
         if self.open_elements:
@@ -502,8 +502,7 @@ class TreeBuilder(TreeBuilderModesMixin):
             else:
                 parent = target
 
-            parent.children.append(node)
-            node.parent = parent
+            parent.append_child(node)
 
             if push:
                 self.open_elements.append(node)
@@ -711,11 +710,10 @@ class TreeBuilder(TreeBuilderModesMixin):
             index += 1
 
     def _insert_node_at(self, parent, index, node):
-        if index is None or index >= len(parent.children):
-            parent.append_child(node)
-        else:
-            parent.children.insert(index, node)
-            node.parent = parent
+        reference_node = None
+        if index is not None and index < len(parent.children):
+            reference_node = parent.children[index]
+        parent.insert_before(node, reference_node)
 
     def _find_last_on_stack(self, name):
         for node in reversed(self.open_elements):
@@ -1109,7 +1107,7 @@ class TreeBuilder(TreeBuilderModesMixin):
         if node.name == name:
             result.append(node)
 
-        if type(node) is not TextNode and node.children:
+        if node.has_child_nodes():
             for child in node.children:
                 self._find_elements(child, name, result)
 
@@ -1118,7 +1116,7 @@ class TreeBuilder(TreeBuilderModesMixin):
         if node.name == name:
             return node
 
-        if type(node) is not TextNode and node.children:
+        if node.has_child_nodes():
             for child in node.children:
                 result = self._find_element(child, name)
                 if result:
@@ -1128,21 +1126,7 @@ class TreeBuilder(TreeBuilderModesMixin):
     def _clone_children(self, source, target):
         """Deep clone all children from source to target."""
         for child in source.children:
-            if type(child) is TextNode:
-                # Text node
-                cloned = TextNode(child.data)
-                target.children.append(cloned)
-                cloned.parent = target
-            else:
-                # Element node
-                cloned = ElementNode(
-                    child.name,
-                    attrs=self._clone_attributes(child.attrs),
-                    namespace=child.namespace,
-                )
-                self._clone_children(child, cloned)
-                target.children.append(cloned)
-                cloned.parent = target
+            target.append_child(child.clone_node(deep=True))
 
     def _has_in_scope(self, name):
         return self._has_element_in_scope(name, DEFAULT_SCOPE_TERMINATORS)

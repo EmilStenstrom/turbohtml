@@ -1488,6 +1488,9 @@ class TestAdditionalCoverage(SelectorTestCase):
             def __init__(self):
                 self.attrs = {}
 
+            def has_child_nodes(self):
+                return False
+
         fake = FakeNode()
         selector = SimpleSelector(SimpleSelector.TYPE_PSEUDO, name="empty")
         result = matcher._matches_pseudo(fake, selector)
