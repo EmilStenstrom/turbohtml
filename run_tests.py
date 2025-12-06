@@ -68,8 +68,10 @@ class TestResult:
     """Result object for a single test (typing removed)."""
 
     __slots__ = [
+        "actual_errors",
         "actual_output",
         "debug_output",
+        "errors_matched",
         "expected_errors",
         "expected_output",
         "input_html",
@@ -83,6 +85,8 @@ class TestResult:
         expected_errors,
         expected_output,
         actual_output,
+        actual_errors=None,
+        errors_matched=False,
         debug_output="",
     ):
         self.passed = passed
@@ -90,6 +94,8 @@ class TestResult:
         self.expected_errors = expected_errors
         self.expected_output = expected_output
         self.actual_output = actual_output
+        self.actual_errors = actual_errors or []
+        self.errors_matched = errors_matched
         self.debug_output = debug_output
 
 
@@ -367,6 +373,7 @@ class TestRunner:
                     fragment_context=test.fragment_context,
                     tokenizer_opts=opts,
                     iframe_srcdoc=test.iframe_srcdoc,
+                    collect_errors=True,
                 )
                 actual_tree = to_test_format(parser.root)
             debug_output = f.getvalue()
@@ -376,10 +383,25 @@ class TestRunner:
                 fragment_context=test.fragment_context,
                 tokenizer_opts=opts,
                 iframe_srcdoc=test.iframe_srcdoc,
+                collect_errors=True,
             )
             actual_tree = to_test_format(parser.root)
 
-        passed = compare_outputs(test.document, actual_tree)
+        tree_passed = compare_outputs(test.document, actual_tree)
+
+        # Extract just error codes for comparison (ignore positions)
+        actual_codes = [e.code for e in parser.errors]
+        expected_codes = self._extract_error_codes(test.errors)
+        errors_matched = actual_codes == expected_codes
+
+        # Format actual errors for display
+        actual_error_strs = [f"({e.line},{e.column}): {e.code}" for e in parser.errors]
+
+        # When --check-errors is set, test only passes if tree AND error codes match
+        if self.config.get("check_errors"):
+            passed = tree_passed and errors_matched
+        else:
+            passed = tree_passed
 
         return TestResult(
             passed=passed,
@@ -387,8 +409,30 @@ class TestRunner:
             expected_errors=test.errors,
             expected_output=test.document,
             actual_output=actual_tree,
+            actual_errors=actual_error_strs,
+            errors_matched=errors_matched,
             debug_output=debug_output,
         )
+
+    def _extract_error_codes(self, error_lines):
+        """Extract just error codes from test error lines like '(1,3): expected-doctype-but-got-start-tag'."""
+        codes = []
+        for raw_line in error_lines:
+            line = raw_line.strip()
+            if not line:
+                continue
+            # Skip malformed entries that start with # or |
+            if line.startswith(("#", "|")):
+                continue
+            # Format: "(line,col): error-code" or "(line:col) error-code"
+            if ": " in line:
+                code = line.split(": ", 1)[1]
+            elif ") " in line:
+                code = line.split(") ", 1)[1]
+            else:
+                code = line
+            codes.append(code)
+        return codes
 
     def _handle_failure(self, file_path, test_index, result):
         """Handle test failure - print report based on verbosity (>=1)."""
@@ -426,10 +470,17 @@ class TestReporter:
             lines = [
                 "FAILED:",
                 f"=== INCOMING HTML ===\n{result.input_html}\n",
-                f"Errors to handle when parsing: {result.expected_errors}\n",
-                f"=== WHATWG HTML5 SPEC COMPLIANT TREE ===\n{result.expected_output}\n",
-                f"=== CURRENT PARSER OUTPUT TREE ===\n{result.actual_output}",
             ]
+            # Show error diff if --check-errors and errors don't match
+            if self.config.get("check_errors") and not result.errors_matched:
+                expected_str = "\n".join(result.expected_errors) if result.expected_errors else "(none)"
+                actual_str = "\n".join(result.actual_errors) if result.actual_errors else "(none)"
+                lines.append(f"=== EXPECTED ERRORS ===\n{expected_str}\n")
+                lines.append(f"=== ACTUAL ERRORS ===\n{actual_str}\n")
+            else:
+                lines.append(f"Errors to handle when parsing: {result.expected_errors}\n")
+            lines.append(f"=== WHATWG HTML5 SPEC COMPLIANT TREE ===\n{result.expected_output}\n")
+            lines.append(f"=== CURRENT PARSER OUTPUT TREE ===\n{result.actual_output}")
             if verbosity >= 2 and result.debug_output:
                 # Insert debug block before trees maybe? Keep after errors for readability.
                 lines.insert(3, f"=== DEBUG PRINTS WHEN PARSING ===\n{result.debug_output.rstrip()}\n")
@@ -448,6 +499,7 @@ class TestReporter:
         header = f"{result}: {passed}/{total} passed ({percentage}%)"
         if skipped:
             header += f", {skipped} skipped"
+
         full_run = self.is_full_run()
 
         # Summary file
@@ -590,6 +642,11 @@ def parse_args():
         action="store_true",
         help="After a full (unfiltered) run, compare results to committed HEAD test-summary.txt and report new failures (exits 1 if regressions).",
     )
+    parser.add_argument(
+        "--check-errors",
+        action="store_true",
+        help="Fail tests if error codes and positions don't match expected values.",
+    )
     args = parser.parse_args()
 
     # Preserve each provided spec exactly so patterns like 'tests1.dat:1,2,3' remain intact.
@@ -614,6 +671,7 @@ def parse_args():
         "filter_errors": filter_errors,
         "verbosity": args.verbose,
         "regressions": args.regressions,
+        "check_errors": args.check_errors,
     }
 
 

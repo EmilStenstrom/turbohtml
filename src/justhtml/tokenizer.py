@@ -174,6 +174,8 @@ class Tokenizer:
         "errors",
         "ignore_lf",
         "last_start_tag_name",
+        "last_token_column",
+        "last_token_line",
         "length",
         "line",
         "opts",
@@ -185,6 +187,8 @@ class Tokenizer:
         "state",
         "temp_buffer",
         "text_buffer",
+        "text_start_line",
+        "text_start_pos",
     )
 
     # _STATE_HANDLERS is defined at the end of the file
@@ -203,9 +207,13 @@ class Tokenizer:
         self.current_char = ""
         self.ignore_lf = False
         self.line = 1
+        self.last_token_line = 1
+        self.last_token_column = 0
 
         # Reusable buffers to avoid per-token allocations.
         self.text_buffer = []
+        self.text_start_pos = 0
+        self.text_start_line = 1
         self.current_tag_name = []
         self.current_tag_attrs = {}
         self.current_attr_name = []
@@ -237,8 +245,12 @@ class Tokenizer:
         self.current_char = ""
         self.ignore_lf = False
         self.line = 1
+        self.last_token_line = 1
+        self.last_token_column = 0
         self.errors = []
         self.text_buffer.clear()
+        self.text_start_pos = 0
+        self.text_start_line = 1
         self.current_tag_name.clear()
         self.current_tag_attrs = {}
         self.current_attr_name.clear()
@@ -289,7 +301,7 @@ class Tokenizer:
 
     def _append_text_chunk(self, chunk, *, ends_with_cr=False):
         self.line += chunk.count("\n")
-        self.text_buffer.append(chunk)
+        self._append_text(chunk)
         self.ignore_lf = ends_with_cr
 
     # ---------------------
@@ -329,7 +341,7 @@ class Tokenizer:
                     chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
 
                 self.line += chunk.count("\n")
-                self.text_buffer.append(chunk)
+                self._append_text(chunk)
                 self.ignore_lf = chunk.endswith("\r")
 
                 pos = end
@@ -403,7 +415,7 @@ class Tokenizer:
         c = self._get_char()
         if c is None:
             self._emit_error("EOF after <")
-            self.text_buffer.append("<")
+            self._append_text("<")
             self._flush_text()
             self._emit_token(EOFToken())
             return True
@@ -421,7 +433,7 @@ class Tokenizer:
             return False
 
         self._emit_error("Invalid first character of tag name")
-        self.text_buffer.append("<")
+        self._append_text("<")
         self._reconsume_current()
         self.state = self.DATA
         return False
@@ -430,8 +442,8 @@ class Tokenizer:
         c = self._get_char()
         if c is None:
             self._emit_error("EOF after </")
-            self.text_buffer.append("<")
-            self.text_buffer.append("/")
+            self._append_text("<")
+            self._append_text("/")
             self._flush_text()
             self._emit_token(EOFToken())
             return True
@@ -561,7 +573,7 @@ class Tokenizer:
                 continue
 
             if c is None:
-                self._emit_error("EOF before attribute name")
+                self._emit_error("eof-in-tag")
                 self._flush_text()
                 self._emit_token(EOFToken())
                 return True
@@ -752,7 +764,7 @@ class Tokenizer:
         while True:
             c = self._get_char()
             if c is None:
-                self._emit_error("EOF before attribute value")
+                self._emit_error("eof-in-tag")
                 self._flush_text()
                 self._emit_token(EOFToken())
                 return True
@@ -1038,7 +1050,7 @@ class Tokenizer:
         replacement = "\ufffd"
         c = self._get_char()
         if c is None:
-            self._emit_error("EOF in comment")
+            self._emit_error("eof-in-comment")
             self._emit_comment()
             self._emit_token(EOFToken())
             return True
@@ -1062,7 +1074,7 @@ class Tokenizer:
         replacement = "\ufffd"
         c = self._get_char()
         if c is None:
-            self._emit_error("EOF in comment")
+            self._emit_error("eof-in-comment")
             self._emit_comment()
             self._emit_token(EOFToken())
             return True
@@ -1089,7 +1101,7 @@ class Tokenizer:
                 continue
             c = self._get_char()
             if c is None:
-                self._emit_error("EOF in comment")
+                self._emit_error("eof-in-comment")
                 self._emit_comment()
                 self._emit_token(EOFToken())
                 return True
@@ -1104,7 +1116,7 @@ class Tokenizer:
         replacement = "\ufffd"
         c = self._get_char()
         if c is None:
-            self._emit_error("EOF in comment")
+            self._emit_error("eof-in-comment")
             self._emit_comment()
             self._emit_token(EOFToken())
             return True
@@ -1125,7 +1137,7 @@ class Tokenizer:
         replacement = "\ufffd"
         c = self._get_char()
         if c is None:
-            self._emit_error("EOF in comment")
+            self._emit_error("eof-in-comment")
             self._emit_comment()
             self._emit_token(EOFToken())
             return True
@@ -1144,7 +1156,7 @@ class Tokenizer:
             self.current_comment.extend(("--", replacement))
             self.state = self.COMMENT
             return False
-        self._emit_error("Comment not properly closed")
+        self._emit_error("incorrectly-closed-comment")
         self.current_comment.extend(("--", c))
         self.state = self.COMMENT
         return False
@@ -1153,7 +1165,7 @@ class Tokenizer:
         replacement = "\ufffd"
         c = self._get_char()
         if c is None:
-            self._emit_error("EOF in comment")
+            self._emit_error("eof-in-comment")
             self._emit_comment()
             self._emit_token(EOFToken())
             return True
@@ -1663,6 +1675,15 @@ class Tokenizer:
     def _reconsume_current(self):
         self.reconsume = True
 
+    def _append_text(self, text):
+        """Append text to buffer, recording start position if this is the first chunk."""
+        if not self.text_buffer:
+            # Record where text started (current position before this chunk)
+            self.text_start_pos = self.pos
+            # Calculate the line number at text_start_pos by counting newlines from start
+            self.text_start_line = self.buffer.count("\n", 0, self.pos) + 1
+        self.text_buffer.append(text)
+
     def _flush_text(self):
         if not self.text_buffer:
             return
@@ -1674,11 +1695,14 @@ class Tokenizer:
         else:
             data = "".join(self.text_buffer)
 
+        # Calculate raw text length before any processing for position tracking
+        raw_len = len(data)
+
         self.text_buffer.clear()
         if self.state == self.DATA and "\0" in data:
             count = data.count("\0")
             for _ in range(count):
-                self._emit_error("Null character in data state")
+                self._emit_error("unexpected-null-character")
 
         # Per HTML5 spec:
         # - RCDATA state (title, textarea): decode character references
@@ -1696,6 +1720,8 @@ class Tokenizer:
         if self.opts.xml_coercion:
             data = _coerce_text_for_xml(data)
 
+        # Record position at END of raw text (1-indexed column = raw_len)
+        self._record_text_end_position(raw_len)
         self.sink.process_characters(data)
         # Note: process_characters never returns Plaintext or RawData
         # State switches happen via _emit_current_tag instead
@@ -1773,6 +1799,7 @@ class Tokenizer:
         # Remember current state before emitting
 
         # Emit token to sink
+        self._record_token_position()
         result = self.sink.process_token(tag)
         if result == 1:  # TokenSinkResult.Plaintext
             self.state = self.PLAINTEXT
@@ -1812,9 +1839,43 @@ class Tokenizer:
         self._emit_token(DoctypeToken(doctype))
 
     def _emit_token(self, token):
+        self._record_token_position()
         self.sink.process_token(token)
         # Note: process_token never returns Plaintext or RawData for state switches
         # State switches happen via _emit_current_tag checking sink response
+
+    def _record_token_position(self):
+        """Record current position as 0-indexed column for the last emitted token.
+
+        Per the spec, the position should be at the end of the token (after the last char).
+        """
+        # pos points after the last consumed character, which is exactly what we want
+        pos = self.pos
+        last_newline = self.buffer.rfind("\n", 0, pos)
+        if last_newline == -1:
+            column = pos  # 0-indexed from start
+        else:
+            column = pos - last_newline - 1  # 0-indexed from after newline
+        self.last_token_line = self.line
+        self.last_token_column = column
+
+    def _record_text_end_position(self, raw_len):
+        """Record position at end of text token (after last character).
+
+        Uses text_start_pos + raw_len to compute where text ends, matching html5lib's
+        behavior of reporting the column of the last character (1-indexed).
+        """
+        # Position of last character of text (0-indexed)
+        end_pos = self.text_start_pos + raw_len
+        last_newline = self.buffer.rfind("\n", 0, end_pos)
+        if last_newline == -1:
+            column = end_pos  # 1-indexed column = end_pos (position after last char)
+        else:
+            column = end_pos - last_newline - 1
+        # For multiline text, count newlines in the text to get the correct line
+        text_newlines = self.buffer.count("\n", self.text_start_pos, end_pos)
+        self.last_token_line = self.text_start_line + text_newlines
+        self.last_token_column = column
 
     def _emit_error(self, code):
         if not self.collect_errors:
@@ -1887,7 +1948,7 @@ class Tokenizer:
             if c == "]":
                 self.state = self.CDATA_SECTION_BRACKET
                 return False
-            self.text_buffer.append(c)
+            self._append_text(c)
 
     def _state_cdata_section_bracket(self):
         # Seen one ']', check for second ']'
@@ -1896,7 +1957,7 @@ class Tokenizer:
             self.state = self.CDATA_SECTION_END
             return False
         # False alarm, emit the ']' we saw and continue
-        self.text_buffer.append("]")
+        self._append_text("]")
         if c is None:
             self._emit_error("eof-in-cdata")
             self._flush_text()
@@ -1915,10 +1976,10 @@ class Tokenizer:
             self.state = self.DATA
             return False
         # Not the end - we saw ']]' but not '>'. Emit one ']' and check if the next char is another ']'
-        self.text_buffer.append("]")
+        self._append_text("]")
         if c is None:
             # EOF after ']]' - emit the second ']' too
-            self.text_buffer.append("]")
+            self._append_text("]")
             self._emit_error("eof-in-cdata")
             self._flush_text()
             self._emit_token(EOFToken())
@@ -1927,7 +1988,7 @@ class Tokenizer:
             # Still might be ']]>' sequence, stay in CDATA_SECTION_END
             return False
         # Not a bracket, so emit the second ']', reconsume current char and go back to CDATA_SECTION
-        self.text_buffer.append("]")
+        self._append_text("]")
         self._reconsume_current()
         self.state = self.CDATA_SECTION
         return False
@@ -1977,12 +2038,12 @@ class Tokenizer:
             if null_index == pos:
                 self.ignore_lf = False
                 self._emit_error("Null character in RCDATA")
-                self.text_buffer.append("\ufffd")
+                self._append_text("\ufffd")
                 pos += 1
                 self.pos = pos
             elif amp_index == pos:
                 # Ampersand in RCDATA - will be decoded by _flush_text
-                self.text_buffer.append("&")
+                self._append_text("&")
                 pos += 1
                 self.pos = pos
             else:
@@ -1999,7 +2060,7 @@ class Tokenizer:
             self.current_tag_name.clear()
             self.state = self.RCDATA_END_TAG_OPEN
             return False
-        self.text_buffer.append("<")
+        self._append_text("<")
         self._reconsume_current()
         self.state = self.RCDATA
         return False
@@ -2053,7 +2114,7 @@ class Tokenizer:
                 # EOF - emit incomplete tag as text (preserve original case) then EOF
                 self.text_buffer.extend(("<", "/"))
                 for ch in self.original_tag_name:
-                    self.text_buffer.append(ch)
+                    self._append_text(ch)
                 self.current_tag_name.clear()
                 self.original_tag_name.clear()
                 self._flush_text()
@@ -2062,7 +2123,7 @@ class Tokenizer:
             # Not a matching end tag - emit as text (preserve original case)
             self.text_buffer.extend(("<", "/"))
             for ch in self.original_tag_name:
-                self.text_buffer.append(ch)
+                self._append_text(ch)
             self.current_tag_name.clear()
             self.original_tag_name.clear()
             self._reconsume_current()
@@ -2094,7 +2155,7 @@ class Tokenizer:
                 else:
                     self.ignore_lf = False
                 self._emit_error("Null character in rawtext")
-                self.text_buffer.append("\ufffd")
+                self._append_text("\ufffd")
                 pos = null_index + 1
                 self.pos = pos
                 continue
@@ -2132,7 +2193,7 @@ class Tokenizer:
             self.current_tag_name.clear()
             self.state = self.RAWTEXT_END_TAG_OPEN
             return False
-        self.text_buffer.append("<")
+        self._append_text("<")
         self._reconsume_current()
         self.state = self.RAWTEXT
         return False
@@ -2186,7 +2247,7 @@ class Tokenizer:
                 # EOF - emit incomplete tag as text (preserve original case) then EOF
                 self.text_buffer.extend(("<", "/"))
                 for ch in self.original_tag_name:
-                    self.text_buffer.append(ch)
+                    self._append_text(ch)
                 self.current_tag_name.clear()
                 self.original_tag_name.clear()
                 self._flush_text()
@@ -2195,7 +2256,7 @@ class Tokenizer:
             # Not a matching end tag - emit as text (preserve original case)
             self.text_buffer.extend(("<", "/"))
             for ch in self.original_tag_name:
-                self.text_buffer.append(ch)
+                self._append_text(ch)
             self.current_tag_name.clear()
             self.original_tag_name.clear()
             self._reconsume_current()
@@ -2210,7 +2271,7 @@ class Tokenizer:
             if "\0" in remaining:
                 remaining = remaining.replace("\0", "\ufffd")
                 self._emit_error("Null character in plaintext")
-            self.text_buffer.append(remaining)
+            self._append_text(remaining)
             self.pos = self.length
         self._flush_text()
         self._emit_token(EOFToken())
@@ -2223,7 +2284,7 @@ class Tokenizer:
             self._emit_token(EOFToken())
             return True
         if c == "-":
-            self.text_buffer.append("-")
+            self._append_text("-")
             self.state = self.SCRIPT_DATA_ESCAPED_DASH
             return False
         if c == "<":
@@ -2231,9 +2292,9 @@ class Tokenizer:
             return False
         if c == "\0":
             self._emit_error("unexpected-null-character")
-            self.text_buffer.append("\ufffd")
+            self._append_text("\ufffd")
             return False
-        self.text_buffer.append(c)
+        self._append_text(c)
         return False
 
     def _state_script_data_escaped_dash(self):
@@ -2243,7 +2304,7 @@ class Tokenizer:
             self._emit_token(EOFToken())
             return True
         if c == "-":
-            self.text_buffer.append("-")
+            self._append_text("-")
             self.state = self.SCRIPT_DATA_ESCAPED_DASH_DASH
             return False
         if c == "<":
@@ -2251,10 +2312,10 @@ class Tokenizer:
             return False
         if c == "\0":
             self._emit_error("unexpected-null-character")
-            self.text_buffer.append("\ufffd")
+            self._append_text("\ufffd")
             self.state = self.SCRIPT_DATA_ESCAPED
             return False
-        self.text_buffer.append(c)
+        self._append_text(c)
         self.state = self.SCRIPT_DATA_ESCAPED
         return False
 
@@ -2265,22 +2326,22 @@ class Tokenizer:
             self._emit_token(EOFToken())
             return True
         if c == "-":
-            self.text_buffer.append("-")
+            self._append_text("-")
             return False
         if c == "<":
-            self.text_buffer.append("<")
+            self._append_text("<")
             self.state = self.SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN
             return False
         if c == ">":
-            self.text_buffer.append(">")
+            self._append_text(">")
             self.state = self.RAWTEXT
             return False
         if c == "\0":
             self._emit_error("unexpected-null-character")
-            self.text_buffer.append("\ufffd")
+            self._append_text("\ufffd")
             self.state = self.SCRIPT_DATA_ESCAPED
             return False
-        self.text_buffer.append(c)
+        self._append_text(c)
         self.state = self.SCRIPT_DATA_ESCAPED
         return False
 
@@ -2292,11 +2353,11 @@ class Tokenizer:
             return False
         if c is not None and ("A" <= c <= "Z" or "a" <= c <= "z"):
             self.temp_buffer.clear()
-            self.text_buffer.append("<")
+            self._append_text("<")
             self._reconsume_current()
             self.state = self.SCRIPT_DATA_DOUBLE_ESCAPE_START
             return False
-        self.text_buffer.append("<")
+        self._append_text("<")
         self._reconsume_current()
         self.state = self.SCRIPT_DATA_ESCAPED
 
@@ -2351,7 +2412,7 @@ class Tokenizer:
         # Not an appropriate end tag
         self.text_buffer.extend(("<", "/"))
         for ch in self.temp_buffer:
-            self.text_buffer.append(ch)
+            self._append_text(ch)
         self._reconsume_current()
         self.state = self.SCRIPT_DATA_ESCAPED
         return False
@@ -2365,11 +2426,11 @@ class Tokenizer:
                 self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
             else:
                 self.state = self.SCRIPT_DATA_ESCAPED
-            self.text_buffer.append(c)
+            self._append_text(c)
             return False
         if c is not None and ("A" <= c <= "Z" or "a" <= c <= "z"):
             self.temp_buffer.append(c)
-            self.text_buffer.append(c)
+            self._append_text(c)
             return False
         self._reconsume_current()
         self.state = self.SCRIPT_DATA_ESCAPED
@@ -2382,18 +2443,18 @@ class Tokenizer:
             self._emit_token(EOFToken())
             return True
         if c == "-":
-            self.text_buffer.append("-")
+            self._append_text("-")
             self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED_DASH
             return False
         if c == "<":
-            self.text_buffer.append("<")
+            self._append_text("<")
             self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN
             return False
         if c == "\0":
             self._emit_error("unexpected-null-character")
-            self.text_buffer.append("\ufffd")
+            self._append_text("\ufffd")
             return False
-        self.text_buffer.append(c)
+        self._append_text(c)
         return False
 
     def _state_script_data_double_escaped_dash(self):
@@ -2403,19 +2464,19 @@ class Tokenizer:
             self._emit_token(EOFToken())
             return True
         if c == "-":
-            self.text_buffer.append("-")
+            self._append_text("-")
             self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED_DASH_DASH
             return False
         if c == "<":
-            self.text_buffer.append("<")
+            self._append_text("<")
             self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN
             return False
         if c == "\0":
             self._emit_error("unexpected-null-character")
-            self.text_buffer.append("\ufffd")
+            self._append_text("\ufffd")
             self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
             return False
-        self.text_buffer.append(c)
+        self._append_text(c)
         self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
         return False
 
@@ -2426,24 +2487,24 @@ class Tokenizer:
             self._emit_token(EOFToken())
             return True
         if c == "-":
-            self.text_buffer.append("-")
+            self._append_text("-")
             return False
         if c == "<":
-            self.text_buffer.append("<")
+            self._append_text("<")
             self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN
 
             return False
         if c == ">":
-            self.text_buffer.append(">")
+            self._append_text(">")
             self.state = self.RAWTEXT
 
             return False
         if c == "\0":
             self._emit_error("unexpected-null-character")
-            self.text_buffer.append("\ufffd")
+            self._append_text("\ufffd")
             self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
             return False
-        self.text_buffer.append(c)
+        self._append_text(c)
         self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
         return False
 
@@ -2451,7 +2512,7 @@ class Tokenizer:
         c = self._get_char()
         if c == "/":
             self.temp_buffer.clear()
-            self.text_buffer.append("/")
+            self._append_text("/")
             self.state = self.SCRIPT_DATA_DOUBLE_ESCAPE_END
             return False
         if c is not None and ("A" <= c <= "Z" or "a" <= c <= "z"):
@@ -2473,11 +2534,11 @@ class Tokenizer:
                 self.state = self.SCRIPT_DATA_ESCAPED
             else:
                 self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
-            self.text_buffer.append(c)
+            self._append_text(c)
             return False
         if c is not None and ("A" <= c <= "Z" or "a" <= c <= "z"):
             self.temp_buffer.append(c)
-            self.text_buffer.append(c)
+            self._append_text(c)
             return False
         self._reconsume_current()
         self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED

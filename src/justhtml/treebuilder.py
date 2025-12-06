@@ -139,17 +139,12 @@ class TreeBuilder(TreeBuilderModesMixin):
     def _parse_error(self, code):
         if not self.collect_errors:
             return
-        # Get position info from tokenizer if available
+        # Use the position of the last emitted token (set by tokenizer before emit)
         line = None
         column = None
         if self.tokenizer:  # pragma: no branch
-            line = self.tokenizer.line
-            pos = max(0, self.tokenizer.pos - 1)
-            last_newline = self.tokenizer.buffer.rfind("\n", 0, pos + 1)
-            if last_newline == -1:
-                column = pos + 1
-            else:
-                column = pos - last_newline
+            line = self.tokenizer.last_token_line
+            column = self.tokenizer.last_token_column
         self.errors.append(ParseError(code, line=line, column=column))
 
     def _has_element_in_scope(self, target, terminators=None, check_integration_points=True):
