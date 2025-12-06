@@ -5,28 +5,32 @@
 from justhtml.constants import FOREIGN_ATTRIBUTE_ADJUSTMENTS, VOID_ELEMENTS
 
 
-def to_html(node, indent=0, indent_size=2):
-    """Convert node to pretty-printed HTML string."""
+def to_html(node, indent=0, indent_size=2, pretty=True):
+    """Convert node to HTML string."""
     if node.name == "#document":
         # Document root - just render children
         parts = []
         for child in node.children or []:
-            parts.append(_node_to_html(child, indent, indent_size))
-        return "\n".join(parts)
-    return _node_to_html(node, indent, indent_size)
+            parts.append(_node_to_html(child, indent, indent_size, pretty))
+        return "\n".join(parts) if pretty else "".join(parts)
+    return _node_to_html(node, indent, indent_size, pretty)
 
 
-def _node_to_html(node, indent=0, indent_size=2):
+def _node_to_html(node, indent=0, indent_size=2, pretty=True):
     """Helper to convert a node to HTML."""
-    prefix = " " * (indent * indent_size)
+    prefix = " " * (indent * indent_size) if pretty else ""
+    newline = "\n" if pretty else ""
     name = node.name
 
     # Text node
     if name == "#text":
-        text = node.data.strip() if node.data else ""
-        if text:
-            return f"{prefix}{text}"
-        return ""
+        text = node.data
+        if pretty:
+            text = text.strip() if text else ""
+            if text:
+                return f"{prefix}{text}"
+            return ""
+        return text or ""
 
     # Comment node
     if name == "#comment":
@@ -40,10 +44,10 @@ def _node_to_html(node, indent=0, indent_size=2):
     if name == "#document-fragment":
         parts = []
         for child in node.children or []:
-            child_html = _node_to_html(child, indent, indent_size)
+            child_html = _node_to_html(child, indent, indent_size, pretty)
             if child_html:
                 parts.append(child_html)
-        return "\n".join(parts)
+        return newline.join(parts) if pretty else "".join(parts)
 
     # Element node
     attrs = node.attrs or {}
@@ -76,18 +80,18 @@ def _node_to_html(node, indent=0, indent_size=2):
     # Check if all children are text-only (inline rendering)
     all_text = all(hasattr(c, "name") and c.name == "#text" for c in children)
 
-    if all_text:
+    if all_text and pretty:
         text = "".join(c.data or "" for c in children)
         return f"{prefix}<{name}{attr_str}>{text}</{name}>"
 
     # Render with child indentation
     parts = [f"{prefix}<{name}{attr_str}>"]
     for child in children:
-        child_html = _node_to_html(child, indent + 1, indent_size)
+        child_html = _node_to_html(child, indent + 1, indent_size, pretty)
         if child_html:
             parts.append(child_html)
     parts.append(f"{prefix}</{name}>")
-    return "\n".join(parts)
+    return newline.join(parts) if pretty else "".join(parts)
 
 
 def to_test_format(node, indent=0):

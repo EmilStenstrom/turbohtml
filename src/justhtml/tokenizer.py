@@ -39,10 +39,6 @@ def _xml_coercion_callback(match):
     return "\ufffd"
 
 
-def _is_ascii_alpha(c):
-    return c is not None and (("A" <= c <= "Z") or ("a" <= c <= "z"))
-
-
 def _coerce_text_for_xml(text):
     """Apply XML coercion to text content."""
     # Fast path for ASCII
@@ -1981,7 +1977,7 @@ class Tokenizer:
 
     def _state_rcdata_end_tag_open(self):
         c = self._get_char()
-        if _is_ascii_alpha(c):
+        if c is not None and ("A" <= c <= "Z" or "a" <= c <= "z"):
             self.current_tag_name.append(c.lower())
             self.original_tag_name.append(c)
             self.state = self.RCDATA_END_TAG_NAME
@@ -1995,7 +1991,7 @@ class Tokenizer:
         # Check if this matches the opening tag name
         while True:
             c = self._get_char()
-            if _is_ascii_alpha(c):
+            if c is not None and ("A" <= c <= "Z" or "a" <= c <= "z"):
                 self.current_tag_name.append(c.lower())
                 self.original_tag_name.append(c)
                 continue
@@ -2114,7 +2110,7 @@ class Tokenizer:
 
     def _state_rawtext_end_tag_open(self):
         c = self._get_char()
-        if _is_ascii_alpha(c):
+        if c is not None and ("A" <= c <= "Z" or "a" <= c <= "z"):
             self.current_tag_name.append(c.lower())
             self.original_tag_name.append(c)
             self.state = self.RAWTEXT_END_TAG_NAME
@@ -2128,7 +2124,7 @@ class Tokenizer:
         # Check if this matches the opening tag name
         while True:
             c = self._get_char()
-            if _is_ascii_alpha(c):
+            if c is not None and ("A" <= c <= "Z" or "a" <= c <= "z"):
                 self.current_tag_name.append(c.lower())
                 self.original_tag_name.append(c)
                 continue
@@ -2265,7 +2261,7 @@ class Tokenizer:
             self.temp_buffer.clear()
             self.state = self.SCRIPT_DATA_ESCAPED_END_TAG_OPEN
             return False
-        if _is_ascii_alpha(c):
+        if c is not None and ("A" <= c <= "Z" or "a" <= c <= "z"):
             self.temp_buffer.clear()
             self.text_buffer.append("<")
             self._reconsume_current()
@@ -2279,7 +2275,7 @@ class Tokenizer:
 
     def _state_script_data_escaped_end_tag_open(self):
         c = self._get_char()
-        if _is_ascii_alpha(c):
+        if c is not None and ("A" <= c <= "Z" or "a" <= c <= "z"):
             self.current_tag_name.clear()
             self.original_tag_name.clear()
             self._reconsume_current()
@@ -2292,7 +2288,7 @@ class Tokenizer:
 
     def _state_script_data_escaped_end_tag_name(self):
         c = self._get_char()
-        if _is_ascii_alpha(c):
+        if c is not None and ("A" <= c <= "Z" or "a" <= c <= "z"):
             self.current_tag_name.append(c.lower())
             self.original_tag_name.append(c)
             self.temp_buffer.append(c)
@@ -2342,7 +2338,7 @@ class Tokenizer:
                 self.state = self.SCRIPT_DATA_ESCAPED
             self.text_buffer.append(c)
             return False
-        if _is_ascii_alpha(c):
+        if c is not None and ("A" <= c <= "Z" or "a" <= c <= "z"):
             self.temp_buffer.append(c)
             self.text_buffer.append(c)
             return False
@@ -2429,7 +2425,7 @@ class Tokenizer:
             self.text_buffer.append("/")
             self.state = self.SCRIPT_DATA_DOUBLE_ESCAPE_END
             return False
-        if _is_ascii_alpha(c):
+        if c is not None and ("A" <= c <= "Z" or "a" <= c <= "z"):
             self.temp_buffer.clear()
             self._reconsume_current()
             self.state = self.SCRIPT_DATA_DOUBLE_ESCAPE_START
@@ -2450,7 +2446,7 @@ class Tokenizer:
                 self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
             self.text_buffer.append(c)
             return False
-        if _is_ascii_alpha(c):
+        if c is not None and ("A" <= c <= "Z" or "a" <= c <= "z"):
             self.temp_buffer.append(c)
             self.text_buffer.append(c)
             return False

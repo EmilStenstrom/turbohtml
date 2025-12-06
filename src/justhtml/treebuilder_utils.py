@@ -1,0 +1,85 @@
+import enum
+
+from .constants import (
+    HTML4_PUBLIC_PREFIXES,
+    LIMITED_QUIRKY_PUBLIC_PREFIXES,
+    QUIRKY_PUBLIC_MATCHES,
+    QUIRKY_PUBLIC_PREFIXES,
+    QUIRKY_SYSTEM_MATCHES,
+)
+
+
+class InsertionMode(enum.IntEnum):
+    INITIAL = 0
+    BEFORE_HTML = 1
+    BEFORE_HEAD = 2
+    IN_HEAD = 3
+    AFTER_HEAD = 4
+    TEXT = 5
+    IN_BODY = 6
+    AFTER_BODY = 7
+    AFTER_AFTER_BODY = 8
+    IN_TABLE = 9
+    IN_TABLE_TEXT = 10
+    IN_CAPTION = 11
+    IN_COLUMN_GROUP = 12
+    IN_TABLE_BODY = 13
+    IN_ROW = 14
+    IN_CELL = 15
+    IN_FRAMESET = 16
+    AFTER_FRAMESET = 17
+    AFTER_AFTER_FRAMESET = 18
+    IN_SELECT = 19
+    IN_TEMPLATE = 20
+
+
+def is_all_whitespace(text):
+    return text.strip("\t\n\f\r ") == ""
+
+
+def contains_prefix(haystack, needle):
+    return any(needle.startswith(prefix) for prefix in haystack)
+
+
+def doctype_error_and_quirks(doctype, iframe_srcdoc=False):
+    name = doctype.name.lower() if doctype.name else None
+    public_id = doctype.public_id
+    system_id = doctype.system_id
+
+    acceptable = (
+        ("html", None, None),
+        ("html", None, "about:legacy-compat"),
+        ("html", "-//W3C//DTD HTML 4.0//EN", None),
+        ("html", "-//W3C//DTD HTML 4.0//EN", "http://www.w3.org/TR/REC-html40/strict.dtd"),
+        ("html", "-//W3C//DTD HTML 4.01//EN", None),
+        ("html", "-//W3C//DTD HTML 4.01//EN", "http://www.w3.org/TR/html4/strict.dtd"),
+        ("html", "-//W3C//DTD XHTML 1.0 Strict//EN", "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"),
+        ("html", "-//W3C//DTD XHTML 1.1//EN", "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"),
+    )
+
+    key = (name, public_id, system_id)
+    parse_error = key not in acceptable
+
+    public_lower = public_id.lower() if public_id else None
+    system_lower = system_id.lower() if system_id else None
+
+    if doctype.force_quirks:
+        quirks_mode = "quirks"
+    elif iframe_srcdoc:
+        quirks_mode = "no-quirks"
+    elif name != "html":
+        quirks_mode = "quirks"
+    elif public_lower in QUIRKY_PUBLIC_MATCHES:
+        quirks_mode = "quirks"
+    elif system_lower in QUIRKY_SYSTEM_MATCHES:
+        quirks_mode = "quirks"
+    elif public_lower and contains_prefix(QUIRKY_PUBLIC_PREFIXES, public_lower):
+        quirks_mode = "quirks"
+    elif public_lower and contains_prefix(LIMITED_QUIRKY_PUBLIC_PREFIXES, public_lower):
+        quirks_mode = "limited-quirks"
+    elif public_lower and contains_prefix(HTML4_PUBLIC_PREFIXES, public_lower):
+        quirks_mode = "quirks" if system_lower is None else "limited-quirks"
+    else:
+        quirks_mode = "no-quirks"
+
+    return parse_error, quirks_mode

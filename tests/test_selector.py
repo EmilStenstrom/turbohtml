@@ -1590,7 +1590,7 @@ class TestJustHTMLMethods(unittest.TestCase):
 
     def test_doc_to_html(self):
         doc = JustHTML("<html><body><p>Test</p></body></html>")
-        html = doc.to_html(indent=False)
+        html = doc.to_html(pretty=False)
         assert "<p>Test</p>" in html
 
 

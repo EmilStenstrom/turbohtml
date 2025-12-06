@@ -40,6 +40,6 @@ class JustHTML:
         """Query the document using a CSS selector. Delegates to root.query()."""
         return self.root.query(selector)
 
-    def to_html(self, indent=True, indent_size=2):
+    def to_html(self, pretty=True, indent_size=2):
         """Serialize the document to HTML. Delegates to root.to_html()."""
-        return self.root.to_html(indent, indent_size)
+        return self.root.to_html(indent=0, indent_size=indent_size, pretty=pretty)
