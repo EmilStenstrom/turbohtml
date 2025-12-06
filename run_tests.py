@@ -453,6 +453,7 @@ class TestReporter:
             or self.config.get("filter_errors")
             or self.config.get("exclude_html")
             or self.config.get("filter_html")
+            or self.config.get("check_errors")
         )
 
     def print_test_result(self, result):
