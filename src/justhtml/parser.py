@@ -4,22 +4,40 @@ from .tokenizer import Tokenizer, TokenizerOpts
 from .treebuilder import TreeBuilder
 
 
+class StrictModeError(Exception):
+    """Raised when strict mode encounters a parse error."""
+
+    def __init__(self, error):
+        self.error = error
+        super().__init__(str(error))
+
+
 class JustHTML:
-    __slots__ = ("debug", "fragment_context", "root", "tokenizer", "tree_builder")
+    __slots__ = ("debug", "errors", "fragment_context", "root", "tokenizer", "tree_builder")
 
     def __init__(
         self,
         html,
         *,
+        collect_errors=False,
         debug=False,
         fragment_context=None,
+        iframe_srcdoc=False,
+        strict=False,
         tokenizer_opts=None,
         tree_builder=None,
-        iframe_srcdoc=False,
     ):
         self.debug = bool(debug)
         self.fragment_context = fragment_context
-        self.tree_builder = tree_builder or TreeBuilder(fragment_context=fragment_context, iframe_srcdoc=iframe_srcdoc)
+
+        # Enable error collection if strict mode is on
+        should_collect = collect_errors or strict
+
+        self.tree_builder = tree_builder or TreeBuilder(
+            fragment_context=fragment_context,
+            iframe_srcdoc=iframe_srcdoc,
+            collect_errors=should_collect,
+        )
         opts = tokenizer_opts or TokenizerOpts()
 
         # For RAWTEXT fragment contexts, set initial tokenizer state and rawtext tag
@@ -32,9 +50,19 @@ class JustHTML:
             elif tag_name in ("plaintext", "script"):
                 opts.initial_state = Tokenizer.PLAINTEXT
 
-        self.tokenizer = Tokenizer(self.tree_builder, opts)
+        self.tokenizer = Tokenizer(self.tree_builder, opts, collect_errors=should_collect)
+        # Link tokenizer to tree_builder for position info
+        self.tree_builder.tokenizer = self.tokenizer
+
         self.tokenizer.run(html or "")
         self.root = self.tree_builder.finish()
+
+        # Merge errors from both tokenizer and tree builder
+        self.errors = self.tokenizer.errors + self.tree_builder.errors
+
+        # In strict mode, raise on first error
+        if strict and self.errors:
+            raise StrictModeError(self.errors[0])
 
     def query(self, selector):
         """Query the document using a CSS selector. Delegates to root.query()."""

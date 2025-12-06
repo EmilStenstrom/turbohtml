@@ -68,7 +68,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.extend-per-file-ignores]
-"tests/**/*.py" = ["S101"]
+"tests/**/*.py" = ["S101", "PT"]  # S101: allow assert, PT: we use unittest not pytest
 
 [tool.coverage.run]
 branch = true

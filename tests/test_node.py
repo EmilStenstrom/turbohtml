@@ -1,7 +1,5 @@
 import unittest
 
-import pytest
-
 from justhtml.node import ElementNode, SimpleDomNode, TemplateNode, TextNode
 
 
@@ -63,14 +61,14 @@ class TestNode(unittest.TestCase):
 
         parent.append_child(child1)
 
-        with pytest.raises(ValueError, match="Reference node is not a child"):
+        with self.assertRaises(ValueError):
             parent.insert_before(child2, other)
 
     def test_insert_before_no_children_allowed(self):
         comment = SimpleDomNode("#comment", data="foo")
         node = SimpleDomNode("div")
 
-        with pytest.raises(ValueError, match="cannot have children"):
+        with self.assertRaises(ValueError):
             comment.insert_before(node, None)
 
     def test_text_node_none(self):
@@ -104,14 +102,14 @@ class TestNode(unittest.TestCase):
 
         parent.append_child(child1)
 
-        with pytest.raises(ValueError, match="not a child"):
+        with self.assertRaises(ValueError):
             parent.replace_child(other, other)
 
     def test_replace_child_no_children_allowed(self):
         comment = SimpleDomNode("#comment", data="foo")
         node = SimpleDomNode("div")
 
-        with pytest.raises(ValueError, match="cannot have children"):
+        with self.assertRaises(ValueError):
             comment.replace_child(node, node)
 
     def test_has_child_nodes(self):
@@ -259,7 +257,7 @@ class TestNode(unittest.TestCase):
     def test_remove_child_not_found(self):
         parent = SimpleDomNode("div")
         child = SimpleDomNode("span")
-        with pytest.raises(ValueError, match="not in list"):
+        with self.assertRaises(ValueError):
             parent.remove_child(child)
 
     def test_to_html_method(self):

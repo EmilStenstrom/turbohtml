@@ -51,4 +51,33 @@ class TokenSinkResult:
 
     Continue = 0
     Plaintext = 1
+
+
+class ParseError:
+    """Represents a parse error with location information."""
+
+    __slots__ = ("code", "column", "line", "message")
+
+    def __init__(self, code, line=None, column=None, message=None):
+        self.code = code
+        self.line = line
+        self.column = column
+        self.message = message or code
+
+    def __repr__(self):
+        if self.line is not None and self.column is not None:
+            return f"ParseError({self.code!r}, line={self.line}, column={self.column})"
+        return f"ParseError({self.code!r})"
+
+    def __str__(self):
+        if self.line is not None and self.column is not None:
+            return f"({self.line},{self.column}): {self.code}"
+        return self.code
+
+    def __eq__(self, other):
+        if not isinstance(other, ParseError):
+            return NotImplemented
+        return self.code == other.code and self.line == other.line and self.column == other.column
+
+    __hash__ = None  # Unhashable since we define __eq__
     RawData = 2

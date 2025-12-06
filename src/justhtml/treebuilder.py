@@ -22,7 +22,7 @@ from .constants import (
     TABLE_SCOPE_TERMINATORS,
 )
 from .node import ElementNode, SimpleDomNode, TemplateNode, TextNode
-from .tokens import CharacterTokens, CommentToken, DoctypeToken, EOFToken, Tag, TokenSinkResult
+from .tokens import CharacterTokens, CommentToken, DoctypeToken, EOFToken, ParseError, Tag, TokenSinkResult
 from .treebuilder_modes import TreeBuilderModesMixin
 from .treebuilder_utils import (
     InsertionMode,
@@ -37,7 +37,9 @@ class TreeBuilder(TreeBuilderModesMixin):
         "_body_token_handlers",
         "_mode_handlers",
         "active_formatting",
+        "collect_errors",
         "document",
+        "errors",
         "form_element",
         "fragment_context",
         "fragment_context_element",
@@ -53,6 +55,7 @@ class TreeBuilder(TreeBuilderModesMixin):
         "quirks_mode",
         "table_text_original_mode",
         "template_modes",
+        "tokenizer",
         "tokenizer_state_override",
     )
 
@@ -60,9 +63,13 @@ class TreeBuilder(TreeBuilderModesMixin):
         self,
         fragment_context=None,
         iframe_srcdoc=False,
+        collect_errors=False,
     ):
         self.fragment_context = fragment_context
         self.iframe_srcdoc = iframe_srcdoc
+        self.collect_errors = collect_errors
+        self.errors = []
+        self.tokenizer = None  # Set by parser after tokenizer is created
         self.fragment_context_element = None
         if fragment_context is not None:
             self.document = SimpleDomNode("#document-fragment")
@@ -129,8 +136,21 @@ class TreeBuilder(TreeBuilderModesMixin):
     def _set_quirks_mode(self, mode):
         self.quirks_mode = mode
 
-    def _parse_error(self, message):
-        return None
+    def _parse_error(self, code):
+        if not self.collect_errors:
+            return
+        # Get position info from tokenizer if available
+        line = None
+        column = None
+        if self.tokenizer:  # pragma: no branch
+            line = self.tokenizer.line
+            pos = max(0, self.tokenizer.pos - 1)
+            last_newline = self.tokenizer.buffer.rfind("\n", 0, pos + 1)
+            if last_newline == -1:
+                column = pos + 1
+            else:
+                column = pos - last_newline
+        self.errors.append(ParseError(code, line=line, column=column))
 
     def _has_element_in_scope(self, target, terminators=None, check_integration_points=True):
         if terminators is None:

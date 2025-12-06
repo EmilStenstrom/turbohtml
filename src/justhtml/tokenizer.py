@@ -1,7 +1,7 @@
 import re
 
 from .entities import decode_entities_in_text
-from .tokens import CharacterTokens, CommentToken, Doctype, DoctypeToken, EOFToken, Tag
+from .tokens import CharacterTokens, CommentToken, Doctype, DoctypeToken, EOFToken, ParseError, Tag
 
 _ATTR_VALUE_DOUBLE_TERMINATORS = '"&\r\n\0'
 _ATTR_VALUE_SINGLE_TERMINATORS = "'&\r\n\0"
@@ -157,6 +157,7 @@ class Tokenizer:
         "_state_handlers",
         "_tag_token",
         "buffer",
+        "collect_errors",
         "current_attr_name",
         "current_attr_value",
         "current_attr_value_has_amp",
@@ -170,6 +171,7 @@ class Tokenizer:
         "current_tag_kind",
         "current_tag_name",
         "current_tag_self_closing",
+        "errors",
         "ignore_lf",
         "last_start_tag_name",
         "length",
@@ -187,9 +189,11 @@ class Tokenizer:
 
     # _STATE_HANDLERS is defined at the end of the file
 
-    def __init__(self, sink, opts=None):
+    def __init__(self, sink, opts=None, collect_errors=False):
         self.sink = sink
         self.opts = opts or TokenizerOpts()
+        self.collect_errors = collect_errors
+        self.errors = []
 
         self.state = self.DATA
         self.buffer = ""
@@ -233,6 +237,7 @@ class Tokenizer:
         self.current_char = ""
         self.ignore_lf = False
         self.line = 1
+        self.errors = []
         self.text_buffer.clear()
         self.current_tag_name.clear()
         self.current_tag_attrs = {}
@@ -1811,8 +1816,17 @@ class Tokenizer:
         # Note: process_token never returns Plaintext or RawData for state switches
         # State switches happen via _emit_current_tag checking sink response
 
-    def _emit_error(self, message):
-        return None
+    def _emit_error(self, code):
+        if not self.collect_errors:
+            return
+        # Compute column on-demand: scan backwards to find last newline
+        pos = max(0, self.pos - 1)  # Current position being processed
+        last_newline = self.buffer.rfind("\n", 0, pos + 1)
+        if last_newline == -1:
+            column = pos + 1  # 1-indexed from start of input
+        else:
+            column = pos - last_newline  # 1-indexed from after newline
+        self.errors.append(ParseError(code, line=self.line, column=column))
 
     def _consume_if(self, literal):
         end = self.pos + len(literal)
