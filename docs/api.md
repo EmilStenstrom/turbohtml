@@ -15,7 +15,7 @@ from justhtml import JustHTML
 ### Constructor
 
 ```python
-JustHTML(html, strict=False, collect_errors=False)
+JustHTML(html, strict=False, collect_errors=False, fragment_context=None)
 ```
 
 | Parameter | Type | Default | Description |
@@ -23,12 +23,13 @@ JustHTML(html, strict=False, collect_errors=False)
 | `html` | `str` | required | The HTML string to parse |
 | `strict` | `bool` | `False` | Raise `StrictModeError` on first parse error |
 | `collect_errors` | `bool` | `False` | Collect all parse errors (enables `errors` property) |
+| `fragment_context` | `FragmentContext` | `None` | Parse as fragment inside this context element |
 
 ### Properties
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `root` | `SimpleDomNode` | The document root node (`#document`) |
+| `root` | `SimpleDomNode` | The document root (`#document` or `#document-fragment`) |
 | `errors` | `list[ParseError]` | Parse errors (only if `collect_errors=True`) |
 
 ### Methods
@@ -98,6 +99,38 @@ for event, data in stream(html):
 | `"text"` | `text_content` | Text content |
 | `"comment"` | `comment_text` | HTML comment |
 | `"doctype"` | `doctype_name` | DOCTYPE declaration |
+
+---
+
+## FragmentContext
+
+Specifies the context element for fragment parsing. See [Fragment Parsing](fragments.md) for detailed usage.
+
+```python
+from justhtml.context import FragmentContext
+```
+
+### Constructor
+
+```python
+FragmentContext(tag_name, namespace=None)
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `tag_name` | `str` | required | Context element tag name (e.g., `"div"`, `"tbody"`) |
+| `namespace` | `str \| None` | `None` | `None` for HTML, `"svg"` for SVG, `"math"` for MathML |
+
+### Example
+
+```python
+from justhtml import JustHTML
+from justhtml.context import FragmentContext
+
+# Parse table rows in correct context
+ctx = FragmentContext("tbody")
+doc = JustHTML("<tr><td>cell</td></tr>", fragment_context=ctx)
+```
 
 ---
 

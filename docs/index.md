@@ -7,6 +7,7 @@ A pure Python HTML5 parser that just works.
 - **[Quickstart](quickstart.md)** - Get up and running in 5 minutes
 - **[API Reference](api.md)** - Complete public API documentation
 - **[CSS Selectors](selectors.md)** - Query elements with familiar CSS syntax
+- **[Fragment Parsing](fragments.md)** - Parse HTML fragments in context
 - **[Streaming](streaming.md)** - Memory-efficient parsing for large files
 - **[Error Codes](errors.md)** - Parse error codes and their meanings
 - **[Correctness Testing](correctness.md)** - How we verify 100% HTML5 compliance
