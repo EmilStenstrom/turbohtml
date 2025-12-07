@@ -110,6 +110,18 @@ for event, data in stream(html):
         print(f"Text: {data}")
     elif event == "end":
         print(f"End: {data}")
+
+# 5. Strict mode (reject malformed HTML)
+# Raises an exception on the first parse error with source highlighting
+try:
+    doc = JustHTML("<html><p>Hello", strict=True)
+except Exception as e:
+    print(e)
+# Output (Python 3.11+):
+#   File "<html>", line 1
+#     <html><p>Hello
+#                   ^
+# StrictModeError: Expected closing tag </p> but reached end of file
 ```
 
 ### Supported CSS Selectors

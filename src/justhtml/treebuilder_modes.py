@@ -50,9 +50,9 @@ class TreeBuilderModesMixin:
             return ("reprocess", InsertionMode.BEFORE_HTML, token)
         # Only Tags remain - no DOCTYPE seen, so quirks mode
         if token.kind == Tag.START:
-            self._parse_error("expected-doctype-but-got-start-tag", tag_name=token.name)
+            self._parse_error("expected-doctype-but-got-start-tag", tag_name=token.name, token=token)
         else:
-            self._parse_error("expected-doctype-but-got-end-tag", tag_name=token.name)
+            self._parse_error("expected-doctype-but-got-end-tag", tag_name=token.name, token=token)
         self._set_quirks_mode("quirks")
         return ("reprocess", InsertionMode.BEFORE_HTML, token)
 
@@ -340,7 +340,7 @@ class TreeBuilderModesMixin:
 
         # Special case: </br> end tag is treated as <br> start tag
         if name == "br":
-            self._parse_error("unexpected-end-tag", tag_name=name)
+            self._parse_error("unexpected-end-tag", tag_name=name, token=token)
             br_tag = Tag(Tag.START, "br", {}, False)
             return self._mode_in_body(br_tag)
 

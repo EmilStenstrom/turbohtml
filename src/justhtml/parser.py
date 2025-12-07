@@ -4,12 +4,25 @@ from .tokenizer import Tokenizer, TokenizerOpts
 from .treebuilder import TreeBuilder
 
 
-class StrictModeError(Exception):
-    """Raised when strict mode encounters a parse error."""
+class StrictModeError(SyntaxError):
+    """Raised when strict mode encounters a parse error.
+
+    Inherits from SyntaxError to provide Python 3.11+ enhanced error display
+    with source location highlighting.
+    """
 
     def __init__(self, error):
         self.error = error
-        super().__init__(str(error))
+        # Use the ParseError's as_exception() to get enhanced display
+        exc = error.as_exception()
+        super().__init__(exc.msg)
+        # Copy SyntaxError attributes for enhanced display
+        self.filename = exc.filename
+        self.lineno = exc.lineno
+        self.offset = exc.offset
+        self.text = exc.text
+        self.end_lineno = getattr(exc, "end_lineno", None)
+        self.end_offset = getattr(exc, "end_offset", None)
 
 
 class JustHTML:

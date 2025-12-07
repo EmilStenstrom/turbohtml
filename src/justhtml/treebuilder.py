@@ -137,18 +137,48 @@ class TreeBuilder(TreeBuilderModesMixin):
     def _set_quirks_mode(self, mode):
         self.quirks_mode = mode
 
-    def _parse_error(self, code, tag_name=None):
+    def _parse_error(self, code, tag_name=None, token=None):
         if not self.collect_errors:
             return
         # Use the position of the last emitted token (set by tokenizer before emit)
         line = None
         column = None
+        end_column = None
         if self.tokenizer:  # pragma: no branch
             line = self.tokenizer.last_token_line
             column = self.tokenizer.last_token_column
 
+            # Calculate start and end columns based on token type for precise highlighting
+            # Note: column from tokenizer points AFTER the last character (0-indexed)
+            if token is not None and isinstance(token, Tag):
+                # Tag: <name> or </name> plus attributes
+                tag_len = len(token.name) + 2  # < + name + >
+                if token.kind == Tag.END:
+                    tag_len += 1  # </name>
+                # Add attribute lengths
+                for attr_name, attr_value in token.attrs.items():
+                    tag_len += 1 + len(attr_name)  # space + name
+                    if attr_value:
+                        tag_len += 1 + 2 + len(attr_value)  # = + "value"
+                if token.self_closing:
+                    tag_len += 1  # /
+                # column points after >, so start is column - tag_len + 1 (for 1-indexed)
+                start_column = column - tag_len + 1
+                column = start_column
+                end_column = column + tag_len
+
         message = generate_error_message(code, tag_name)
-        self.errors.append(ParseError(code, line=line, column=column, message=message))
+        source_html = self.tokenizer.buffer if self.tokenizer else None
+        self.errors.append(
+            ParseError(
+                code,
+                line=line,
+                column=column,
+                message=message,
+                source_html=source_html,
+                end_column=end_column,
+            )
+        )
 
     def _has_element_in_scope(self, target, terminators=None, check_integration_points=True):
         if terminators is None:

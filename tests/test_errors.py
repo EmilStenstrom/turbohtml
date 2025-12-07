@@ -3,6 +3,9 @@
 import unittest
 
 from justhtml import JustHTML, ParseError, StrictModeError
+from justhtml.tokenizer import Tokenizer
+from justhtml.tokens import CharacterTokens, Tag
+from justhtml.treebuilder import TreeBuilder
 
 
 class TestErrorCollection(unittest.TestCase):
@@ -139,6 +142,199 @@ class TestParseError(unittest.TestCase):
         error = ParseError("test-error", message="This is a test error")
         assert str(error) == "test-error - This is a test error"
         assert "line=" not in repr(error)
+
+    def test_parse_error_with_location_and_message(self):
+        """ParseError with both location and message."""
+        error = ParseError("test-error", line=5, column=10, message="Detailed error")
+        assert str(error) == "(5,10): test-error - Detailed error"
+
+    def test_parse_error_as_exception_no_location(self):
+        """as_exception() works without location info."""
+        error = ParseError("test-error", message="Test error message")
+        exc = error.as_exception()
+        assert isinstance(exc, SyntaxError)
+        assert exc.msg == "Test error message"
+        assert not hasattr(exc, "lineno") or exc.lineno is None
+
+    def test_parse_error_as_exception_with_location(self):
+        """as_exception() highlights HTML source location."""
+        html = "<html>\n<body>\n  <div></div>\n</body>"
+        error = ParseError("test-error", line=3, column=3, message="Unexpected div", source_html=html)
+        exc = error.as_exception()
+        assert isinstance(exc, SyntaxError)
+        assert exc.lineno == 3
+        assert exc.filename == "<html>"
+        assert exc.text == "  <div></div>"
+        # Should highlight the full <div> tag
+        assert exc.offset == 3  # Start of <div>
+        assert exc.end_offset == 8  # End of <div>
+
+    def test_parse_error_as_exception_with_end_column(self):
+        """as_exception() respects explicit end_column."""
+        html = "<html><body><div></div></body>"
+        error = ParseError("test-error", line=1, column=13, source_html=html)
+        exc = error.as_exception(end_column=18)
+        assert exc.offset == 13
+        assert exc.end_offset == 18
+
+    def test_parse_error_as_exception_invalid_line(self):
+        """as_exception() handles invalid line numbers."""
+        html = "<html>"
+        error = ParseError("test-error", line=99, column=1, source_html=html)
+        exc = error.as_exception()
+        assert isinstance(exc, SyntaxError)
+        assert exc.msg == "test-error"
+
+    def test_parse_error_as_exception_not_on_tag_start(self):
+        """as_exception() finds tag start when column is in middle of tag."""
+        html = "<html>\n<body>\n  <div></div>\n</body>"
+        # Column 5 is the 'i' in <div>
+        error = ParseError("test-error", line=3, column=5, source_html=html)
+        exc = error.as_exception()
+        # Should find the '<' and highlight full <div>
+        assert exc.offset == 3  # Start of <div>
+        assert exc.end_offset == 8  # End of <div>
+
+    def test_parse_error_as_exception_no_closing_bracket(self):
+        """as_exception() handles tags without closing '>'."""
+        html = "<html><body><div"
+        error = ParseError("test-error", line=1, column=13, source_html=html)
+        exc = error.as_exception()
+        # Should highlight from '<' to end of line
+        assert exc.offset == 13
+        assert exc.end_offset == 17  # End of string + 1
+
+    def test_parse_error_as_exception_far_from_tag_start(self):
+        """as_exception() doesn't search too far back for '<'."""
+        html = "<html><body>some long text here error</body>"
+        # Column 35 is far from any '<'
+        error = ParseError("test-error", line=1, column=35, source_html=html)
+        exc = error.as_exception()
+        # Should give up searching and use current position
+        assert exc.offset == 35
+
+    def test_parse_error_as_exception_no_tag_start_found(self):
+        """as_exception() handles case where no '<' is found before position."""
+        html = "some text without tags"
+        error = ParseError("test-error", line=1, column=10, source_html=html)
+        exc = error.as_exception()
+        # Should use current position when no '<' found
+        assert exc.offset == 10
+
+    def test_parse_error_with_end_column_from_token(self):
+        """ParseError created with end_column uses it for highlighting."""
+        html = "<html><body><div>text</div></body></html>"
+        # Simulate a tag token error: <div> at position 13-17
+        error = ParseError(
+            "test-error",
+            line=1,
+            column=13,
+            message="Test error on div tag",
+            source_html=html,
+            end_column=18,  # End of <div>
+        )
+        exc = error.as_exception()
+        assert exc.offset == 13
+        assert exc.end_offset == 18
+
+
+class TestTokenBasedErrorHighlighting(unittest.TestCase):
+    """Test that ParseError highlighting works with different token types."""
+
+    def test_tag_token_start_tag(self):
+        """Start tag tokens get full tag highlighting."""
+        html = "<html>"
+        parser = JustHTML(html, collect_errors=True)
+        assert len(parser.errors) == 1
+        error = parser.errors[0]
+        # Should highlight full <html> tag
+        assert error.column == 1
+        assert error._end_column == 7
+
+    def test_tag_token_end_tag(self):
+        """End tag tokens get full tag highlighting."""
+        html = "<html></br></html>"
+        parser = JustHTML(html, collect_errors=True)
+        # </br> is treated as error (should be <br>)
+        errors_with_end_col = [e for e in parser.errors if e._end_column is not None]
+        assert len(errors_with_end_col) >= 1
+        # The </br> error should have end_column set
+        br_error = [e for e in parser.errors if "br" in e.code or e.code == "unexpected-end-tag"]
+        if br_error and br_error[0]._end_column:
+            # </br> is 5 chars
+            assert br_error[0]._end_column - br_error[0].column == 5
+
+
+class TestTreeBuilderParseErrorWithTokens(unittest.TestCase):
+    """Test TreeBuilder._parse_error with different token types."""
+
+    def setUp(self):
+        """Create a TreeBuilder with a mocked tokenizer."""
+        self.builder = TreeBuilder(collect_errors=True)
+        # Create a minimal tokenizer with buffer
+        self.builder.tokenizer = Tokenizer(None, None, collect_errors=False)
+        self.builder.tokenizer.buffer = "<html><body>text</body></html>"
+        self.builder.tokenizer.last_token_line = 1
+
+    def test_parse_error_with_tag_token(self):
+        """_parse_error with Tag token calculates correct positions."""
+        token = Tag(Tag.START, "div", {"class": "test"}, False)
+        # Simulate tokenizer pointing after <div class="test">
+        self.builder.tokenizer.last_token_column = 18  # After '>' of <div class="test">
+
+        self.builder._parse_error("test-error", tag_name="div", token=token)
+
+        assert len(self.builder.errors) == 1
+        error = self.builder.errors[0]
+        # Tag length: <div class="test"> = 18 chars
+        # Start = 18 - 18 + 1 = 1
+        assert error.column == 1
+        assert error._end_column == 19
+
+    def test_parse_error_with_end_tag_token(self):
+        """_parse_error with end Tag token calculates correct positions."""
+        token = Tag(Tag.END, "div", {}, False)
+        # Simulate tokenizer pointing after </div>
+        self.builder.tokenizer.last_token_column = 6  # After '>' of </div>
+
+        self.builder._parse_error("test-error", tag_name="div", token=token)
+
+        assert len(self.builder.errors) == 1
+        error = self.builder.errors[0]
+        # Tag length: </div> = 6 chars
+        # Start = 6 - 6 + 1 = 1
+        assert error.column == 1
+        assert error._end_column == 7
+
+    def test_parse_error_with_self_closing_tag(self):
+        """_parse_error with self-closing tag includes / in length."""
+        token = Tag(Tag.START, "img", {"src": "test.jpg"}, True)
+        # <img src="test.jpg"/> (no space before /)
+        # Tag length: 3(img) + 2(<>) + 1(space) + 3(src) + 1(=) + 2(quotes) + 8(test.jpg) + 1(/) = 21
+        # Simulate tokenizer pointing after the tag
+        tag_len = 21
+        self.builder.tokenizer.last_token_column = tag_len
+
+        self.builder._parse_error("test-error", tag_name="img", token=token)
+
+        assert len(self.builder.errors) == 1
+        error = self.builder.errors[0]
+        assert error.column == 1
+        assert error._end_column == tag_len + 1
+
+    def test_parse_error_with_non_tag_token(self):
+        """_parse_error with non-Tag token uses fallback highlighting."""
+        token = CharacterTokens("hello")
+        # Non-Tag tokens don't get special position calculation
+        self.builder.tokenizer.last_token_column = 11
+
+        self.builder._parse_error("test-error", token=token)
+
+        assert len(self.builder.errors) == 1
+        error = self.builder.errors[0]
+        # Should use original column without adjustment
+        assert error.column == 11
+        assert error._end_column is None
 
 
 class TestTokenizerErrors(unittest.TestCase):

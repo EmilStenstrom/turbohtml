@@ -1891,7 +1891,7 @@ class Tokenizer:
             column = pos - last_newline  # 1-indexed from after newline
 
         message = generate_error_message(code)
-        self.errors.append(ParseError(code, line=self.line, column=column, message=message))
+        self.errors.append(ParseError(code, line=self.line, column=column, message=message, source_html=self.buffer))
 
     def _consume_if(self, literal):
         end = self.pos + len(literal)
