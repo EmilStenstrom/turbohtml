@@ -15,7 +15,6 @@ _RAWTEXT_SWITCH_TAGS = {
     "iframe",
     "noembed",
     "noframes",
-    "noscript",
     "textarea",
     "title",
 }

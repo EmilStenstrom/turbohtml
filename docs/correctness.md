@@ -76,10 +76,10 @@ python run_tests.py
 
 Output:
 ```
-PASSED: 8973/8973 passed (100.0%), 39 skipped
+PASSED: 9002/9002 passed (100.0%), 12 skipped
 ```
 
-The 39 skipped tests are for `<noscript>` behavior which depends on JavaScript being enabled - a runtime configuration that doesn't apply to a parsing library.
+The 12 skipped tests are `#script-on` tests that require JavaScript execution during parsing - something no HTML parser can do without a JS engine.
 
 ### 2. 100% Code Coverage
 

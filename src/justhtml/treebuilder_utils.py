@@ -14,23 +14,24 @@ class InsertionMode(enum.IntEnum):
     BEFORE_HTML = 1
     BEFORE_HEAD = 2
     IN_HEAD = 3
-    AFTER_HEAD = 4
-    TEXT = 5
-    IN_BODY = 6
-    AFTER_BODY = 7
-    AFTER_AFTER_BODY = 8
-    IN_TABLE = 9
-    IN_TABLE_TEXT = 10
-    IN_CAPTION = 11
-    IN_COLUMN_GROUP = 12
-    IN_TABLE_BODY = 13
-    IN_ROW = 14
-    IN_CELL = 15
-    IN_FRAMESET = 16
-    AFTER_FRAMESET = 17
-    AFTER_AFTER_FRAMESET = 18
-    IN_SELECT = 19
-    IN_TEMPLATE = 20
+    IN_HEAD_NOSCRIPT = 4
+    AFTER_HEAD = 5
+    TEXT = 6
+    IN_BODY = 7
+    AFTER_BODY = 8
+    AFTER_AFTER_BODY = 9
+    IN_TABLE = 10
+    IN_TABLE_TEXT = 11
+    IN_CAPTION = 12
+    IN_COLUMN_GROUP = 13
+    IN_TABLE_BODY = 14
+    IN_ROW = 15
+    IN_CELL = 16
+    IN_FRAMESET = 17
+    AFTER_FRAMESET = 18
+    AFTER_AFTER_FRAMESET = 19
+    IN_SELECT = 20
+    IN_TEMPLATE = 21
 
 
 def is_all_whitespace(text):

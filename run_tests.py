@@ -240,8 +240,9 @@ class TestRunner:
 
     def _should_run_test(self, filename, index, test):
         """Determine if a test should be run based on configuration."""
-        # Skip script-dependent tests since HTML parsers don't execute JavaScript
-        if test.script_directive in ("script-on", "script-off"):
+        # Skip script-on tests since we don't execute JavaScript
+        # We DO run script-off tests since scripting is disabled by default
+        if test.script_directive == "script-on":
             return False
 
         if self.config["test_specs"]:

@@ -181,10 +181,15 @@ class TreeBuilderModesMixin:
                 self.template_modes.pop()
                 self._reset_insertion_mode()
                 return None
-            if token.kind == Tag.START and token.name in {"title", "style", "script", "noscript", "noframes"}:
+            if token.kind == Tag.START and token.name in {"title", "style", "script", "noframes"}:
                 self._insert_element(token, push=True)
                 self.original_mode = self.mode
                 self.mode = InsertionMode.TEXT
+                return None
+            if token.kind == Tag.START and token.name == "noscript":
+                # Scripting is disabled: parse noscript content as HTML
+                self._insert_element(token, push=True)
+                self.mode = InsertionMode.IN_HEAD_NOSCRIPT
                 return None
             if token.kind == Tag.END and token.name == "head":
                 self._pop_current()
@@ -202,6 +207,55 @@ class TreeBuilderModesMixin:
         self._pop_current()
         self.mode = InsertionMode.AFTER_HEAD
         return ("reprocess", InsertionMode.AFTER_HEAD, token)
+
+    def _mode_in_head_noscript(self, token):
+        """Handle tokens in 'in head noscript' insertion mode (scripting disabled)."""
+        if isinstance(token, CharacterTokens):
+            data = token.data or ""
+            # Whitespace: process using in head rules
+            if is_all_whitespace(data):
+                return self._mode_in_head(token)
+            # Non-whitespace: parse error, pop noscript, reprocess in head
+            self._parse_error("unexpected-start-tag", tag_name="text")
+            self._pop_current()  # Pop noscript
+            self.mode = InsertionMode.IN_HEAD
+            return ("reprocess", InsertionMode.IN_HEAD, token)
+        if isinstance(token, CommentToken):
+            return self._mode_in_head(token)
+        if isinstance(token, Tag):
+            if token.kind == Tag.START:
+                if token.name == "html":
+                    return self._mode_in_body(token)
+                if token.name in {"basefont", "bgsound", "link", "meta", "noframes", "style"}:
+                    return self._mode_in_head(token)
+                if token.name in {"head", "noscript"}:
+                    self._parse_error("unexpected-start-tag", tag_name=token.name)
+                    return None  # Ignore
+                # Any other start tag: parse error, pop noscript, reprocess in head
+                self._parse_error("unexpected-start-tag", tag_name=token.name)
+                self._pop_current()  # Pop noscript
+                self.mode = InsertionMode.IN_HEAD
+                return ("reprocess", InsertionMode.IN_HEAD, token)
+            # token.kind == Tag.END
+            if token.name == "noscript":
+                self._pop_current()  # Pop noscript
+                self.mode = InsertionMode.IN_HEAD
+                return None
+            if token.name == "br":
+                self._parse_error("unexpected-end-tag", tag_name=token.name)
+                self._pop_current()  # Pop noscript
+                self.mode = InsertionMode.IN_HEAD
+                return ("reprocess", InsertionMode.IN_HEAD, token)
+            # Any other end tag: parse error, ignore
+            self._parse_error("unexpected-end-tag", tag_name=token.name)
+            return None
+        if isinstance(token, EOFToken):
+            self._parse_error("expected-closing-tag-but-got-eof", tag_name="noscript")
+            self._pop_current()  # Pop noscript
+            self.mode = InsertionMode.IN_HEAD
+            return ("reprocess", InsertionMode.IN_HEAD, token)
+        # All token types are handled above - CharacterTokens, CommentToken, Tag, EOFToken
+        return None  # pragma: no cover
 
     def _mode_after_head(self, token):
         if isinstance(token, CharacterTokens):
@@ -1777,6 +1831,7 @@ class TreeBuilderModesMixin:
         _mode_before_html,
         _mode_before_head,
         _mode_in_head,
+        _mode_in_head_noscript,
         _mode_after_head,
         _mode_text,
         _mode_in_body,

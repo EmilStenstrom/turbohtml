@@ -159,3 +159,25 @@
 | <html>
 |   <head>
 |   <frameset>
+
+
+#data
+<head><noscript><!DOCTYPE html></noscript>
+#errors
+#script-off
+#document
+| <html>
+|   <head>
+|     <noscript>
+|   <body>
+
+
+#data
+<head><noscript></p></noscript>
+#errors
+#script-off
+#document
+| <html>
+|   <head>
+|     <noscript>
+|   <body>

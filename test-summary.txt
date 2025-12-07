@@ -28,7 +28,7 @@ html5lib-tests-tree/main-element.dat: 3/3 (100%) [...]
 html5lib-tests-tree/math.dat: 8/8 (100%) [........]
 html5lib-tests-tree/menuitem-element.dat: 20/20 (100%) [....................]
 html5lib-tests-tree/namespace-sensitivity.dat: 1/1 (100%) [.]
-html5lib-tests-tree/noscript01.dat: 0/0 (N/A) [ssssssssssssssssss] (18 skipped)
+html5lib-tests-tree/noscript01.dat: 18/18 (100%) [..................]
 html5lib-tests-tree/pending-spec-changes-plain-text-unsafe.dat: 1/1 (100%) [.]
 html5lib-tests-tree/pending-spec-changes.dat: 3/3 (100%) [...]
 html5lib-tests-tree/plain-text-unsafe.dat: 33/33 (100%) [.................................]
@@ -46,7 +46,7 @@ html5lib-tests-tree/tests1.dat: 112/112 (100%) [................................
 html5lib-tests-tree/tests2.dat: 63/63 (100%) [...............................................................]
 html5lib-tests-tree/tests3.dat: 24/24 (100%) [........................]
 html5lib-tests-tree/tests4.dat: 9/9 (100%) [.........]
-html5lib-tests-tree/tests5.dat: 15/15 (100%) [...............ss] (2 skipped)
+html5lib-tests-tree/tests5.dat: 16/16 (100%) [...............s.] (1 skipped)
 html5lib-tests-tree/tests6.dat: 52/52 (100%) [....................................................]
 html5lib-tests-tree/tests7.dat: 34/34 (100%) [..................................]
 html5lib-tests-tree/tests8.dat: 10/10 (100%) [..........]
@@ -56,9 +56,9 @@ html5lib-tests-tree/tests11.dat: 13/13 (100%) [.............]
 html5lib-tests-tree/tests12.dat: 2/2 (100%) [..]
 html5lib-tests-tree/tests14.dat: 7/7 (100%) [.......]
 html5lib-tests-tree/tests15.dat: 14/14 (100%) [..............]
-html5lib-tests-tree/tests16.dat: 185/185 (100%) [...................................................................................ssssss...........................................................................................ssssss...........] (12 skipped)
+html5lib-tests-tree/tests16.dat: 191/191 (100%) [...................................................................................s.s.s............................................................................................s.s.s............] (6 skipped)
 html5lib-tests-tree/tests17.dat: 13/13 (100%) [.............]
-html5lib-tests-tree/tests18.dat: 35/35 (100%) [....s...............................] (1 skipped)
+html5lib-tests-tree/tests18.dat: 36/36 (100%) [....................................]
 html5lib-tests-tree/tests19.dat: 103/103 (100%) [.......................................................................................................]
 html5lib-tests-tree/tests20.dat: 64/64 (100%) [................................................................]
 html5lib-tests-tree/tests21.dat: 23/23 (100%) [.......................]
@@ -70,13 +70,13 @@ html5lib-tests-tree/tests26.dat: 20/20 (100%) [....................]
 html5lib-tests-tree/tests_innerHTML_1.dat: 81/81 (100%) [.................................................................................]
 html5lib-tests-tree/tricky01.dat: 9/9 (100%) [.........]
 html5lib-tests-tree/webkit01.dat: 52/52 (100%) [....................................................]
-html5lib-tests-tree/webkit02.dat: 47/47 (100%) [.ss..............................................] (2 skipped)
+html5lib-tests-tree/webkit02.dat: 48/48 (100%) [.s...............................................] (1 skipped)
 justhtml-tests/branch_coverage.dat: 28/28 (100%) [............................]
 justhtml-tests/coverage_gaps.test: 9/9 (100%) [.........]
 justhtml-tests/empty_stack_edge_cases.dat: 3/3 (100%) [...]
 justhtml-tests/iframe_srcdoc.dat: 1/1 (100%) [.]
 justhtml-tests/tokenizer_edge_cases.test: 35/35 (100%) [...................................]
-justhtml-tests/treebuilder_coverage.dat: 15/15 (100%) [...............]
+justhtml-tests/treebuilder_coverage.dat: 17/17 (100%) [.................]
 justhtml-tests/xml_coercion.dat: 4/4 (100%) [....]
 justhtml-tests/xml_coercion_coverage.test: 2/2 (100%) [..]
 test_errors.py: 41/41 (100%) [.........................................]
@@ -85,4 +85,4 @@ test_selector.py: 226/226 (100%) [..............................................
 test_serialize.py: 16/16 (100%) [................]
 test_stream.py: 7/7 (100%) [.......]
 
-PASSED: 8973/8973 passed (100.0%), 39 skipped
+PASSED: 9002/9002 passed (100.0%), 12 skipped
