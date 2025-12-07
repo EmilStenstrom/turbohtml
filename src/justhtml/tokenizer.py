@@ -1,4 +1,5 @@
 import re
+from bisect import bisect_right
 
 from .entities import decode_entities_in_text
 from .errors import generate_error_message
@@ -155,6 +156,7 @@ class Tokenizer:
     __slots__ = (
         "_char_token",
         "_comment_token",
+        "_newline_positions",
         "_state_handlers",
         "_tag_token",
         "buffer",
@@ -178,7 +180,6 @@ class Tokenizer:
         "last_token_column",
         "last_token_line",
         "length",
-        "line",
         "opts",
         "original_tag_name",
         "pos",
@@ -188,7 +189,6 @@ class Tokenizer:
         "state",
         "temp_buffer",
         "text_buffer",
-        "text_start_line",
         "text_start_pos",
     )
 
@@ -207,14 +207,12 @@ class Tokenizer:
         self.reconsume = False
         self.current_char = ""
         self.ignore_lf = False
-        self.line = 1
         self.last_token_line = 1
         self.last_token_column = 0
 
         # Reusable buffers to avoid per-token allocations.
         self.text_buffer = []
         self.text_start_pos = 0
-        self.text_start_line = 1
         self.current_tag_name = []
         self.current_tag_attrs = {}
         self.current_attr_name = []
@@ -245,13 +243,11 @@ class Tokenizer:
         self.reconsume = False
         self.current_char = ""
         self.ignore_lf = False
-        self.line = 1
         self.last_token_line = 1
         self.last_token_column = 0
         self.errors = []
         self.text_buffer.clear()
         self.text_start_pos = 0
-        self.text_start_line = 1
         self.current_tag_name.clear()
         self.current_tag_attrs = {}
         self.current_attr_name.clear()
@@ -278,6 +274,24 @@ class Tokenizer:
         else:
             self.state = self.DATA
 
+        # Pre-compute newline positions for O(log n) line lookups
+        if self.collect_errors:
+            self._newline_positions = []
+            pos = -1
+            buffer = self.buffer
+            while True:
+                pos = buffer.find("\n", pos + 1)
+                if pos == -1:
+                    break
+                self._newline_positions.append(pos)
+        else:
+            self._newline_positions = None
+
+    def _get_line_at_pos(self, pos):
+        """Get line number (1-indexed) for a position using binary search."""
+        # Line number = count of newlines before pos + 1
+        return bisect_right(self._newline_positions, pos - 1) + 1
+
     def step(self):
         """Run one step of the tokenizer state machine. Returns True if EOF reached."""
         handler = self._STATE_HANDLERS[self.state]
@@ -301,8 +315,6 @@ class Tokenizer:
         return None
 
     def _append_text_chunk(self, chunk, *, ends_with_cr=False):
-        if self.collect_errors:
-            self.line += chunk.count("\n")
         self._append_text(chunk)
         self.ignore_lf = ends_with_cr
 
@@ -342,8 +354,6 @@ class Tokenizer:
                 if "\r" in chunk:
                     chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
 
-                if self.collect_errors:
-                    self.line += chunk.count("\n")
                 self._append_text(chunk)
                 self.ignore_lf = chunk.endswith("\r")
 
@@ -488,10 +498,7 @@ class Tokenizer:
                         c = buffer[self.pos]
                         if c in (" ", "\t", "\n", "\f", "\r"):
                             self.pos += 1
-                            if c == "\n":
-                                self.line += 1
                             if c == "\r":
-                                self.line += 1
                                 self.ignore_lf = True
                             self.state = self.BEFORE_ATTRIBUTE_NAME
                             return self._state_before_attribute_name()
@@ -540,9 +547,6 @@ class Tokenizer:
                     if buffer[self.pos] in " \t\n\f":
                         match = _WHITESPACE_PATTERN.match(buffer, self.pos)
                         if match:
-                            chunk = match.group(0)
-                            if self.collect_errors:
-                                self.line += chunk.count("\n")
                             self.pos = match.end()
 
             # Inline _get_char
@@ -563,15 +567,13 @@ class Tokenizer:
             if c == "\n":
                 if self.ignore_lf:
                     self.ignore_lf = False
-                else:
-                    self.line += 1  # pragma: no cover
+                # Line tracking now computed on-demand via _get_line_at_pos()
                 continue
             if c == "\t" or c == "\f":
                 self.ignore_lf = False
                 continue
             if c == "\r":
                 self.ignore_lf = False
-                self.line += 1
                 if self.pos < length and buffer[self.pos] == "\n":
                     self.pos += 1
                 continue
@@ -643,10 +645,7 @@ class Tokenizer:
                                 return self._state_before_attribute_value()
                             if c in (" ", "\t", "\n", "\f", "\r"):
                                 self.pos += 1
-                                if c == "\n":
-                                    self.line += 1
                                 if c == "\r":
-                                    self.line += 1
                                     self.ignore_lf = True
                                 self._finish_attribute()
                                 self.state = self.AFTER_ATTRIBUTE_NAME
@@ -703,9 +702,6 @@ class Tokenizer:
                 if self.pos < length:
                     match = _WHITESPACE_PATTERN.match(buffer, self.pos)
                     if match:
-                        chunk = match.group(0)
-                        if self.collect_errors:
-                            self.line += chunk.count("\n")
                         self.pos = match.end()
 
             # Inline _get_char
@@ -726,7 +722,6 @@ class Tokenizer:
                 self.ignore_lf = False
                 continue
             if c == "\r":
-                self.line += 1
                 self.ignore_lf = True
                 continue
             if c == "\t" or c == "\f":
@@ -821,17 +816,9 @@ class Tokenizer:
                     if end != next_quote:
                         chunk = buffer[pos:end]
 
-                    # Update line count based on RAW chunk (only if collecting errors)
-                    if "\n" in chunk or "\r" in chunk:
-                        if self.collect_errors:
-                            newlines = chunk.count("\n")
-                            returns = chunk.count("\r")
-                            crlf = chunk.count("\r\n")
-                            self.line += newlines + returns - crlf
-
-                        # Normalize chunk for value
-                        if "\r" in chunk:
-                            chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
+                    # Normalize chunk for value if needed
+                    if "\r" in chunk:
+                        chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
 
                     self.current_attr_value.append(chunk)
                     self.pos = end
@@ -889,17 +876,9 @@ class Tokenizer:
                     if end != next_quote:
                         chunk = buffer[pos:end]
 
-                    # Update line count based on RAW chunk (only if collecting errors)
-                    if "\n" in chunk or "\r" in chunk:
-                        if self.collect_errors:
-                            newlines = chunk.count("\n")
-                            returns = chunk.count("\r")
-                            crlf = chunk.count("\r\n")
-                            self.line += newlines + returns - crlf
-
-                        # Normalize chunk for value
-                        if "\r" in chunk:
-                            chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
+                    # Normalize chunk for value if needed
+                    if "\r" in chunk:
+                        chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
 
                     self.current_attr_value.append(chunk)
                     self.pos = end
@@ -1663,7 +1642,6 @@ class Tokenizer:
             if c == "\r":
                 self.ignore_lf = True
                 self.current_char = "\n"
-                self.line += 1
                 self.pos = pos
                 return "\n"
 
@@ -1671,7 +1649,7 @@ class Tokenizer:
                 if self.ignore_lf:
                     self.ignore_lf = False
                     continue
-                self.line += 1
+                # Line tracking now computed on-demand via _get_line_at_pos()
 
             else:
                 self.ignore_lf = False
@@ -1688,9 +1666,6 @@ class Tokenizer:
         if not self.text_buffer:
             # Record where text started (current position before this chunk)
             self.text_start_pos = self.pos
-            # Calculate the line number at text_start_pos by counting newlines from start
-            if self.collect_errors:
-                self.text_start_line = self.buffer.count("\n", 0, self.pos) + 1
         self.text_buffer.append(text)
 
     def _flush_text(self):
@@ -1867,7 +1842,7 @@ class Tokenizer:
             column = pos  # 0-indexed from start
         else:
             column = pos - last_newline - 1  # 0-indexed from after newline
-        self.last_token_line = self.line
+        self.last_token_line = self._get_line_at_pos(pos)
         self.last_token_column = column
 
     def _record_text_end_position(self, raw_len):
@@ -1885,9 +1860,7 @@ class Tokenizer:
             column = end_pos  # 1-indexed column = end_pos (position after last char)
         else:
             column = end_pos - last_newline - 1
-        # For multiline text, count newlines in the text to get the correct line
-        text_newlines = self.buffer.count("\n", self.text_start_pos, end_pos)
-        self.last_token_line = self.text_start_line + text_newlines
+        self.last_token_line = self._get_line_at_pos(end_pos)
         self.last_token_column = column
 
     def _emit_error(self, code):
@@ -1902,7 +1875,8 @@ class Tokenizer:
             column = pos - last_newline  # 1-indexed from after newline
 
         message = generate_error_message(code)
-        self.errors.append(ParseError(code, line=self.line, column=column, message=message, source_html=self.buffer))
+        line = self._get_line_at_pos(self.pos)
+        self.errors.append(ParseError(code, line=line, column=column, message=message, source_html=self.buffer))
 
     def _consume_if(self, literal):
         end = self.pos + len(literal)
