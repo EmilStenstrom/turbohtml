@@ -1,6 +1,7 @@
 import re
 
 from .entities import decode_entities_in_text
+from .errors import generate_error_message
 from .tokens import CharacterTokens, CommentToken, Doctype, DoctypeToken, EOFToken, ParseError, Tag
 
 _ATTR_VALUE_DOUBLE_TERMINATORS = '"&\r\n\0'
@@ -414,7 +415,7 @@ class Tokenizer:
     def _state_tag_open(self):
         c = self._get_char()
         if c is None:
-            self._emit_error("EOF after <")
+            self._emit_error("eof-before-tag-name")
             self._append_text("<")
             self._flush_text()
             self._emit_token(EOFToken())
@@ -426,13 +427,13 @@ class Tokenizer:
             self.state = self.END_TAG_OPEN
             return False
         if c == "?":
-            self._emit_error("Unexpected '?' at tag open")
+            self._emit_error("unexpected-question-mark-instead-of-tag-name")
             self.current_comment.clear()
             self._reconsume_current()
             self.state = self.BOGUS_COMMENT
             return False
 
-        self._emit_error("Invalid first character of tag name")
+        self._emit_error("invalid-first-character-of-tag-name")
         self._append_text("<")
         self._reconsume_current()
         self.state = self.DATA
@@ -441,18 +442,18 @@ class Tokenizer:
     def _state_end_tag_open(self):
         c = self._get_char()
         if c is None:
-            self._emit_error("EOF after </")
+            self._emit_error("eof-before-tag-name")
             self._append_text("<")
             self._append_text("/")
             self._flush_text()
             self._emit_token(EOFToken())
             return True
         if c == ">":
-            self._emit_error("Empty end tag")
+            self._emit_error("empty-end-tag")
             self.state = self.DATA
             return False
 
-        self._emit_error("Invalid character after </")
+        self._emit_error("invalid-first-character-of-tag-name")
         self.current_comment.clear()
         self._reconsume_current()
         self.state = self.BOGUS_COMMENT
@@ -504,7 +505,7 @@ class Tokenizer:
 
             c = self._get_char()
             if c is None:
-                self._emit_error("EOF in tag name")
+                self._emit_error("eof-in-tag")
                 # Per HTML5 spec: EOF in tag name is a parse error, emit EOF token only
                 # The incomplete tag is discarded (not emitted as text)
                 self._emit_token(EOFToken())
@@ -522,7 +523,7 @@ class Tokenizer:
                 self.state = self.DATA
                 return False
             # c == "\0" - the only remaining possibility after fast-path
-            self._emit_error("Null character in tag name")
+            self._emit_error("unexpected-null-character")
             append_tag_char(replacement)
 
     def _state_before_attribute_name(self):
@@ -587,7 +588,7 @@ class Tokenizer:
                     self.state = self.DATA
                 return False
             if c == "=":
-                self._emit_error("Attribute name cannot start with '='")
+                self._emit_error("unexpected-equals-sign-before-attribute-name")
                 self.current_attr_name.clear()
                 self.current_attr_value.clear()
                 self.current_attr_value_has_amp = False
@@ -599,7 +600,7 @@ class Tokenizer:
             self.current_attr_value.clear()
             self.current_attr_value_has_amp = False
             if c == "\0":
-                self._emit_error("Null in attribute name")
+                self._emit_error("unexpected-null-character")
                 c = "\ufffd"
             elif "A" <= c <= "Z":
                 c = chr(ord(c) + 32)
@@ -661,7 +662,7 @@ class Tokenizer:
 
             c = self._get_char()
             if c is None:
-                self._emit_error("EOF in attribute name")
+                self._emit_error("eof-in-tag")
                 self._flush_text()
                 self._emit_token(EOFToken())
                 return True
@@ -682,11 +683,11 @@ class Tokenizer:
                     self.state = self.DATA
                 return False
             if c == "\0":
-                self._emit_error("Null in attribute name")
+                self._emit_error("unexpected-null-character")
                 append_attr_char(replacement)
                 continue
             if c in ('"', "'", "<"):
-                self._emit_error("Invalid character in attribute name")
+                self._emit_error("unexpected-character-in-attribute-name")
             append_attr_char(c)
 
     def _state_after_attribute_name(self):
@@ -731,7 +732,7 @@ class Tokenizer:
             self.ignore_lf = False
 
             if c is None:
-                self._emit_error("EOF after attribute name")
+                self._emit_error("eof-in-tag")
                 self._flush_text()
                 self._emit_token(EOFToken())
                 return True
@@ -752,7 +753,7 @@ class Tokenizer:
             self.current_attr_value.clear()
             self.current_attr_value_has_amp = False
             if c == "\0":
-                self._emit_error("Null in attribute name")
+                self._emit_error("unexpected-null-character")
                 c = "\ufffd"
             elif "A" <= c <= "Z":
                 c = chr(ord(c) + 32)
@@ -777,7 +778,7 @@ class Tokenizer:
                 self.state = self.ATTRIBUTE_VALUE_SINGLE
                 return self._state_attribute_value_single()
             if c == ">":
-                self._emit_error("Missing attribute value")
+                self._emit_error("missing-attribute-value")
                 self._finish_attribute()
                 if not self._emit_current_tag():
                     self.state = self.DATA
@@ -833,7 +834,7 @@ class Tokenizer:
             # Inlined _get_char logic
             if self.pos >= length:
                 self.current_char = None
-                self._emit_error("EOF in attribute value")
+                self._emit_error("eof-in-tag")
                 self._emit_token(EOFToken())
                 return True
 
@@ -850,7 +851,7 @@ class Tokenizer:
                 self.current_attr_value_has_amp = True
             else:
                 # c == "\0" - the only remaining possibility after fast-path
-                self._emit_error("Null in attribute value")
+                self._emit_error("unexpected-null-character")
                 self._append_attr_value_char(replacement)
 
     def _state_attribute_value_single(self):
@@ -900,7 +901,7 @@ class Tokenizer:
             # Inlined _get_char logic
             if self.pos >= length:
                 self.current_char = None
-                self._emit_error("EOF in attribute value")
+                self._emit_error("eof-in-tag")
                 self._emit_token(EOFToken())
                 return True
 
@@ -917,7 +918,7 @@ class Tokenizer:
                 self.current_attr_value_has_amp = True
             else:
                 # c == "\0" - the only remaining possibility after fast-path
-                self._emit_error("Null in attribute value")
+                self._emit_error("unexpected-null-character")
                 self._append_attr_value_char(replacement)
 
     def _state_attribute_value_unquoted(self):
@@ -943,7 +944,7 @@ class Tokenizer:
             if c is None:
                 # Per HTML5 spec: EOF in attribute value is a parse error
                 # The incomplete tag is discarded (not emitted)
-                self._emit_error("EOF in attribute value")
+                self._emit_error("eof-in-tag")
                 self._emit_token(EOFToken())
                 return True
             if c in ("\t", "\n", "\f", " "):
@@ -960,9 +961,9 @@ class Tokenizer:
                 self.current_attr_value_has_amp = True
                 continue
             if c in ('"', "'", "<", "=", "`"):
-                self._emit_error("Invalid character in unquoted attribute value")
+                self._emit_error("unexpected-character-in-unquoted-attribute-value")
             if c == "\0":
-                self._emit_error("Null in attribute value")
+                self._emit_error("unexpected-null-character")
                 self._append_attr_value_char(replacement)
                 continue
             self._append_attr_value_char(c)
@@ -971,7 +972,7 @@ class Tokenizer:
         """After attribute value (quoted) state per HTML5 spec §13.2.5.42"""
         c = self._get_char()
         if c is None:
-            self._emit_error("EOF after attribute value")
+            self._emit_error("eof-in-tag")
             self._flush_text()
             self._emit_token(EOFToken())
             return True
@@ -989,7 +990,7 @@ class Tokenizer:
                 self.state = self.DATA
             return False
         # Anything else: parse error, reconsume in before attribute name state
-        self._emit_error("Missing whitespace between attributes")
+        self._emit_error("missing-whitespace-between-attributes")
         self._finish_attribute()
         self._reconsume_current()
         self.state = self.BEFORE_ATTRIBUTE_NAME
@@ -998,7 +999,7 @@ class Tokenizer:
     def _state_self_closing_start_tag(self):
         c = self._get_char()
         if c is None:
-            self._emit_error("EOF in self-closing tag")
+            self._emit_error("eof-in-tag")
             self._flush_text()
             self._emit_token(EOFToken())
             return True
@@ -1007,7 +1008,7 @@ class Tokenizer:
             self._emit_current_tag()
             self.state = self.DATA
             return False
-        self._emit_error("Unexpected character after '/' in tag")
+        self._emit_error("unexpected-character-after-solidus-in-tag")
         self._reconsume_current()
         self.state = self.BEFORE_ATTRIBUTE_NAME
         return False
@@ -1033,14 +1034,14 @@ class Tokenizer:
                     self.state = self.CDATA_SECTION
                     return False
             # Treat as bogus comment in HTML context, preserving "[CDATA[" prefix
-            self._emit_error("CDATA section outside foreign content")
+            self._emit_error("cdata-in-html-content")
             self.current_comment.clear()
             # Add the consumed "[CDATA[" text to the comment
             for ch in "[CDATA[":
                 self.current_comment.append(ch)
             self.state = self.BOGUS_COMMENT
             return False
-        self._emit_error("Invalid markup declaration")
+        self._emit_error("incorrectly-opened-comment")
         self.current_comment.clear()
         # Don't reconsume - bogus comment starts from current position
         self.state = self.BOGUS_COMMENT
@@ -1058,12 +1059,12 @@ class Tokenizer:
             self.state = self.COMMENT_START_DASH
             return False
         if c == ">":
-            self._emit_error("Abrupt comment end")
+            self._emit_error("abrupt-closing-of-empty-comment")
             self._emit_comment()
             self.state = self.DATA
             return False
         if c == "\0":
-            self._emit_error("Null in comment")
+            self._emit_error("unexpected-null-character")
             self.current_comment.append(replacement)
         else:
             self.current_comment.append(c)
@@ -1082,12 +1083,12 @@ class Tokenizer:
             self.state = self.COMMENT_END
             return False
         if c == ">":
-            self._emit_error("Abrupt comment end")
+            self._emit_error("abrupt-closing-of-empty-comment")
             self._emit_comment()
             self.state = self.DATA
             return False
         if c == "\0":
-            self._emit_error("Null in comment")
+            self._emit_error("unexpected-null-character")
             self.current_comment.extend(("-", replacement))
         else:
             self.current_comment.extend(("-", c))
@@ -1109,7 +1110,7 @@ class Tokenizer:
                 self.state = self.COMMENT_END_DASH
                 return False
             # c == "\0" - the only remaining possibility after _consume_comment_run
-            self._emit_error("Null in comment")
+            self._emit_error("unexpected-null-character")
             self.current_comment.append(replacement)
 
     def _state_comment_end_dash(self):
@@ -1124,7 +1125,7 @@ class Tokenizer:
             self.state = self.COMMENT_END
             return False
         if c == "\0":
-            self._emit_error("Null in comment")
+            self._emit_error("unexpected-null-character")
             self.current_comment.extend(("-", replacement))
             self.state = self.COMMENT
             return False
@@ -1152,7 +1153,7 @@ class Tokenizer:
             self.current_comment.append("-")
             return False
         if c == "\0":
-            self._emit_error("Null in comment")
+            self._emit_error("unexpected-null-character")
             self.current_comment.extend(("--", replacement))
             self.state = self.COMMENT
             return False
@@ -1176,12 +1177,12 @@ class Tokenizer:
             self.state = self.COMMENT_END_DASH
             return False
         if c == ">":
-            self._emit_error("Comment ended with !")
+            self._emit_error("incorrectly-closed-comment")
             self._emit_comment()
             self.state = self.DATA
             return False
         if c == "\0":
-            self._emit_error("Null in comment")
+            self._emit_error("unexpected-null-character")
             self.current_comment.append("-")
             self.current_comment.append("-")
             self.current_comment.append("!")
@@ -1215,7 +1216,7 @@ class Tokenizer:
     def _state_doctype(self):
         c = self._get_char()
         if c is None:
-            self._emit_error("EOF in DOCTYPE")
+            self._emit_error("eof-in-doctype")
             self.current_doctype_force_quirks = True
             self._emit_doctype()
             self._emit_token(EOFToken())
@@ -1224,11 +1225,12 @@ class Tokenizer:
             self.state = self.BEFORE_DOCTYPE_NAME
             return False
         if c == ">":
-            self._emit_error("Missing DOCTYPE name")
+            self._emit_error("expected-doctype-name-but-got-right-bracket")
             self.current_doctype_force_quirks = True
             self._emit_doctype()
             self.state = self.DATA
             return False
+        self._emit_error("missing-whitespace-before-doctype-name")
         self._reconsume_current()
         self.state = self.BEFORE_DOCTYPE_NAME
         return False
@@ -1237,7 +1239,7 @@ class Tokenizer:
         while True:
             c = self._get_char()
             if c is None:
-                self._emit_error("EOF in DOCTYPE name")
+                self._emit_error("eof-in-doctype-name")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self._emit_token(EOFToken())
@@ -1245,7 +1247,7 @@ class Tokenizer:
             if c in ("\t", "\n", "\f", " "):
                 return False
             if c == ">":
-                self._emit_error("Missing DOCTYPE name")
+                self._emit_error("expected-doctype-name-but-got-right-bracket")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self.state = self.DATA
@@ -1253,7 +1255,7 @@ class Tokenizer:
             if "A" <= c <= "Z":
                 self.current_doctype_name.append(chr(ord(c) + 32))
             elif c == "\0":
-                self._emit_error("Null in DOCTYPE name")
+                self._emit_error("unexpected-null-character")
                 self.current_doctype_name.append("\ufffd")
             else:
                 self.current_doctype_name.append(c)
@@ -1264,7 +1266,7 @@ class Tokenizer:
         while True:
             c = self._get_char()
             if c is None:
-                self._emit_error("EOF in DOCTYPE name")
+                self._emit_error("eof-in-doctype-name")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self._emit_token(EOFToken())
@@ -1280,7 +1282,7 @@ class Tokenizer:
                 self.current_doctype_name.append(chr(ord(c) + 32))
                 continue
             if c == "\0":
-                self._emit_error("Null in DOCTYPE name")
+                self._emit_error("unexpected-null-character")
                 self.current_doctype_name.append("\ufffd")
                 continue
             self.current_doctype_name.append(c)
@@ -1295,7 +1297,7 @@ class Tokenizer:
         while True:
             c = self._get_char()
             if c is None:
-                self._emit_error("EOF in DOCTYPE")
+                self._emit_error("eof-in-doctype")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self._emit_token(EOFToken())
@@ -1306,7 +1308,7 @@ class Tokenizer:
                 self._emit_doctype()
                 self.state = self.DATA
                 return False
-            self._emit_error("Unexpected token after DOCTYPE name")
+            self._emit_error("missing-whitespace-after-doctype-name")
             self.current_doctype_force_quirks = True
             self._reconsume_current()
             self.state = self.BOGUS_DOCTYPE
@@ -1316,7 +1318,7 @@ class Tokenizer:
         while True:
             c = self._get_char()
             if c is None:
-                self._emit_error("EOF after DOCTYPE public keyword")
+                self._emit_error("missing-quote-before-doctype-public-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self._emit_token(EOFToken())
@@ -1325,22 +1327,22 @@ class Tokenizer:
                 self.state = self.BEFORE_DOCTYPE_PUBLIC_IDENTIFIER
                 return False
             if c == '"':
-                self._emit_error("Missing whitespace before DOCTYPE public identifier")
+                self._emit_error("missing-whitespace-before-doctype-public-identifier")
                 self.current_doctype_public = []
                 self.state = self.DOCTYPE_PUBLIC_IDENTIFIER_DOUBLE_QUOTED
                 return False
             if c == "'":
-                self._emit_error("Missing whitespace before DOCTYPE public identifier")
+                self._emit_error("missing-whitespace-before-doctype-public-identifier")
                 self.current_doctype_public = []
                 self.state = self.DOCTYPE_PUBLIC_IDENTIFIER_SINGLE_QUOTED
                 return False
             if c == ">":
-                self._emit_error("Missing DOCTYPE public identifier")
+                self._emit_error("missing-doctype-public-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self.state = self.DATA
                 return False
-            self._emit_error("Unexpected character after DOCTYPE public keyword")
+            self._emit_error("unexpected-character-after-doctype-public-keyword")
             self.current_doctype_force_quirks = True
             self._reconsume_current()
             self.state = self.BOGUS_DOCTYPE
@@ -1350,7 +1352,7 @@ class Tokenizer:
         while True:
             c = self._get_char()
             if c is None:
-                self._emit_error("EOF after DOCTYPE system keyword")
+                self._emit_error("missing-quote-before-doctype-system-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self._emit_token(EOFToken())
@@ -1359,22 +1361,22 @@ class Tokenizer:
                 self.state = self.BEFORE_DOCTYPE_SYSTEM_IDENTIFIER
                 return False
             if c == '"':
-                self._emit_error("Missing whitespace before DOCTYPE system identifier")
+                self._emit_error("missing-whitespace-after-doctype-public-identifier")
                 self.current_doctype_system = []
                 self.state = self.DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE_QUOTED
                 return False
             if c == "'":
-                self._emit_error("Missing whitespace before DOCTYPE system identifier")
+                self._emit_error("missing-whitespace-after-doctype-public-identifier")
                 self.current_doctype_system = []
                 self.state = self.DOCTYPE_SYSTEM_IDENTIFIER_SINGLE_QUOTED
                 return False
             if c == ">":
-                self._emit_error("Missing DOCTYPE system identifier")
+                self._emit_error("missing-doctype-system-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self.state = self.DATA
                 return False
-            self._emit_error("Unexpected character after DOCTYPE system keyword")
+            self._emit_error("unexpected-character-after-doctype-system-keyword")
             self.current_doctype_force_quirks = True
             self._reconsume_current()
             self.state = self.BOGUS_DOCTYPE
@@ -1384,7 +1386,7 @@ class Tokenizer:
         while True:
             c = self._get_char()
             if c is None:
-                self._emit_error("EOF before DOCTYPE public identifier")
+                self._emit_error("missing-doctype-public-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self._emit_token(EOFToken())
@@ -1400,12 +1402,12 @@ class Tokenizer:
                 self.state = self.DOCTYPE_PUBLIC_IDENTIFIER_SINGLE_QUOTED
                 return False
             if c == ">":
-                self._emit_error("Missing DOCTYPE public identifier")
+                self._emit_error("missing-doctype-public-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self.state = self.DATA
                 return False
-            self._emit_error("Invalid DOCTYPE public identifier start")
+            self._emit_error("missing-quote-before-doctype-public-identifier")
             self.current_doctype_force_quirks = True
             self._reconsume_current()
             self.state = self.BOGUS_DOCTYPE
@@ -1415,7 +1417,7 @@ class Tokenizer:
         while True:
             c = self._get_char()
             if c is None:
-                self._emit_error("EOF in DOCTYPE public identifier")
+                self._emit_error("eof-in-doctype-public-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self._emit_token(EOFToken())
@@ -1424,11 +1426,11 @@ class Tokenizer:
                 self.state = self.AFTER_DOCTYPE_PUBLIC_IDENTIFIER
                 return False
             if c == "\0":
-                self._emit_error("Null in DOCTYPE public identifier")
+                self._emit_error("unexpected-null-character")
                 self.current_doctype_public.append("\ufffd")
                 continue
             if c == ">":
-                self._emit_error("Abrupt DOCTYPE public identifier end")
+                self._emit_error("abrupt-doctype-public-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self.state = self.DATA
@@ -1439,7 +1441,7 @@ class Tokenizer:
         while True:
             c = self._get_char()
             if c is None:
-                self._emit_error("EOF in DOCTYPE public identifier")
+                self._emit_error("eof-in-doctype-public-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self._emit_token(EOFToken())
@@ -1448,11 +1450,11 @@ class Tokenizer:
                 self.state = self.AFTER_DOCTYPE_PUBLIC_IDENTIFIER
                 return False
             if c == "\0":
-                self._emit_error("Null in DOCTYPE public identifier")
+                self._emit_error("unexpected-null-character")
                 self.current_doctype_public.append("\ufffd")
                 continue
             if c == ">":
-                self._emit_error("Abrupt DOCTYPE public identifier end")
+                self._emit_error("abrupt-doctype-public-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self.state = self.DATA
@@ -1463,7 +1465,7 @@ class Tokenizer:
         while True:
             c = self._get_char()
             if c is None:
-                self._emit_error("EOF after DOCTYPE public identifier")
+                self._emit_error("missing-whitespace-between-doctype-public-and-system-identifiers")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self._emit_token(EOFToken())
@@ -1476,16 +1478,16 @@ class Tokenizer:
                 self.state = self.DATA
                 return False
             if c == '"':
-                self._emit_error("Missing whitespace between DOCTYPE public and system identifiers")
+                self._emit_error("missing-whitespace-between-doctype-public-and-system-identifiers")
                 self.current_doctype_system = []
                 self.state = self.DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE_QUOTED
                 return False
             if c == "'":
-                self._emit_error("Missing whitespace between DOCTYPE public and system identifiers")
+                self._emit_error("missing-whitespace-between-doctype-public-and-system-identifiers")
                 self.current_doctype_system = []
                 self.state = self.DOCTYPE_SYSTEM_IDENTIFIER_SINGLE_QUOTED
                 return False
-            self._emit_error("Unexpected character after DOCTYPE public identifier")
+            self._emit_error("unexpected-character-after-doctype-public-identifier")
             self.current_doctype_force_quirks = True
             self._reconsume_current()
             self.state = self.BOGUS_DOCTYPE
@@ -1495,7 +1497,7 @@ class Tokenizer:
         while True:
             c = self._get_char()
             if c is None:
-                self._emit_error("EOF between DOCTYPE identifiers")
+                self._emit_error("missing-quote-before-doctype-system-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self._emit_token(EOFToken())
@@ -1514,7 +1516,7 @@ class Tokenizer:
                 self.current_doctype_system = []
                 self.state = self.DOCTYPE_SYSTEM_IDENTIFIER_SINGLE_QUOTED
                 return False
-            self._emit_error("Unexpected character between DOCTYPE identifiers")
+            self._emit_error("missing-quote-before-doctype-system-identifier")
             self.current_doctype_force_quirks = True
             self._reconsume_current()
             self.state = self.BOGUS_DOCTYPE
@@ -1524,7 +1526,7 @@ class Tokenizer:
         while True:
             c = self._get_char()
             if c is None:
-                self._emit_error("EOF before DOCTYPE system identifier")
+                self._emit_error("missing-doctype-system-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self._emit_token(EOFToken())
@@ -1540,12 +1542,12 @@ class Tokenizer:
                 self.state = self.DOCTYPE_SYSTEM_IDENTIFIER_SINGLE_QUOTED
                 return False
             if c == ">":
-                self._emit_error("Missing DOCTYPE system identifier")
+                self._emit_error("missing-doctype-system-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self.state = self.DATA
                 return False
-            self._emit_error("Invalid DOCTYPE system identifier start")
+            self._emit_error("missing-quote-before-doctype-system-identifier")
             self.current_doctype_force_quirks = True
             self._reconsume_current()
             self.state = self.BOGUS_DOCTYPE
@@ -1555,7 +1557,7 @@ class Tokenizer:
         while True:
             c = self._get_char()
             if c is None:
-                self._emit_error("EOF in DOCTYPE system identifier")
+                self._emit_error("eof-in-doctype-system-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self._emit_token(EOFToken())
@@ -1564,11 +1566,11 @@ class Tokenizer:
                 self.state = self.AFTER_DOCTYPE_SYSTEM_IDENTIFIER
                 return False
             if c == "\0":
-                self._emit_error("Null in DOCTYPE system identifier")
+                self._emit_error("unexpected-null-character")
                 self.current_doctype_system.append("\ufffd")
                 continue
             if c == ">":
-                self._emit_error("Abrupt DOCTYPE system identifier end")
+                self._emit_error("abrupt-doctype-system-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self.state = self.DATA
@@ -1579,7 +1581,7 @@ class Tokenizer:
         while True:
             c = self._get_char()
             if c is None:
-                self._emit_error("EOF in DOCTYPE system identifier")
+                self._emit_error("eof-in-doctype-system-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self._emit_token(EOFToken())
@@ -1588,11 +1590,11 @@ class Tokenizer:
                 self.state = self.AFTER_DOCTYPE_SYSTEM_IDENTIFIER
                 return False
             if c == "\0":
-                self._emit_error("Null in DOCTYPE system identifier")
+                self._emit_error("unexpected-null-character")
                 self.current_doctype_system.append("\ufffd")
                 continue
             if c == ">":
-                self._emit_error("Abrupt DOCTYPE system identifier end")
+                self._emit_error("abrupt-doctype-system-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self.state = self.DATA
@@ -1603,7 +1605,7 @@ class Tokenizer:
         while True:
             c = self._get_char()
             if c is None:
-                self._emit_error("EOF after DOCTYPE system identifier")
+                self._emit_error("eof-in-doctype")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self._emit_token(EOFToken())
@@ -1614,7 +1616,7 @@ class Tokenizer:
                 self._emit_doctype()
                 self.state = self.DATA
                 return False
-            self._emit_error("Unexpected character after DOCTYPE system identifier")
+            self._emit_error("unexpected-character-after-doctype-system-identifier")
             self._reconsume_current()
             self.state = self.BOGUS_DOCTYPE
             return False
@@ -1742,7 +1744,7 @@ class Tokenizer:
         attr_name_buffer.clear()
         attr_value_buffer = self.current_attr_value
         if is_duplicate:
-            self._emit_error("Duplicate attribute")
+            self._emit_error("duplicate-attribute")
             attr_value_buffer.clear()
             self.current_attr_value_has_amp = False
             return
@@ -1887,7 +1889,9 @@ class Tokenizer:
             column = pos + 1  # 1-indexed from start of input
         else:
             column = pos - last_newline  # 1-indexed from after newline
-        self.errors.append(ParseError(code, line=self.line, column=column))
+
+        message = generate_error_message(code)
+        self.errors.append(ParseError(code, line=self.line, column=column, message=message))
 
     def _consume_if(self, literal):
         end = self.pos + len(literal)
@@ -2037,7 +2041,7 @@ class Tokenizer:
             # Handle special characters - we're at one of them after find()
             if null_index == pos:
                 self.ignore_lf = False
-                self._emit_error("Null character in RCDATA")
+                self._emit_error("unexpected-null-character")
                 self._append_text("\ufffd")
                 pos += 1
                 self.pos = pos
@@ -2154,7 +2158,7 @@ class Tokenizer:
                     self._append_text_chunk(chunk, ends_with_cr=chunk.endswith("\r"))
                 else:
                     self.ignore_lf = False
-                self._emit_error("Null character in rawtext")
+                self._emit_error("unexpected-null-character")
                 self._append_text("\ufffd")
                 pos = null_index + 1
                 self.pos = pos
@@ -2270,7 +2274,7 @@ class Tokenizer:
             # Replace null bytes with replacement character
             if "\0" in remaining:
                 remaining = remaining.replace("\0", "\ufffd")
-                self._emit_error("Null character in plaintext")
+                self._emit_error("unexpected-null-character")
             self._append_text(remaining)
             self.pos = self.length
         self._flush_text()

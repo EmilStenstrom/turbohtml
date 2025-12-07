@@ -71,7 +71,11 @@ class ParseError:
 
     def __str__(self):
         if self.line is not None and self.column is not None:
+            if self.message != self.code:
+                return f"({self.line},{self.column}): {self.code} - {self.message}"
             return f"({self.line},{self.column}): {self.code}"
+        if self.message != self.code:
+            return f"{self.code} - {self.message}"
         return self.code
 
     def __eq__(self, other):

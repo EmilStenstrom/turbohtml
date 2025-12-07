@@ -17,7 +17,7 @@ from .treebuilder_utils import (
 class TreeBuilderModesMixin:
     def _handle_doctype(self, token):
         if self.mode != InsertionMode.INITIAL:
-            self._parse_error("Unexpected DOCTYPE")
+            self._parse_error("unexpected-doctype")
             return TokenSinkResult.Continue
 
         doctype = token.doctype
@@ -27,7 +27,7 @@ class TreeBuilderModesMixin:
         self.document.append_child(node)
 
         if parse_error:
-            self._parse_error("Unexpected DOCTYPE")
+            self._parse_error("unknown-doctype")
 
         self._set_quirks_mode(quirks_mode)
         self.mode = InsertionMode.BEFORE_HTML
@@ -37,16 +37,22 @@ class TreeBuilderModesMixin:
         if isinstance(token, CharacterTokens):
             if is_all_whitespace(token.data):
                 return None
+            self._parse_error("expected-doctype-but-got-chars")
             self._set_quirks_mode("quirks")
             return ("reprocess", InsertionMode.BEFORE_HTML, token)
         if isinstance(token, CommentToken):
             self._append_comment_to_document(token.data)
             return None
         if isinstance(token, EOFToken):
+            self._parse_error("expected-doctype-but-got-eof")
             self._set_quirks_mode("quirks")
             self.mode = InsertionMode.BEFORE_HTML
             return ("reprocess", InsertionMode.BEFORE_HTML, token)
-        # Anything else (Tags, etc) - no DOCTYPE seen, so quirks mode
+        # Only Tags remain - no DOCTYPE seen, so quirks mode
+        if token.kind == Tag.START:
+            self._parse_error("expected-doctype-but-got-start-tag", tag_name=token.name)
+        else:
+            self._parse_error("expected-doctype-but-got-end-tag", tag_name=token.name)
         self._set_quirks_mode("quirks")
         return ("reprocess", InsertionMode.BEFORE_HTML, token)
 
@@ -67,7 +73,7 @@ class TreeBuilderModesMixin:
                 return ("reprocess", InsertionMode.BEFORE_HEAD, token)
             if token.kind == Tag.END:
                 # Ignore other end tags
-                self._parse_error("Unexpected end tag in before html")
+                self._parse_error("unexpected-end-tag-before-html", tag_name=token.name)
                 return None
         if isinstance(token, EOFToken):
             self._create_root({})
@@ -115,7 +121,7 @@ class TreeBuilderModesMixin:
                 return ("reprocess", InsertionMode.IN_HEAD, token)
             if token.kind == Tag.END:
                 # Ignore other end tags
-                self._parse_error("Unexpected end tag in before head")
+                self._parse_error("unexpected-end-tag-before-head", tag_name=token.name)
                 return None
         if isinstance(token, EOFToken):
             self.head_element = self._insert_phantom("head")
@@ -276,7 +282,7 @@ class TreeBuilderModesMixin:
                 return ("reprocess", InsertionMode.IN_BODY, token)
             if token.kind == Tag.END:
                 # Ignore other end tags
-                self._parse_error("Unexpected end tag in after head")
+                self._parse_error("unexpected-end-tag-after-head", tag_name=token.name)
                 return None
         if isinstance(token, EOFToken):
             self._insert_body_if_missing()
@@ -291,6 +297,9 @@ class TreeBuilderModesMixin:
             self._append_text(token.data)
             return None
         if isinstance(token, EOFToken):
+            # Get the tag name of the unclosed element
+            tag_name = self.open_elements[-1].name if self.open_elements else None
+            self._parse_error("expected-named-closing-tag-but-got-eof", tag_name=tag_name)
             self._pop_current()
             self.mode = self.original_mode or InsertionMode.IN_BODY
             return ("reprocess", self.mode, token)
@@ -331,7 +340,7 @@ class TreeBuilderModesMixin:
 
         # Special case: </br> end tag is treated as <br> start tag
         if name == "br":
-            self._parse_error("Unexpected </br>")
+            self._parse_error("unexpected-end-tag", tag_name=name)
             br_tag = Tag(Tag.START, "br", {}, False)
             return self._mode_in_body(br_tag)
 
@@ -349,6 +358,30 @@ class TreeBuilderModesMixin:
         # If we're in a template, handle EOF in template mode first
         if self.template_modes:
             return self._mode_in_template(token)
+        # Check for unclosed elements (excluding html, body, head which are implicit)
+        for node in self.open_elements:
+            if node.name not in {
+                "dd",
+                "dt",
+                "li",
+                "optgroup",
+                "option",
+                "p",
+                "rb",
+                "rp",
+                "rt",
+                "rtc",
+                "tbody",
+                "td",
+                "tfoot",
+                "th",
+                "thead",
+                "tr",
+                "body",
+                "html",
+            }:
+                self._parse_error("expected-closing-tag-but-got-eof", tag_name=node.name)
+                break
         self.mode = InsertionMode.AFTER_BODY
         return ("reprocess", InsertionMode.AFTER_BODY, token)
 
@@ -358,7 +391,7 @@ class TreeBuilderModesMixin:
 
     def _handle_body_start_html(self, token):
         if self.template_modes:
-            self._parse_error("Unexpected <html> in template")
+            self._parse_error("unexpected-start-tag", tag_name=token.name)
             return
         # In IN_BODY mode, html element is always at open_elements[0]
         if self.open_elements:  # pragma: no branch
@@ -368,10 +401,10 @@ class TreeBuilderModesMixin:
 
     def _handle_body_start_body(self, token):
         if self.template_modes:
-            self._parse_error("Unexpected <body> in template")
+            self._parse_error("unexpected-start-tag", tag_name=token.name)
             return
         if len(self.open_elements) > 1:
-            self._parse_error("Unexpected <body> inside body")
+            self._parse_error("unexpected-start-tag", tag_name=token.name)
             body = self.open_elements[1] if len(self.open_elements) > 1 else None
             if body and body.name == "body":
                 self._add_missing_attributes(body, token.attrs)
@@ -381,7 +414,7 @@ class TreeBuilderModesMixin:
         return
 
     def _handle_body_start_head(self, token):
-        self._parse_error("Unexpected <head> in body")
+        self._parse_error("unexpected-start-tag", tag_name=token.name)
         return
 
     def _handle_body_start_in_head(self, token):
@@ -395,7 +428,7 @@ class TreeBuilderModesMixin:
     def _handle_body_start_heading(self, token):
         self._close_p_element()
         if self.open_elements and self.open_elements[-1].name in HEADING_ELEMENTS:
-            self._parse_error("Nested heading")
+            self._parse_error("unexpected-start-tag", tag_name=token.name)
             self._pop_current()
         self._insert_element(token, push=True)
         self.frameset_ok = False
@@ -410,7 +443,7 @@ class TreeBuilderModesMixin:
 
     def _handle_body_start_form(self, token):
         if self.form_element is not None:
-            self._parse_error("Nested form")
+            self._parse_error("unexpected-start-tag", tag_name=token.name)
             return
         self._close_p_element()
         node = self._insert_element(token, push=True)
@@ -420,7 +453,7 @@ class TreeBuilderModesMixin:
 
     def _handle_body_start_button(self, token):
         if self._has_in_scope("button"):
-            self._parse_error("Nested button")
+            self._parse_error("unexpected-start-tag-implies-end-tag", tag_name=token.name)
             self._close_element_by_name("button")
         self._insert_element(token, push=True)
         self.frameset_ok = False
@@ -490,18 +523,18 @@ class TreeBuilderModesMixin:
 
             # 4. If formatting element is not in open elements
             if formatting_element not in self.open_elements:
-                self._parse_error("Adoption agency: formatting element not in open elements")
+                self._parse_error("adoption-agency-1.3")
                 self._remove_formatting_entry(formatting_element_index)
                 return
 
             # 5. If formatting element is in open elements but not in scope
             if not self._has_element_in_scope(formatting_element.name):
-                self._parse_error("Adoption agency: formatting element not in scope")
+                self._parse_error("adoption-agency-1.3")
                 return
 
             # 6. If formatting element is not the current node
             if formatting_element is not self.open_elements[-1]:
-                self._parse_error("Adoption agency: formatting element not current node")
+                self._parse_error("adoption-agency-1.3")
 
             # 7. Find furthest block
             furthest_block = None
@@ -655,7 +688,7 @@ class TreeBuilderModesMixin:
 
     def _handle_body_start_frameset(self, token):
         if not self.frameset_ok:
-            self._parse_error("unexpected-start-tag-ignored")
+            self._parse_error("unexpected-start-tag-ignored", tag_name=token.name)
             return
         # Find body element on the stack (may not exist if already in frameset)
         body_index = None
@@ -665,7 +698,7 @@ class TreeBuilderModesMixin:
                 break
         if body_index is None:
             # No body on stack (e.g., nested frameset after mode reset), ignore
-            self._parse_error("unexpected-start-tag-ignored")
+            self._parse_error("unexpected-start-tag-ignored", tag_name=token.name)
             return
         body_elem = self.open_elements[body_index]
         body_elem.parent.remove_child(body_elem)
@@ -690,7 +723,7 @@ class TreeBuilderModesMixin:
 
     def _handle_body_end_p(self, token):
         if not self._close_p_element():
-            self._parse_error("Unexpected </p>")
+            self._parse_error("unexpected-end-tag", tag_name=token.name)
             phantom = Tag(Tag.START, "p", {}, False)
             self._insert_element(phantom, push=True)
             self._close_p_element()
@@ -698,7 +731,7 @@ class TreeBuilderModesMixin:
 
     def _handle_body_end_li(self, token):
         if not self._has_in_list_item_scope("li"):
-            self._parse_error("Unexpected </li>")
+            self._parse_error("unexpected-end-tag", tag_name=token.name)
             return
         self._pop_until_any_inclusive({"li"})
         return
@@ -706,24 +739,24 @@ class TreeBuilderModesMixin:
     def _handle_body_end_dd_dt(self, token):
         name = token.name
         if not self._has_in_definition_scope(name):
-            self._parse_error("Unexpected closing tag")
+            self._parse_error("unexpected-end-tag", tag_name=name)
             return
         self._pop_until_any_inclusive({"dd", "dt"})
 
     def _handle_body_end_form(self, token):
         if self.form_element is None:
-            self._parse_error("Unexpected </form>")
+            self._parse_error("unexpected-end-tag", tag_name=token.name)
             return
         removed = self._remove_from_open_elements(self.form_element)
         self.form_element = None
         if not removed:
-            self._parse_error("Form element not in stack")
+            self._parse_error("unexpected-end-tag", tag_name=token.name)
         return
 
     def _handle_body_end_applet_like(self, token):
         name = token.name
         if not self._in_scope(name):
-            self._parse_error("Unexpected closing tag")
+            self._parse_error("unexpected-end-tag", tag_name=name)
             return
         # Element verified in scope above
         while self.open_elements:  # pragma: no branch
@@ -736,11 +769,11 @@ class TreeBuilderModesMixin:
     def _handle_body_end_heading(self, token):
         name = token.name
         if not self._has_any_in_scope(HEADING_ELEMENTS):
-            self._parse_error(f"Unexpected </{name}>")
+            self._parse_error("unexpected-end-tag", tag_name=name)
             return
         self._generate_implied_end_tags()
         if self.open_elements and self.open_elements[-1].name != name:
-            self._parse_error(f"Mismatched heading end tag </{name}>")
+            self._parse_error("end-tag-too-early", tag_name=name)
         # Heading verified in scope by caller
         while self.open_elements:  # pragma: no branch
             popped = self.open_elements.pop()
@@ -751,11 +784,11 @@ class TreeBuilderModesMixin:
     def _handle_body_end_block(self, token):
         name = token.name
         if not self._in_scope(name):
-            self._parse_error(f"No matching <{name}> tag")
+            self._parse_error("unexpected-end-tag", tag_name=name)
             return
         self._generate_implied_end_tags()
         if self.open_elements and self.open_elements[-1].name != name:
-            self._parse_error(f"Unexpected open element while closing {name}")
+            self._parse_error("end-tag-too-early", tag_name=name)
         self._pop_until_any_inclusive({name})
         return
 
@@ -773,18 +806,18 @@ class TreeBuilderModesMixin:
         return
 
     def _handle_body_start_structure_ignored(self, token):
-        self._parse_error("unexpected-start-tag-ignored")
+        self._parse_error("unexpected-start-tag-ignored", tag_name=token.name)
         return
 
     def _handle_body_start_col_or_frame(self, token):
         if self.fragment_context is None:
-            self._parse_error("unexpected-start-tag-ignored")
+            self._parse_error("unexpected-start-tag-ignored", tag_name=token.name)
             return
         self._insert_element(token, push=False)
         return
 
     def _handle_body_start_image(self, token):
-        self._parse_error("image-start-tag")
+        self._parse_error("image-start-tag", tag_name=token.name)
         img_token = Tag(Tag.START, "img", token.attrs, token.self_closing)
         self._reconstruct_active_formatting_elements()
         self._insert_element(img_token, push=False)
@@ -826,6 +859,10 @@ class TreeBuilderModesMixin:
         self.frameset_ok = False
         if token.name == "plaintext":
             self.tokenizer_state_override = TokenSinkResult.Plaintext
+        else:
+            # xmp, iframe, noembed, noframes, noscript (scripting disabled)
+            self.original_mode = self.mode
+            self.mode = InsertionMode.TEXT
         return
 
     def _handle_body_start_textarea(self, token):
@@ -867,14 +904,14 @@ class TreeBuilderModesMixin:
         return
 
     def _handle_body_start_table_parse_error(self, token):
-        self._parse_error(f"Unexpected <{token.name}> in body")
+        self._parse_error("unexpected-start-tag", tag_name=token.name)
         return
 
     def _handle_body_start_default(self, token):
         self._reconstruct_active_formatting_elements()
         self._insert_element(token, push=True)
         if token.self_closing:
-            self._parse_error("non-void-html-element-start-tag-with-trailing-solidus")
+            self._parse_error("non-void-html-element-start-tag-with-trailing-solidus", tag_name=token.name)
         # Elements reaching here have no handler - never in FRAMESET_NEUTRAL/FORMATTING_ELEMENTS
         self.frameset_ok = False
         return
@@ -883,7 +920,7 @@ class TreeBuilderModesMixin:
         if isinstance(token, CharacterTokens):
             data = token.data or ""
             if "\x00" in data:
-                self._parse_error("Unexpected null character")
+                self._parse_error("unexpected-null-character")
                 data = data.replace("\x00", "")
                 if not data:
                     return None
@@ -927,7 +964,7 @@ class TreeBuilderModesMixin:
                     self.mode = InsertionMode.IN_TABLE_BODY
                     return ("reprocess", InsertionMode.IN_TABLE_BODY, token)
                 if name == "table":
-                    self._parse_error("unexpected-start-tag-implies-end-tag")
+                    self._parse_error("unexpected-start-tag-implies-end-tag", tag_name=name)
                     closed = self._close_table_element()
                     if closed:
                         return ("reprocess", self.mode, token)
@@ -960,7 +997,7 @@ class TreeBuilderModesMixin:
                         self.form_element = node
                         self.open_elements.pop()  # push=True always adds to stack
                     return None
-                self._parse_error("unexpected-start-tag-implies-table-voodoo")
+                self._parse_error("unexpected-start-tag-implies-table-voodoo", tag_name=name)
                 previous = self.insert_from_table
                 self.insert_from_table = True
                 try:
@@ -972,9 +1009,9 @@ class TreeBuilderModesMixin:
                     self._close_table_element()
                     return None
                 if name in {"body", "caption", "col", "colgroup", "html", "tbody", "td", "tfoot", "th", "thead", "tr"}:
-                    self._parse_error("unexpected-end-tag")
+                    self._parse_error("unexpected-end-tag", tag_name=name)
                     return None
-                self._parse_error("unexpected-end-tag-implies-table-voodoo")
+                self._parse_error("unexpected-end-tag-implies-table-voodoo", tag_name=name)
                 previous = self.insert_from_table
                 self.insert_from_table = True
                 try:
@@ -987,7 +1024,7 @@ class TreeBuilderModesMixin:
         if self.template_modes:
             return self._mode_in_template(token)
         if self._has_in_table_scope("table"):
-            self._parse_error("eof-in-table")
+            self._parse_error("expected-closing-tag-but-got-eof", tag_name="table")
         return None
 
     def _mode_in_table_text(self, token):
@@ -1016,13 +1053,13 @@ class TreeBuilderModesMixin:
             name = token.name
             if token.kind == Tag.START:
                 if name in {"caption", "col", "colgroup", "tbody", "tfoot", "thead", "tr", "td", "th"}:
-                    self._parse_error("unexpected-start-tag-implies-end-tag")
+                    self._parse_error("unexpected-start-tag-implies-end-tag", tag_name=name)
                     if self._close_caption_element():
                         return ("reprocess", InsertionMode.IN_TABLE, token)
                     # Fragment parsing with caption context: caption not on stack, ignore table structure elements
                     return None
                 if name == "table":
-                    self._parse_error("unexpected-start-tag-implies-end-tag")
+                    self._parse_error("unexpected-start-tag-implies-end-tag", tag_name=name)
                     if self._close_caption_element():
                         return ("reprocess", InsertionMode.IN_TABLE, token)
                     # Fragment parsing: no caption on stack - handle in body mode
@@ -1039,7 +1076,7 @@ class TreeBuilderModesMixin:
             if name in {"tbody", "tfoot", "thead"}:
                 # These elements are never in table scope when in caption -
                 # caption closes any open tbody/tfoot/thead when created
-                self._parse_error("unexpected-end-tag")
+                self._parse_error("unexpected-end-tag", tag_name=name)
                 return None
             return self._mode_in_body(token)
         assert isinstance(token, EOFToken), f"Unexpected token type: {type(token)}"
@@ -1047,7 +1084,7 @@ class TreeBuilderModesMixin:
 
     def _close_caption_element(self):
         if not self._has_in_table_scope("caption"):
-            self._parse_error("unexpected-end-tag")
+            self._parse_error("unexpected-end-tag", tag_name="caption")
             return False
         self._generate_implied_end_tags()
         # Caption verified in scope above
@@ -1102,7 +1139,7 @@ class TreeBuilderModesMixin:
                     # Template is handled by delegating to IN_HEAD
                     return self._mode_in_head(token)
                 if name == "colgroup":
-                    self._parse_error("unexpected-start-tag-implies-end-tag")
+                    self._parse_error("unexpected-start-tag-implies-end-tag", tag_name=name)
                     # Don't pop template element - only pop actual colgroup
                     if current and current.name == "colgroup":
                         self._pop_current()
@@ -1114,7 +1151,7 @@ class TreeBuilderModesMixin:
                     and self.fragment_context.tag_name.lower() == "colgroup"
                     and not self._has_in_table_scope("table")
                 ):
-                    self._parse_error("unexpected-start-tag-in-column-group")
+                    self._parse_error("unexpected-start-tag-in-column-group", tag_name=name)
                     return None
                 # Anything else: if we're in a colgroup, pop it and switch to IN_TABLE
                 if current and current.name == "colgroup":
@@ -1124,17 +1161,17 @@ class TreeBuilderModesMixin:
                 # In template column group context (via <col> in template), ignore non-column content
                 # At this point current is template - the only other case after colgroup fragment
                 # and colgroup element are handled
-                self._parse_error("unexpected-start-tag-in-template-column-group")
+                self._parse_error("unexpected-start-tag-in-template-column-group", tag_name=name)
                 return None
             if name == "colgroup":
                 if current and current.name == "colgroup":
                     self._pop_current()
                     self.mode = InsertionMode.IN_TABLE
                 else:
-                    self._parse_error("unexpected-end-tag")
+                    self._parse_error("unexpected-end-tag", tag_name=token.name)
                 return None
             if name == "col":
-                self._parse_error("unexpected-end-tag")
+                self._parse_error("unexpected-end-tag", tag_name=name)
                 return None
             if name == "template":
                 # Template end tag needs proper handling
@@ -1176,7 +1213,7 @@ class TreeBuilderModesMixin:
                     current = self.open_elements[-1] if self.open_elements else None
                     # When in a template, these tags create invalid structure - treat as "anything else"
                     if current and current.name == "template":
-                        self._parse_error("unexpected-start-tag-in-template-table-context")
+                        self._parse_error("unexpected-start-tag-in-template-table-context", tag_name=name)
                         return None
                     # In fragment parsing with tbody/tfoot/thead context and no tbody on stack, ignore these tags
                     if (
@@ -1198,7 +1235,7 @@ class TreeBuilderModesMixin:
                 return self._mode_in_table(token)
             if name in {"tbody", "tfoot", "thead"}:
                 if not self._has_in_table_scope(name):
-                    self._parse_error("unexpected-end-tag")
+                    self._parse_error("unexpected-end-tag", tag_name=name)
                     return None
                 self._clear_stack_until({"tbody", "tfoot", "thead", "template", "html"})
                 self._pop_current()
@@ -1208,7 +1245,7 @@ class TreeBuilderModesMixin:
                 current = self.open_elements[-1] if self.open_elements else None
                 # In a template, reject </table> as there's no table element
                 if current and current.name == "template":
-                    self._parse_error("unexpected-end-tag")
+                    self._parse_error("unexpected-end-tag", tag_name=token.name)
                     return None
                 # In fragment parsing with tbody/tfoot/thead context and no tbody on stack, ignore </table>
                 if (
@@ -1217,14 +1254,14 @@ class TreeBuilderModesMixin:
                     and current.name == "html"
                     and self.fragment_context.tag_name.lower() in {"tbody", "tfoot", "thead"}
                 ):
-                    self._parse_error("unexpected-end-tag")
+                    self._parse_error("unexpected-end-tag", tag_name=token.name)
                     return None
                 if current and current.name in {"tbody", "tfoot", "thead"}:
                     self.open_elements.pop()
                 self.mode = InsertionMode.IN_TABLE
                 return ("reprocess", InsertionMode.IN_TABLE, token)
             if name in {"caption", "col", "colgroup", "td", "th", "tr"}:
-                self._parse_error("unexpected-end-tag")
+                self._parse_error("unexpected-end-tag", tag_name=name)
                 return None
             return self._mode_in_table(token)
         assert isinstance(token, EOFToken), f"Unexpected token type: {type(token)}"
@@ -1244,7 +1281,7 @@ class TreeBuilderModesMixin:
                     return None
                 if name in {"caption", "col", "colgroup", "tbody", "tfoot", "thead", "tr", "table"}:
                     if not self._has_in_table_scope("tr"):
-                        self._parse_error("unexpected-start-tag-implies-end-tag")
+                        self._parse_error("unexpected-start-tag-implies-end-tag", tag_name=name)
                         return None
                     self._end_tr_element()
                     return ("reprocess", self.mode, token)
@@ -1257,7 +1294,7 @@ class TreeBuilderModesMixin:
             else:
                 if name == "tr":
                     if not self._has_in_table_scope("tr"):
-                        self._parse_error("unexpected-end-tag")
+                        self._parse_error("unexpected-end-tag", tag_name=name)
                         return None
                     self._end_tr_element()
                     return None
@@ -1265,10 +1302,10 @@ class TreeBuilderModesMixin:
                     if self._has_in_table_scope(name):
                         self._end_tr_element()
                         return ("reprocess", self.mode, token)
-                    self._parse_error("unexpected-end-tag")
+                    self._parse_error("unexpected-end-tag", tag_name=name)
                     return None
                 if name in {"caption", "col", "group", "td", "th"}:
-                    self._parse_error("unexpected-end-tag")
+                    self._parse_error("unexpected-end-tag", tag_name=name)
                     return None
                 previous = self.insert_from_table
                 self.insert_from_table = True
@@ -1310,7 +1347,7 @@ class TreeBuilderModesMixin:
                     # Per spec: if we reach here in IN_CELL mode with no cell to close,
                     # we're in a fragment context with td/th as context element and no table structure.
                     # Issue parse error and ignore the token.
-                    self._parse_error("unexpected-start-tag-in-cell-fragment")
+                    self._parse_error("unexpected-start-tag-in-cell-fragment", tag_name=name)
                     return None
                 previous = self.insert_from_table
                 self.insert_from_table = False
@@ -1321,7 +1358,7 @@ class TreeBuilderModesMixin:
             else:
                 if name in {"td", "th"}:
                     if not self._has_in_table_scope(name):
-                        self._parse_error("unexpected-end-tag")
+                        self._parse_error("unexpected-end-tag", tag_name=name)
                         return None
                     self._end_table_cell(name)
                     return None
@@ -1329,7 +1366,7 @@ class TreeBuilderModesMixin:
                     # Per HTML5 spec: only close cell if the element is actually in scope
                     # Otherwise it's a parse error and we ignore the token
                     if not self._has_in_table_scope(name):
-                        self._parse_error("unexpected-end-tag")
+                        self._parse_error("unexpected-end-tag", tag_name=name)
                         return None
                     self._close_table_cell()
                     return ("reprocess", self.mode, token)
@@ -1380,13 +1417,13 @@ class TreeBuilderModesMixin:
                     self._insert_element(token, push=True)
                     return None
                 if name == "select":
-                    self._parse_error("Nested select")
+                    self._parse_error("unexpected-start-tag-implies-end-tag", tag_name=name)
                     # select is always in scope in IN_SELECT mode
                     self._pop_until_any_inclusive({"select"})
                     self._reset_insertion_mode()
                     return None
                 if name in {"input", "textarea"}:
-                    self._parse_error(f"Unexpected <{name}> in select")
+                    self._parse_error("unexpected-start-tag-implies-end-tag", tag_name=name)
                     # select is always in scope in IN_SELECT mode
                     self._pop_until_any_inclusive({"select"})
                     self._reset_insertion_mode()
@@ -1396,7 +1433,7 @@ class TreeBuilderModesMixin:
                     self._insert_element(token, push=False)
                     return None
                 if name in {"caption", "col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr", "table"}:
-                    self._parse_error(f"Unexpected <{name}> in select")
+                    self._parse_error("unexpected-start-tag-implies-end-tag", tag_name=name)
                     # select is always in scope in IN_SELECT mode
                     self._pop_until_any_inclusive({"select"})
                     self._reset_insertion_mode()
@@ -1446,13 +1483,13 @@ class TreeBuilderModesMixin:
                 if self.open_elements and self.open_elements[-1].name == "optgroup":
                     self.open_elements.pop()
                 else:
-                    self._parse_error("Unexpected </optgroup>")
+                    self._parse_error("unexpected-end-tag", tag_name=token.name)
                 return None
             if name == "option":
                 if self.open_elements and self.open_elements[-1].name == "option":
                     self.open_elements.pop()
                 else:
-                    self._parse_error("Unexpected </option>")
+                    self._parse_error("unexpected-end-tag", tag_name=token.name)
                 return None
             if name == "select":
                 # In IN_SELECT mode, select is always in scope - pop to it
@@ -1470,7 +1507,7 @@ class TreeBuilderModesMixin:
                         select_index = self.open_elements.index(select_node)
                         target_index = self.open_elements.index(target)
                         if target_index < select_index:
-                            self._parse_error(f"Unexpected </{name}> in select")
+                            self._parse_error("unexpected-end-tag", tag_name=name)
                             return None
                 self._adoption_agency(name)
                 return None
@@ -1492,16 +1529,16 @@ class TreeBuilderModesMixin:
                         if popped.name == name:
                             break
                 else:
-                    self._parse_error(f"Unexpected </{name}> in select")
+                    self._parse_error("unexpected-end-tag", tag_name=name)
                 return None
             if name in {"caption", "col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr", "table"}:
-                self._parse_error(f"Unexpected </{name}> in select")
+                self._parse_error("unexpected-end-tag", tag_name=name)
                 # select is always in scope in IN_SELECT mode
                 self._pop_until_any_inclusive({"select"})
                 self._reset_insertion_mode()
                 return ("reprocess", self.mode, token)
             # Any other end tag: parse error, ignore
-            self._parse_error(f"Unexpected </{name}> in select")
+            self._parse_error("unexpected-end-tag", tag_name=name)
             return None
         assert isinstance(token, EOFToken), f"Unexpected token type: {type(token)}"
         return self._mode_in_body(token)
@@ -1574,6 +1611,8 @@ class TreeBuilderModesMixin:
             has_template = any(node.name == "template" for node in self.open_elements)
             if not has_template:
                 return None
+            # Parse error for EOF in template
+            self._parse_error("expected-closing-tag-but-got-eof", tag_name="template")
             # Pop until template, then handle EOF in reset mode
             self._pop_until_inclusive("template")
             self._clear_active_formatting_up_to_marker()
@@ -1612,7 +1651,7 @@ class TreeBuilderModesMixin:
                 self._mode_in_body(token)
                 return None
             # Non-whitespace character: parse error, reprocess in IN_BODY
-            self._parse_error("Unexpected character after </html>")
+            self._parse_error("unexpected-char-after-body")
             return ("reprocess", InsertionMode.IN_BODY, token)
         if isinstance(token, CommentToken):
             if self.fragment_context is not None:
@@ -1626,7 +1665,7 @@ class TreeBuilderModesMixin:
             if token.kind == Tag.START and token.name == "html":
                 return ("reprocess", InsertionMode.IN_BODY, token)
             # Any other tag: parse error, reprocess in IN_BODY
-            self._parse_error("Unexpected tag after </html>")
+            self._parse_error("unexpected-token-after-body")
             return ("reprocess", InsertionMode.IN_BODY, token)
         assert isinstance(token, EOFToken), f"Unexpected token type: {type(token)}"
         return None
@@ -1650,7 +1689,7 @@ class TreeBuilderModesMixin:
                 return None
             if token.kind == Tag.END and token.name == "frameset":
                 if self.open_elements and self.open_elements[-1].name == "html":
-                    self._parse_error("Unexpected frameset end tag")
+                    self._parse_error("unexpected-end-tag", tag_name=token.name)
                     return None
                 self.open_elements.pop()
                 if self.open_elements and self.open_elements[-1].name != "frameset":
@@ -1668,9 +1707,9 @@ class TreeBuilderModesMixin:
                 return None
         if isinstance(token, EOFToken):
             if self.open_elements and self.open_elements[-1].name != "html":
-                self._parse_error("Unexpected EOF in frameset")
+                self._parse_error("expected-closing-tag-but-got-eof", tag_name=self.open_elements[-1].name)
             return None
-        self._parse_error("Unexpected token in frameset")
+        self._parse_error("unexpected-token-in-frameset")
         return None
 
     def _mode_after_frameset(self, token):
@@ -1698,7 +1737,7 @@ class TreeBuilderModesMixin:
                 return None
         if isinstance(token, EOFToken):
             return None
-        self._parse_error("Unexpected token after frameset")
+        self._parse_error("unexpected-token-after-frameset")
         self.mode = InsertionMode.IN_FRAMESET
         return ("reprocess", InsertionMode.IN_FRAMESET, token)
 
@@ -1727,7 +1766,7 @@ class TreeBuilderModesMixin:
         if isinstance(token, EOFToken):
             return None
         # Anything else: parse error, reprocess in IN_FRAMESET
-        self._parse_error("Unexpected token after after frameset")
+        self._parse_error("unexpected-token-after-after-frameset")
         self.mode = InsertionMode.IN_FRAMESET
         return ("reprocess", InsertionMode.IN_FRAMESET, token)
 

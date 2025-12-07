@@ -134,6 +134,12 @@ class TestParseError(unittest.TestCase):
         assert str(error) == "test-error"
         assert "line=" not in repr(error)
 
+    def test_parse_error_no_location_with_message(self):
+        """ParseError with message but no location."""
+        error = ParseError("test-error", message="This is a test error")
+        assert str(error) == "test-error - This is a test error"
+        assert "line=" not in repr(error)
+
 
 class TestTokenizerErrors(unittest.TestCase):
     """Test tokenizer-specific errors are collected."""

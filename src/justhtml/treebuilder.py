@@ -21,6 +21,7 @@ from .constants import (
     TABLE_FOSTER_TARGETS,
     TABLE_SCOPE_TERMINATORS,
 )
+from .errors import generate_error_message
 from .node import ElementNode, SimpleDomNode, TemplateNode, TextNode
 from .tokens import CharacterTokens, CommentToken, DoctypeToken, EOFToken, ParseError, Tag, TokenSinkResult
 from .treebuilder_modes import TreeBuilderModesMixin
@@ -136,7 +137,7 @@ class TreeBuilder(TreeBuilderModesMixin):
     def _set_quirks_mode(self, mode):
         self.quirks_mode = mode
 
-    def _parse_error(self, code):
+    def _parse_error(self, code, tag_name=None):
         if not self.collect_errors:
             return
         # Use the position of the last emitted token (set by tokenizer before emit)
@@ -145,7 +146,9 @@ class TreeBuilder(TreeBuilderModesMixin):
         if self.tokenizer:  # pragma: no branch
             line = self.tokenizer.last_token_line
             column = self.tokenizer.last_token_column
-        self.errors.append(ParseError(code, line=line, column=column))
+
+        message = generate_error_message(code, tag_name)
+        self.errors.append(ParseError(code, line=line, column=column, message=message))
 
     def _has_element_in_scope(self, target, terminators=None, check_integration_points=True):
         if terminators is None:
@@ -184,7 +187,7 @@ class TreeBuilder(TreeBuilderModesMixin):
         if self._has_element_in_button_scope("p"):
             self._generate_implied_end_tags("p")
             if self.open_elements[-1].name != "p":
-                self._parse_error("Unexpected end tag </p>")
+                self._parse_error("end-tag-too-early", tag_name="p")
             self._pop_until_inclusive("p")
             return True
         return False
@@ -197,7 +200,7 @@ class TreeBuilder(TreeBuilderModesMixin):
             if self.open_elements:
                 current = self.open_elements[-1]
                 if current.namespace not in {None, "html"}:
-                    self._parse_error("Unexpected DOCTYPE in foreign content")
+                    self._parse_error("unexpected-doctype")
                     return TokenSinkResult.Continue
             return self._handle_doctype(token)
 
@@ -287,13 +290,16 @@ class TreeBuilder(TreeBuilderModesMixin):
                                         self._reconstruct_active_formatting_elements()
                                     self._insert_element(current_token, push=True)
                                     if current_token.self_closing:
-                                        self._parse_error("non-void-html-element-start-tag-with-trailing-solidus")
+                                        self._parse_error(
+                                            "non-void-html-element-start-tag-with-trailing-solidus",
+                                            tag_name=current_token.name,
+                                        )
                                     self.frameset_ok = False
                                     result = None
                         else:
                             name = current_token.name
                             if name == "br":
-                                self._parse_error("Unexpected </br>")
+                                self._parse_error("unexpected-end-tag", tag_name=name)
                                 br_tag = Tag(0, "br", {}, False)
                                 result = self._handle_body_start_br(br_tag)
                             elif name in FORMATTING_ELEMENTS:
@@ -575,14 +581,14 @@ class TreeBuilder(TreeBuilderModesMixin):
                 # Generate implied end tags (except for this name)
                 # If current node is not this node, parse error
                 if index != len(self.open_elements) - 1:
-                    self._parse_error(f"Unexpected end tag </{name}>")
+                    self._parse_error("end-tag-too-early")
                 # Pop all elements from this node onwards
                 del self.open_elements[index:]
                 return
 
             # If node is a special element, parse error and ignore the tag
             if self._is_special_element(node):
-                self._parse_error(f"Unexpected end tag </{name}>")
+                self._parse_error("unexpected-end-tag", tag_name=name)
                 return  # Ignore the end tag
 
             # Continue to next node (previous in stack)
@@ -782,7 +788,7 @@ class TreeBuilder(TreeBuilderModesMixin):
         if is_all_whitespace(data):
             self._append_text(data)
             return
-        self._parse_error("unexpected-character-implies-table-voodoo")
+        self._parse_error("foster-parenting-character")
         previous = self.insert_from_table
         self.insert_from_table = True
         try:
@@ -793,7 +799,7 @@ class TreeBuilder(TreeBuilderModesMixin):
 
     def _close_table_element(self):
         if not self._has_in_table_scope("table"):
-            self._parse_error("unexpected-end-tag")
+            self._parse_error("unexpected-end-tag", tag_name="table")
             return False
         self._generate_implied_end_tags()
         # Table verified in scope above
@@ -992,7 +998,7 @@ class TreeBuilder(TreeBuilderModesMixin):
             if name_lower in FOREIGN_BREAKOUT_ELEMENTS or (
                 name_lower == "font" and self._foreign_breakout_font(token)
             ):
-                self._parse_error("Unexpected HTML element in foreign content")
+                self._parse_error("unexpected-html-element-in-foreign-content")
                 self._pop_until_html_or_integration_point()
                 self._reset_insertion_mode()
                 return ("reprocess", self.mode, token, True)
@@ -1013,7 +1019,7 @@ class TreeBuilder(TreeBuilderModesMixin):
 
         # Special case: </br> and </p> end tags trigger breakout from foreign content
         if name_lower in {"br", "p"}:
-            self._parse_error("Unexpected HTML end tag in foreign content")
+            self._parse_error("unexpected-html-element-in-foreign-content")
             self._pop_until_html_or_integration_point()
             self._reset_insertion_mode()
             return ("reprocess", self.mode, token, True)
@@ -1040,7 +1046,7 @@ class TreeBuilder(TreeBuilderModesMixin):
 
             # Per HTML5 spec: if first node doesn't match, it's a parse error
             if first:
-                self._parse_error("unexpected-end-tag-in-foreign-content")
+                self._parse_error("unexpected-end-tag-in-foreign-content", tag_name=token.name)
                 first = False
 
             # If we hit an HTML element that doesn't match, process in secondary mode
