@@ -89,6 +89,10 @@ curl -s https://example.com | python -m justhtml -
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
+## Acknowledgments
+
+JustHTML started as a Python port of [html5ever](https://github.com/servo/html5ever), the HTML5 parser from Mozilla's Servo browser engine. While the codebase has since evolved significantly, html5ever's clean architecture and spec-compliant approach were invaluable as a starting point. Thank you to the Servo team for their excellent work.
+
 ## License
 
 MIT. Free to use both for commercial and non-commercial use.
