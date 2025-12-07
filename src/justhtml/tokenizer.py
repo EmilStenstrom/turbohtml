@@ -5,11 +5,7 @@ from .entities import decode_entities_in_text
 from .errors import generate_error_message
 from .tokens import CharacterTokens, CommentToken, Doctype, DoctypeToken, EOFToken, ParseError, Tag
 
-_ATTR_VALUE_DOUBLE_TERMINATORS = '"&\r\n\0'
-_ATTR_VALUE_SINGLE_TERMINATORS = "'&\r\n\0"
 _ATTR_VALUE_UNQUOTED_TERMINATORS = "\t\n\f >&\"'<=`\r\0"
-_ATTR_NAME_TERMINATORS = "\t\n\f />=\0\"'<\r"
-_TAG_NAME_TERMINATORS = "\t\n\f />\0\r"
 _ASCII_LOWER_TABLE = str.maketrans({chr(code): chr(code + 32) for code in range(65, 91)})
 _RCDATA_ELEMENTS = {"title", "textarea"}
 _RAWTEXT_SWITCH_TAGS = {
@@ -24,10 +20,8 @@ _RAWTEXT_SWITCH_TAGS = {
     "title",
 }
 
-_ATTR_VALUE_DOUBLE_TERMINATORS_OPT = '"&\0'
-_ATTR_VALUE_SINGLE_TERMINATORS_OPT = "'&\0"
-_ATTR_VALUE_DOUBLE_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_DOUBLE_TERMINATORS_OPT)}]")
-_ATTR_VALUE_SINGLE_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_SINGLE_TERMINATORS_OPT)}]")
+_ATTR_VALUE_DOUBLE_PATTERN = re.compile(r'["&\0]')
+_ATTR_VALUE_SINGLE_PATTERN = re.compile(r"['&\0]")
 _ATTR_VALUE_UNQUOTED_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_UNQUOTED_TERMINATORS)}]")
 
 _TAG_NAME_RUN_PATTERN = re.compile(r"[^\t\n\f />\0\r]+")
