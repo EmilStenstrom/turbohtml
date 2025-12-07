@@ -2,6 +2,8 @@
 
 A pure Python HTML5 parser that just works. No C extensions to compile. No system dependencies to install. No complex API to learn.
 
+**[📖 Read the full documentation here](docs/index.md)**
+
 ## Why use JustHTML?
 
 ### 1. Just... Correct ✅
@@ -57,137 +59,35 @@ Requires Python 3.10 or later.
 pip install justhtml
 ```
 
-## Example usage
-
-### Python API
+## Quick Example
 
 ```python
 from justhtml import JustHTML
 
-html = "<html><body><div id='main'><p>Hello, <b>world</b>!</p></div></body></html>"
-doc = JustHTML(html)
+doc = JustHTML("<html><body><p class='intro'>Hello!</p></body></html>")
 
-# 1. Traverse the tree
-# The tree is made of SimpleDomNode objects.
-# Each node has .name, .attrs, .children, and .parent
-root = doc.root              # #document
-html_node = root.children[0] # html
-body = html_node.children[1] # body (children[0] is head)
-div = body.children[0]       # div
-
-print(f"Tag: {div.name}")
-print(f"Attributes: {div.attrs}")
-
-# 2. Query with CSS selectors
-# Find elements using familiar CSS selector syntax
-paragraphs = doc.query("p")           # All <p> elements
-main_div = doc.query("#main")[0]      # Element with id="main"
-bold = doc.query("div > p b")         # <b> inside <p> inside <div>
-
-# 3. Pretty-print HTML
-# You can serialize any node back to HTML
-print(div.to_html())
-# Output:
-# <div id="main">
-#   <p>
-#     Hello,
-#     <b>world</b>
-#     !
-#   </p>
-# </div>
-
-# 4. Streaming API (extremely fast and memory efficient)
-# For massive files or when you don't need the full DOM tree.
-# NOTE: Does not build a tree and _only_ runs the html5-compatible tokenizer
-
-from justhtml import stream
-
-for event, data in stream(html):
-    if event == "start":
-        tag, attrs = data
-        print(f"Start: {tag} with {attrs}")
-    elif event == "text":
-        print(f"Text: {data}")
-    elif event == "end":
-        print(f"End: {data}")
-
-# 5. Strict mode (reject malformed HTML)
-# Raises an exception on the first parse error with source highlighting
-try:
-    doc = JustHTML("<html><p>Hello", strict=True)
-except Exception as e:
-    print(e)
-# Output (Python 3.11+):
-#   File "<html>", line 1
-#     <html><p>Hello
-#                   ^
-# StrictModeError: Expected closing tag </p> but reached end of file
+# Query with CSS selectors
+for p in doc.query("p.intro"):
+    print(p.name)        # "p"
+    print(p.attrs)       # {"class": "intro"}
+    print(p.to_html())   # <p class="intro">Hello!</p>
 ```
 
-### Supported CSS Selectors
+See the **[Quickstart Guide](docs/quickstart.md)** for more examples including tree traversal, streaming, and strict mode.
 
-JustHTML supports a comprehensive subset of CSS selectors:
-
-| Selector | Example | Description |
-|----------|---------|-------------|
-| Tag | `div` | Elements by tag name |
-| Class | `.intro` | Elements with class |
-| ID | `#main` | Element with ID |
-| Universal | `*` | All elements |
-| Attribute | `[href]` | Elements with attribute |
-| Attr value | `[type="text"]` | Exact attribute match |
-| Attr prefix | `[href^="https"]` | Attribute starts with |
-| Attr suffix | `[href$=".pdf"]` | Attribute ends with |
-| Attr contains | `[href*="example"]` | Attribute contains |
-| Descendant | `div p` | `<p>` inside `<div>` |
-| Child | `div > p` | Direct child |
-| Adjacent | `h1 + p` | Immediately after |
-| Sibling | `h1 ~ p` | Any sibling after |
-| First child | `:first-child` | First child element |
-| Last child | `:last-child` | Last child element |
-| Nth child | `:nth-child(2n+1)` | Nth child (odd, even, formula) |
-| Not | `:not(.hidden)` | Negation |
-| Groups | `h1, h2, h3` | Multiple selectors |
-
-### Command Line Interface
-
-You can also use JustHTML from the command line to pretty-print HTML files:
+## Command Line
 
 ```bash
-# Parse a file
+# Pretty-print an HTML file
 python -m justhtml index.html
 
-# Parse from stdin (great for piping)
+# Parse from stdin
 curl -s https://example.com | python -m justhtml -
 ```
 
-## Develop locally and run the tests
+## Contributing
 
-1. Clone the repository:
-   ```bash
-   git clone git@github.com:EmilStenstrom/justhtml.git
-   cd justhtml
-   ```
-
-2. Install the library locally:
-   ```bash
-   pip install -e ".[dev]"
-   ```
-
-3. Run the tests:
-   ```bash
-   python run_tests.py
-   ```
-
-   For verbose output showing diffs on failures:
-   ```bash
-   python run_tests.py -v
-   ```
-
-4. Run the benchmarks:
-   ```bash
-   python benchmarks/performance.py
-   ```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## License
 
