@@ -302,33 +302,6 @@ BUTTON_SCOPE_TERMINATORS = DEFAULT_SCOPE_TERMINATORS | {"button"}
 LIST_ITEM_SCOPE_TERMINATORS = DEFAULT_SCOPE_TERMINATORS | {"ol", "ul"}
 DEFINITION_SCOPE_TERMINATORS = DEFAULT_SCOPE_TERMINATORS | {"dl"}
 
-BLOCK_WITH_P_START = {
-    "address",
-    "article",
-    "aside",
-    "blockquote",
-    "center",
-    "details",
-    "dialog",
-    "dir",
-    "div",
-    "dl",
-    "fieldset",
-    "figcaption",
-    "figure",
-    "footer",
-    "header",
-    "hgroup",
-    "main",
-    "menu",
-    "nav",
-    "search",
-    "ol",
-    "section",
-    "summary",
-    "ul",
-}
-
 TABLE_FOSTER_TARGETS = {"table", "tbody", "tfoot", "thead", "tr"}
 
 SVG_TAG_NAME_ADJUSTMENTS = {
@@ -446,8 +419,6 @@ TABLE_ALLOWED_CHILDREN = {
 }
 
 TABLE_SCOPE_TERMINATORS = {"html", "table", "template"}
-TABLE_BODY_SCOPE_TERMINATORS = TABLE_SCOPE_TERMINATORS | {"tbody", "tfoot", "thead"}
-TABLE_ROW_SCOPE_TERMINATORS = TABLE_SCOPE_TERMINATORS | {"tr"}
 IMPLIED_END_TAGS = {"dd", "dt", "li", "option", "optgroup", "p", "rb", "rp", "rt", "rtc"}
 
 VOID_ELEMENTS = frozenset(

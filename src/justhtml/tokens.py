@@ -173,5 +173,3 @@ class ParseError:
             exc.end_offset = end_idx + 1
 
         return exc
-
-    RawData = 2

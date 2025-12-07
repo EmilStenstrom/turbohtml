@@ -3,7 +3,7 @@ from bisect import bisect_right
 
 from .entities import decode_entities_in_text
 from .errors import generate_error_message
-from .tokens import CharacterTokens, CommentToken, Doctype, DoctypeToken, EOFToken, ParseError, Tag
+from .tokens import CommentToken, Doctype, DoctypeToken, EOFToken, ParseError, Tag
 
 _ATTR_VALUE_UNQUOTED_TERMINATORS = "\t\n\f >&\"'<=`\r\0"
 _ASCII_LOWER_TABLE = str.maketrans({chr(code): chr(code + 32) for code in range(65, 91)})
@@ -148,7 +148,6 @@ class Tokenizer:
     SCRIPT_DATA_DOUBLE_ESCAPE_END = 60
 
     __slots__ = (
-        "_char_token",
         "_comment_token",
         "_newline_positions",
         "_state_handlers",
@@ -224,7 +223,6 @@ class Tokenizer:
         self.original_tag_name = []
         self.temp_buffer = []
         self._tag_token = Tag(Tag.START, "", {}, False)
-        self._char_token = CharacterTokens("")
         self._comment_token = CommentToken("")
 
     def initialize(self, html):
