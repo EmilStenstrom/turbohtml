@@ -301,7 +301,8 @@ class Tokenizer:
         return None
 
     def _append_text_chunk(self, chunk, *, ends_with_cr=False):
-        self.line += chunk.count("\n")
+        if self.collect_errors:
+            self.line += chunk.count("\n")
         self._append_text(chunk)
         self.ignore_lf = ends_with_cr
 
@@ -341,7 +342,8 @@ class Tokenizer:
                 if "\r" in chunk:
                     chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
 
-                self.line += chunk.count("\n")
+                if self.collect_errors:
+                    self.line += chunk.count("\n")
                 self._append_text(chunk)
                 self.ignore_lf = chunk.endswith("\r")
 
@@ -539,7 +541,8 @@ class Tokenizer:
                         match = _WHITESPACE_PATTERN.match(buffer, self.pos)
                         if match:
                             chunk = match.group(0)
-                            self.line += chunk.count("\n")
+                            if self.collect_errors:
+                                self.line += chunk.count("\n")
                             self.pos = match.end()
 
             # Inline _get_char
@@ -701,7 +704,8 @@ class Tokenizer:
                     match = _WHITESPACE_PATTERN.match(buffer, self.pos)
                     if match:
                         chunk = match.group(0)
-                        self.line += chunk.count("\n")
+                        if self.collect_errors:
+                            self.line += chunk.count("\n")
                         self.pos = match.end()
 
             # Inline _get_char
@@ -817,15 +821,16 @@ class Tokenizer:
                     if end != next_quote:
                         chunk = buffer[pos:end]
 
-                    # Update line count based on RAW chunk
+                    # Update line count based on RAW chunk (only if collecting errors)
                     if "\n" in chunk or "\r" in chunk:
-                        newlines = chunk.count("\n")
-                        returns = chunk.count("\r")
-                        crlf = chunk.count("\r\n")
-                        self.line += newlines + returns - crlf
+                        if self.collect_errors:
+                            newlines = chunk.count("\n")
+                            returns = chunk.count("\r")
+                            crlf = chunk.count("\r\n")
+                            self.line += newlines + returns - crlf
 
                         # Normalize chunk for value
-                        if returns:
+                        if "\r" in chunk:
                             chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
 
                     self.current_attr_value.append(chunk)
@@ -884,15 +889,16 @@ class Tokenizer:
                     if end != next_quote:
                         chunk = buffer[pos:end]
 
-                    # Update line count based on RAW chunk
+                    # Update line count based on RAW chunk (only if collecting errors)
                     if "\n" in chunk or "\r" in chunk:
-                        newlines = chunk.count("\n")
-                        returns = chunk.count("\r")
-                        crlf = chunk.count("\r\n")
-                        self.line += newlines + returns - crlf
+                        if self.collect_errors:
+                            newlines = chunk.count("\n")
+                            returns = chunk.count("\r")
+                            crlf = chunk.count("\r\n")
+                            self.line += newlines + returns - crlf
 
                         # Normalize chunk for value
-                        if returns:
+                        if "\r" in chunk:
                             chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
 
                     self.current_attr_value.append(chunk)
@@ -1683,7 +1689,8 @@ class Tokenizer:
             # Record where text started (current position before this chunk)
             self.text_start_pos = self.pos
             # Calculate the line number at text_start_pos by counting newlines from start
-            self.text_start_line = self.buffer.count("\n", 0, self.pos) + 1
+            if self.collect_errors:
+                self.text_start_line = self.buffer.count("\n", 0, self.pos) + 1
         self.text_buffer.append(text)
 
     def _flush_text(self):
@@ -1851,6 +1858,8 @@ class Tokenizer:
 
         Per the spec, the position should be at the end of the token (after the last char).
         """
+        if not self.collect_errors:
+            return
         # pos points after the last consumed character, which is exactly what we want
         pos = self.pos
         last_newline = self.buffer.rfind("\n", 0, pos)
@@ -1867,6 +1876,8 @@ class Tokenizer:
         Uses text_start_pos + raw_len to compute where text ends, matching html5lib's
         behavior of reporting the column of the last character (1-indexed).
         """
+        if not self.collect_errors:
+            return
         # Position of last character of text (0-indexed)
         end_pos = self.text_start_pos + raw_len
         last_newline = self.buffer.rfind("\n", 0, end_pos)

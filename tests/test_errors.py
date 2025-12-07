@@ -380,3 +380,34 @@ class TestTreeBuilderErrors(unittest.TestCase):
         doc = JustHTML("<!DOCTYPE html><button><p>text</button>", collect_errors=True)
         # This may trigger various parse errors
         assert isinstance(doc.errors, list)
+
+    def test_line_counting_in_attribute_whitespace(self):
+        """Line counting works in whitespace before/after attributes."""
+        # Whitespace with newlines before attribute name
+        html = "<div\n   \n   class='test'>content</div>"
+        doc = JustHTML(html, collect_errors=True)
+        assert doc.root is not None
+
+        # Whitespace with newlines AFTER attribute name (before =)
+        html_after = "<div class\n   \n   ='test'>content</div>"
+        doc = JustHTML(html_after, collect_errors=True)
+        assert doc.root is not None
+
+    def test_line_counting_in_quoted_attribute_values(self):
+        """Line counting works in multiline attribute values."""
+        # Double-quoted attribute with newlines
+        html_double = '<div data-content="line1\nline2\nline3">text</div>'
+        doc = JustHTML(html_double, collect_errors=True)
+        assert doc.root is not None
+
+        # Single-quoted attribute with newlines
+        html_single = "<div data-content='line1\nline2'>text</div>"
+        doc = JustHTML(html_single, collect_errors=True)
+        assert doc.root is not None
+
+    def test_line_counting_with_cr_in_attributes(self):
+        """Line counting handles carriage returns in attribute values."""
+        # Attribute value with CR+LF
+        html = '<div data-x="a\r\nb\rc">text</div>'
+        doc = JustHTML(html, collect_errors=True)
+        assert doc.root is not None
