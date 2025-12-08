@@ -11,7 +11,7 @@ The [html5lib-tests](https://github.com/html5lib/html5lib-tests) repository is t
 The suite contains:
 - **56 tree-construction test files** - Testing how the parser builds the DOM tree
 - **14 tokenizer test files** - Testing lexical analysis of HTML
-- **8,973 individual test cases** - Covering edge cases, error recovery, and spec compliance
+- **9,002 individual test cases** - Covering edge cases, error recovery, and spec compliance
 
 ### What the Tests Cover
 
@@ -66,7 +66,7 @@ We run the same test suite against other Python parsers to compare compliance:
 
 ## Our Testing Strategy
 
-### 1. Official Test Suite (8,500+ tests)
+### 1. Official Test Suite (9,000+ tests)
 
 We run the complete html5lib test suite on every commit:
 
