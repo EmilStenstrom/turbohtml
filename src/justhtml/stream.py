@@ -1,3 +1,4 @@
+from .encoding import decode_html
 from .tokenizer import Tokenizer
 from .tokens import CommentToken, DoctypeToken, Tag
 
@@ -48,11 +49,13 @@ class StreamSink:
         self.tokens.append(("text", data))
 
 
-def stream(html):
+def stream(html, *, encoding=None):
     """
     Stream HTML events from the given HTML string.
     Yields tuples of (event_type, data).
     """
+    if isinstance(html, (bytes, bytearray, memoryview)):
+        html, _ = decode_html(bytes(html), transport_encoding=encoding)
     sink = StreamSink()
     tokenizer = Tokenizer(sink)
     tokenizer.initialize(html)

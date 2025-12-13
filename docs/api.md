@@ -15,14 +15,15 @@ from justhtml import JustHTML
 ### Constructor
 
 ```python
-JustHTML(html, strict=False, collect_errors=False, fragment_context=None)
+JustHTML(html, strict=False, collect_errors=False, encoding=None, fragment_context=None)
 ```
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `html` | `str` | required | The HTML string to parse |
+| `html` | `str \| bytes \| bytearray \| memoryview` | required | HTML input to parse. Bytes are decoded using HTML encoding sniffing. |
 | `strict` | `bool` | `False` | Raise `StrictModeError` on first parse error |
 | `collect_errors` | `bool` | `False` | Collect all parse errors (enables `errors` property) |
+| `encoding` | `str \| None` | `None` | Transport-supplied encoding label used as an override for byte input. See [Encoding & Byte Input](encoding.md). |
 | `fragment_context` | `FragmentContext` | `None` | Parse as fragment inside this context element |
 
 ### Properties
@@ -89,6 +90,9 @@ from justhtml import stream
 for event, data in stream(html):
     ...
 ```
+
+`stream()` accepts the same input types as `JustHTML`. If you pass bytes, it will decode using HTML encoding sniffing.
+To override the encoding for byte input, pass `encoding=...`.
 
 ### Events
 

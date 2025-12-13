@@ -9,6 +9,7 @@ A pure Python HTML5 parser that just works.
 - **[CSS Selectors](selectors.md)** - Query elements with familiar CSS syntax
 - **[Fragment Parsing](fragments.md)** - Parse HTML fragments in context
 - **[Streaming](streaming.md)** - Memory-efficient parsing for large files
+- **[Encoding & Byte Input](encoding.md)** - How byte streams are decoded (including `windows-1252` fallback)
 - **[Error Codes](errors.md)** - Parse error codes and their meanings
 - **[Correctness Testing](correctness.md)** - How we verify 100% HTML5 compliance
 

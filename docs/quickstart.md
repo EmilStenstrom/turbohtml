@@ -19,6 +19,20 @@ html = "<html><body><div id='main'><p>Hello, <b>world</b>!</p></div></body></htm
 doc = JustHTML(html)
 ```
 
+## Parsing Bytes (Encoding Sniffing)
+
+If you pass bytes (for example from a file), JustHTML decodes them using HTML encoding sniffing. If no encoding is found, it falls back to `windows-1252` for browser compatibility.
+
+```python
+from justhtml import JustHTML
+
+data = open("page.html", "rb").read()
+doc = JustHTML(data)
+print(doc.encoding)
+```
+
+See [Encoding & Byte Input](encoding.md) for details and how to override with `encoding=...`.
+
 ## Traversing the Tree
 
 The parser returns a tree of `SimpleDomNode` objects:

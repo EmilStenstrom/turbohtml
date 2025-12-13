@@ -16,6 +16,7 @@ from pathlib import Path
 from justhtml import JustHTML, to_test_format
 from justhtml.constants import VOID_ELEMENTS
 from justhtml.context import FragmentContext
+from justhtml.encoding import normalize_encoding_label, sniff_html_encoding
 from justhtml.serialize import serialize_end_tag
 from justhtml.tokenizer import Tokenizer, TokenizerOpts
 from justhtml.tokens import CharacterTokens, CommentToken, Doctype, DoctypeToken, EOFToken, Tag
@@ -344,7 +345,15 @@ class TestRunner:
                 else:
                     # Use relative path to handle duplicate filenames in different directories
                     relative_path = file_path.relative_to(self.test_dir)
-                    self.file_results[str(relative_path)] = {
+                    key = str(relative_path)
+                    # Keep suite prefixes stable in summaries. When running a focused
+                    # directory (e.g. tests/html5lib-tests-tree), include that directory
+                    # name as a prefix so output matches historical keys like
+                    # html5lib-tests-tree/tests1.dat.
+                    if self.test_dir.name != "tests":
+                        key = f"{self.test_dir.name}/{key}"
+
+                    self.file_results[key] = {
                         "passed": file_passed,
                         "failed": file_failed,
                         "skipped": file_skipped,
@@ -764,12 +773,18 @@ def main():
     # Check that html5lib-tests symlinks exist
     tree_tests = test_dir / "html5lib-tests-tree"
     tokenizer_tests = test_dir / "html5lib-tests-tokenizer"
+    serializer_tests = test_dir / "html5lib-tests-serializer"
+    encoding_tests = test_dir / "html5lib-tests-encoding"
     missing = []
     if not tree_tests.exists():
         missing.append(str(tree_tests))
     if not tokenizer_tests.exists():
         missing.append(str(tokenizer_tests))
-    if missing:
+    if not serializer_tests.exists():
+        missing.append(str(serializer_tests))
+    if not encoding_tests.exists():
+        missing.append(str(encoding_tests))
+    if len(missing) > 0:
         print("ERROR: html5lib-tests not found. Please create symlinks:", file=sys.stderr)
         for path in missing:
             print(f"  {path}", file=sys.stderr)
@@ -778,29 +793,55 @@ def main():
         print("  ln -s ../../html5lib-tests/tree-construction tests/html5lib-tests-tree", file=sys.stderr)
         print("  ln -s ../../html5lib-tests/tokenizer tests/html5lib-tests-tokenizer", file=sys.stderr)
         print("  ln -s ../../html5lib-tests/serializer tests/html5lib-tests-serializer", file=sys.stderr)
+        print("  ln -s ../../html5lib-tests/encoding tests/html5lib-tests-encoding", file=sys.stderr)
         sys.exit(1)
 
-    runner = TestRunner(test_dir, config)
+    runner = TestRunner(tree_tests, config)
     reporter = TestReporter(config)
 
     tree_passed, tree_failed, skipped = runner.run()
+
+    # Run JustHTML-specific tree-construction tests (custom .dat fixtures).
+    # These live outside the upstream html5lib-tests checkout.
+    justhtml_tree_tests = test_dir / "justhtml-tests"
+    justhtml_runner = TestRunner(justhtml_tree_tests, config)
+    justhtml_tree_passed, justhtml_tree_failed, justhtml_tree_skipped = justhtml_runner.run()
+
+    # Merge justhtml-tests results into the main runner for reporting and regression checks.
+    for filename, result in justhtml_runner.file_results.items():
+        runner.file_results[filename] = result
 
     tok_passed, tok_total, tok_file_results = _run_tokenizer_tests(config)
 
     ser_passed, ser_total, ser_skipped, ser_file_results = _run_serializer_tests(config)
 
+    enc_passed, enc_total, enc_skipped, enc_file_results = _run_encoding_tests(config)
+
     unit_passed, unit_failed, unit_file_results = _run_unit_tests(config)
 
-    total_passed = tree_passed + tok_passed + ser_passed + unit_passed
-    total_failed = tree_failed + (tok_total - tok_passed) + (ser_total - ser_passed - ser_skipped) + unit_failed
+    total_passed = tree_passed + justhtml_tree_passed + tok_passed + ser_passed + enc_passed + unit_passed
+    total_failed = (
+        tree_failed
+        + justhtml_tree_failed
+        + (tok_total - tok_passed)
+        + (ser_total - ser_passed - ser_skipped)
+        + (enc_total - enc_passed - enc_skipped)
+        + unit_failed
+    )
 
     # Combine file results to show tokenizer files alongside tree tests
     combined_results = dict(runner.file_results)
     combined_results.update(tok_file_results)
     combined_results.update(ser_file_results)
+    combined_results.update(enc_file_results)
     combined_results.update(unit_file_results)
 
-    reporter.print_summary(total_passed, total_failed, skipped + ser_skipped, combined_results)
+    reporter.print_summary(
+        total_passed,
+        total_failed,
+        skipped + justhtml_tree_skipped + ser_skipped + enc_skipped,
+        combined_results,
+    )
 
     if total_failed:
         sys.exit(1)
@@ -1423,6 +1464,140 @@ def _run_serializer_tests(config):
                         print(repr(e))
                     print("ACTUAL:")
                     print(repr(actual))
+
+        file_results[rel_name] = {
+            "passed": file_passed,
+            "failed": file_failed,
+            "skipped": file_skipped,
+            "total": file_passed + file_failed + file_skipped,
+            "test_indices": test_indices,
+        }
+
+    return passed, total, skipped, file_results
+
+
+def _parse_encoding_dat_file(path):
+    data = path.read_bytes()
+    tests = []
+    mode = None
+    current_data = []
+    current_encoding = None
+
+    def flush():
+        nonlocal current_data, current_encoding
+        if current_data is None or current_encoding is None:
+            return
+        tests.append((b"".join(current_data), current_encoding))
+        current_data = []
+        current_encoding = None
+
+    for line in data.splitlines(keepends=True):
+        stripped = line.rstrip(b"\r\n")
+        if stripped == b"#data":
+            flush()
+            mode = "data"
+            continue
+        if stripped == b"#encoding":
+            mode = "encoding"
+            continue
+
+        if mode == "data":
+            current_data.append(line)
+        elif mode == "encoding":
+            # First non-empty line after #encoding is the expected label.
+            if current_encoding is None and stripped:
+                current_encoding = stripped.decode("ascii", "ignore")
+        else:
+            continue
+
+    flush()
+    return tests
+
+
+def _run_encoding_tests(config):
+    root = Path("tests")
+    fixture_dir = root / "html5lib-tests-encoding"
+    if not fixture_dir.exists():
+        return 0, 0, 0, {}
+
+    test_files = sorted([p for p in fixture_dir.rglob("*.dat") if p.is_file()])
+    if not test_files:
+        print("No encoding tests found.")
+        return 0, 0, 0, {}
+
+    verbosity = config.get("verbosity", 0)
+    quiet = config.get("quiet", False)
+    test_specs = config.get("test_specs", [])
+
+    total = 0
+    passed = 0
+    skipped = 0
+    file_results = {}
+
+    for path in test_files:
+        filename = path.name
+        rel_name = str(path.relative_to(root))
+
+        if test_specs:
+            should_run_file = False
+            specific_indices = None
+            for spec in test_specs:
+                if ":" in spec:
+                    spec_file, indices_str = spec.split(":", 1)
+                    if spec_file in rel_name or spec_file in filename:
+                        should_run_file = True
+                        specific_indices = set(int(i) for i in indices_str.split(",") if i)
+                        break
+                else:
+                    if spec in rel_name or spec in filename:
+                        should_run_file = True
+                        break
+            if not should_run_file:
+                continue
+        else:
+            specific_indices = None
+
+        tests = _parse_encoding_dat_file(path)
+        file_passed = 0
+        file_failed = 0
+        file_skipped = 0
+        test_indices = []
+
+        is_scripted = "scripted" in path.parts
+
+        for idx, (data, expected_label) in enumerate(tests):
+            if specific_indices is not None and idx not in specific_indices:
+                continue
+
+            total += 1
+
+            expected = normalize_encoding_label(expected_label)
+            if expected is None:
+                skipped += 1
+                file_skipped += 1
+                test_indices.append(("skip", idx))
+                continue
+
+            if is_scripted:
+                skipped += 1
+                file_skipped += 1
+                test_indices.append(("skip", idx))
+                continue
+
+            sniffed = sniff_html_encoding(data)
+            actual = sniffed[0] if isinstance(sniffed, tuple) else sniffed
+
+            if actual == expected:
+                passed += 1
+                file_passed += 1
+                test_indices.append(("pass", idx))
+            else:
+                file_failed += 1
+                test_indices.append(("fail", idx))
+                if verbosity >= 1 and not quiet:
+                    print(f"\nENCODING FAIL: {rel_name}:{idx}")
+                    print(f"EXPECTED: {expected!r} (raw: {expected_label!r})")
+                    print(f"ACTUAL:   {actual!r}")
 
         file_results[rel_name] = {
             "passed": file_passed,

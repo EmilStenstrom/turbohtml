@@ -1,3 +1,7 @@
+html5lib-tests-encoding/scripted/tests1.dat: 0/0 (N/A) [s] (1 skipped)
+html5lib-tests-encoding/test-yahoo-jp.dat: 1/1 (100%) [.]
+html5lib-tests-encoding/tests1.dat: 59/59 (100%) [...........................................................]
+html5lib-tests-encoding/tests2.dat: 22/22 (100%) [......................]
 html5lib-tests-serializer/core.test: 23/23 (100%) [.......................]
 html5lib-tests-serializer/injectmeta.test: 9/9 (100%) [.........]
 html5lib-tests-serializer/optionaltags.test: 181/181 (100%) [.....................................................................................................................................................................................]
@@ -84,10 +88,11 @@ justhtml-tests/tokenizer_edge_cases.test: 35/35 (100%) [........................
 justhtml-tests/treebuilder_coverage.dat: 17/17 (100%) [.................]
 justhtml-tests/xml_coercion.dat: 4/4 (100%) [....]
 justhtml-tests/xml_coercion_coverage.test: 2/2 (100%) [..]
+test_encoding.py: 9/9 (100%) [.........]
 test_errors.py: 41/41 (100%) [.........................................]
 test_node.py: 33/33 (100%) [.................................]
 test_selector.py: 226/226 (100%) [..................................................................................................................................................................................................................................]
 test_serialize.py: 20/20 (100%) [....................]
 test_stream.py: 7/7 (100%) [.......]
 
-PASSED: 9236/9236 passed (100.0%), 12 skipped
+PASSED: 9327/9327 passed (100.0%), 13 skipped

@@ -77,10 +77,12 @@ python run_tests.py
 
 Output:
 ```
-PASSED: 9236/9236 passed (100.0%), 12 skipped
+PASSED: 9327/9327 passed (100.0%), 13 skipped
 ```
 
-The 12 skipped tests are `#script-on` tests that require JavaScript execution during parsing - something no HTML parser can do without a JS engine.
+The skipped tests are scripted (`#script-on`) cases that require JavaScript execution during parsing.
+
+Per-file results are also written to `test-summary.txt`, with suite prefixes like `html5lib-tests-tree/...`, `html5lib-tests-tokenizer/...`, `html5lib-tests-serializer/...`, `html5lib-tests-encoding/...`, and `justhtml-tests/...`.
 
 ### 2. 100% Code Coverage
 
@@ -146,6 +148,7 @@ cd tests
 ln -s ../../html5lib-tests/tokenizer html5lib-tests-tokenizer
 ln -s ../../html5lib-tests/tree-construction html5lib-tests-tree
 ln -s ../../html5lib-tests/serializer html5lib-tests-serializer
+ln -s ../../html5lib-tests/encoding html5lib-tests-encoding
 cd ..
 
 # Run all tests

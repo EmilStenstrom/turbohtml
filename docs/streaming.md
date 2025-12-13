@@ -22,6 +22,30 @@ for event, data in stream(html):
     print(event, data)
 ```
 
+## Byte Input and Encodings
+
+`stream()` also accepts bytes (`bytes`, `bytearray`, `memoryview`). In that case, the input is decoded using HTML encoding sniffing (including a `windows-1252` fallback for legacy documents).
+
+```python
+from justhtml import stream
+
+data = open("page.html", "rb").read()
+for event, data in stream(data):
+    ...
+```
+
+To override decoding when you already know the correct encoding:
+
+```python
+from justhtml import stream
+
+data = open("page.html", "rb").read()
+for event, data in stream(data, encoding="utf-8"):
+    ...
+```
+
+See [Encoding & Byte Input](encoding.md) for details.
+
 Output:
 ```
 start ('html', {})

@@ -1,5 +1,6 @@
 """Minimal JustHTML parser entry point."""
 
+from .encoding import decode_html
 from .tokenizer import Tokenizer, TokenizerOpts
 from .treebuilder import TreeBuilder
 
@@ -26,7 +27,7 @@ class StrictModeError(SyntaxError):
 
 
 class JustHTML:
-    __slots__ = ("debug", "errors", "fragment_context", "root", "tokenizer", "tree_builder")
+    __slots__ = ("debug", "encoding", "errors", "fragment_context", "root", "tokenizer", "tree_builder")
 
     def __init__(
         self,
@@ -34,6 +35,7 @@ class JustHTML:
         *,
         collect_errors=False,
         debug=False,
+        encoding=None,
         fragment_context=None,
         iframe_srcdoc=False,
         strict=False,
@@ -42,6 +44,15 @@ class JustHTML:
     ):
         self.debug = bool(debug)
         self.fragment_context = fragment_context
+        self.encoding = None
+
+        if isinstance(html, (bytes, bytearray, memoryview)):
+            html, chosen = decode_html(bytes(html), transport_encoding=encoding)
+            self.encoding = chosen
+        elif html is not None:
+            html = str(html)
+        else:
+            html = ""
 
         # Enable error collection if strict mode is on
         should_collect = collect_errors or strict
@@ -67,7 +78,7 @@ class JustHTML:
         # Link tokenizer to tree_builder for position info
         self.tree_builder.tokenizer = self.tokenizer
 
-        self.tokenizer.run(html or "")
+        self.tokenizer.run(html)
         self.root = self.tree_builder.finish()
 
         # Merge errors from both tokenizer and tree builder
