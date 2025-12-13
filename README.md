@@ -11,7 +11,7 @@ It implements the official WHATWG HTML5 specification exactly. If a browser can 
 
 - **Verified Compliance**: Passes all 9,000+ tests in the official [html5lib-tests](https://github.com/html5lib/html5lib-tests) suite (used by browser vendors).
 - **100% Coverage**: Every line and branch of code is covered by integration tests.
-- **Fuzz Tested**: Has parsed 3 million randomized broken HTML documents to ensure it never crashes or hangs (see benchmarks/fuzz.py).
+- **Fuzz Tested**: Has parsed 6 million randomized broken HTML documents to ensure it never crashes or hangs (see benchmarks/fuzz.py).
 - **Living Standard**: It tracks the living standard, not a snapshot from 2012.
 
 ### 2. Just... Python 🐍
