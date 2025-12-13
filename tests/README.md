@@ -18,6 +18,7 @@ JustHTML uses the official [html5lib-tests](https://github.com/html5lib/html5lib
     cd tests
     ln -s ../../html5lib-tests/tokenizer html5lib-tests-tokenizer
     ln -s ../../html5lib-tests/tree-construction html5lib-tests-tree
+    ln -s ../../html5lib-tests/serializer html5lib-tests-serializer
     ```
 
 ## Running tests

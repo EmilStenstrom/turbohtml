@@ -37,6 +37,7 @@ jobs:
           cd tests
           ln -s ../../html5lib-tests/tokenizer html5lib-tests-tokenizer
           ln -s ../../html5lib-tests/tree-construction html5lib-tests-tree
+          ln -s ../../html5lib-tests/serializer html5lib-tests-serializer
 
       - name: Run pre-commit
         uses: pre-commit/action@v3.0.1
