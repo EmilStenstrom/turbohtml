@@ -26,6 +26,8 @@ Thanks for considering contributing to JustHTML! This document explains how to s
 
 The test suite uses the html5lib test cases plus additional tests for selector functionality.
 
+If you want to run the full html5lib test suite locally, clone `html5lib-tests` next to this repository and create the symlinks described in [tests/README.md](tests/README.md) (tokenizer, tree-construction, and serializer).
+
 ```bash
 # Run all tests
 python run_tests.py

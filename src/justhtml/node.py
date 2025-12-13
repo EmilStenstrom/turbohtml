@@ -138,7 +138,7 @@ class SimpleDomNode:
 
 
 class ElementNode(SimpleDomNode):
-    __slots__ = ()
+    __slots__ = ("template_content",)
 
     def __init__(self, name, attrs, namespace):
         self.name = name
@@ -147,6 +147,7 @@ class ElementNode(SimpleDomNode):
         self.namespace = namespace
         self.children = []
         self.attrs = attrs
+        self.template_content = None
 
     def clone_node(self, deep=False):
         clone = ElementNode(self.name, self.attrs.copy() if self.attrs else {}, self.namespace)
@@ -157,7 +158,7 @@ class ElementNode(SimpleDomNode):
 
 
 class TemplateNode(ElementNode):
-    __slots__ = ("template_content",)
+    __slots__ = ()
 
     def __init__(self, name, attrs=None, data=None, namespace=None):
         super().__init__(name, attrs, namespace)

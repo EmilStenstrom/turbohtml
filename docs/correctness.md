@@ -11,7 +11,8 @@ The [html5lib-tests](https://github.com/html5lib/html5lib-tests) repository is t
 The suite contains:
 - **56 tree-construction test files** - Testing how the parser builds the DOM tree
 - **14 tokenizer test files** - Testing lexical analysis of HTML
-- **9,002 individual test cases** - Covering edge cases, error recovery, and spec compliance
+- **5 serializer fixture files** - Testing how token streams are serialized back to HTML
+- **9,200+ individual test cases** - Covering edge cases, error recovery, and spec compliance
 
 ### What the Tests Cover
 
@@ -66,7 +67,7 @@ We run the same test suite against other Python parsers to compare compliance:
 
 ## Our Testing Strategy
 
-### 1. Official Test Suite (9,000+ tests)
+### 1. Official Test Suite (9,200+ tests)
 
 We run the complete html5lib test suite on every commit:
 
@@ -76,7 +77,7 @@ python run_tests.py
 
 Output:
 ```
-PASSED: 9002/9002 passed (100.0%), 12 skipped
+PASSED: 9236/9236 passed (100.0%), 12 skipped
 ```
 
 The 12 skipped tests are `#script-on` tests that require JavaScript execution during parsing - something no HTML parser can do without a JS engine.
@@ -144,6 +145,7 @@ cd justhtml
 cd tests
 ln -s ../../html5lib-tests/tokenizer html5lib-tests-tokenizer
 ln -s ../../html5lib-tests/tree-construction html5lib-tests-tree
+ln -s ../../html5lib-tests/serializer html5lib-tests-serializer
 cd ..
 
 # Run all tests

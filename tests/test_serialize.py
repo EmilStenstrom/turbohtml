@@ -1,7 +1,16 @@
 import unittest
 
 from justhtml import JustHTML
-from justhtml.serialize import to_html, to_test_format
+from justhtml.serialize import (
+    _can_unquote_attr_value,
+    _choose_attr_quote,
+    _escape_attr_value,
+    _escape_text,
+    serialize_end_tag,
+    serialize_start_tag,
+    to_html,
+    to_test_format,
+)
 from justhtml.treebuilder import SimpleDomNode as Node
 from justhtml.treebuilder import TemplateNode
 
@@ -19,9 +28,17 @@ class TestSerialize(unittest.TestCase):
         html = '<div id="test" class="foo" data-val="x&y"></div>'
         doc = JustHTML(html)
         output = doc.root.to_html()
-        assert 'id="test"' in output
-        assert 'class="foo"' in output
-        assert 'data-val="x&amp;y"' in output  # Check escaping
+        assert ("id=test" in output) or ('id="test"' in output)
+        assert ("class=foo" in output) or ('class="foo"' in output)
+        assert ("data-val=x&amp;y" in output) or ('data-val="x&amp;y"' in output)  # Check escaping
+
+    def test_text_escaping(self):
+        frag = Node("#document-fragment")
+        div = Node("div")
+        frag.append_child(div)
+        div.append_child(Node("#text", data="a<b&c"))
+        output = to_html(frag, pretty=False)
+        assert output == "<div>a&lt;b&amp;c</div>"
 
     def test_void_elements(self):
         html = "<br><hr><img>"
@@ -79,6 +96,31 @@ class TestSerialize(unittest.TestCase):
         doc = JustHTML(html)
         output = doc.root.to_html()
         assert "<div data-val></div>" in output
+
+    def test_serialize_start_tag_quotes(self):
+        # Prefer single quotes if the value contains a double quote but no single quote
+        tag = serialize_start_tag("span", {"title": 'foo"bar'})
+        assert tag == "<span title='foo\"bar'>"
+
+        # Otherwise use double quotes and escape embedded double quotes
+        tag = serialize_start_tag("span", {"title": "foo'bar\"baz"})
+        assert tag == '<span title="foo\'bar&quot;baz">'
+
+        # Unquoted when safe
+        assert serialize_start_tag("span", {"title": "foo"}) == "<span title=foo>"
+        assert _can_unquote_attr_value("foo<bar") is True
+        assert _can_unquote_attr_value("foo>bar") is False
+        assert _can_unquote_attr_value('foo"bar') is False
+        assert _can_unquote_attr_value("foo bar") is False
+
+    def test_serialize_end_tag(self):
+        assert serialize_end_tag("span") == "</span>"
+
+    def test_serializer_private_helpers_none(self):
+        assert _escape_text(None) == ""
+        assert _choose_attr_quote(None) == '"'
+        assert _escape_attr_value(None, '"') == ""
+        assert _can_unquote_attr_value(None) is False
 
     def test_mixed_content_whitespace(self):
         html = "<div>   <p></p></div>"
