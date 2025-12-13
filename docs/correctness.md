@@ -91,7 +91,7 @@ coverage run run_tests.py && coverage report --fail-under=100
 
 This isn't just vanity - during development, we discovered that uncovered code was often dead code. Removing it made the parser faster and cleaner.
 
-### 3. Fuzz Testing (3+ Million Cases)
+### 3. Fuzz Testing (millions of cases)
 
 We generate random malformed HTML to find crashes and hangs:
 
