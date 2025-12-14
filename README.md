@@ -77,12 +77,49 @@ See the **[Quickstart Guide](docs/quickstart.md)** for more examples including t
 
 ## Command Line
 
+If you installed JustHTML (for example with `pip install justhtml` or `pip install -e .`), you can use the `justhtml` command.
+If you don't have it available, use the equivalent `python -m justhtml ...` form instead.
+
 ```bash
 # Pretty-print an HTML file
-python -m justhtml index.html
+justhtml index.html
 
 # Parse from stdin
-curl -s https://example.com | python -m justhtml -
+curl -s https://example.com | justhtml -
+
+# Select nodes and output text
+justhtml index.html --selector "main p" --format text
+
+# Select nodes and output Markdown (subset of GFM)
+justhtml index.html --selector "article" --format markdown
+
+# Select nodes and output HTML
+justhtml index.html --selector "a" --format html
+```
+
+```bash
+# Example: extract Markdown from GitHub README HTML
+curl -s https://github.com/EmilStenstrom/justhtml/ | justhtml - --selector '.markdown-body' --format markdown | head -n 15
+```
+
+Output:
+
+```text
+# JustHTML
+
+[](#justhtml)
+
+A pure Python HTML5 parser that just works. No C extensions to compile. No system dependencies to install. No complex API to learn.
+
+**[📖 Read the full documentation here](/EmilStenstrom/justhtml/blob/main/docs/index.md)**
+
+## Why use JustHTML?
+
+[](#why-use-justhtml)
+
+### 1. Just... Correct ✅
+
+[](#1-just-correct-)
 ```
 
 ## Contributing

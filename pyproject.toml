@@ -1,7 +1,7 @@
 [project]
 name = "justhtml"
 authors = [{ name = "Emil Stenström", email = "emil@emilstenstrom.se" }]
-version = "0.9.0"
+version = "0.10.0"
 description = "A pure Python HTML5 parser that just works."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -32,6 +32,9 @@ dev = [
 [project.urls]
 Homepage = "https://github.com/emilstenstrom/justhtml"
 Issues = "https://github.com/emilstenstrom/justhtml/issues"
+
+[project.scripts]
+justhtml = "justhtml.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -73,7 +76,6 @@ ignore = [
 [tool.coverage.run]
 branch = true
 source = ["src/justhtml"]
-omit = ["src/justhtml/__main__.py"]
 
 [tool.coverage.report]
 fail_under = 100
