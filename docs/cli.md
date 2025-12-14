@@ -8,7 +8,7 @@ JustHTML ships with a small CLI for parsing HTML and extracting HTML/text/Markdo
 
 If you installed JustHTML (for example with `pip install justhtml` or `pip install -e .`), you can use the `justhtml` command.
 
-If you don't have it available, use the equivalent `python -m justhtml ...` form instead.
+If you don't have it available, use the equivalent `python -m justhtml ...` form.
 
 ## Basic usage
 

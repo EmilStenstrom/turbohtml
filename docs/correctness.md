@@ -12,7 +12,8 @@ The suite contains:
 - **56 tree-construction test files** - Testing how the parser builds the DOM tree
 - **14 tokenizer test files** - Testing lexical analysis of HTML
 - **5 serializer fixture files** - Testing how token streams are serialized back to HTML
-- **9,200+ individual test cases** - Covering edge cases, error recovery, and spec compliance
+- **Encoding sniffing tests** - Testing BOM/meta charset/transport overrides and legacy fallbacks
+- **9k+ individual test cases** - Covering edge cases, error recovery, and spec compliance
 
 ### What the Tests Cover
 
@@ -26,6 +27,7 @@ The tests verify correct handling of:
 - **Character references** - Named entities (`&amp;`), numeric (`&#65;`), and edge cases
 - **Script/style handling** - RAWTEXT and RCDATA content models
 - **DOCTYPE parsing** - Quirks mode detection
+- **Encoding sniffing** - BOM detection, `<meta charset=...>`, transport overrides (`encoding=`), and `windows-1252` fallback
 
 ### Example Test Case
 
@@ -67,7 +69,7 @@ We run the same test suite against other Python parsers to compare compliance:
 
 ## Our Testing Strategy
 
-### 1. Official Test Suite (9,200+ tests)
+### 1. Official Test Suite (9k+ tests)
 
 We run the complete html5lib test suite on every commit:
 
@@ -77,12 +79,17 @@ python run_tests.py
 
 Output:
 ```
-PASSED: 9327/9327 passed (100.0%), 13 skipped
+PASSED: 9k+ tests (100%), a few skipped
 ```
 
 The skipped tests are scripted (`#script-on`) cases that require JavaScript execution during parsing.
 
 Per-file results are also written to `test-summary.txt`, with suite prefixes like `html5lib-tests-tree/...`, `html5lib-tests-tokenizer/...`, `html5lib-tests-serializer/...`, `html5lib-tests-encoding/...`, and `justhtml-tests/...`.
+
+The encoding coverage comes from both:
+
+- The official `html5lib-tests/encoding` fixtures (exposed in this repo as `tests/html5lib-tests-encoding/...`).
+- JustHTML's own unit tests (see `tests/test_encoding.py`) which exercise byte input, encoding label normalization, BOM handling, and meta charset prescanning.
 
 ### 2. 100% Code Coverage
 

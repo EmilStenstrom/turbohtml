@@ -19,7 +19,7 @@ A pure Python HTML5 parser that just works.
 
 | Feature | JustHTML |
 |---------|----------|
-| HTML5 Compliance | ✅ 100% (passes all 9,200+ official tests) |
+| HTML5 Compliance | ✅ 100% (passes all 9k+ official tests) |
 | Pure Python | ✅ Zero dependencies |
 | Query API | ✅ CSS selectors |
 | Speed | ⚡ Fastest pure-Python HTML5 parser |
