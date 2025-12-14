@@ -95,3 +95,17 @@ class JustHTML:
     def to_html(self, pretty=True, indent_size=2):
         """Serialize the document to HTML. Delegates to root.to_html()."""
         return self.root.to_html(indent=0, indent_size=indent_size, pretty=pretty)
+
+    def to_text(self, separator=" ", strip=True):
+        """Return the document's concatenated text.
+
+        Delegates to `root.to_text(separator=..., strip=...)`.
+        """
+        return self.root.to_text(separator=separator, strip=strip)
+
+    def to_markdown(self):
+        """Return a GitHub Flavored Markdown representation.
+
+        Delegates to `root.to_markdown()`.
+        """
+        return self.root.to_markdown()

@@ -35,6 +35,31 @@ JustHTML(html, strict=False, collect_errors=False, encoding=None, fragment_conte
 
 ### Methods
 
+#### `to_text()`
+
+Return the document's concatenated text.
+
+```python
+doc = JustHTML("<p>Hello <b>world</b></p>")
+doc.to_text()  # "Hello world"  (separator=" ", strip=True)
+```
+
+Parameters:
+
+- `separator` (default: `" "`): join string between text nodes
+- `strip` (default: `True`): strip each text node and drop empties
+
+#### `to_markdown()`
+
+Return a pragmatic subset of GitHub Flavored Markdown (GFM).
+
+Tables (`<table>`) and images (`<img>`) are preserved as raw HTML.
+
+```python
+doc = JustHTML("<h1>Title</h1><p>Hello <b>world</b></p>")
+doc.to_markdown()  # "# Title\n\nHello **world**"
+```
+
 #### `query(selector)`
 
 Find all elements matching a CSS selector.
@@ -57,6 +82,7 @@ Represents an element, text, comment, or document node.
 | `attrs` | `dict` | Attribute dictionary (empty for non-elements) |
 | `children` | `list` | Child nodes |
 | `parent` | `SimpleDomNode` | Parent node (or `None` for root) |
+| `text` | `str` | Node-local text value. For text nodes this is the node data, otherwise `""`. Use `to_text()` for textContent semantics. |
 
 ### Methods
 
@@ -76,6 +102,22 @@ Find descendants matching a CSS selector.
 
 ```python
 div.query("p.intro")  # Search within this node
+```
+
+#### `to_text()`
+
+Return the node's concatenated text.
+
+```python
+node.to_text()
+```
+
+#### `to_markdown()`
+
+Return a pragmatic subset of GitHub Flavored Markdown (GFM) for this subtree.
+
+```python
+node.to_markdown()
 ```
 
 ---

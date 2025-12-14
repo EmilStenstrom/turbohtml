@@ -134,7 +134,7 @@ def _node_to_html(node, indent=0, indent_size=2, pretty=True):
     all_text = all(c.name == "#text" for c in children)
 
     if all_text and pretty:
-        return f"{prefix}{open_tag}{_escape_text(node.text)}{serialize_end_tag(name)}"
+        return f"{prefix}{open_tag}{_escape_text(node.to_text(separator='', strip=False))}{serialize_end_tag(name)}"
 
     # Render with child indentation
     parts = [f"{prefix}{open_tag}"]

@@ -6,6 +6,7 @@ A pure Python HTML5 parser that just works.
 
 - **[Quickstart](quickstart.md)** - Get up and running in 5 minutes
 - **[API Reference](api.md)** - Complete public API documentation
+- **[Extracting Text](text.md)** - `to_text()` and `to_markdown()`
 - **[CSS Selectors](selectors.md)** - Query elements with familiar CSS syntax
 - **[Fragment Parsing](fragments.md)** - Parse HTML fragments in context
 - **[Streaming](streaming.md)** - Memory-efficient parsing for large files

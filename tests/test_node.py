@@ -1,6 +1,15 @@
 import unittest
 
-from justhtml.node import ElementNode, SimpleDomNode, TemplateNode, TextNode
+from justhtml import JustHTML
+from justhtml.node import (
+    ElementNode,
+    SimpleDomNode,
+    TemplateNode,
+    TextNode,
+    _markdown_code_span,
+    _MarkdownBuilder,
+    _to_markdown_walk,
+)
 
 
 class TestNode(unittest.TestCase):
@@ -8,7 +17,9 @@ class TestNode(unittest.TestCase):
         node = SimpleDomNode("div")
         text = TextNode("Hello")
         node.append_child(text)
-        assert node.text == "Hello"
+        assert node.text == ""
+        assert text.text == "Hello"
+        assert node.to_text() == "Hello"
 
     def test_text_property_nested(self):
         root = SimpleDomNode("div")
@@ -20,8 +31,10 @@ class TestNode(unittest.TestCase):
         root.append_child(span)
         span.append_child(text2)
 
-        assert root.text == "Hello World"
-        assert span.text == "World"
+        assert root.text == ""
+        assert span.text == ""
+        assert root.to_text() == "Hello World"
+        assert span.to_text() == "World"
 
     def test_text_property_empty(self):
         node = SimpleDomNode("div")
@@ -30,6 +43,212 @@ class TestNode(unittest.TestCase):
     def test_text_property_comment(self):
         node = SimpleDomNode("#comment", data="comment")
         assert node.text == ""
+
+    def test_to_text_matches_textcontent(self):
+        root = SimpleDomNode("div")
+        span = SimpleDomNode("span")
+        root.append_child(TextNode("Hello "))
+        root.append_child(span)
+        span.append_child(TextNode("World"))
+
+        assert root.to_text() == "Hello World"
+        assert span.to_text() == "World"
+        assert root.to_text(separator="", strip=False) == "Hello World"
+        assert root.to_text(separator="", strip=True) == "HelloWorld"
+
+    def test_to_text_skips_empty_and_whitespace_segments_by_default(self):
+        root = SimpleDomNode("div")
+        root.append_child(TextNode(""))
+        root.append_child(TextNode("   "))
+        root.append_child(TextNode("A"))
+        assert root.to_text() == "A"
+
+    def test_to_text_empty_subtree(self):
+        root = SimpleDomNode("div")
+        assert root.to_text() == ""
+
+    def test_textnode_to_text_strip_false(self):
+        t = TextNode("  A  ")
+        assert t.to_text(strip=False) == "  A  "
+        assert t.to_text(strip=True) == "A"
+
+    def test_textnode_to_text_none_data(self):
+        t = TextNode(None)
+        assert t.to_text() == ""
+
+    def test_to_text_includes_template_content(self):
+        template = TemplateNode("template", namespace="html")
+        template.template_content.append_child(TextNode("Inside"))
+
+        # `.text` only sees direct children, while `to_text()` includes template content.
+        assert template.text == ""
+        assert template.to_text() == "Inside"
+
+    def test_to_text_simple_dom_text_node_branch(self):
+        node = SimpleDomNode("#text", data="Hi")
+        assert node.to_text() == "Hi"
+
+    def test_justhtml_to_text(self):
+        doc = JustHTML("<p>Hello</p><p>World</p>")
+        assert doc.to_text() == "Hello World"
+        assert doc.to_text(separator="", strip=True) == "HelloWorld"
+
+    def test_to_markdown_headings_paragraphs_and_inline(self):
+        doc = JustHTML("<h1>Title</h1><p>Hello <b>world</b> <em>ok</em> <a href='https://e.com'>link</a> a*b</p>")
+
+        md = doc.to_markdown()
+        assert md.startswith("# Title\n\n")
+        assert "Hello **world** *ok* [link](https://e.com) a\\*b" in md
+
+    def test_to_markdown_code_inline_and_block(self):
+        doc = JustHTML("<pre>code`here\n</pre><p>inline <code>a`b</code></p>")
+        md = doc.to_markdown()
+        assert "```\ncode`here\n```" in md
+        # Inline code uses a longer fence when content contains backticks.
+        assert "inline ``a`b``" in md
+
+    def test_to_markdown_blockquote_and_br(self):
+        doc = JustHTML("<blockquote><p>Q<br>R</p></blockquote>")
+        assert doc.to_markdown() == "> Q\n> R"
+
+    def test_to_markdown_lists(self):
+        doc = JustHTML("<ul><li>One</li><li>Two</li></ul><ol><li>A</li><li>B</li></ol>")
+        md = doc.to_markdown()
+        assert "- One\n- Two" in md
+        assert "1. A\n2. B" in md
+
+    def test_to_markdown_tables_and_images_are_html(self):
+        doc = JustHTML("<p>Hi<img src=x alt=y>there</p><table><tr><td>A</td></tr></table>")
+        md = doc.to_markdown()
+        assert "<img src=x alt=y>" in md
+        # HTML5 parsing inserts <tbody>; ensure the table subtree is preserved as HTML.
+        assert "<table" in md
+        assert "<td>A</td>" in md
+        assert "</table>" in md
+
+    def test_to_markdown_ignores_comment_and_doctype(self):
+        root = SimpleDomNode("div")
+        root.append_child(SimpleDomNode("#comment", data="nope"))
+        root.append_child(SimpleDomNode("!doctype", data="html"))
+        root.append_child(TextNode("ok"))
+        assert root.to_markdown() == "ok"
+
+    def test_to_markdown_preserves_script_whitespace(self):
+        # script/style are treated as whitespace-preserving containers.
+        root = SimpleDomNode("div")
+        script = SimpleDomNode("script")
+        # Include a trailing newline to exercise raw-newline tracking.
+        script.append_child(TextNode("var x = 1;\nvar y = 2;\n"))
+        root.append_child(script)
+        assert root.to_markdown() == "var x = 1;\nvar y = 2;"
+
+    def test_to_markdown_textnode_method(self):
+        t = TextNode("a*b")
+        assert t.to_markdown() == "a\\*b"
+
+    def test_to_markdown_empty_textnode(self):
+        # Exercises empty-string handling in markdown helpers and builder.
+        t = TextNode("")
+        assert t.to_markdown() == ""
+
+    def test_to_markdown_br_on_empty_buffer_and_multiple_newlines(self):
+        # Exercises newline logic when buffer is empty and when newline_count is already >= 2.
+        doc = JustHTML("<br><br><br>")
+        assert doc.to_markdown() == ""
+
+    def test_to_markdown_empty_blocks_and_hr(self):
+        doc = JustHTML("<hr><h2></h2><p></p><pre></pre><blockquote></blockquote>")
+        md = doc.to_markdown()
+        assert "---" in md
+        assert "##" in md
+        assert "```\n```" in md
+
+    def test_to_markdown_list_skips_non_li_children(self):
+        # Newlines between list items become text nodes; list renderer should skip them.
+        doc = JustHTML("<ul>\n<li>One</li>\n</ul>")
+        assert doc.to_markdown() == "- One"
+
+    def test_to_markdown_link_without_href(self):
+        doc = JustHTML("<p><a>text</a></p>")
+        assert doc.to_markdown() == "[text]"
+
+    def test_markdown_code_span_edge_cases(self):
+        # Cover helper edge cases (None input and leading/trailing backticks).
+        assert _markdown_code_span(None) == "``"
+        assert _markdown_code_span("`x") == "`` `x ``"
+        assert _markdown_code_span("x`") == "`` x` ``"
+        # Exercise backtick runs that don't increase the longest run.
+        assert _markdown_code_span("a`b`") == "`` a`b` ``"
+
+    def test_to_markdown_pre_rstrips_trailing_spaces_before_newline(self):
+        doc = JustHTML("<pre>X   \n</pre>")
+        assert doc.to_markdown() == "```\nX\n```"
+
+    def test_to_markdown_document_container_direct(self):
+        doc = SimpleDomNode("#document")
+        doc.append_child(SimpleDomNode("p"))
+        assert doc.to_markdown() == ""
+
+    def test_markdown_builder_text_preserve_whitespace_branch(self):
+        b = _MarkdownBuilder()
+        b.text("x\n", preserve_whitespace=True)
+        assert b.finish() == "x"
+
+    def test_markdown_builder_text_leading_whitespace_does_not_add_space(self):
+        # Covers the branch where pending whitespace exists but we are at start of output.
+        b = _MarkdownBuilder()
+        b.text("   a")
+        assert b.finish() == "a"
+
+    def test_to_markdown_raw_with_internal_newline_no_trailing_newline(self):
+        # Covers raw() newline handling when the string contains a newline but doesn't end with one.
+        root = SimpleDomNode("div")
+        style = SimpleDomNode("style")
+        style.append_child(TextNode("a {\n  b: c; }"))
+        root.append_child(style)
+        assert "a {\n  b: c; }" in root.to_markdown()
+
+    def test_to_markdown_unknown_container_walks_children(self):
+        doc = JustHTML("<span>Hi</span>")
+        assert doc.to_markdown() == "Hi"
+
+    def test_markdown_builder_raw_inserts_pending_space(self):
+        b = _MarkdownBuilder()
+        b.text("a ")
+        b.raw("**")
+        b.raw("b")
+        assert b.finish() == "a **b"
+
+    def test_markdown_builder_raw_does_not_insert_space_before_newline(self):
+        # Covers the branch where pending space exists but raw output starts with whitespace.
+        b = _MarkdownBuilder()
+        b.text("a ")
+        b.raw("\n")
+        assert b.finish() == "a"
+
+    def test_markdown_walk_document_children_loop(self):
+        b = _MarkdownBuilder()
+        doc = SimpleDomNode("#document")
+        doc.append_child(TextNode("Hi"))
+        _to_markdown_walk(doc, b, preserve_whitespace=False, list_depth=0)
+        assert b.finish() == "Hi"
+
+    def test_markdown_walk_document_without_children(self):
+        # Covers the document-container branch when there are no children.
+        doc = SimpleDomNode("#document")
+        assert doc.to_markdown() == ""
+
+    def test_to_markdown_includes_template_content(self):
+        template = TemplateNode("template", namespace="html")
+        template.template_content.append_child(TextNode("T"))
+        assert template.to_markdown() == "T"
+
+    def test_markdown_walk_unknown_tag_children_loop(self):
+        b = _MarkdownBuilder()
+        span = SimpleDomNode("span")
+        span.append_child(TextNode("Hi"))
+        _to_markdown_walk(span, b, preserve_whitespace=False, list_depth=0)
+        assert b.finish() == "Hi"
 
     def test_insert_before(self):
         parent = SimpleDomNode("div")

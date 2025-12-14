@@ -2,6 +2,143 @@ from .selector import query
 from .serialize import to_html
 
 
+def _markdown_escape_text(s):
+    if not s:
+        return ""
+    # Pragmatic: escape the few characters that commonly change Markdown meaning.
+    # Keep this minimal to preserve readability.
+    out = []
+    for ch in s:
+        if ch in "\\`*_[]":
+            out.append("\\")
+        out.append(ch)
+    return "".join(out)
+
+
+def _markdown_code_span(s):
+    if s is None:
+        s = ""
+    # Use a backtick fence longer than any run of backticks inside.
+    longest = 0
+    run = 0
+    for ch in s:
+        if ch == "`":
+            run += 1
+            if run > longest:
+                longest = run
+        else:
+            run = 0
+    fence = "`" * (longest + 1)
+    # CommonMark requires a space if the content starts/ends with backticks.
+    needs_space = s.startswith("`") or s.endswith("`")
+    if needs_space:
+        return f"{fence} {s} {fence}"
+    return f"{fence}{s}{fence}"
+
+
+class _MarkdownBuilder:
+    __slots__ = ("_buf", "_newline_count", "_pending_space")
+
+    def __init__(self):
+        self._buf = []
+        self._newline_count = 0
+        self._pending_space = False
+
+    def _rstrip_last_segment(self):
+        if not self._buf:
+            return
+        last = self._buf[-1]
+        stripped = last.rstrip(" \t")
+        if stripped != last:
+            self._buf[-1] = stripped
+
+    def newline(self, count=1):
+        for _ in range(count):
+            self._pending_space = False
+            self._rstrip_last_segment()
+            self._buf.append("\n")
+            # Track newlines to make it easy to insert blank lines.
+            if self._newline_count < 2:
+                self._newline_count += 1
+
+    def ensure_newlines(self, count):
+        while self._newline_count < count:
+            self.newline(1)
+
+    def raw(self, s):
+        if not s:
+            return
+
+        # If we've collapsed whitespace and the next output is raw (e.g. "**"),
+        # we still need to emit a single separating space.
+        if self._pending_space:
+            first = s[0]
+            if first not in " \t\n\r\f" and self._buf and self._newline_count == 0:
+                self._buf.append(" ")
+            self._pending_space = False
+
+        self._buf.append(s)
+        if "\n" in s:
+            # Count trailing newlines (cap at 2 for blank-line semantics).
+            trailing = 0
+            i = len(s) - 1
+            while i >= 0 and s[i] == "\n":
+                trailing += 1
+                i -= 1
+            self._newline_count = min(2, trailing)
+            if trailing:
+                self._pending_space = False
+        else:
+            self._newline_count = 0
+
+    def text(self, s, preserve_whitespace=False):
+        if not s:
+            return
+
+        if preserve_whitespace:
+            self.raw(s)
+            return
+
+        for ch in s:
+            if ch in " \t\n\r\f":
+                self._pending_space = True
+                continue
+
+            if self._pending_space:
+                if self._buf and self._newline_count == 0:
+                    self._buf.append(" ")
+                self._pending_space = False
+
+            self._buf.append(ch)
+            self._newline_count = 0
+
+    def finish(self):
+        out = "".join(self._buf)
+        return out.strip(" \t\n")
+
+
+def _to_text_collect(node, parts, strip):
+    name = node.name
+
+    if name == "#text":
+        data = node.data
+        if not data:
+            return
+        if strip:
+            data = data.strip()
+            if not data:
+                return
+        parts.append(data)
+        return
+
+    if node.children:
+        for child in node.children:
+            _to_text_collect(child, parts, strip=strip)
+
+    if isinstance(node, ElementNode) and node.template_content:
+        _to_text_collect(node.template_content, parts, strip=strip)
+
+
 class SimpleDomNode:
     __slots__ = ("attrs", "children", "data", "name", "namespace", "parent")
 
@@ -52,12 +189,39 @@ class SimpleDomNode:
 
     @property
     def text(self):
-        """Return the text content of this node and its descendants."""
+        """Return the node's own text value.
+
+        For text nodes this is the node data. For other nodes this is an empty
+        string. Use `to_text()` to get textContent semantics.
+        """
         if self.name == "#text":
             return self.data or ""
-        if not self.children:
+        return ""
+
+    def to_text(self, separator=" ", strip=True):
+        """Return the concatenated text of this node's descendants.
+
+        - `separator` controls how text nodes are joined (default: a single space).
+        - `strip=True` strips each text node and drops empty segments.
+
+        Template element contents are included via `template_content`.
+        """
+        parts = []
+        _to_text_collect(self, parts, strip=strip)
+        if not parts:
             return ""
-        return "".join(child.text for child in self.children)
+        return separator.join(parts)
+
+    def to_markdown(self):
+        """Return a GitHub Flavored Markdown representation of this subtree.
+
+        This is a pragmatic HTML->Markdown converter intended for readability.
+        - Tables and images are preserved as raw HTML.
+        - Unknown elements fall back to rendering their children.
+        """
+        builder = _MarkdownBuilder()
+        _to_markdown_walk(self, builder, preserve_whitespace=False, list_depth=0)
+        return builder.finish()
 
     def insert_before(self, node, reference_node):
         """
@@ -196,6 +360,19 @@ class TextNode:
         """Return the text content of this node."""
         return self.data or ""
 
+    def to_text(self, separator=" ", strip=True):
+        # Parameters are accepted for API consistency; they don't affect leaf nodes.
+        if self.data is None:
+            return ""
+        if strip:
+            return self.data.strip()
+        return self.data
+
+    def to_markdown(self):
+        builder = _MarkdownBuilder()
+        builder.text(_markdown_escape_text(self.data or ""), preserve_whitespace=False)
+        return builder.finish()
+
     @property
     def children(self):
         """Return empty list for TextNode (leaf node)."""
@@ -207,3 +384,200 @@ class TextNode:
 
     def clone_node(self, deep=False):
         return TextNode(self.data)
+
+
+_MARKDOWN_BLOCK_ELEMENTS = frozenset(
+    {
+        "p",
+        "div",
+        "section",
+        "article",
+        "header",
+        "footer",
+        "main",
+        "nav",
+        "aside",
+        "blockquote",
+        "pre",
+        "ul",
+        "ol",
+        "li",
+        "hr",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "table",
+    }
+)
+
+
+def _to_markdown_walk(node, builder, preserve_whitespace, list_depth):
+    name = node.name
+
+    if name == "#text":
+        if preserve_whitespace:
+            builder.raw(node.data or "")
+        else:
+            builder.text(_markdown_escape_text(node.data or ""), preserve_whitespace=False)
+        return
+
+    if name == "br":
+        builder.newline(1)
+        return
+
+    # Comments/doctype don't contribute.
+    if name == "#comment" or name == "!doctype":
+        return
+
+    # Document containers contribute via descendants.
+    if name.startswith("#"):
+        if node.children:
+            for child in node.children:
+                _to_markdown_walk(child, builder, preserve_whitespace, list_depth)
+        return
+
+    tag = name.lower()
+
+    # Preserve <img> and <table> as HTML.
+    if tag == "img":
+        builder.raw(node.to_html(indent=0, indent_size=2, pretty=False))
+        return
+
+    if tag == "table":
+        builder.ensure_newlines(2 if builder._buf else 0)
+        builder.raw(node.to_html(indent=0, indent_size=2, pretty=False))
+        builder.ensure_newlines(2)
+        return
+
+    # Headings.
+    if tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+        builder.ensure_newlines(2 if builder._buf else 0)
+        level = int(tag[1])
+        builder.raw("#" * level)
+        builder.raw(" ")
+        if node.children:
+            for child in node.children:
+                _to_markdown_walk(child, builder, preserve_whitespace=False, list_depth=list_depth)
+        builder.ensure_newlines(2)
+        return
+
+    # Horizontal rule.
+    if tag == "hr":
+        builder.ensure_newlines(2 if builder._buf else 0)
+        builder.raw("---")
+        builder.ensure_newlines(2)
+        return
+
+    # Code blocks.
+    if tag == "pre":
+        builder.ensure_newlines(2 if builder._buf else 0)
+        code = node.to_text(separator="", strip=False)
+        builder.raw("```")
+        builder.newline(1)
+        if code:
+            builder.raw(code.rstrip("\n"))
+            builder.newline(1)
+        builder.raw("```")
+        builder.ensure_newlines(2)
+        return
+
+    # Inline code.
+    if tag == "code" and not preserve_whitespace:
+        code = node.to_text(separator="", strip=False)
+        builder.raw(_markdown_code_span(code))
+        return
+
+    # Paragraph-like blocks.
+    if tag == "p":
+        builder.ensure_newlines(2 if builder._buf else 0)
+        if node.children:
+            for child in node.children:
+                _to_markdown_walk(child, builder, preserve_whitespace=False, list_depth=list_depth)
+        builder.ensure_newlines(2)
+        return
+
+    # Blockquotes.
+    if tag == "blockquote":
+        builder.ensure_newlines(2 if builder._buf else 0)
+        inner = _MarkdownBuilder()
+        if node.children:
+            for child in node.children:
+                _to_markdown_walk(child, inner, preserve_whitespace=False, list_depth=list_depth)
+        text = inner.finish()
+        if text:
+            lines = text.split("\n")
+            for i, line in enumerate(lines):
+                if i:
+                    builder.newline(1)
+                builder.raw("> ")
+                builder.raw(line)
+        builder.ensure_newlines(2)
+        return
+
+    # Lists.
+    if tag in {"ul", "ol"}:
+        builder.ensure_newlines(2 if builder._buf else 0)
+        ordered = tag == "ol"
+        idx = 1
+        for child in node.children or []:
+            if child.name.lower() != "li":
+                continue
+            if idx > 1:
+                builder.newline(1)
+            indent = "  " * list_depth
+            marker = f"{idx}. " if ordered else "- "
+            builder.raw(indent)
+            builder.raw(marker)
+            # Render list item content inline-ish.
+            for li_child in child.children or []:
+                _to_markdown_walk(li_child, builder, preserve_whitespace=False, list_depth=list_depth + 1)
+            idx += 1
+        builder.ensure_newlines(2)
+        return
+
+    # Emphasis/strong.
+    if tag in {"em", "i"}:
+        builder.raw("*")
+        for child in node.children or []:
+            _to_markdown_walk(child, builder, preserve_whitespace=False, list_depth=list_depth)
+        builder.raw("*")
+        return
+
+    if tag in {"strong", "b"}:
+        builder.raw("**")
+        for child in node.children or []:
+            _to_markdown_walk(child, builder, preserve_whitespace=False, list_depth=list_depth)
+        builder.raw("**")
+        return
+
+    # Links.
+    if tag == "a":
+        href = ""
+        if node.attrs and "href" in node.attrs and node.attrs["href"] is not None:
+            href = str(node.attrs["href"])
+
+        builder.raw("[")
+        for child in node.children or []:
+            _to_markdown_walk(child, builder, preserve_whitespace=False, list_depth=list_depth)
+        builder.raw("]")
+        if href:
+            builder.raw("(")
+            builder.raw(href)
+            builder.raw(")")
+        return
+
+    # Containers / unknown tags: recurse into children.
+    next_preserve = preserve_whitespace or (tag in {"textarea", "script", "style"})
+    if node.children:
+        for child in node.children:
+            _to_markdown_walk(child, builder, next_preserve, list_depth)
+
+    if isinstance(node, ElementNode) and node.template_content:
+        _to_markdown_walk(node.template_content, builder, next_preserve, list_depth)
+
+    # Add spacing after block containers to keep output readable.
+    if tag in _MARKDOWN_BLOCK_ELEMENTS:
+        builder.ensure_newlines(2)
