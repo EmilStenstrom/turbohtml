@@ -38,8 +38,9 @@ JustHTML also treats `utf-7` labels as unsafe and falls back to `windows-1252`.
 
 ```python
 from justhtml import JustHTML
+from pathlib import Path
 
-data = open("page.html", "rb").read()
+data = Path("page.html").read_bytes()
 
 doc = JustHTML(data)
 print(doc.encoding)
@@ -51,8 +52,9 @@ If you already know the correct encoding (e.g. from HTTP headers, file metadata,
 
 ```python
 from justhtml import JustHTML
+from pathlib import Path
 
-data = open("page.html", "rb").read()
+data = Path("page.html").read_bytes()
 
 doc = JustHTML(data, encoding="utf-8")
 ```
@@ -61,8 +63,9 @@ doc = JustHTML(data, encoding="utf-8")
 
 ```python
 from justhtml import JustHTML
+from pathlib import Path
 
-data = open("page.html", "rb").read()
+data = Path("page.html").read_bytes()
 html = data.decode("utf-8", errors="replace")
 
 doc = JustHTML(html)
@@ -74,8 +77,9 @@ The streaming API supports the same byte-input behavior:
 
 ```python
 from justhtml import stream
+from pathlib import Path
 
-for event, data in stream(open("page.html", "rb").read()):
+for event, data in stream(Path("page.html").read_bytes()):
     ...
 ```
 
@@ -83,7 +87,8 @@ To override the encoding:
 
 ```python
 from justhtml import stream
+from pathlib import Path
 
-for event, data in stream(open("page.html", "rb").read(), encoding="utf-8"):
+for event, data in stream(Path("page.html").read_bytes(), encoding="utf-8"):
     ...
 ```

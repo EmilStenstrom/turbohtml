@@ -25,8 +25,9 @@ If you pass bytes (for example from a file), JustHTML decodes them using HTML en
 
 ```python
 from justhtml import JustHTML
+from pathlib import Path
 
-data = open("page.html", "rb").read()
+data = Path("page.html").read_bytes()
 doc = JustHTML(data)
 print(doc.encoding)
 ```

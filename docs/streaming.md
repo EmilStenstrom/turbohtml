@@ -15,6 +15,7 @@ The streaming parser is:
 
 ```python
 from justhtml import stream
+from pathlib import Path
 
 html = "<html><body><p>Hello, world!</p></body></html>"
 
@@ -29,7 +30,7 @@ for event, data in stream(html):
 ```python
 from justhtml import stream
 
-data = open("page.html", "rb").read()
+data = Path("page.html").read_bytes()
 for event, data in stream(data):
     ...
 ```
@@ -38,8 +39,9 @@ To override decoding when you already know the correct encoding:
 
 ```python
 from justhtml import stream
+from pathlib import Path
 
-data = open("page.html", "rb").read()
+data = Path("page.html").read_bytes()
 for event, data in stream(data, encoding="utf-8"):
     ...
 ```
@@ -75,8 +77,9 @@ end html
 
 ```python
 from justhtml import stream
+from pathlib import Path
 
-html = open("page.html").read()
+html = Path("page.html").read_text()
 
 for event, data in stream(html):
     if event == "start":

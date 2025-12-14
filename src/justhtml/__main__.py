@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Command-line interface for JustHTML."""
 
-# ruff: noqa: PTH123
-
 import argparse
 import sys
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 
 from . import JustHTML
 from .selector import SelectorError
@@ -95,8 +94,7 @@ def _read_html(path):
     if path == "-":
         return sys.stdin.read()
 
-    with open(path) as f:
-        return f.read()
+    return Path(path).read_text()
 
 
 def main():
