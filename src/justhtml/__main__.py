@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import io
 import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from typing import cast
 
 from . import JustHTML
 from .selector import SelectorError
@@ -92,11 +94,15 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return args
 
 
-def _read_html(path: str) -> str:
+def _read_html(path: str) -> str | bytes:
     if path == "-":
-        return sys.stdin.read()
+        stdin = sys.stdin
+        if isinstance(stdin, io.TextIOWrapper):
+            data: bytes = stdin.buffer.read()
+            return data
+        return cast("str", stdin.read())
 
-    return Path(path).read_text()
+    return Path(path).read_bytes()
 
 
 def main() -> None:

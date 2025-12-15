@@ -1,7 +1,7 @@
 import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
-from io import StringIO
+from io import BytesIO, StringIO, TextIOWrapper
 from tempfile import NamedTemporaryFile
 
 import justhtml.__main__ as cli
@@ -55,6 +55,27 @@ class TestCLI(unittest.TestCase):
         self.assertIn("Hello", out)
         self.assertIn("world", out)
         self.assertEqual(err, "")
+
+    def test_stdin_non_utf8_bytes_does_not_crash(self):
+        stdout = StringIO()
+        stderr = StringIO()
+
+        old_argv = sys.argv
+        old_stdin = sys.stdin
+        try:
+            sys.argv = ["justhtml", "-", "--format", "text"]
+            sys.stdin = TextIOWrapper(BytesIO(b"<p>Hello</p>\xfc"), encoding="utf-8", errors="strict")
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                try:
+                    cli.main()
+                except SystemExit as e:
+                    self.assertEqual(e.code, 0)
+                    self.assertIn("Hello", stdout.getvalue())
+                    return
+            self.assertIn("Hello", stdout.getvalue())
+        finally:
+            sys.argv = old_argv
+            sys.stdin = old_stdin
 
     def test_selector_text_multiple_matches(self):
         html = "<article><p>Hi <b>there</b></p><p>Bye</p></article>"
