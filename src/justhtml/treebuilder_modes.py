@@ -1,8 +1,9 @@
-from __future__ import annotations
-
 # ruff: noqa: S101, RUF012
 # mypy: disable-error-code="attr-defined, has-type, var-annotated, assignment"
 
+from __future__ import annotations
+
+from typing import Any
 
 from .constants import (
     FORMATTING_ELEMENTS,
@@ -15,8 +16,6 @@ from .treebuilder_utils import (
     doctype_error_and_quirks,
     is_all_whitespace,
 )
-
-from typing import TYPE_CHECKING, Any
 
 
 class TreeBuilderModesMixin:

@@ -1,12 +1,12 @@
 """HTML serialization utilities for JustHTML DOM nodes."""
 
-from __future__ import annotations
-
 # ruff: noqa: PERF401
+
+from __future__ import annotations
 
 from typing import Any
 
-from justhtml.constants import FOREIGN_ATTRIBUTE_ADJUSTMENTS, VOID_ELEMENTS
+from .constants import FOREIGN_ATTRIBUTE_ADJUSTMENTS, VOID_ELEMENTS
 
 
 def _escape_text(text: str | None) -> str:

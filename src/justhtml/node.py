@@ -366,7 +366,7 @@ class TemplateNode(ElementNode):
         self,
         name: str,
         attrs: dict[str, str | None] | None = None,
-        data: str | None = None,  # noqa: ARG002
+        data: str | None = None,
         namespace: str | None = None,
     ) -> None:
         super().__init__(name, attrs, namespace)
@@ -409,7 +409,7 @@ class TextNode:
         """Return the text content of this node."""
         return self.data or ""
 
-    def to_text(self, separator: str = " ", strip: bool = True) -> str:  # noqa: ARG002
+    def to_text(self, separator: str = " ", strip: bool = True) -> str:
         # Parameters are accepted for API consistency; they don't affect leaf nodes.
         if self.data is None:
             return ""
@@ -431,7 +431,7 @@ class TextNode:
         """Return False for TextNode."""
         return False
 
-    def clone_node(self, deep: bool = False) -> TextNode:  # noqa: ARG002
+    def clone_node(self, deep: bool = False) -> TextNode:
         return TextNode(self.data)
 
 

@@ -417,8 +417,9 @@ class SelectorParser:
         selectors: list[ComplexSelector] = []
         # parse_selector() validates non-empty input, so first selector always exists
         first = self._parse_complex_selector()
-        if first:
-            selectors.append(first)
+        if first is None:  # pragma: no cover
+            raise SelectorError("Empty selector")
+        selectors.append(first)
 
         while self._peek().type == TokenType.COMMA:
             self._advance()  # consume comma

@@ -592,7 +592,7 @@ class TreeBuilder(TreeBuilderModesMixin):
             else:
                 parent = target
 
-            if parent is not None:
+            if parent is not None:  # pragma: no branch
                 parent.append_child(node)
 
             if push:
@@ -615,7 +615,7 @@ class TreeBuilder(TreeBuilderModesMixin):
     def _insert_body_if_missing(self) -> None:
         html_node = self._find_last_on_stack("html")
         node = SimpleDomNode("body", namespace="html")
-        if html_node is not None:
+        if html_node is not None:  # pragma: no branch
             html_node.append_child(node)
             node.parent = html_node
         self.open_elements.append(node)

@@ -7,7 +7,6 @@ import argparse
 import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import NoReturn
 
 from . import JustHTML
 from .selector import SelectorError
@@ -100,7 +99,7 @@ def _read_html(path: str) -> str:
     return Path(path).read_text()
 
 
-def main() -> NoReturn | None:
+def main() -> None:
     args = _parse_args(sys.argv[1:])
     html = _read_html(args.path)
     doc = JustHTML(html)
@@ -121,18 +120,18 @@ def main() -> NoReturn | None:
         outputs = [node.to_html() for node in nodes]
         sys.stdout.write("\n".join(outputs))
         sys.stdout.write("\n")
-        return None
+        return
 
     if args.format == "text":
         outputs = [node.to_text(separator=args.separator, strip=args.strip) for node in nodes]
         sys.stdout.write("\n".join(outputs))
         sys.stdout.write("\n")
-        return None
+        return
 
     outputs = [node.to_markdown() for node in nodes]
     sys.stdout.write("\n\n".join(outputs))
     sys.stdout.write("\n")
-    return None
+    return
 
 
 if __name__ == "__main__":

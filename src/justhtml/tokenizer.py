@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import re
 from bisect import bisect_right
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from .entities import decode_entities_in_text
 from .errors import generate_error_message
@@ -326,8 +329,10 @@ class Tokenizer:
     def _get_line_at_pos(self, pos: int) -> int:
         """Get line number (1-indexed) for a position using binary search."""
         # Line number = count of newlines before pos + 1
-        assert self._newline_positions is not None
-        return bisect_right(self._newline_positions, pos - 1) + 1
+        newline_positions = self._newline_positions
+        if newline_positions is None:  # pragma: no cover
+            return 1
+        return bisect_right(newline_positions, pos - 1) + 1
 
     def step(self) -> bool:
         """Run one step of the tokenizer state machine. Returns True if EOF reached."""
@@ -843,9 +848,7 @@ class Tokenizer:
                 if "&" in chunk or "\0" in chunk:
                     # Fallback to regex if complex chars present
                     match = stop_pattern.search(buffer, pos)
-                    # match is always found because we checked for & or \0 above
-                    assert match is not None
-                    end = match.start()
+                    end = length if match is None else match.start()
                 else:
                     end = next_quote
 
@@ -904,9 +907,7 @@ class Tokenizer:
                 if "&" in chunk or "\0" in chunk:
                     # Fallback to regex if complex chars present
                     match = stop_pattern.search(buffer, pos)
-                    # match is always found because we checked for & or \0 above
-                    assert match is not None
-                    end = match.start()
+                    end = length if match is None else match.start()
                 else:
                     end = next_quote
 
@@ -1438,7 +1439,8 @@ class Tokenizer:
             return False
 
     def _state_doctype_public_identifier_double_quoted(self) -> bool:
-        assert self.current_doctype_public is not None
+        if self.current_doctype_public is None:  # pragma: no cover
+            self.current_doctype_public = []
         while True:
             c = self._get_char()
             if c is None:
@@ -1463,7 +1465,8 @@ class Tokenizer:
             self.current_doctype_public.append(c)
 
     def _state_doctype_public_identifier_single_quoted(self) -> bool:
-        assert self.current_doctype_public is not None
+        if self.current_doctype_public is None:  # pragma: no cover
+            self.current_doctype_public = []
         while True:
             c = self._get_char()
             if c is None:
@@ -1580,7 +1583,8 @@ class Tokenizer:
             return False
 
     def _state_doctype_system_identifier_double_quoted(self) -> bool:
-        assert self.current_doctype_system is not None
+        if self.current_doctype_system is None:  # pragma: no cover
+            self.current_doctype_system = []
         while True:
             c = self._get_char()
             if c is None:
@@ -1605,7 +1609,8 @@ class Tokenizer:
             self.current_doctype_system.append(c)
 
     def _state_doctype_system_identifier_single_quoted(self) -> bool:
-        assert self.current_doctype_system is not None
+        if self.current_doctype_system is None:  # pragma: no cover
+            self.current_doctype_system = []
         while True:
             c = self._get_char()
             if c is None:

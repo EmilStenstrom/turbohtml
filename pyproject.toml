@@ -27,7 +27,7 @@ dev = [
     "build",
     "twine",
     "pre-commit",
-    "mypy>=1.0",
+    "mypy>=1.0; platform_python_implementation != 'PyPy'",
 ]
 
 [project.urls]
@@ -94,6 +94,7 @@ source = ["src/justhtml"]
 fail_under = 100
 exclude_lines = [
     "pragma: no cover",
+    "if TYPE_CHECKING:",
     "def __repr__",
     "raise AssertionError",
     "raise NotImplementedError",
