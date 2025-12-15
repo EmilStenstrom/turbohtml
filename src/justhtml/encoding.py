@@ -7,29 +7,31 @@ Inputs are bytes and an optional transport-supplied encoding label.
 Outputs are a decoded Unicode string and the chosen encoding name.
 """
 
-_ASCII_WHITESPACE = {0x09, 0x0A, 0x0C, 0x0D, 0x20}
+from __future__ import annotations
+
+_ASCII_WHITESPACE: set[int] = {0x09, 0x0A, 0x0C, 0x0D, 0x20}
 
 
-def _ascii_lower(b):
+def _ascii_lower(b: int) -> int:
     # b is an int 0..255
     if 0x41 <= b <= 0x5A:
         return b | 0x20
     return b
 
 
-def _is_ascii_alpha(b):
+def _is_ascii_alpha(b: int) -> bool:
     b = _ascii_lower(b)
     return 0x61 <= b <= 0x7A
 
 
-def _skip_ascii_whitespace(data, i):
+def _skip_ascii_whitespace(data: bytes, i: int) -> int:
     n = len(data)
     while i < n and data[i] in _ASCII_WHITESPACE:
         i += 1
     return i
 
 
-def _strip_ascii_whitespace(value):
+def _strip_ascii_whitespace(value: bytes | None) -> bytes | None:
     if value is None:
         return None
     start = 0
@@ -41,7 +43,7 @@ def _strip_ascii_whitespace(value):
     return value[start:end]
 
 
-def normalize_encoding_label(label):
+def normalize_encoding_label(label: str | bytes | None) -> str | None:
     if not label:
         return None
 
@@ -92,7 +94,7 @@ def normalize_encoding_label(label):
     return None
 
 
-def _normalize_meta_declared_encoding(label):
+def _normalize_meta_declared_encoding(label: bytes | None) -> str | None:
     enc = normalize_encoding_label(label)
     if enc is None:
         return None
@@ -105,7 +107,7 @@ def _normalize_meta_declared_encoding(label):
     return enc
 
 
-def _sniff_bom(data):
+def _sniff_bom(data: bytes) -> tuple[str | None, int]:
     if len(data) >= 3 and data[0:3] == b"\xef\xbb\xbf":
         return "utf-8", 3
     if len(data) >= 2 and data[0:2] == b"\xff\xfe":
@@ -115,7 +117,7 @@ def _sniff_bom(data):
     return None, 0
 
 
-def _extract_charset_from_content(content_bytes):
+def _extract_charset_from_content(content_bytes: bytes) -> bytes | None:
     if not content_bytes:
         return None
 
@@ -144,7 +146,7 @@ def _extract_charset_from_content(content_bytes):
     if i >= n:
         return None
 
-    quote = None
+    quote: int | None = None
     if s[i] in (0x22, 0x27):  # '"' or "'"
         quote = s[i]
         i += 1
@@ -166,7 +168,7 @@ def _extract_charset_from_content(content_bytes):
     return s[start:i]
 
 
-def _prescan_for_meta_charset(data):
+def _prescan_for_meta_charset(data: bytes) -> str | None:
     # Scan up to 1024 bytes worth of non-comment input, but allow skipping
     # arbitrarily large comments (bounded by a hard cap).
     max_non_comment = 1024
@@ -195,7 +197,7 @@ def _prescan_for_meta_charset(data):
         if j < n and data[j] == 0x2F:  # '/'
             # Skip end tag.
             k = i
-            quote = None
+            quote: int | None = None
             while k < n and k < max_total_scan and non_comment < max_non_comment:
                 ch = data[k]
                 if quote is None:
@@ -246,9 +248,9 @@ def _prescan_for_meta_charset(data):
             continue
 
         # Parse attributes until '>'
-        charset = None
-        http_equiv = None
-        content = None
+        charset: bytes | None = None
+        http_equiv: bytes | None = None
+        content: bytes | None = None
 
         k = j
         saw_gt = False
@@ -277,7 +279,7 @@ def _prescan_for_meta_charset(data):
             attr_name = data[attr_start:k].lower()
             k = _skip_ascii_whitespace(data, k)
 
-            value = None
+            value: bytes | None = None
             if k < n and data[k] == 0x3D:  # '='
                 k += 1
                 k = _skip_ascii_whitespace(data, k)
@@ -342,7 +344,7 @@ def _prescan_for_meta_charset(data):
     return None
 
 
-def sniff_html_encoding(data, transport_encoding=None):
+def sniff_html_encoding(data: bytes, transport_encoding: str | None = None) -> tuple[str, int]:
     # Transport overrides everything.
     transport = normalize_encoding_label(transport_encoding)
     if transport:
@@ -359,7 +361,7 @@ def sniff_html_encoding(data, transport_encoding=None):
     return "windows-1252", 0
 
 
-def decode_html(data, transport_encoding=None):
+def decode_html(data: bytes, transport_encoding: str | None = None) -> tuple[str, str]:
     """Decode an HTML byte stream using HTML encoding sniffing.
 
     Returns (text, encoding_name).

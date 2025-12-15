@@ -1,6 +1,10 @@
 # CSS Selector implementation for JustHTML
 # Supports a subset of CSS selectors for querying the DOM
 
+from __future__ import annotations
+
+from typing import Any
+
 
 class SelectorError(ValueError):
     """Raised when a CSS selector is invalid."""
@@ -8,30 +12,33 @@ class SelectorError(ValueError):
 
 # Token types for the CSS selector lexer
 class TokenType:
-    TAG = "TAG"  # div, span, etc.
-    ID = "ID"  # #foo
-    CLASS = "CLASS"  # .bar
-    UNIVERSAL = "UNIVERSAL"  # *
-    ATTR_START = "ATTR_START"  # [
-    ATTR_END = "ATTR_END"  # ]
-    ATTR_OP = "ATTR_OP"  # =, ~=, |=, ^=, $=, *=
-    STRING = "STRING"  # "value" or 'value' or unquoted
-    COMBINATOR = "COMBINATOR"  # >, +, ~, or whitespace (descendant)
-    COMMA = "COMMA"  # ,
-    COLON = "COLON"  # :
-    PAREN_OPEN = "PAREN_OPEN"  # (
-    PAREN_CLOSE = "PAREN_CLOSE"  # )
-    EOF = "EOF"
+    TAG: str = "TAG"  # div, span, etc.
+    ID: str = "ID"  # #foo
+    CLASS: str = "CLASS"  # .bar
+    UNIVERSAL: str = "UNIVERSAL"  # *
+    ATTR_START: str = "ATTR_START"  # [
+    ATTR_END: str = "ATTR_END"  # ]
+    ATTR_OP: str = "ATTR_OP"  # =, ~=, |=, ^=, $=, *=
+    STRING: str = "STRING"  # "value" or 'value' or unquoted
+    COMBINATOR: str = "COMBINATOR"  # >, +, ~, or whitespace (descendant)
+    COMMA: str = "COMMA"  # ,
+    COLON: str = "COLON"  # :
+    PAREN_OPEN: str = "PAREN_OPEN"  # (
+    PAREN_CLOSE: str = "PAREN_CLOSE"  # )
+    EOF: str = "EOF"
 
 
 class Token:
     __slots__ = ("type", "value")
 
-    def __init__(self, token_type, value=None):
+    type: str
+    value: str | None
+
+    def __init__(self, token_type: str, value: str | None = None) -> None:
         self.type = token_type
         self.value = value
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"Token({self.type}, {self.value!r})"
 
 
@@ -40,45 +47,49 @@ class SelectorTokenizer:
 
     __slots__ = ("length", "pos", "selector")
 
-    def __init__(self, selector):
+    selector: str
+    pos: int
+    length: int
+
+    def __init__(self, selector: str) -> None:
         self.selector = selector
         self.pos = 0
         self.length = len(selector)
 
-    def _peek(self, offset=0):
+    def _peek(self, offset: int = 0) -> str:
         pos = self.pos + offset
         if pos < self.length:
             return self.selector[pos]
         return ""
 
-    def _advance(self):
+    def _advance(self) -> str:
         ch = self._peek()
         self.pos += 1
         return ch
 
-    def _skip_whitespace(self):
+    def _skip_whitespace(self) -> None:
         while self.pos < self.length and self.selector[self.pos] in " \t\n\r\f":
             self.pos += 1
 
-    def _is_name_start(self, ch):
+    def _is_name_start(self, ch: str) -> bool:
         # CSS identifier start: letter, underscore, or non-ASCII
         return ch.isalpha() or ch == "_" or ch == "-" or ord(ch) > 127
 
-    def _is_name_char(self, ch):
+    def _is_name_char(self, ch: str) -> bool:
         # CSS identifier continuation: name-start or digit
         return self._is_name_start(ch) or ch.isdigit()
 
-    def _read_name(self):
+    def _read_name(self) -> str:
         start = self.pos
         while self.pos < self.length and self._is_name_char(self.selector[self.pos]):
             self.pos += 1
         return self.selector[start : self.pos]
 
-    def _read_string(self, quote):
+    def _read_string(self, quote: str) -> str:
         # Skip opening quote
         self.pos += 1
         start = self.pos
-        parts = []
+        parts: list[str] = []
 
         while self.pos < self.length:
             ch = self.selector[self.pos]
@@ -105,7 +116,7 @@ class SelectorTokenizer:
 
         raise SelectorError(f"Unterminated string in selector: {self.selector!r}")
 
-    def _read_unquoted_attr_value(self):
+    def _read_unquoted_attr_value(self) -> str:
         # Read an unquoted attribute value (CSS identifier)
         start = self.pos
         while self.pos < self.length:
@@ -115,8 +126,8 @@ class SelectorTokenizer:
             self.pos += 1
         return self.selector[start : self.pos]
 
-    def tokenize(self):
-        tokens = []
+    def tokenize(self) -> list[Token]:
+        tokens: list[Token] = []
         pending_whitespace = False
 
         while self.pos < self.length:
@@ -284,21 +295,34 @@ class SimpleSelector:
 
     __slots__ = ("arg", "name", "operator", "type", "value")
 
-    TYPE_TAG = "tag"
-    TYPE_ID = "id"
-    TYPE_CLASS = "class"
-    TYPE_UNIVERSAL = "universal"
-    TYPE_ATTR = "attr"
-    TYPE_PSEUDO = "pseudo"
+    TYPE_TAG: str = "tag"
+    TYPE_ID: str = "id"
+    TYPE_CLASS: str = "class"
+    TYPE_UNIVERSAL: str = "universal"
+    TYPE_ATTR: str = "attr"
+    TYPE_PSEUDO: str = "pseudo"
 
-    def __init__(self, selector_type, name=None, operator=None, value=None, arg=None):
+    type: str
+    name: str | None
+    operator: str | None
+    value: str | None
+    arg: str | None
+
+    def __init__(
+        self,
+        selector_type: str,
+        name: str | None = None,
+        operator: str | None = None,
+        value: str | None = None,
+        arg: str | None = None,
+    ) -> None:
         self.type = selector_type
         self.name = name
         self.operator = operator
         self.value = value
         self.arg = arg  # For :not() and :nth-child()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         parts = [f"SimpleSelector({self.type!r}"]
         if self.name:
             parts.append(f", name={self.name!r}")
@@ -317,10 +341,12 @@ class CompoundSelector:
 
     __slots__ = ("selectors",)
 
-    def __init__(self, selectors=None):
+    selectors: list[SimpleSelector]
+
+    def __init__(self, selectors: list[SimpleSelector] | None = None) -> None:
         self.selectors = selectors or []
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"CompoundSelector({self.selectors!r})"
 
 
@@ -329,12 +355,14 @@ class ComplexSelector:
 
     __slots__ = ("parts",)
 
-    def __init__(self):
+    parts: list[tuple[str | None, CompoundSelector]]
+
+    def __init__(self) -> None:
         # List of (combinator, compound_selector) tuples
         # First item has combinator=None
         self.parts = []
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"ComplexSelector({self.parts!r})"
 
 
@@ -343,11 +371,17 @@ class SelectorList:
 
     __slots__ = ("selectors",)
 
-    def __init__(self, selectors=None):
+    selectors: list[ComplexSelector]
+
+    def __init__(self, selectors: list[ComplexSelector] | None = None) -> None:
         self.selectors = selectors or []
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"SelectorList({self.selectors!r})"
+
+
+# Type alias for parsed selectors
+ParsedSelector = ComplexSelector | SelectorList
 
 
 class SelectorParser:
@@ -355,31 +389,36 @@ class SelectorParser:
 
     __slots__ = ("pos", "tokens")
 
-    def __init__(self, tokens):
+    tokens: list[Token]
+    pos: int
+
+    def __init__(self, tokens: list[Token]) -> None:
         self.tokens = tokens
         self.pos = 0
 
-    def _peek(self):
+    def _peek(self) -> Token:
         if self.pos < len(self.tokens):
             return self.tokens[self.pos]
         return Token(TokenType.EOF)
 
-    def _advance(self):
+    def _advance(self) -> Token:
         token = self._peek()
         self.pos += 1
         return token
 
-    def _expect(self, token_type):
+    def _expect(self, token_type: str) -> Token:
         token = self._peek()
         if token.type != token_type:
             raise SelectorError(f"Expected {token_type}, got {token.type}")
         return self._advance()
 
-    def parse(self):
+    def parse(self) -> ParsedSelector:
         """Parse a complete selector (possibly comma-separated list)."""
-        selectors = []
+        selectors: list[ComplexSelector] = []
         # parse_selector() validates non-empty input, so first selector always exists
-        selectors.append(self._parse_complex_selector())
+        first = self._parse_complex_selector()
+        if first:
+            selectors.append(first)
 
         while self._peek().type == TokenType.COMMA:
             self._advance()  # consume comma
@@ -394,7 +433,7 @@ class SelectorParser:
             return selectors[0]
         return SelectorList(selectors)
 
-    def _parse_complex_selector(self):
+    def _parse_complex_selector(self) -> ComplexSelector | None:
         """Parse a complex selector (compound selectors with combinators)."""
         complex_sel = ComplexSelector()
 
@@ -414,9 +453,9 @@ class SelectorParser:
 
         return complex_sel
 
-    def _parse_compound_selector(self):
+    def _parse_compound_selector(self) -> CompoundSelector | None:
         """Parse a compound selector (sequence of simple selectors)."""
-        simple_selectors = []
+        simple_selectors: list[SimpleSelector] = []
 
         while True:
             token = self._peek()
@@ -450,7 +489,7 @@ class SelectorParser:
             return None
         return CompoundSelector(simple_selectors)
 
-    def _parse_attribute_selector(self):
+    def _parse_attribute_selector(self) -> SimpleSelector:
         """Parse an attribute selector [attr], [attr=value], etc."""
         self._expect(TokenType.ATTR_START)
 
@@ -467,7 +506,7 @@ class SelectorParser:
 
         return SimpleSelector(SimpleSelector.TYPE_ATTR, name=attr_name, operator=operator, value=value)
 
-    def _parse_pseudo_selector(self):
+    def _parse_pseudo_selector(self) -> SimpleSelector:
         """Parse a pseudo-class selector like :first-child or :not(selector)."""
         self._expect(TokenType.COLON)
         name = self._expect(TokenType.TAG).value
@@ -475,7 +514,7 @@ class SelectorParser:
         # Functional pseudo-class
         if self._peek().type == TokenType.PAREN_OPEN:
             self._advance()
-            arg = None
+            arg: str | None = None
             if self._peek().type == TokenType.STRING:
                 arg = self._advance().value
             self._expect(TokenType.PAREN_CLOSE)
@@ -489,7 +528,7 @@ class SelectorMatcher:
 
     __slots__ = ()
 
-    def matches(self, node, selector):
+    def matches(self, node: Any, selector: ParsedSelector | CompoundSelector | SimpleSelector) -> bool:
         """Check if a node matches a parsed selector."""
         if isinstance(selector, SelectorList):
             return any(self.matches(node, sel) for sel in selector.selectors)
@@ -501,7 +540,7 @@ class SelectorMatcher:
             return self._matches_simple(node, selector)
         return False
 
-    def _matches_complex(self, node, selector):
+    def _matches_complex(self, node: Any, selector: ComplexSelector) -> bool:
         """Match a complex selector (with combinators)."""
         # Work backwards from the rightmost compound selector
         parts = selector.parts
@@ -557,11 +596,11 @@ class SelectorMatcher:
 
         return True
 
-    def _matches_compound(self, node, compound):
+    def _matches_compound(self, node: Any, compound: CompoundSelector) -> bool:
         """Match a compound selector (all simple selectors must match)."""
         return all(self._matches_simple(node, simple) for simple in compound.selectors)
 
-    def _matches_simple(self, node, selector):
+    def _matches_simple(self, node: Any, selector: SimpleSelector) -> bool:
         """Match a simple selector against a node."""
         # Text nodes and other non-element nodes don't match element selectors
         if not hasattr(node, "name") or node.name.startswith("#"):
@@ -574,7 +613,7 @@ class SelectorMatcher:
 
         if sel_type == SimpleSelector.TYPE_TAG:
             # HTML tag names are case-insensitive
-            return node.name.lower() == selector.name.lower()
+            return bool(node.name.lower() == (selector.name.lower() if selector.name else ""))
 
         if sel_type == SimpleSelector.TYPE_ID:
             node_id = node.attrs.get("id", "") if node.attrs else ""
@@ -593,13 +632,13 @@ class SelectorMatcher:
 
         return False
 
-    def _matches_attribute(self, node, selector):
+    def _matches_attribute(self, node: Any, selector: SimpleSelector) -> bool:
         """Match an attribute selector."""
         attrs = node.attrs or {}
-        attr_name = selector.name.lower()  # Attribute names are case-insensitive in HTML
+        attr_name = (selector.name or "").lower()  # Attribute names are case-insensitive in HTML
 
         # Check if attribute exists (for any case)
-        attr_value = None
+        attr_value: str | None = None
         for name, value in attrs.items():
             if name.lower() == attr_name:
                 attr_value = value
@@ -612,7 +651,7 @@ class SelectorMatcher:
         if selector.operator is None:
             return True
 
-        value = selector.value
+        value = selector.value or ""
         op = selector.operator
 
         if op == "=":
@@ -641,9 +680,9 @@ class SelectorMatcher:
 
         return False
 
-    def _matches_pseudo(self, node, selector):
+    def _matches_pseudo(self, node: Any, selector: SimpleSelector) -> bool:
         """Match a pseudo-class selector."""
-        name = selector.name.lower()
+        name = (selector.name or "").lower()
 
         if name == "first-child":
             return self._is_first_child(node)
@@ -699,19 +738,19 @@ class SelectorMatcher:
         # Unknown pseudo-class - don't match
         raise SelectorError(f"Unsupported pseudo-class: :{name}")
 
-    def _get_element_children(self, parent):
+    def _get_element_children(self, parent: Any) -> list[Any]:
         """Get only element children (exclude text, comments, etc.)."""
         if not parent or not parent.has_child_nodes():
             return []
         return [c for c in parent.children if hasattr(c, "name") and not c.name.startswith("#")]
 
-    def _get_previous_sibling(self, node):
+    def _get_previous_sibling(self, node: Any) -> Any | None:
         """Get the previous element sibling. Returns None if node is first or not found."""
         parent = node.parent
         if not parent:
             return None
 
-        prev = None
+        prev: Any | None = None
         for child in parent.children:
             if child is node:
                 return prev
@@ -719,23 +758,23 @@ class SelectorMatcher:
                 prev = child
         return None  # node not in parent.children (detached)
 
-    def _is_first_child(self, node):
+    def _is_first_child(self, node: Any) -> bool:
         """Check if node is the first element child of its parent."""
         parent = node.parent
         if not parent:
             return False
         elements = self._get_element_children(parent)
-        return elements and elements[0] is node
+        return bool(elements) and elements[0] is node
 
-    def _is_last_child(self, node):
+    def _is_last_child(self, node: Any) -> bool:
         """Check if node is the last element child of its parent."""
         parent = node.parent
         if not parent:
             return False
         elements = self._get_element_children(parent)
-        return elements and elements[-1] is node
+        return bool(elements) and elements[-1] is node
 
-    def _is_first_of_type(self, node):
+    def _is_first_of_type(self, node: Any) -> bool:
         """Check if node is the first sibling of its type."""
         parent = node.parent
         if not parent:
@@ -746,19 +785,19 @@ class SelectorMatcher:
                 return child is node
         return False
 
-    def _is_last_of_type(self, node):
+    def _is_last_of_type(self, node: Any) -> bool:
         """Check if node is the last sibling of its type."""
         parent = node.parent
         if not parent:
             return False
         node_name = node.name.lower()
-        last_of_type = None
+        last_of_type: Any | None = None
         for child in self._get_element_children(parent):
             if child.name.lower() == node_name:
                 last_of_type = child
         return last_of_type is node
 
-    def _parse_nth_expression(self, expr):
+    def _parse_nth_expression(self, expr: str | None) -> tuple[int, int] | None:
         """Parse an nth-child expression like '2n+1', 'odd', 'even', '3'."""
         if not expr:
             return None
@@ -807,7 +846,7 @@ class SelectorMatcher:
 
         return (a, b)
 
-    def _matches_nth(self, index, a, b):
+    def _matches_nth(self, index: int, a: int, b: int) -> bool:
         """Check if 1-based index matches An+B formula."""
         if a == 0:
             return index == b
@@ -819,7 +858,7 @@ class SelectorMatcher:
         # a < 0: need diff <= 0 and diff divisible by abs(a)
         return diff <= 0 and diff % a == 0
 
-    def _matches_nth_child(self, node, arg):
+    def _matches_nth_child(self, node: Any, arg: str | None) -> bool:
         """Match :nth-child(An+B)."""
         parent = node.parent
         if not parent:
@@ -836,7 +875,7 @@ class SelectorMatcher:
                 return self._matches_nth(i + 1, a, b)
         return False
 
-    def _matches_nth_of_type(self, node, arg):
+    def _matches_nth_of_type(self, node: Any, arg: str | None) -> bool:
         """Match :nth-of-type(An+B)."""
         parent = node.parent
         if not parent:
@@ -858,7 +897,7 @@ class SelectorMatcher:
         return False
 
 
-def parse_selector(selector_string):
+def parse_selector(selector_string: str) -> ParsedSelector:
     """Parse a CSS selector string into an AST."""
     if not selector_string or not selector_string.strip():
         raise SelectorError("Empty selector")
@@ -870,10 +909,10 @@ def parse_selector(selector_string):
 
 
 # Global matcher instance
-_matcher = SelectorMatcher()
+_matcher: SelectorMatcher = SelectorMatcher()
 
 
-def query(root, selector_string):
+def query(root: Any, selector_string: str) -> list[Any]:
     """
     Query the DOM tree starting from root, returning all matching elements.
 
@@ -888,12 +927,12 @@ def query(root, selector_string):
         A list of matching nodes
     """
     selector = parse_selector(selector_string)
-    results = []
+    results: list[Any] = []
     _query_descendants(root, selector, results)
     return results
 
 
-def _query_descendants(node, selector, results):
+def _query_descendants(node: Any, selector: ParsedSelector, results: list[Any]) -> None:
     """Recursively search for matching nodes in descendants."""
     # Only recurse into children (not the node itself)
     if node.has_child_nodes():
@@ -910,7 +949,7 @@ def _query_descendants(node, selector, results):
         _query_descendants(node.template_content, selector, results)
 
 
-def matches(node, selector_string):
+def matches(node: Any, selector_string: str) -> bool:
     """
     Check if a node matches a CSS selector.
 

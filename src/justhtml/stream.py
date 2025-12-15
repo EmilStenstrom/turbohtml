@@ -1,16 +1,31 @@
+from __future__ import annotations
+
+from collections.abc import Generator
+from typing import Any
+
 from .encoding import decode_html
 from .tokenizer import Tokenizer
 from .tokens import CommentToken, DoctypeToken, Tag
+
+# Type alias for stream events
+StreamEvent = tuple[str, Any]
+
+
+class _DummyNode:
+    namespace: str = "html"
 
 
 class StreamSink:
     """A sink that buffers tokens for the stream API."""
 
-    def __init__(self):
+    tokens: list[StreamEvent]
+    open_elements: list[_DummyNode]
+
+    def __init__(self) -> None:
         self.tokens = []
         self.open_elements = []  # Required by tokenizer for rawtext checks
 
-    def process_token(self, token):
+    def process_token(self, token: Tag | CommentToken | DoctypeToken | Any) -> int:
         # Tokenizer reuses token objects, so we must copy data
         if isinstance(token, Tag):
             # Copy tag data
@@ -25,10 +40,7 @@ class StreamSink:
                 # We need a dummy object with namespace for tokenizer checks
                 # Tokenizer checks: stack[-1].namespace
                 # We can just use a simple object
-                class DummyNode:
-                    namespace = "html"
-
-                self.open_elements.append(DummyNode())
+                self.open_elements.append(_DummyNode())
             else:  # Tag.END
                 if self.open_elements:
                     self.open_elements.pop()
@@ -44,21 +56,28 @@ class StreamSink:
 
         return 0  # TokenSinkResult.Continue
 
-    def process_characters(self, data):
+    def process_characters(self, data: str) -> None:
         """Handle character data from tokenizer."""
         self.tokens.append(("text", data))
 
 
-def stream(html, *, encoding=None):
+def stream(
+    html: str | bytes | bytearray | memoryview,
+    *,
+    encoding: str | None = None,
+) -> Generator[StreamEvent, None, None]:
     """
     Stream HTML events from the given HTML string.
     Yields tuples of (event_type, data).
     """
+    html_str: str
     if isinstance(html, (bytes, bytearray, memoryview)):
-        html, _ = decode_html(bytes(html), transport_encoding=encoding)
+        html_str, _ = decode_html(bytes(html), transport_encoding=encoding)
+    else:
+        html_str = html
     sink = StreamSink()
     tokenizer = Tokenizer(sink)
-    tokenizer.initialize(html)
+    tokenizer.initialize(html_str)
 
     while True:
         # Run one step of the tokenizer
@@ -67,7 +86,7 @@ def stream(html, *, encoding=None):
         # Yield any tokens produced by this step
         if sink.tokens:
             # Coalesce text tokens
-            text_buffer = []
+            text_buffer: list[str] = []
             for event, data in sink.tokens:
                 if event == "text":
                     text_buffer.append(data)

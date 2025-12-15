@@ -1,10 +1,26 @@
+from __future__ import annotations
+
+from typing import Literal
+
+
 class Tag:
     __slots__ = ("attrs", "kind", "name", "self_closing")
 
-    START = 0
-    END = 1
+    START: Literal[0] = 0
+    END: Literal[1] = 1
 
-    def __init__(self, kind, name, attrs, self_closing=False):
+    kind: int
+    name: str
+    attrs: dict[str, str | None]
+    self_closing: bool
+
+    def __init__(
+        self,
+        kind: int,
+        name: str,
+        attrs: dict[str, str | None] | None,
+        self_closing: bool = False,
+    ) -> None:
         self.kind = kind
         self.name = name
         self.attrs = attrs if attrs is not None else {}
@@ -14,21 +30,36 @@ class Tag:
 class CharacterTokens:
     __slots__ = ("data",)
 
-    def __init__(self, data):
+    data: str
+
+    def __init__(self, data: str) -> None:
         self.data = data
 
 
 class CommentToken:
     __slots__ = ("data",)
 
-    def __init__(self, data):
+    data: str
+
+    def __init__(self, data: str) -> None:
         self.data = data
 
 
 class Doctype:
     __slots__ = ("force_quirks", "name", "public_id", "system_id")
 
-    def __init__(self, name=None, public_id=None, system_id=None, force_quirks=False):
+    name: str | None
+    public_id: str | None
+    system_id: str | None
+    force_quirks: bool
+
+    def __init__(
+        self,
+        name: str | None = None,
+        public_id: str | None = None,
+        system_id: str | None = None,
+        force_quirks: bool = False,
+    ) -> None:
         self.name = name
         self.public_id = public_id
         self.system_id = system_id
@@ -38,7 +69,9 @@ class Doctype:
 class DoctypeToken:
     __slots__ = ("doctype",)
 
-    def __init__(self, doctype):
+    doctype: Doctype
+
+    def __init__(self, doctype: Doctype) -> None:
         self.doctype = doctype
 
 
@@ -49,8 +82,8 @@ class EOFToken:
 class TokenSinkResult:
     __slots__ = ()
 
-    Continue = 0
-    Plaintext = 1
+    Continue: Literal[0] = 0
+    Plaintext: Literal[1] = 1
 
 
 class ParseError:
@@ -58,7 +91,24 @@ class ParseError:
 
     __slots__ = ("_end_column", "_source_html", "code", "column", "line", "message")
 
-    def __init__(self, code, line=None, column=None, message=None, source_html=None, end_column=None):
+    code: str
+    line: int | None
+    column: int | None
+    message: str
+    _source_html: str | None
+    _end_column: int | None
+
+    __hash__ = None  # type: ignore[assignment]  # Unhashable since we define __eq__
+
+    def __init__(
+        self,
+        code: str,
+        line: int | None = None,
+        column: int | None = None,
+        message: str | None = None,
+        source_html: str | None = None,
+        end_column: int | None = None,
+    ) -> None:
         self.code = code
         self.line = line
         self.column = column
@@ -66,12 +116,12 @@ class ParseError:
         self._source_html = source_html
         self._end_column = end_column
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         if self.line is not None and self.column is not None:
             return f"ParseError({self.code!r}, line={self.line}, column={self.column})"
         return f"ParseError({self.code!r})"
 
-    def __str__(self):
+    def __str__(self) -> str:
         if self.line is not None and self.column is not None:
             if self.message != self.code:
                 return f"({self.line},{self.column}): {self.code} - {self.message}"
@@ -80,14 +130,12 @@ class ParseError:
             return f"{self.code} - {self.message}"
         return self.code
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, ParseError):
             return NotImplemented
         return self.code == other.code and self.line == other.line and self.column == other.column
 
-    __hash__ = None  # Unhashable since we define __eq__
-
-    def as_exception(self, end_column=None):
+    def as_exception(self, end_column: int | None = None) -> SyntaxError:
         """Convert to a SyntaxError-like exception with source highlighting.
 
         This uses Python 3.11+ enhanced error display to show the exact

@@ -1,13 +1,20 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
 from .selector import query
 from .serialize import to_html
 
+if TYPE_CHECKING:
+    from .tokens import Doctype
 
-def _markdown_escape_text(s):
+
+def _markdown_escape_text(s: str) -> str:
     if not s:
         return ""
     # Pragmatic: escape the few characters that commonly change Markdown meaning.
     # Keep this minimal to preserve readability.
-    out = []
+    out: list[str] = []
     for ch in s:
         if ch in "\\`*_[]":
             out.append("\\")
@@ -15,7 +22,7 @@ def _markdown_escape_text(s):
     return "".join(out)
 
 
-def _markdown_code_span(s):
+def _markdown_code_span(s: str | None) -> str:
     if s is None:
         s = ""
     # Use a backtick fence longer than any run of backticks inside.
@@ -39,12 +46,16 @@ def _markdown_code_span(s):
 class _MarkdownBuilder:
     __slots__ = ("_buf", "_newline_count", "_pending_space")
 
-    def __init__(self):
+    _buf: list[str]
+    _newline_count: int
+    _pending_space: bool
+
+    def __init__(self) -> None:
         self._buf = []
         self._newline_count = 0
         self._pending_space = False
 
-    def _rstrip_last_segment(self):
+    def _rstrip_last_segment(self) -> None:
         if not self._buf:
             return
         last = self._buf[-1]
@@ -52,7 +63,7 @@ class _MarkdownBuilder:
         if stripped != last:
             self._buf[-1] = stripped
 
-    def newline(self, count=1):
+    def newline(self, count: int = 1) -> None:
         for _ in range(count):
             self._pending_space = False
             self._rstrip_last_segment()
@@ -61,11 +72,11 @@ class _MarkdownBuilder:
             if self._newline_count < 2:
                 self._newline_count += 1
 
-    def ensure_newlines(self, count):
+    def ensure_newlines(self, count: int) -> None:
         while self._newline_count < count:
             self.newline(1)
 
-    def raw(self, s):
+    def raw(self, s: str) -> None:
         if not s:
             return
 
@@ -91,7 +102,7 @@ class _MarkdownBuilder:
         else:
             self._newline_count = 0
 
-    def text(self, s, preserve_whitespace=False):
+    def text(self, s: str, preserve_whitespace: bool = False) -> None:
         if not s:
             return
 
@@ -112,16 +123,20 @@ class _MarkdownBuilder:
             self._buf.append(ch)
             self._newline_count = 0
 
-    def finish(self):
+    def finish(self) -> str:
         out = "".join(self._buf)
         return out.strip(" \t\n")
 
 
-def _to_text_collect(node, parts, strip):
-    name = node.name
+# Type alias for any node type
+NodeType = "SimpleDomNode | ElementNode | TemplateNode | TextNode"
+
+
+def _to_text_collect(node: Any, parts: list[str], strip: bool) -> None:
+    name: str = node.name
 
     if name == "#text":
-        data = node.data
+        data: str | None = node.data
         if not data:
             return
         if strip:
@@ -142,7 +157,20 @@ def _to_text_collect(node, parts, strip):
 class SimpleDomNode:
     __slots__ = ("attrs", "children", "data", "name", "namespace", "parent")
 
-    def __init__(self, name, attrs=None, data=None, namespace=None):
+    name: str
+    parent: SimpleDomNode | ElementNode | TemplateNode | None
+    attrs: dict[str, str | None] | None
+    children: list[Any] | None
+    data: str | Doctype | None
+    namespace: str | None
+
+    def __init__(
+        self,
+        name: str,
+        attrs: dict[str, str | None] | None = None,
+        data: str | Doctype | None = None,
+        namespace: str | None = None,
+    ) -> None:
         self.name = name
         self.parent = None
         self.data = data
@@ -160,19 +188,21 @@ class SimpleDomNode:
             self.children = []
             self.attrs = attrs if attrs is not None else {}
 
-    def append_child(self, node):
-        self.children.append(node)
-        node.parent = self
+    def append_child(self, node: Any) -> None:
+        if self.children is not None:
+            self.children.append(node)
+            node.parent = self
 
-    def remove_child(self, node):
-        self.children.remove(node)
-        node.parent = None
+    def remove_child(self, node: Any) -> None:
+        if self.children is not None:
+            self.children.remove(node)
+            node.parent = None
 
-    def to_html(self, indent=0, indent_size=2, pretty=True):
+    def to_html(self, indent: int = 0, indent_size: int = 2, pretty: bool = True) -> str:
         """Convert node to HTML string."""
         return to_html(self, indent, indent_size, pretty=pretty)
 
-    def query(self, selector):
+    def query(self, selector: str) -> list[Any]:
         """
         Query this subtree using a CSS selector.
 
@@ -185,20 +215,24 @@ class SimpleDomNode:
         Raises:
             ValueError: If the selector is invalid
         """
-        return query(self, selector)
+        result: list[Any] = query(self, selector)
+        return result
 
     @property
-    def text(self):
+    def text(self) -> str:
         """Return the node's own text value.
 
         For text nodes this is the node data. For other nodes this is an empty
         string. Use `to_text()` to get textContent semantics.
         """
         if self.name == "#text":
-            return self.data or ""
+            data = self.data
+            if isinstance(data, str):
+                return data
+            return ""
         return ""
 
-    def to_text(self, separator=" ", strip=True):
+    def to_text(self, separator: str = " ", strip: bool = True) -> str:
         """Return the concatenated text of this node's descendants.
 
         - `separator` controls how text nodes are joined (default: a single space).
@@ -206,13 +240,13 @@ class SimpleDomNode:
 
         Template element contents are included via `template_content`.
         """
-        parts = []
+        parts: list[str] = []
         _to_text_collect(self, parts, strip=strip)
         if not parts:
             return ""
         return separator.join(parts)
 
-    def to_markdown(self):
+    def to_markdown(self) -> str:
         """Return a GitHub Flavored Markdown representation of this subtree.
 
         This is a pragmatic HTML->Markdown converter intended for readability.
@@ -223,7 +257,7 @@ class SimpleDomNode:
         _to_markdown_walk(self, builder, preserve_whitespace=False, list_depth=0)
         return builder.finish()
 
-    def insert_before(self, node, reference_node):
+    def insert_before(self, node: Any, reference_node: Any | None) -> None:
         """
         Insert a node before a reference node.
 
@@ -248,7 +282,7 @@ class SimpleDomNode:
         except ValueError:
             raise ValueError("Reference node is not a child of this node") from None
 
-    def replace_child(self, new_node, old_node):
+    def replace_child(self, new_node: Any, old_node: Any) -> Any:
         """
         Replace a child node with a new node.
 
@@ -275,11 +309,11 @@ class SimpleDomNode:
         old_node.parent = None
         return old_node
 
-    def has_child_nodes(self):
+    def has_child_nodes(self) -> bool:
         """Return True if this node has children."""
         return bool(self.children)
 
-    def clone_node(self, deep=False):
+    def clone_node(self, deep: bool = False) -> SimpleDomNode:
         """
         Clone this node.
 
@@ -304,16 +338,20 @@ class SimpleDomNode:
 class ElementNode(SimpleDomNode):
     __slots__ = ("template_content",)
 
-    def __init__(self, name, attrs, namespace):
+    template_content: SimpleDomNode | None
+    children: list[Any]
+    attrs: dict[str, str | None]
+
+    def __init__(self, name: str, attrs: dict[str, str | None] | None, namespace: str | None) -> None:
         self.name = name
         self.parent = None
         self.data = None
         self.namespace = namespace
         self.children = []
-        self.attrs = attrs
+        self.attrs = attrs if attrs is not None else {}
         self.template_content = None
 
-    def clone_node(self, deep=False):
+    def clone_node(self, deep: bool = False) -> ElementNode:
         clone = ElementNode(self.name, self.attrs.copy() if self.attrs else {}, self.namespace)
         if deep:
             for child in self.children:
@@ -324,18 +362,24 @@ class ElementNode(SimpleDomNode):
 class TemplateNode(ElementNode):
     __slots__ = ()
 
-    def __init__(self, name, attrs=None, data=None, namespace=None):
+    def __init__(
+        self,
+        name: str,
+        attrs: dict[str, str | None] | None = None,
+        data: str | None = None,  # noqa: ARG002
+        namespace: str | None = None,
+    ) -> None:
         super().__init__(name, attrs, namespace)
         if self.namespace == "html":
             self.template_content = SimpleDomNode("#document-fragment")
         else:
             self.template_content = None
 
-    def clone_node(self, deep=False):
+    def clone_node(self, deep: bool = False) -> TemplateNode:
         clone = TemplateNode(
             self.name,
             self.attrs.copy() if self.attrs else {},
-            self.data,
+            None,
             self.namespace,
         )
         if deep:
@@ -349,18 +393,23 @@ class TemplateNode(ElementNode):
 class TextNode:
     __slots__ = ("data", "name", "namespace", "parent")
 
-    def __init__(self, data):
+    data: str | None
+    name: str
+    namespace: None
+    parent: SimpleDomNode | ElementNode | TemplateNode | None
+
+    def __init__(self, data: str | None) -> None:
         self.data = data
         self.parent = None
         self.name = "#text"
         self.namespace = None
 
     @property
-    def text(self):
+    def text(self) -> str:
         """Return the text content of this node."""
         return self.data or ""
 
-    def to_text(self, separator=" ", strip=True):
+    def to_text(self, separator: str = " ", strip: bool = True) -> str:  # noqa: ARG002
         # Parameters are accepted for API consistency; they don't affect leaf nodes.
         if self.data is None:
             return ""
@@ -368,25 +417,25 @@ class TextNode:
             return self.data.strip()
         return self.data
 
-    def to_markdown(self):
+    def to_markdown(self) -> str:
         builder = _MarkdownBuilder()
         builder.text(_markdown_escape_text(self.data or ""), preserve_whitespace=False)
         return builder.finish()
 
     @property
-    def children(self):
+    def children(self) -> list[Any]:
         """Return empty list for TextNode (leaf node)."""
         return []
 
-    def has_child_nodes(self):
+    def has_child_nodes(self) -> bool:
         """Return False for TextNode."""
         return False
 
-    def clone_node(self, deep=False):
+    def clone_node(self, deep: bool = False) -> TextNode:  # noqa: ARG002
         return TextNode(self.data)
 
 
-_MARKDOWN_BLOCK_ELEMENTS = frozenset(
+_MARKDOWN_BLOCK_ELEMENTS: frozenset[str] = frozenset(
     {
         "p",
         "div",
@@ -414,8 +463,8 @@ _MARKDOWN_BLOCK_ELEMENTS = frozenset(
 )
 
 
-def _to_markdown_walk(node, builder, preserve_whitespace, list_depth):
-    name = node.name
+def _to_markdown_walk(node: Any, builder: _MarkdownBuilder, preserve_whitespace: bool, list_depth: int) -> None:
+    name: str = node.name
 
     if name == "#text":
         if preserve_whitespace:

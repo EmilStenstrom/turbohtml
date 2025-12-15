@@ -1,5 +1,8 @@
 # ruff: noqa: S101, PLW2901
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 from .constants import (
     BUTTON_SCOPE_TERMINATORS,
@@ -29,6 +32,9 @@ from .treebuilder_utils import (
     InsertionMode,
     is_all_whitespace,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class TreeBuilder(TreeBuilderModesMixin):
@@ -60,12 +66,38 @@ class TreeBuilder(TreeBuilderModesMixin):
         "tokenizer_state_override",
     )
 
+    _body_end_handlers: dict[str, Callable[[TreeBuilder, Any], Any]]
+    _body_start_handlers: dict[str, Callable[[TreeBuilder, Any], Any]]
+    _body_token_handlers: dict[str, Callable[[TreeBuilder, Any], Any]]
+    _mode_handlers: dict[InsertionMode, Callable[[TreeBuilder, Any], Any]]
+    active_formatting: list[Any]
+    collect_errors: bool
+    document: SimpleDomNode
+    errors: list[ParseError]
+    form_element: Any | None
+    fragment_context: Any | None
+    fragment_context_element: Any | None
+    frameset_ok: bool
+    head_element: Any | None
+    iframe_srcdoc: bool
+    ignore_lf: bool
+    insert_from_table: bool
+    mode: InsertionMode
+    open_elements: list[Any]
+    original_mode: InsertionMode | None  # type: ignore[assignment]
+    pending_table_text: list[str]
+    quirks_mode: str
+    table_text_original_mode: InsertionMode | None  # type: ignore[assignment]
+    template_modes: list[InsertionMode]
+    tokenizer: Any | None
+    tokenizer_state_override: Any | None  # type: ignore[assignment]
+
     def __init__(
         self,
-        fragment_context=None,
-        iframe_srcdoc=False,
-        collect_errors=False,
-    ):
+        fragment_context: Any | None = None,
+        iframe_srcdoc: bool = False,
+        collect_errors: bool = False,
+    ) -> None:
         self.fragment_context = fragment_context
         self.iframe_srcdoc = iframe_srcdoc
         self.collect_errors = collect_errors
@@ -134,10 +166,10 @@ class TreeBuilder(TreeBuilderModesMixin):
             # This prevents frameset from being inserted in fragment contexts
             self.frameset_ok = False
 
-    def _set_quirks_mode(self, mode):
+    def _set_quirks_mode(self, mode: str) -> None:
         self.quirks_mode = mode
 
-    def _parse_error(self, code, tag_name=None, token=None):
+    def _parse_error(self, code: str, tag_name: str | None = None, token: Any = None) -> None:
         if not self.collect_errors:
             return
         # Use the position of the last emitted token (set by tokenizer before emit)
@@ -180,7 +212,9 @@ class TreeBuilder(TreeBuilderModesMixin):
             )
         )
 
-    def _has_element_in_scope(self, target, terminators=None, check_integration_points=True):
+    def _has_element_in_scope(
+        self, target: str, terminators: set[str] | None = None, check_integration_points: bool = True
+    ) -> bool:
         if terminators is None:
             terminators = DEFAULT_SCOPE_TERMINATORS
         for node in reversed(self.open_elements):
@@ -196,24 +230,24 @@ class TreeBuilder(TreeBuilderModesMixin):
                 return False
         return False
 
-    def _has_element_in_button_scope(self, target):
+    def _has_element_in_button_scope(self, target: str) -> bool:
         return self._has_element_in_scope(target, BUTTON_SCOPE_TERMINATORS)
 
-    def _pop_until_inclusive(self, name):
+    def _pop_until_inclusive(self, name: str) -> None:
         # Callers ensure element exists on stack
         while self.open_elements:  # pragma: no branch
             node = self.open_elements.pop()
             if node.name == name:
                 break
 
-    def _pop_until_any_inclusive(self, names):
+    def _pop_until_any_inclusive(self, names: set[str]) -> None:
         # Pop elements until we find one in names (callers ensure element exists)
         while self.open_elements:
             node = self.open_elements.pop()
             if node.name in names:
                 return
 
-    def _close_p_element(self):
+    def _close_p_element(self) -> bool:
         if self._has_element_in_button_scope("p"):
             self._generate_implied_end_tags("p")
             if self.open_elements[-1].name != "p":
@@ -222,7 +256,7 @@ class TreeBuilder(TreeBuilderModesMixin):
             return True
         return False
 
-    def process_token(self, token):
+    def process_token(self, token: Any) -> Any:
         # Optimization: Use type() identity check instead of isinstance
         token_type = type(token)
         if token_type is DoctypeToken:
@@ -437,10 +471,11 @@ class TreeBuilder(TreeBuilderModesMixin):
             current_token = token_override
             # Continue loop to reprocess
 
-    def finish(self):
+    def finish(self) -> SimpleDomNode:
         if self.fragment_context is not None:
             # For fragments, remove the html wrapper and promote its children
             # Note: html element is always created in fragment setup, so children[0] is always "html"
+            assert self.document.children is not None
             root = self.document.children[0]
             context_elem = self.fragment_context_element
             if context_elem is not None and context_elem.parent is root:
@@ -460,11 +495,11 @@ class TreeBuilder(TreeBuilderModesMixin):
 
     # Insertion mode dispatch ------------------------------------------------
 
-    def _append_comment_to_document(self, text):
+    def _append_comment_to_document(self, text: str) -> None:
         node = SimpleDomNode("#comment", data=text)
         self.document.append_child(node)
 
-    def _append_comment(self, text, parent=None):
+    def _append_comment(self, text: str, parent: Any | None = None) -> None:
         if parent is None:
             parent = self._current_node_or_html()
         # If parent is a template, insert into its content fragment
@@ -473,7 +508,7 @@ class TreeBuilder(TreeBuilderModesMixin):
         node = SimpleDomNode("#comment", data=text)
         parent.append_child(node)
 
-    def _append_text(self, text):
+    def _append_text(self, text: str) -> None:
         if self.ignore_lf:
             self.ignore_lf = False
             if text.startswith("\n"):
@@ -493,7 +528,7 @@ class TreeBuilder(TreeBuilderModesMixin):
             if children:
                 last_child = children[-1]
                 if type(last_child) is TextNode:
-                    last_child.data += text
+                    last_child.data = (last_child.data or "") + text
                     return
 
             node = TextNode(text)
@@ -520,24 +555,28 @@ class TreeBuilder(TreeBuilderModesMixin):
         reference_node = parent.children[position] if position < len(parent.children) else None
         parent.insert_before(node, reference_node)
 
-    def _current_node_or_html(self):
+    def _current_node_or_html(self) -> Any:
         if self.open_elements:
             return self.open_elements[-1]
         # Stack empty - find html element in document children
         # (may not be first if there are comments/doctype before it)
-        for child in self.document.children:
-            if child.name == "html":
-                return child
-        # Edge case: no html found, return first child or None
-        return self.document.children[0] if self.document.children else None  # pragma: no cover
+        children = self.document.children
+        if children is not None:
+            for child in children:
+                if child.name == "html":
+                    return child
+            # Edge case: no html found, return first child or None
+            return children[0] if children else None  # pragma: no cover
+        return None  # pragma: no cover
 
-    def _create_root(self, attrs):
+    def _create_root(self, attrs: dict[str, str | None]) -> Any:
         node = SimpleDomNode("html", attrs=attrs, namespace="html")
         self.document.append_child(node)
         self.open_elements.append(node)
         return node
 
-    def _insert_element(self, tag, *, push, namespace="html"):
+    def _insert_element(self, tag: Any, *, push: bool, namespace: str = "html") -> Any:
+        node: ElementNode | TemplateNode
         if tag.name == "template" and namespace == "html":
             node = TemplateNode(tag.name, attrs=tag.attrs, namespace=namespace)
         else:
@@ -553,7 +592,8 @@ class TreeBuilder(TreeBuilderModesMixin):
             else:
                 parent = target
 
-            parent.append_child(node)
+            if parent is not None:
+                parent.append_child(node)
 
             if push:
                 self.open_elements.append(node)
@@ -567,28 +607,30 @@ class TreeBuilder(TreeBuilderModesMixin):
             self.open_elements.append(node)
         return node
 
-    def _insert_phantom(self, name):
-        tag = Tag(Tag.START, name, {}, False)
+    def _insert_phantom(self, name: str) -> Any:
+        attrs: dict[str, str | None] = {}
+        tag = Tag(Tag.START, name, attrs, False)
         return self._insert_element(tag, push=True)
 
-    def _insert_body_if_missing(self):
+    def _insert_body_if_missing(self) -> None:
         html_node = self._find_last_on_stack("html")
         node = SimpleDomNode("body", namespace="html")
-        html_node.append_child(node)
-        node.parent = html_node
+        if html_node is not None:
+            html_node.append_child(node)
+            node.parent = html_node
         self.open_elements.append(node)
 
-    def _create_element(self, name, namespace, attrs):
+    def _create_element(self, name: str, namespace: str | None, attrs: dict[str, str | None]) -> Any:
         ns = namespace or "html"
         return ElementNode(name, attrs, ns)
 
-    def _pop_current(self):
+    def _pop_current(self) -> Any:
         return self.open_elements.pop()
 
-    def _in_scope(self, name):
+    def _in_scope(self, name: str) -> bool:
         return self._has_element_in_scope(name, DEFAULT_SCOPE_TERMINATORS)
 
-    def _close_element_by_name(self, name):
+    def _close_element_by_name(self, name: str) -> None:
         # Simple element closing - pops from the named element onwards
         # Used for explicit closing (e.g., when button start tag closes existing button)
         # Caller guarantees name is on the stack via _has_in_scope check
@@ -599,7 +641,7 @@ class TreeBuilder(TreeBuilderModesMixin):
                 return
             index -= 1
 
-    def _any_other_end_tag(self, name):
+    def _any_other_end_tag(self, name: str) -> None:
         # Spec: "Any other end tag" in IN_BODY mode
         # Loop through stack backwards (always terminates: html is special)
         index = len(self.open_elements) - 1
@@ -624,7 +666,7 @@ class TreeBuilder(TreeBuilderModesMixin):
             # Continue to next node (previous in stack)
             index -= 1
 
-    def _add_missing_attributes(self, node, attrs):
+    def _add_missing_attributes(self, node: Any, attrs: dict[str, str]) -> None:
         if not attrs:
             return
         existing = node.attrs
@@ -632,19 +674,19 @@ class TreeBuilder(TreeBuilderModesMixin):
             if name not in existing:
                 existing[name] = value
 
-    def _remove_from_open_elements(self, node):
+    def _remove_from_open_elements(self, node: Any) -> bool:
         for index, current in enumerate(self.open_elements):
             if current is node:
                 del self.open_elements[index]
                 return True
         return False
 
-    def _is_special_element(self, node):
+    def _is_special_element(self, node: Any) -> bool:
         if node.namespace not in {None, "html"}:
             return False
         return node.name in SPECIAL_ELEMENTS
 
-    def _find_active_formatting_index(self, name):
+    def _find_active_formatting_index(self, name: str) -> int | None:
         for index in range(len(self.active_formatting) - 1, -1, -1):
             entry = self.active_formatting[index]
             if entry is FORMAT_MARKER:
@@ -653,28 +695,28 @@ class TreeBuilder(TreeBuilderModesMixin):
                 return index
         return None
 
-    def _find_active_formatting_index_by_node(self, node):
+    def _find_active_formatting_index_by_node(self, node: Any) -> int | None:
         for index in range(len(self.active_formatting) - 1, -1, -1):
             entry = self.active_formatting[index]
             if entry is not FORMAT_MARKER and entry["node"] is node:
                 return index
         return None
 
-    def _clone_attributes(self, attrs):
+    def _clone_attributes(self, attrs: dict[str, str | None]) -> dict[str, str | None]:
         return attrs.copy() if attrs else {}
 
-    def _attrs_signature(self, attrs):
+    def _attrs_signature(self, attrs: dict[str, str | None]) -> tuple[tuple[str, str], ...]:
         if not attrs:
             return ()
-        items = []
+        items: list[tuple[str, str]] = []
         for name, value in attrs.items():
             items.append((name, value or ""))
         items.sort()
         return tuple(items)
 
-    def _find_active_formatting_duplicate(self, name, attrs):
+    def _find_active_formatting_duplicate(self, name: str, attrs: dict[str, str | None]) -> int | None:
         signature = self._attrs_signature(attrs)
-        matches = []
+        matches: list[int] = []
         for index, entry in enumerate(self.active_formatting):
             if entry is FORMAT_MARKER:
                 matches.clear()
@@ -686,7 +728,7 @@ class TreeBuilder(TreeBuilderModesMixin):
             return matches[0]
         return None
 
-    def _has_active_formatting_entry(self, name):
+    def _has_active_formatting_entry(self, name: str) -> bool:
         for index in range(len(self.active_formatting) - 1, -1, -1):
             entry = self.active_formatting[index]
             if entry is FORMAT_MARKER:
@@ -695,7 +737,7 @@ class TreeBuilder(TreeBuilderModesMixin):
                 return True
         return False
 
-    def _remove_last_active_formatting_by_name(self, name):
+    def _remove_last_active_formatting_by_name(self, name: str) -> None:
         for index in range(len(self.active_formatting) - 1, -1, -1):
             entry = self.active_formatting[index]
             if entry is FORMAT_MARKER:
@@ -704,13 +746,13 @@ class TreeBuilder(TreeBuilderModesMixin):
                 del self.active_formatting[index]
                 return
 
-    def _remove_last_open_element_by_name(self, name):
+    def _remove_last_open_element_by_name(self, name: str) -> None:
         for index in range(len(self.open_elements) - 1, -1, -1):
             if self.open_elements[index].name == name:
                 del self.open_elements[index]
                 return
 
-    def _append_active_formatting_entry(self, name, attrs, node):
+    def _append_active_formatting_entry(self, name: str, attrs: dict[str, str | None], node: Any) -> None:
         entry_attrs = self._clone_attributes(attrs)
         signature = self._attrs_signature(entry_attrs)
         self.active_formatting.append(
@@ -722,20 +764,20 @@ class TreeBuilder(TreeBuilderModesMixin):
             },
         )
 
-    def _clear_active_formatting_up_to_marker(self):
+    def _clear_active_formatting_up_to_marker(self) -> None:
         while self.active_formatting:
             entry = self.active_formatting.pop()
             if entry is FORMAT_MARKER:
                 break
 
-    def _push_formatting_marker(self):
+    def _push_formatting_marker(self) -> None:
         self.active_formatting.append(FORMAT_MARKER)
 
-    def _remove_formatting_entry(self, index):
+    def _remove_formatting_entry(self, index: int) -> None:
         assert 0 <= index < len(self.active_formatting), f"Invalid index: {index}"
         del self.active_formatting[index]
 
-    def _reconstruct_active_formatting_elements(self):
+    def _reconstruct_active_formatting_elements(self) -> None:
         if not self.active_formatting:
             return
         last_entry = self.active_formatting[-1]
@@ -760,19 +802,19 @@ class TreeBuilder(TreeBuilderModesMixin):
             entry["node"] = new_node
             index += 1
 
-    def _insert_node_at(self, parent, index, node):
+    def _insert_node_at(self, parent: Any, index: int, node: Any) -> None:
         reference_node = None
         if index is not None and index < len(parent.children):
             reference_node = parent.children[index]
         parent.insert_before(node, reference_node)
 
-    def _find_last_on_stack(self, name):
+    def _find_last_on_stack(self, name: str) -> Any | None:
         for node in reversed(self.open_elements):
             if node.name == name:
                 return node
         return None
 
-    def _clear_stack_until(self, names):
+    def _clear_stack_until(self, names: set[str]) -> None:
         # All callers include "html" in names, so this always terminates via break
         while self.open_elements:
             node = self.open_elements[-1]
@@ -780,7 +822,7 @@ class TreeBuilder(TreeBuilderModesMixin):
                 break
             self.open_elements.pop()
 
-    def _generate_implied_end_tags(self, exclude=None):
+    def _generate_implied_end_tags(self, exclude: str | None = None) -> None:
         # Always terminates: html is not in IMPLIED_END_TAGS
         while self.open_elements:  # pragma: no branch
             node = self.open_elements[-1]
@@ -789,10 +831,10 @@ class TreeBuilder(TreeBuilderModesMixin):
                 continue
             break
 
-    def _has_in_table_scope(self, name):
+    def _has_in_table_scope(self, name: str) -> bool:
         return self._has_element_in_scope(name, TABLE_SCOPE_TERMINATORS, check_integration_points=False)
 
-    def _close_table_cell(self):
+    def _close_table_cell(self) -> bool:
         if self._has_in_table_scope("td"):
             self._end_table_cell("td")
             return True
@@ -801,7 +843,7 @@ class TreeBuilder(TreeBuilderModesMixin):
             return True
         return False
 
-    def _end_table_cell(self, name):
+    def _end_table_cell(self, name: str) -> None:
         self._generate_implied_end_tags(name)
         while self.open_elements:
             node = self.open_elements.pop()
@@ -810,7 +852,7 @@ class TreeBuilder(TreeBuilderModesMixin):
         self._clear_active_formatting_up_to_marker()
         self.mode = InsertionMode.IN_ROW
 
-    def _flush_pending_table_text(self):
+    def _flush_pending_table_text(self) -> None:
         data = "".join(self.pending_table_text)
         self.pending_table_text.clear()
         if not data:
@@ -827,7 +869,7 @@ class TreeBuilder(TreeBuilderModesMixin):
         finally:
             self.insert_from_table = previous
 
-    def _close_table_element(self):
+    def _close_table_element(self) -> bool:
         if not self._has_in_table_scope("table"):
             self._parse_error("unexpected-end-tag", tag_name="table")
             return False
@@ -840,7 +882,7 @@ class TreeBuilder(TreeBuilderModesMixin):
         self._reset_insertion_mode()
         return True
 
-    def _reset_insertion_mode(self):
+    def _reset_insertion_mode(self) -> None:
         # Walk stack backwards - html element always terminates
         idx = len(self.open_elements) - 1
         while idx >= 0:
@@ -880,7 +922,7 @@ class TreeBuilder(TreeBuilderModesMixin):
         # Empty stack fallback
         self.mode = InsertionMode.IN_BODY
 
-    def _should_foster_parenting(self, target, *, for_tag=None, is_text=False):
+    def _should_foster_parenting(self, target: Any, *, for_tag: str | None = None, is_text: bool = False) -> bool:
         if not self.insert_from_table:
             return False
         if target.name not in TABLE_FOSTER_TARGETS:
@@ -891,17 +933,17 @@ class TreeBuilder(TreeBuilderModesMixin):
             return False
         return True
 
-    def _lower_ascii(self, value):
+    def _lower_ascii(self, value: str) -> str:
         return value.lower() if value else ""
 
-    def _adjust_svg_tag_name(self, name):
+    def _adjust_svg_tag_name(self, name: str) -> str:
         lowered = self._lower_ascii(name)
         return SVG_TAG_NAME_ADJUSTMENTS.get(lowered, name)
 
-    def _prepare_foreign_attributes(self, namespace, attrs):
+    def _prepare_foreign_attributes(self, namespace: str, attrs: dict[str, str | None]) -> dict[str, str | None]:
         if not attrs:
             return {}
-        adjusted = {}
+        adjusted: dict[str, str | None] = {}
         for name, value in attrs.items():
             lower_name = self._lower_ascii(name)
             if namespace == "math" and lower_name in MATHML_ATTRIBUTE_ADJUSTMENTS:
@@ -920,14 +962,14 @@ class TreeBuilder(TreeBuilderModesMixin):
             adjusted[name] = value
         return adjusted
 
-    def _node_attribute_value(self, node, name):
+    def _node_attribute_value(self, node: Any, name: str) -> str | None:
         target = self._lower_ascii(name)
         for attr_name, attr_value in node.attrs.items():
             if self._lower_ascii(attr_name) == target:
                 return attr_value or ""
         return None
 
-    def _is_html_integration_point(self, node):
+    def _is_html_integration_point(self, node: Any) -> bool:
         # annotation-xml is an HTML integration point only with specific encoding values
         if node.namespace == "math" and node.name == "annotation-xml":
             encoding = self._node_attribute_value(node, "encoding")
@@ -939,15 +981,15 @@ class TreeBuilder(TreeBuilderModesMixin):
         # SVG foreignObject, desc, and title are always HTML integration points
         return (node.namespace, node.name) in HTML_INTEGRATION_POINT_SET
 
-    def _is_mathml_text_integration_point(self, node):
+    def _is_mathml_text_integration_point(self, node: Any) -> bool:
         if node.namespace != "math":
             return False
         return (node.namespace, node.name) in MATHML_TEXT_INTEGRATION_POINT_SET
 
-    def _adjusted_current_node(self):
+    def _adjusted_current_node(self) -> Any:
         return self.open_elements[-1]
 
-    def _should_use_foreign_content(self, token):
+    def _should_use_foreign_content(self, token: Any) -> bool:
         current = self._adjusted_current_node()
         # HTML namespace elements don't use foreign content rules
         # (unreachable in practice as foreign content mode only entered for foreign elements)
@@ -978,13 +1020,13 @@ class TreeBuilder(TreeBuilderModesMixin):
 
         return True
 
-    def _foreign_breakout_font(self, tag):
+    def _foreign_breakout_font(self, tag: Any) -> bool:
         for name in tag.attrs.keys():
             if self._lower_ascii(name) in {"color", "face", "size"}:
                 return True
         return False
 
-    def _pop_until_html_or_integration_point(self):
+    def _pop_until_html_or_integration_point(self) -> None:
         # Always terminates: html element has html namespace
         while self.open_elements:  # pragma: no branch
             node = self.open_elements[-1]
@@ -996,7 +1038,7 @@ class TreeBuilder(TreeBuilderModesMixin):
                 return
             self.open_elements.pop()
 
-    def _process_foreign_content(self, token):
+    def _process_foreign_content(self, token: Any) -> Any | None:
         current = self._adjusted_current_node()
 
         if isinstance(token, CharacterTokens):
@@ -1087,7 +1129,9 @@ class TreeBuilder(TreeBuilderModesMixin):
         # Stack exhausted without finding match - ignore tag (defensive, html always terminates)
         return None  # pragma: no cover
 
-    def _appropriate_insertion_location(self, override_target=None, *, foster_parenting=False):
+    def _appropriate_insertion_location(
+        self, override_target: Any | None = None, *, foster_parenting: bool = False
+    ) -> tuple[Any, int]:
         if override_target is not None:
             target = override_target
         else:
@@ -1106,24 +1150,28 @@ class TreeBuilder(TreeBuilderModesMixin):
             parent = last_table.parent
             # Table has no parent (e.g., detached) - fall back to target
             if parent is None:  # pragma: no cover
-                return target, len(target.children)
+                children = target.children
+                return target, len(children) if children is not None else 0
+            assert parent.children is not None
             position = parent.children.index(last_table)
             return parent, position
 
         # If target is a template element, insert into its content document fragment
         if type(target) is TemplateNode and target.template_content:
-            return target.template_content, len(target.template_content.children)
+            children = target.template_content.children
+            return target.template_content, len(children) if children is not None else 0
 
-        return target, len(target.children)
+        target_children = target.children
+        return target, len(target_children) if target_children is not None else 0
 
-    def _populate_selectedcontent(self, root):
+    def _populate_selectedcontent(self, root: Any) -> None:
         """Populate selectedcontent elements with content from selected option.
 
         Per HTML5 spec: selectedcontent mirrors the content of the selected option,
         or the first option if none is selected.
         """
         # Find all select elements
-        selects = []
+        selects: list[Any] = []
         self._find_elements(root, "select", selects)
 
         for select in selects:
@@ -1133,7 +1181,7 @@ class TreeBuilder(TreeBuilderModesMixin):
                 continue
 
             # Find all option elements
-            options = []
+            options: list[Any] = []
             self._find_elements(select, "option", options)
 
             # Find selected option or use first one
@@ -1153,7 +1201,7 @@ class TreeBuilder(TreeBuilderModesMixin):
             # Clone content from selected option to selectedcontent
             self._clone_children(selected_option, selectedcontent)
 
-    def _find_elements(self, node, name, result):
+    def _find_elements(self, node: Any, name: str, result: list[Any]) -> None:
         """Recursively find all elements with given name."""
         if node.name == name:
             result.append(node)
@@ -1162,7 +1210,7 @@ class TreeBuilder(TreeBuilderModesMixin):
             for child in node.children:
                 self._find_elements(child, name, result)
 
-    def _find_element(self, node, name):
+    def _find_element(self, node: Any, name: str) -> Any | None:
         """Find first element with given name."""
         if node.name == name:
             return node
@@ -1174,21 +1222,21 @@ class TreeBuilder(TreeBuilderModesMixin):
                     return result
         return None
 
-    def _clone_children(self, source, target):
+    def _clone_children(self, source: Any, target: Any) -> None:
         """Deep clone all children from source to target."""
         for child in source.children:
             target.append_child(child.clone_node(deep=True))
 
-    def _has_in_scope(self, name):
+    def _has_in_scope(self, name: str) -> bool:
         return self._has_element_in_scope(name, DEFAULT_SCOPE_TERMINATORS)
 
-    def _has_in_list_item_scope(self, name):
+    def _has_in_list_item_scope(self, name: str) -> bool:
         return self._has_element_in_scope(name, LIST_ITEM_SCOPE_TERMINATORS)
 
-    def _has_in_definition_scope(self, name):
+    def _has_in_definition_scope(self, name: str) -> bool:
         return self._has_element_in_scope(name, DEFINITION_SCOPE_TERMINATORS)
 
-    def _has_any_in_scope(self, names):
+    def _has_any_in_scope(self, names: set[str]) -> bool:
         # Always terminates: html is in DEFAULT_SCOPE_TERMINATORS
         terminators = DEFAULT_SCOPE_TERMINATORS
         idx = len(self.open_elements) - 1
@@ -1201,7 +1249,7 @@ class TreeBuilder(TreeBuilderModesMixin):
             idx -= 1
         return False  # pragma: no cover - html always terminates
 
-    def process_characters(self, data):
+    def process_characters(self, data: str) -> Any:
         """Optimized path for character tokens."""
         # Check for foreign content first
         current_node = self.open_elements[-1] if self.open_elements else None

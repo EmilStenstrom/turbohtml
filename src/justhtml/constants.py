@@ -1,5 +1,9 @@
 """HTML5 spec constants for tree building."""
 
+from __future__ import annotations
+
+from typing import Final
+
 # HTML5 spec: Foreign attribute adjustments for SVG/MathML
 # Maps lowercase attribute names to (prefix, local_name, namespace_url)
 FOREIGN_ATTRIBUTE_ADJUSTMENTS = {
@@ -284,7 +288,7 @@ SPECIAL_ELEMENTS = {
     "wbr",
 }
 
-FORMAT_MARKER = object()
+FORMAT_MARKER: Final[object] = object()
 
 DEFAULT_SCOPE_TERMINATORS = {
     "applet",
