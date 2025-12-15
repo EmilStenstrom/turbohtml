@@ -46,6 +46,10 @@ jobs:
       - name: Run tests
         run: python run_tests.py
 
+      - name: Run mypy
+        if: matrix.python-version == '3.12'
+        run: mypy
+
   test-pyodide:
     runs-on: ubuntu-latest
     steps:

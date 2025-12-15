@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import enum
+from typing import TYPE_CHECKING
 
 from .constants import (
     HTML4_PUBLIC_PREFIXES,
@@ -7,6 +10,9 @@ from .constants import (
     QUIRKY_PUBLIC_PREFIXES,
     QUIRKY_SYSTEM_MATCHES,
 )
+
+if TYPE_CHECKING:
+    from .tokens import Doctype
 
 
 class InsertionMode(enum.IntEnum):
@@ -34,20 +40,20 @@ class InsertionMode(enum.IntEnum):
     IN_TEMPLATE = 21
 
 
-def is_all_whitespace(text):
+def is_all_whitespace(text: str) -> bool:
     return text.strip("\t\n\f\r ") == ""
 
 
-def contains_prefix(haystack, needle):
+def contains_prefix(haystack: tuple[str, ...], needle: str) -> bool:
     return any(needle.startswith(prefix) for prefix in haystack)
 
 
-def doctype_error_and_quirks(doctype, iframe_srcdoc=False):
+def doctype_error_and_quirks(doctype: Doctype, iframe_srcdoc: bool = False) -> tuple[bool, str]:
     name = doctype.name.lower() if doctype.name else None
     public_id = doctype.public_id
     system_id = doctype.system_id
 
-    acceptable = (
+    acceptable: tuple[tuple[str | None, str | None, str | None], ...] = (
         ("html", None, None),
         ("html", None, "about:legacy-compat"),
         ("html", "-//W3C//DTD HTML 4.0//EN", None),
@@ -64,6 +70,7 @@ def doctype_error_and_quirks(doctype, iframe_srcdoc=False):
     public_lower = public_id.lower() if public_id else None
     system_lower = system_id.lower() if system_id else None
 
+    quirks_mode: str
     if doctype.force_quirks:
         quirks_mode = "quirks"
     elif iframe_srcdoc:

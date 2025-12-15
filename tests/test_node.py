@@ -13,6 +13,22 @@ from justhtml.node import (
 
 
 class TestNode(unittest.TestCase):
+    def test_simple_dom_text_node_text_property(self):
+        node = SimpleDomNode("#text", data="Hi")
+        assert node.text == "Hi"
+
+    def test_append_child_noop_for_comment_node(self):
+        parent = SimpleDomNode("#comment", data="comment")
+        child = SimpleDomNode("span")
+        parent.append_child(child)
+        assert child.parent is None
+
+    def test_remove_child_noop_for_comment_node(self):
+        parent = SimpleDomNode("#comment", data="comment")
+        child = SimpleDomNode("span")
+        parent.remove_child(child)
+        assert child.parent is None
+
     def test_text_property_simple(self):
         node = SimpleDomNode("div")
         text = TextNode("Hello")

@@ -17,10 +17,9 @@
 2. **No exceptions in hot paths**: Use deterministic control flow, not try/except for branching.
 3. **No reflective probing**: No `hasattr`, `getattr`, or `delattr` - all data structures used are deterministic.
 4. **Minimal allocations**: Reuse buffers, avoid per-token object creation in tokenizer.
-5. **No typing annotations**: Keep code clean and fast.
-6. **Token reuse**: Create new token objects when emitting (don't reuse references).
-7. **State machine purity**: Tokenizer state transitions follow spec state machine exactly.
-8. **No test-specific code**: No references to test files in comments or code.
+5. **Token reuse**: Create new token objects when emitting (don't reuse references).
+6. **State machine purity**: Tokenizer state transitions follow spec state machine exactly.
+7. **No test-specific code**: No references to test files in comments or code.
 
 ### Testing Workflow
 1. **Target failures**: Use `--test-specs file:indices` to run specific tests

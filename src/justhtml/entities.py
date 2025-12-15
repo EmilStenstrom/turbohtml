@@ -4,27 +4,29 @@ Implements HTML5 character reference (entity) decoding per WHATWG spec §13.2.5.
 Supports both named entities (&amp;, &nbsp;) and numeric references (&#60;, &#x3C;).
 """
 
+from __future__ import annotations
+
 import html.entities
 
 # Use Python's complete HTML5 entity list (2231 entities)
 # Keys include the trailing semicolon (e.g., "amp;", "lang;")
 # We'll strip semicolons when looking up to match both forms
-_HTML5_ENTITIES = html.entities.html5
+_HTML5_ENTITIES: dict[str, str] = html.entities.html5
 
 # Build a normalized lookup without semicolons for easier access
-NAMED_ENTITIES = {}
-for key, value in _HTML5_ENTITIES.items():
+NAMED_ENTITIES: dict[str, str] = {}
+for _key, _value in _HTML5_ENTITIES.items():
     # Remove trailing semicolon for lookup
-    if key.endswith(";"):
-        NAMED_ENTITIES[key[:-1]] = value
+    if _key.endswith(";"):
+        NAMED_ENTITIES[_key[:-1]] = _value
     else:
-        NAMED_ENTITIES[key] = value
+        NAMED_ENTITIES[_key] = _value
 
 # Legacy named character references that can be used without semicolons
 # Per HTML5 spec, these are primarily ISO-8859-1 (Latin-1) entities from HTML4
 # Modern entities like "prod", "notin" etc. require semicolons
 # Note: Some have both uppercase and lowercase versions (e.g., COPY/copy, GT/gt)
-LEGACY_ENTITIES = {
+LEGACY_ENTITIES: set[str] = {
     "gt",
     "lt",
     "amp",
@@ -134,7 +136,7 @@ LEGACY_ENTITIES = {
 }
 
 # HTML5 numeric character reference replacements (§13.2.5.73)
-NUMERIC_REPLACEMENTS = {
+NUMERIC_REPLACEMENTS: dict[int, str] = {
     0x00: "\ufffd",  # NULL
     0x80: "\u20ac",  # EURO SIGN
     0x82: "\u201a",  # SINGLE LOW-9 QUOTATION MARK
@@ -166,7 +168,7 @@ NUMERIC_REPLACEMENTS = {
 }
 
 
-def decode_numeric_entity(text, is_hex=False):
+def decode_numeric_entity(text: str, is_hex: bool = False) -> str:
     """Decode a numeric character reference like &#60; or &#x3C;.
 
     Args:
@@ -192,7 +194,7 @@ def decode_numeric_entity(text, is_hex=False):
     return chr(codepoint)
 
 
-def decode_entities_in_text(text, in_attribute=False):
+def decode_entities_in_text(text: str, in_attribute: bool = False) -> str:
     """Decode all HTML entities in text.
 
     This is a simple implementation that handles:
@@ -207,7 +209,7 @@ def decode_entities_in_text(text, in_attribute=False):
     Returns:
         Text with entities decoded
     """
-    result = []
+    result: list[str] = []
     i = 0
     length = len(text)
     while i < length:
@@ -274,7 +276,7 @@ def decode_entities_in_text(text, in_attribute=False):
             continue
         # If semicolon present but no exact match, allow legacy prefix match in text
         if has_semicolon and not in_attribute:
-            best_match = None
+            best_match: str | None = None
             best_match_len = 0
             for k in range(len(entity_name), 0, -1):
                 prefix = entity_name[:k]

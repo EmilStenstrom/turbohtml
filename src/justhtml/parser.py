@@ -1,8 +1,17 @@
 """Minimal JustHTML parser entry point."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
 from .encoding import decode_html
 from .tokenizer import Tokenizer, TokenizerOpts
 from .treebuilder import TreeBuilder
+
+if TYPE_CHECKING:
+    from .context import FragmentContext
+    from .node import SimpleDomNode
+    from .tokens import ParseError
 
 
 class StrictModeError(SyntaxError):
@@ -12,7 +21,9 @@ class StrictModeError(SyntaxError):
     with source location highlighting.
     """
 
-    def __init__(self, error):
+    error: ParseError
+
+    def __init__(self, error: ParseError) -> None:
         self.error = error
         # Use the ParseError's as_exception() to get enhanced display
         exc = error.as_exception()
@@ -29,30 +40,39 @@ class StrictModeError(SyntaxError):
 class JustHTML:
     __slots__ = ("debug", "encoding", "errors", "fragment_context", "root", "tokenizer", "tree_builder")
 
+    debug: bool
+    encoding: str | None
+    errors: list[ParseError]
+    fragment_context: FragmentContext | None
+    root: SimpleDomNode
+    tokenizer: Tokenizer
+    tree_builder: TreeBuilder
+
     def __init__(
         self,
-        html,
+        html: str | bytes | bytearray | memoryview | None,
         *,
-        collect_errors=False,
-        debug=False,
-        encoding=None,
-        fragment_context=None,
-        iframe_srcdoc=False,
-        strict=False,
-        tokenizer_opts=None,
-        tree_builder=None,
-    ):
+        collect_errors: bool = False,
+        debug: bool = False,
+        encoding: str | None = None,
+        fragment_context: FragmentContext | None = None,
+        iframe_srcdoc: bool = False,
+        strict: bool = False,
+        tokenizer_opts: TokenizerOpts | None = None,
+        tree_builder: TreeBuilder | None = None,
+    ) -> None:
         self.debug = bool(debug)
         self.fragment_context = fragment_context
         self.encoding = None
 
+        html_str: str
         if isinstance(html, (bytes, bytearray, memoryview)):
-            html, chosen = decode_html(bytes(html), transport_encoding=encoding)
+            html_str, chosen = decode_html(bytes(html), transport_encoding=encoding)
             self.encoding = chosen
         elif html is not None:
-            html = str(html)
+            html_str = str(html)
         else:
-            html = ""
+            html_str = ""
 
         # Enable error collection if strict mode is on
         should_collect = collect_errors or strict
@@ -78,7 +98,7 @@ class JustHTML:
         # Link tokenizer to tree_builder for position info
         self.tree_builder.tokenizer = self.tokenizer
 
-        self.tokenizer.run(html)
+        self.tokenizer.run(html_str)
         self.root = self.tree_builder.finish()
 
         # Merge errors from both tokenizer and tree builder
@@ -88,22 +108,22 @@ class JustHTML:
         if strict and self.errors:
             raise StrictModeError(self.errors[0])
 
-    def query(self, selector):
+    def query(self, selector: str) -> list[Any]:
         """Query the document using a CSS selector. Delegates to root.query()."""
         return self.root.query(selector)
 
-    def to_html(self, pretty=True, indent_size=2):
+    def to_html(self, pretty: bool = True, indent_size: int = 2) -> str:
         """Serialize the document to HTML. Delegates to root.to_html()."""
         return self.root.to_html(indent=0, indent_size=indent_size, pretty=pretty)
 
-    def to_text(self, separator=" ", strip=True):
+    def to_text(self, separator: str = " ", strip: bool = True) -> str:
         """Return the document's concatenated text.
 
         Delegates to `root.to_text(separator=..., strip=...)`.
         """
         return self.root.to_text(separator=separator, strip=strip)
 
-    def to_markdown(self):
+    def to_markdown(self) -> str:
         """Return a GitHub Flavored Markdown representation.
 
         Delegates to `root.to_markdown()`.

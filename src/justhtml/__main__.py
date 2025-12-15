@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Command-line interface for JustHTML."""
 
+from __future__ import annotations
+
 import argparse
 import sys
 from importlib.metadata import PackageNotFoundError, version
@@ -10,14 +12,14 @@ from . import JustHTML
 from .selector import SelectorError
 
 
-def _get_version():
+def _get_version() -> str:
     try:
         return version("justhtml")
     except PackageNotFoundError:  # pragma: no cover
         return "dev"
 
 
-def _parse_args(argv):
+def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="justhtml",
         description="Parse HTML5 and output text, pretty-printed HTML, or Markdown.",
@@ -90,14 +92,14 @@ def _parse_args(argv):
     return args
 
 
-def _read_html(path):
+def _read_html(path: str) -> str:
     if path == "-":
         return sys.stdin.read()
 
     return Path(path).read_text()
 
 
-def main():
+def main() -> None:
     args = _parse_args(sys.argv[1:])
     html = _read_html(args.path)
     doc = JustHTML(html)
@@ -129,6 +131,7 @@ def main():
     outputs = [node.to_markdown() for node in nodes]
     sys.stdout.write("\n\n".join(outputs))
     sys.stdout.write("\n")
+    return
 
 
 if __name__ == "__main__":

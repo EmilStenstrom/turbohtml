@@ -4,8 +4,10 @@ This module provides human-readable error messages for all parse error codes
 emitted by both the tokenizer and tree builder during HTML parsing.
 """
 
+from __future__ import annotations
 
-def generate_error_message(code, tag_name=None):
+
+def generate_error_message(code: str, tag_name: str | None = None) -> str:
     """Generate human-readable error message from error code.
 
     Args:

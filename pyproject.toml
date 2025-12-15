@@ -27,6 +27,7 @@ dev = [
     "build",
     "twine",
     "pre-commit",
+    "mypy>=1.0; platform_python_implementation != 'PyPy'",
 ]
 
 [project.urls]
@@ -73,6 +74,18 @@ ignore = [
 [tool.ruff.lint.extend-per-file-ignores]
 "tests/**/*.py" = ["S101", "PT"]  # S101: allow assert, PT: we use unittest not pytest
 
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_ignores = false
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+show_error_codes = true
+files = ["src/justhtml"]
+
 [tool.coverage.run]
 branch = true
 source = ["src/justhtml"]
@@ -81,6 +94,7 @@ source = ["src/justhtml"]
 fail_under = 100
 exclude_lines = [
     "pragma: no cover",
+    "if TYPE_CHECKING:",
     "def __repr__",
     "raise AssertionError",
     "raise NotImplementedError",
