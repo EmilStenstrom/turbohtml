@@ -1610,14 +1610,25 @@ def _run_encoding_tests(config):
     return passed, total, skipped, file_results
 
 
-class RecordingTreeBuilder(TreeBuilder):
-    """TreeBuilder sink that also records emitted tokens."""
+class RecordingTreeBuilder:
+    """TreeBuilder sink wrapper that records emitted tokens.
 
-    __slots__ = ("tokens",)
+    Uses composition instead of inheritance for mypyc compatibility.
+    Mypyc doesn't allow interpreted classes to inherit from compiled classes.
+    """
+
+    __slots__ = ("_tree_builder", "_original_process_token", "tokens")
 
     def __init__(self):
-        super().__init__()
+        self._tree_builder = TreeBuilder()
         self.tokens = []
+        # Save the original process_token method
+        self._original_process_token = self._tree_builder.process_token
+        # Monkey-patch the tree builder's process_token to call ours
+        # This is necessary because TreeBuilder.process_characters internally
+        # calls self.process_token(), and we need that to go through our
+        # recording wrapper
+        self._tree_builder.process_token = self.process_token
 
     def process_token(self, token):
         # Copy token because tokenizer might reuse it
@@ -1647,12 +1658,30 @@ class RecordingTreeBuilder(TreeBuilder):
             else:
                 self.tokens.append(token)
 
-        return super().process_token(token)
+        return self._original_process_token(token)
 
     def process_characters(self, data):
-        if self.mode == InsertionMode.IN_BODY:
+        if self._tree_builder.mode == InsertionMode.IN_BODY:
             self.tokens.append(CharacterTokens(data))
-        return super().process_characters(data)
+        return self._tree_builder.process_characters(data)
+
+    # Delegate all TreeBuilder attributes to the internal instance
+    def __getattr__(self, name):
+        return getattr(self._tree_builder, name)
+
+    def __setattr__(self, name, value):
+        # Handle our own slots first
+        if name in ("_tree_builder", "_original_process_token", "tokens"):
+            object.__setattr__(self, name, value)
+        else:
+            # Delegate to the wrapped tree builder (if it exists)
+            try:
+                tree_builder = object.__getattribute__(self, "_tree_builder")
+                setattr(tree_builder, name, value)
+            except AttributeError:
+                # During initialization, _tree_builder doesn't exist yet
+                # This shouldn't happen in normal use, but just in case
+                object.__setattr__(self, name, value)
 
 
 def _unescape_unicode(text: str) -> str:

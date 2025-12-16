@@ -625,26 +625,26 @@ class Tokenizer:
                             self.state = self.SELF_CLOSING_START_TAG
                             return self._state_self_closing_start_tag()
 
-            c = self._get_char()  # type: ignore[assignment]
-            if c is None:
+            ch: str | None = self._get_char()
+            if ch is None:
                 self._emit_error("eof-in-tag")
                 # Per HTML5 spec: EOF in tag name is a parse error, emit EOF token only
                 # The incomplete tag is discarded (not emitted as text)
                 self._emit_token(EOFToken())
                 return True
-            if c in ("\t", "\n", "\f", " "):
+            if ch in ("\t", "\n", "\f", " "):
                 self.state = self.BEFORE_ATTRIBUTE_NAME
                 return self._state_before_attribute_name()
-            if c == "/":
+            if ch == "/":
                 self.state = self.SELF_CLOSING_START_TAG
                 return self._state_self_closing_start_tag()
-            if c == ">":
+            if ch == ">":
                 # In slow path, tag name is only first char (from DATA),
                 # so no rawtext elements possible - always set DATA state
                 self._emit_current_tag()
                 self.state = self.DATA
                 return False
-            # c == "\0" - the only remaining possibility after fast-path
+            # ch == "\0" - the only remaining possibility after fast-path
             self._emit_error("unexpected-null-character")
             append_tag_char(replacement)
 
@@ -775,35 +775,35 @@ class Tokenizer:
                                 self.state = self.SELF_CLOSING_START_TAG
                                 return self._state_self_closing_start_tag()
 
-            c = self._get_char()  # type: ignore[assignment]
-            if c is None:
+            ch: str | None = self._get_char()
+            if ch is None:
                 self._emit_error("eof-in-tag")
                 self._flush_text()
                 self._emit_token(EOFToken())
                 return True
-            if c in ("\t", "\n", "\f", " "):
+            if ch in ("\t", "\n", "\f", " "):
                 self._finish_attribute()
                 self.state = self.AFTER_ATTRIBUTE_NAME
                 return False  # Let main loop dispatch to avoid recursion
-            if c == "/":
+            if ch == "/":
                 self._finish_attribute()
                 self.state = self.SELF_CLOSING_START_TAG
                 return self._state_self_closing_start_tag()
-            if c == "=":
+            if ch == "=":
                 self.state = self.BEFORE_ATTRIBUTE_VALUE
                 return self._state_before_attribute_value()
-            if c == ">":
+            if ch == ">":
                 self._finish_attribute()
                 if not self._emit_current_tag():
                     self.state = self.DATA
                 return False
-            if c == "\0":
+            if ch == "\0":
                 self._emit_error("unexpected-null-character")
                 append_attr_char(replacement)
                 continue
-            if c in ('"', "'", "<"):
+            if ch in ('"', "'", "<"):
                 self._emit_error("unexpected-character-in-attribute-name")
-            append_attr_char(c)
+            append_attr_char(ch)
 
     def _state_after_attribute_name(self) -> bool:
         buffer = self.buffer
