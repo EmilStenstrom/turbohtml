@@ -31,7 +31,7 @@ dev = [
 ]
 mypyc = [
     "mypy>=1.0",
-    "setuptools>=60",
+    "setuptools>=61",
 ]
 
 [project.urls]
@@ -43,7 +43,7 @@ justhtml = "justhtml.__main__:main"
 
 [build-system]
 requires = [
-    "setuptools>=60",
+    "setuptools>=61",
     "wheel",
     "mypy>=1.0; python_version>='3.10'",
 ]
