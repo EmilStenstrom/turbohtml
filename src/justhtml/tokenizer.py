@@ -232,7 +232,77 @@ class Tokenizer:
     text_buffer: list[str]
     text_start_pos: int
 
-    # _STATE_HANDLERS is defined at the end of the file
+    # _state_handlers is initialized in __init__ for mypyc compatibility
+
+    def _build_state_handlers(self) -> list:
+        """Build the state handlers dispatch table. Called from __init__.
+
+        Returns a list of bound methods - since they're bound to self,
+        they can be called without passing self as an argument.
+        """
+        return [
+            self._state_data,                                            # 0
+            self._state_tag_open,                                        # 1
+            self._state_end_tag_open,                                    # 2
+            self._state_tag_name,                                        # 3
+            self._state_before_attribute_name,                           # 4
+            self._state_attribute_name,                                  # 5
+            self._state_after_attribute_name,                            # 6
+            self._state_before_attribute_value,                          # 7
+            self._state_attribute_value_double,                          # 8
+            self._state_attribute_value_single,                          # 9
+            self._state_attribute_value_unquoted,                        # 10
+            self._state_after_attribute_value_quoted,                    # 11
+            self._state_self_closing_start_tag,                          # 12
+            self._state_markup_declaration_open,                         # 13
+            self._state_comment_start,                                   # 14
+            self._state_comment_start_dash,                              # 15
+            self._state_comment,                                         # 16
+            self._state_comment_end_dash,                                # 17
+            self._state_comment_end,                                     # 18
+            self._state_comment_end_bang,                                # 19
+            self._state_bogus_comment,                                   # 20
+            self._state_doctype,                                         # 21
+            self._state_before_doctype_name,                             # 22
+            self._state_doctype_name,                                    # 23
+            self._state_after_doctype_name,                              # 24
+            self._state_bogus_doctype,                                   # 25
+            self._state_after_doctype_public_keyword,                    # 26
+            self._state_after_doctype_system_keyword,                    # 27
+            self._state_before_doctype_public_identifier,                # 28
+            self._state_doctype_public_identifier_double_quoted,         # 29
+            self._state_doctype_public_identifier_single_quoted,         # 30
+            self._state_after_doctype_public_identifier,                 # 31
+            self._state_between_doctype_public_and_system_identifiers,   # 32
+            self._state_before_doctype_system_identifier,                # 33
+            self._state_doctype_system_identifier_double_quoted,         # 34
+            self._state_doctype_system_identifier_single_quoted,         # 35
+            self._state_after_doctype_system_identifier,                 # 36
+            self._state_cdata_section,                                   # 37
+            self._state_cdata_section_bracket,                           # 38
+            self._state_cdata_section_end,                               # 39
+            self._state_rcdata,                                          # 40
+            self._state_rcdata_less_than_sign,                           # 41
+            self._state_rcdata_end_tag_open,                             # 42
+            self._state_rcdata_end_tag_name,                             # 43
+            self._state_rawtext,                                         # 44
+            self._state_rawtext_less_than_sign,                          # 45
+            self._state_rawtext_end_tag_open,                            # 46
+            self._state_rawtext_end_tag_name,                            # 47
+            self._state_plaintext,                                       # 48
+            self._state_script_data_escaped,                             # 49
+            self._state_script_data_escaped_dash,                        # 50
+            self._state_script_data_escaped_dash_dash,                   # 51
+            self._state_script_data_escaped_less_than_sign,              # 52
+            self._state_script_data_escaped_end_tag_open,                # 53
+            self._state_script_data_escaped_end_tag_name,                # 54
+            self._state_script_data_double_escape_start,                 # 55
+            self._state_script_data_double_escaped,                      # 56
+            self._state_script_data_double_escaped_dash,                 # 57
+            self._state_script_data_double_escaped_dash_dash,            # 58
+            self._state_script_data_double_escaped_less_than_sign,       # 59
+            self._state_script_data_double_escape_end,                   # 60
+        ]
 
     def __init__(self, sink: Any, opts: TokenizerOpts | None = None, collect_errors: bool = False) -> None:
         self.sink = sink
@@ -271,6 +341,7 @@ class Tokenizer:
         self.temp_buffer = []
         self._tag_token = Tag(Tag.START, "", {}, False)
         self._comment_token = CommentToken("")
+        self._state_handlers = self._build_state_handlers()
 
     def initialize(self, html: str | None) -> None:
         if html and html[0] == "\ufeff" and self.opts.discard_bom:
@@ -336,8 +407,8 @@ class Tokenizer:
 
     def step(self) -> bool:
         """Run one step of the tokenizer state machine. Returns True if EOF reached."""
-        handler = self._STATE_HANDLERS[self.state]  # type: ignore[attr-defined]
-        return handler(self)  # type: ignore[no-any-return]
+        handler = self._state_handlers[self.state]
+        return handler()  # type: ignore[no-any-return,call-arg]
 
     def run(self, html: str | None) -> None:
         self.initialize(html)
@@ -2580,68 +2651,3 @@ class Tokenizer:
         self._reconsume_current()
         self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
         return False
-
-
-Tokenizer._STATE_HANDLERS = [  # type: ignore[attr-defined]
-    Tokenizer._state_data,
-    Tokenizer._state_tag_open,
-    Tokenizer._state_end_tag_open,
-    Tokenizer._state_tag_name,
-    Tokenizer._state_before_attribute_name,
-    Tokenizer._state_attribute_name,
-    Tokenizer._state_after_attribute_name,
-    Tokenizer._state_before_attribute_value,
-    Tokenizer._state_attribute_value_double,
-    Tokenizer._state_attribute_value_single,
-    Tokenizer._state_attribute_value_unquoted,
-    Tokenizer._state_after_attribute_value_quoted,
-    Tokenizer._state_self_closing_start_tag,
-    Tokenizer._state_markup_declaration_open,
-    Tokenizer._state_comment_start,
-    Tokenizer._state_comment_start_dash,
-    Tokenizer._state_comment,
-    Tokenizer._state_comment_end_dash,
-    Tokenizer._state_comment_end,
-    Tokenizer._state_comment_end_bang,
-    Tokenizer._state_bogus_comment,
-    Tokenizer._state_doctype,
-    Tokenizer._state_before_doctype_name,
-    Tokenizer._state_doctype_name,
-    Tokenizer._state_after_doctype_name,
-    Tokenizer._state_bogus_doctype,
-    Tokenizer._state_after_doctype_public_keyword,
-    Tokenizer._state_after_doctype_system_keyword,
-    Tokenizer._state_before_doctype_public_identifier,
-    Tokenizer._state_doctype_public_identifier_double_quoted,
-    Tokenizer._state_doctype_public_identifier_single_quoted,
-    Tokenizer._state_after_doctype_public_identifier,
-    Tokenizer._state_between_doctype_public_and_system_identifiers,
-    Tokenizer._state_before_doctype_system_identifier,
-    Tokenizer._state_doctype_system_identifier_double_quoted,
-    Tokenizer._state_doctype_system_identifier_single_quoted,
-    Tokenizer._state_after_doctype_system_identifier,
-    Tokenizer._state_cdata_section,
-    Tokenizer._state_cdata_section_bracket,
-    Tokenizer._state_cdata_section_end,
-    Tokenizer._state_rcdata,
-    Tokenizer._state_rcdata_less_than_sign,
-    Tokenizer._state_rcdata_end_tag_open,
-    Tokenizer._state_rcdata_end_tag_name,
-    Tokenizer._state_rawtext,
-    Tokenizer._state_rawtext_less_than_sign,
-    Tokenizer._state_rawtext_end_tag_open,
-    Tokenizer._state_rawtext_end_tag_name,
-    Tokenizer._state_plaintext,
-    Tokenizer._state_script_data_escaped,
-    Tokenizer._state_script_data_escaped_dash,
-    Tokenizer._state_script_data_escaped_dash_dash,
-    Tokenizer._state_script_data_escaped_less_than_sign,
-    Tokenizer._state_script_data_escaped_end_tag_open,
-    Tokenizer._state_script_data_escaped_end_tag_name,
-    Tokenizer._state_script_data_double_escape_start,
-    Tokenizer._state_script_data_double_escaped,
-    Tokenizer._state_script_data_double_escaped_dash,
-    Tokenizer._state_script_data_double_escaped_dash_dash,
-    Tokenizer._state_script_data_double_escaped_less_than_sign,
-    Tokenizer._state_script_data_double_escape_end,
-]

@@ -52,6 +52,54 @@ jobs:
         if: matrix.python-version == '3.12'
         run: mypy
 
+  test-mypyc:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,mypyc]"
+
+      - name: Build with mypyc
+        run: |
+          # Remove pure Python version
+          find src/justhtml -name "*.so" -delete || true
+          # Build with mypyc
+          JUSTHTML_USE_MYPYC=1 pip install -e . --no-build-isolation
+          # Verify compilation
+          ls -lh src/justhtml/*.so
+
+      - name: Checkout html5lib-tests
+        run: |
+          cd ..
+          git clone https://github.com/html5lib/html5lib-tests.git
+
+      - name: Setup test symlinks
+        run: |
+          cd tests
+          ln -s ../../html5lib-tests/tokenizer html5lib-tests-tokenizer
+          ln -s ../../html5lib-tests/tree-construction html5lib-tests-tree
+          ln -s ../../html5lib-tests/serializer html5lib-tests-serializer
+          ln -s ../../html5lib-tests/encoding html5lib-tests-encoding
+
+      - name: Run tests with mypyc
+        run: python run_tests.py
+
+      - name: Run mypyc benchmarks
+        run: python benchmarks/compare_mypyc.py --mode compiled
+
   test-pyodide:
     runs-on: ubuntu-latest
     steps:
