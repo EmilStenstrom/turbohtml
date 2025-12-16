@@ -529,6 +529,14 @@ class SelectorMatcher:
 
     __slots__ = ()
 
+    def _unquote_pseudo_arg(self, arg: str) -> str:
+        arg = arg.strip()
+        if len(arg) >= 2 and arg[0] == arg[-1] and arg[0] in ('"', "'"):
+            quote = arg[0]
+            # Minimal unescaping for common cases like :contains("click me")
+            return arg[1:-1].replace("\\" + quote, quote).replace("\\\\", "\\")
+        return arg
+
     def matches(self, node: Any, selector: ParsedSelector | CompoundSelector | SimpleSelector) -> bool:
         """Check if a node matches a parsed selector."""
         if isinstance(selector, SelectorList):
@@ -723,6 +731,17 @@ class SelectorMatcher:
             if parent and hasattr(parent, "name"):
                 return parent.name in ("#document", "#document-fragment")
             return False
+
+        if name == "contains":
+            if selector.arg is None:
+                raise SelectorError(":contains() requires a string argument")
+            needle = self._unquote_pseudo_arg(selector.arg)
+            if needle == "":
+                return True
+            # Non-standard (jQuery-style) pseudo-class: match elements whose descendant
+            # text contains the substring. We use `to_text()` to approximate textContent.
+            haystack: str = node.to_text(separator=" ", strip=True)
+            return needle in haystack
 
         if name == "first-of-type":
             return self._is_first_of_type(node)

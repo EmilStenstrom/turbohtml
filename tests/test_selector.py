@@ -1582,6 +1582,47 @@ class TestAdditionalCoverage(SelectorTestCase):
         div.children = original_children
 
 
+class TestPseudoContains(SelectorTestCase):
+    """Test non-standard :contains() pseudo-class."""
+
+    def get_contains_doc(self):
+        html = """
+        <html><body>
+            <div id="a"><button>click me</button></div>
+            <div id="b"><button>do not click</button></div>
+            <div id="c"><span>click</span> me</div>
+        </body></html>
+        """
+        return JustHTML(html).root
+
+    def test_contains_basic(self):
+        result = query(self.get_contains_doc(), 'button:contains("click me")')
+        assert len(result) == 1
+        assert result[0].name == "button"
+        assert result[0].to_text() == "click me"
+
+    def test_contains_unquoted_arg(self):
+        result = query(self.get_contains_doc(), "button:contains(click)")
+        assert len(result) == 2
+
+    def test_contains_descendant_text(self):
+        result = query(self.get_contains_doc(), 'div:contains("click me")')
+        ids = {n.attrs.get("id") for n in result}
+        assert ids == {"a", "c"}
+
+    def test_contains_case_sensitive(self):
+        result = query(self.get_contains_doc(), 'button:contains("Click")')
+        assert len(result) == 0
+
+    def test_contains_empty_string_matches_all(self):
+        result = query(self.get_contains_doc(), 'button:contains("")')
+        assert len(result) == 2
+
+    def test_contains_requires_arg(self):
+        with self.assertRaises(SelectorError):
+            query(self.get_contains_doc(), "button:contains()")
+
+
 class TestJustHTMLMethods(unittest.TestCase):
     """Test JustHTML convenience methods that delegate to root."""
 

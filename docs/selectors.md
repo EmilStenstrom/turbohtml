@@ -89,6 +89,7 @@ doc.query("li:nth-child(3n+1)")   # 1st, 4th, 7th... (formula: An+B)
 |----------|-------------|
 | `:empty` | Elements with no children |
 | `:root` | Document root element |
+| `:contains("text")` | Non-standard (jQuery-style): elements whose descendant text contains `text` |
 
 ```python
 doc.query("p:empty")    # Empty paragraphs
