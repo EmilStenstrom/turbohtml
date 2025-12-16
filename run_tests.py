@@ -18,7 +18,7 @@ from justhtml.constants import VOID_ELEMENTS
 from justhtml.context import FragmentContext
 from justhtml.encoding import normalize_encoding_label, sniff_html_encoding
 from justhtml.serialize import serialize_end_tag
-from justhtml.tokenizer import Tokenizer, TokenizerOpts
+from justhtml.tokenizer import Tokenizer, TokenizerOpts, TokenizerState
 from justhtml.tokens import CharacterTokens, CommentToken, Doctype, DoctypeToken, EOFToken, Tag
 from justhtml.treebuilder import InsertionMode, TreeBuilder
 
@@ -1611,26 +1611,16 @@ def _run_encoding_tests(config):
 
 
 class RecordingTreeBuilder:
-    """TreeBuilder sink wrapper that records emitted tokens.
+    """TreeBuilder sink wrapper that records emitted tokens."""
 
-    Uses composition instead of inheritance for mypyc compatibility.
-    Mypyc doesn't allow interpreted classes to inherit from compiled classes.
-    """
-
-    __slots__ = ("_tree_builder", "_original_process_token", "tokens")
+    __slots__ = ("_tree_builder", "tokens")
 
     def __init__(self):
         self._tree_builder = TreeBuilder()
         self.tokens = []
-        # Save the original process_token method
-        self._original_process_token = self._tree_builder.process_token
-        # Monkey-patch the tree builder's process_token to call ours
-        # This is necessary because TreeBuilder.process_characters internally
-        # calls self.process_token(), and we need that to go through our
-        # recording wrapper
-        self._tree_builder.process_token = self.process_token
+        self._tree_builder.set_token_observer(self._record_token)
 
-    def process_token(self, token):
+    def _record_token(self, token):
         # Copy token because tokenizer might reuse it
         if isinstance(token, Tag):
             # Create a new Tag instance with the same data
@@ -1658,7 +1648,8 @@ class RecordingTreeBuilder:
             else:
                 self.tokens.append(token)
 
-        return self._original_process_token(token)
+    def process_token(self, token):
+        return self._tree_builder.process_token(token)
 
     def process_characters(self, data):
         if self._tree_builder.mode == InsertionMode.IN_BODY:
@@ -1671,7 +1662,7 @@ class RecordingTreeBuilder:
 
     def __setattr__(self, name, value):
         # Handle our own slots first
-        if name in ("_tree_builder", "_original_process_token", "tokens"):
+        if name in ("_tree_builder", "tokens"):
             object.__setattr__(self, name, value)
         else:
             # Delegate to the wrapped tree builder (if it exists)
@@ -1690,12 +1681,12 @@ def _unescape_unicode(text: str) -> str:
 
 def _map_initial_state(name):
     mapping = {
-        "Data state": (Tokenizer.DATA, None),
-        "PLAINTEXT state": (Tokenizer.PLAINTEXT, None),
-        "RCDATA state": (Tokenizer.RCDATA, None),
-        "RAWTEXT state": (Tokenizer.RAWTEXT, None),
-        "Script data state": (Tokenizer.RAWTEXT, "script"),
-        "CDATA section state": (Tokenizer.CDATA_SECTION, None),
+        "Data state": (TokenizerState.DATA, None),
+        "PLAINTEXT state": (TokenizerState.PLAINTEXT, None),
+        "RCDATA state": (TokenizerState.RCDATA, None),
+        "RAWTEXT state": (TokenizerState.RAWTEXT, None),
+        "Script data state": (TokenizerState.RAWTEXT, "script"),
+        "CDATA section state": (TokenizerState.CDATA_SECTION, None),
     }
     return mapping.get(name)
 

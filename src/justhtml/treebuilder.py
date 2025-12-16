@@ -62,6 +62,7 @@ class TreeBuilder(TreeBuilderModesMixin):
         "quirks_mode",
         "table_text_original_mode",
         "template_modes",
+        "token_observer",
         "tokenizer",
         "tokenizer_state_override",
     )
@@ -89,6 +90,7 @@ class TreeBuilder(TreeBuilderModesMixin):
     quirks_mode: str
     table_text_original_mode: InsertionMode | None  # type: ignore[assignment]
     template_modes: list[InsertionMode]
+    token_observer: Callable[[Any], None] | None
     tokenizer: Any | None
     tokenizer_state_override: Any | None  # type: ignore[assignment]
 
@@ -122,6 +124,7 @@ class TreeBuilder(TreeBuilderModesMixin):
         self.pending_table_text = []
         self.template_modes = []
         self.tokenizer_state_override = None
+        self.token_observer = None
         if fragment_context is not None:
             # Fragment parsing per HTML5 spec
             root = self._create_element("html", None, {})
@@ -165,6 +168,10 @@ class TreeBuilder(TreeBuilderModesMixin):
             # For fragments, frameset_ok starts as False per HTML5 spec
             # This prevents frameset from being inserted in fragment contexts
             self.frameset_ok = False
+
+    def set_token_observer(self, observer: Callable[[Any], None] | None) -> None:
+        """Register a callback invoked before each token is processed."""
+        self.token_observer = observer
 
     def _set_quirks_mode(self, mode: str) -> None:
         self.quirks_mode = mode
@@ -257,6 +264,9 @@ class TreeBuilder(TreeBuilderModesMixin):
         return False
 
     def process_token(self, token: Any) -> Any:
+        observer = self.token_observer
+        if observer is not None:
+            observer(token)
         # Optimization: Use type() identity check instead of isinstance
         token_type = type(token)
         if token_type is DoctypeToken:

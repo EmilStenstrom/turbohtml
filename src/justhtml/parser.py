@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from .encoding import decode_html
-from .tokenizer import Tokenizer, TokenizerOpts
+from .tokenizer import Tokenizer, TokenizerOpts, TokenizerState
 from .treebuilder import TreeBuilder
 
 if TYPE_CHECKING:
@@ -89,10 +89,10 @@ class JustHTML:
             rawtext_elements = {"textarea", "title", "style"}
             tag_name = fragment_context.tag_name.lower()
             if tag_name in rawtext_elements:
-                opts.initial_state = Tokenizer.RAWTEXT
+                opts.initial_state = TokenizerState.RAWTEXT
                 opts.initial_rawtext_tag = tag_name
             elif tag_name in ("plaintext", "script"):
-                opts.initial_state = Tokenizer.PLAINTEXT
+                opts.initial_state = TokenizerState.PLAINTEXT
 
         self.tokenizer = Tokenizer(self.tree_builder, opts, collect_errors=should_collect)
         # Link tokenizer to tree_builder for position info

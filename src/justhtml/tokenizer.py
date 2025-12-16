@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from bisect import bisect_right
+from enum import IntEnum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -71,31 +72,7 @@ def _coerce_comment_for_xml(text: str) -> str:
     return text
 
 
-class TokenizerOpts:
-    __slots__ = ("discard_bom", "exact_errors", "initial_rawtext_tag", "initial_state", "xml_coercion")
-
-    discard_bom: bool
-    exact_errors: bool
-    initial_rawtext_tag: str | None
-    initial_state: int | None
-    xml_coercion: bool
-
-    def __init__(
-        self,
-        exact_errors: bool = False,
-        discard_bom: bool = True,
-        initial_state: int | None = None,
-        initial_rawtext_tag: str | None = None,
-        xml_coercion: bool = False,
-    ) -> None:
-        self.exact_errors = bool(exact_errors)
-        self.discard_bom = bool(discard_bom)
-        self.initial_state = initial_state
-        self.initial_rawtext_tag = initial_rawtext_tag
-        self.xml_coercion = bool(xml_coercion)
-
-
-class Tokenizer:
+class TokenizerState(IntEnum):
     DATA = 0
     TAG_OPEN = 1
     END_TAG_OPEN = 2
@@ -158,6 +135,32 @@ class Tokenizer:
     SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN = 59
     SCRIPT_DATA_DOUBLE_ESCAPE_END = 60
 
+
+class TokenizerOpts:
+    __slots__ = ("discard_bom", "exact_errors", "initial_rawtext_tag", "initial_state", "xml_coercion")
+
+    discard_bom: bool
+    exact_errors: bool
+    initial_rawtext_tag: str | None
+    initial_state: TokenizerState | int | None
+    xml_coercion: bool
+
+    def __init__(
+        self,
+        exact_errors: bool = False,
+        discard_bom: bool = True,
+        initial_state: TokenizerState | int | None = None,
+        initial_rawtext_tag: str | None = None,
+        xml_coercion: bool = False,
+    ) -> None:
+        self.exact_errors = bool(exact_errors)
+        self.discard_bom = bool(discard_bom)
+        self.initial_state = initial_state
+        self.initial_rawtext_tag = initial_rawtext_tag
+        self.xml_coercion = bool(xml_coercion)
+
+
+class Tokenizer:
     __slots__ = (
         "_comment_token",
         "_newline_positions",
@@ -310,7 +313,7 @@ class Tokenizer:
         self.collect_errors = collect_errors
         self.errors = []
 
-        self.state = self.DATA
+        self.state = TokenizerState.DATA
         self.buffer = ""
         self.length = 0
         self.pos = 0
@@ -379,10 +382,15 @@ class Tokenizer:
         self._tag_token.self_closing = False
 
         initial_state = self.opts.initial_state
-        if isinstance(initial_state, int):
+        if isinstance(initial_state, TokenizerState):
             self.state = initial_state
+        elif isinstance(initial_state, int):
+            try:
+                self.state = TokenizerState(initial_state)
+            except ValueError:
+                self.state = TokenizerState.DATA
         else:
-            self.state = self.DATA
+            self.state = TokenizerState.DATA
 
         # Pre-compute newline positions for O(log n) line lookups
         if self.collect_errors:
@@ -500,7 +508,7 @@ class Tokenizer:
                         nc = chr(ord(nc) + 32)
                     self.current_tag_name.append(nc)
                     self.pos += 1
-                    self.state = self.TAG_NAME
+                    self.state = TokenizerState.TAG_NAME
                     return self._state_tag_name()
 
                 if nc == "!":
@@ -509,7 +517,7 @@ class Tokenizer:
                         self._flush_text()
                         self.pos += 3  # Consume !--
                         self.current_comment.clear()
-                        self.state = self.COMMENT_START
+                        self.state = TokenizerState.COMMENT_START
                         return self._state_comment_start()
 
                 if nc == "/":
@@ -530,11 +538,11 @@ class Tokenizer:
                                 nnc = chr(ord(nnc) + 32)
                             self.current_tag_name.append(nnc)
                             self.pos += 2  # Consume / and nnc
-                            self.state = self.TAG_NAME
+                            self.state = TokenizerState.TAG_NAME
                             return self._state_tag_name()
 
             self._flush_text()
-            self.state = self.TAG_OPEN
+            self.state = TokenizerState.TAG_OPEN
             return self._state_tag_open()
 
     def _state_tag_open(self) -> bool:
@@ -546,22 +554,22 @@ class Tokenizer:
             self._emit_token(EOFToken())
             return True
         if c == "!":
-            self.state = self.MARKUP_DECLARATION_OPEN
+            self.state = TokenizerState.MARKUP_DECLARATION_OPEN
             return False
         if c == "/":
-            self.state = self.END_TAG_OPEN
+            self.state = TokenizerState.END_TAG_OPEN
             return False
         if c == "?":
             self._emit_error("unexpected-question-mark-instead-of-tag-name")
             self.current_comment.clear()
             self._reconsume_current()
-            self.state = self.BOGUS_COMMENT
+            self.state = TokenizerState.BOGUS_COMMENT
             return False
 
         self._emit_error("invalid-first-character-of-tag-name")
         self._append_text("<")
         self._reconsume_current()
-        self.state = self.DATA
+        self.state = TokenizerState.DATA
         return False
 
     def _state_end_tag_open(self) -> bool:
@@ -575,13 +583,13 @@ class Tokenizer:
             return True
         if c == ">":
             self._emit_error("empty-end-tag")
-            self.state = self.DATA
+            self.state = TokenizerState.DATA
             return False
 
         self._emit_error("invalid-first-character-of-tag-name")
         self.current_comment.clear()
         self._reconsume_current()
-        self.state = self.BOGUS_COMMENT
+        self.state = TokenizerState.BOGUS_COMMENT
         return False
 
     def _state_tag_name(self) -> bool:
@@ -613,16 +621,16 @@ class Tokenizer:
                             self.pos += 1
                             if c == "\r":
                                 self.ignore_lf = True
-                            self.state = self.BEFORE_ATTRIBUTE_NAME
+                            self.state = TokenizerState.BEFORE_ATTRIBUTE_NAME
                             return self._state_before_attribute_name()
                         if c == ">":
                             self.pos += 1
                             if not self._emit_current_tag():
-                                self.state = self.DATA
+                                self.state = TokenizerState.DATA
                             return False
                         if c == "/":
                             self.pos += 1
-                            self.state = self.SELF_CLOSING_START_TAG
+                            self.state = TokenizerState.SELF_CLOSING_START_TAG
                             return self._state_self_closing_start_tag()
 
             ch: str | None = self._get_char()
@@ -633,16 +641,16 @@ class Tokenizer:
                 self._emit_token(EOFToken())
                 return True
             if ch in ("\t", "\n", "\f", " "):
-                self.state = self.BEFORE_ATTRIBUTE_NAME
+                self.state = TokenizerState.BEFORE_ATTRIBUTE_NAME
                 return self._state_before_attribute_name()
             if ch == "/":
-                self.state = self.SELF_CLOSING_START_TAG
+                self.state = TokenizerState.SELF_CLOSING_START_TAG
                 return self._state_self_closing_start_tag()
             if ch == ">":
                 # In slow path, tag name is only first char (from DATA),
                 # so no rawtext elements possible - always set DATA state
                 self._emit_current_tag()
-                self.state = self.DATA
+                self.state = TokenizerState.DATA
                 return False
             # ch == "\0" - the only remaining possibility after fast-path
             self._emit_error("unexpected-null-character")
@@ -698,12 +706,12 @@ class Tokenizer:
                 return True
 
             if c == "/":
-                self.state = self.SELF_CLOSING_START_TAG
+                self.state = TokenizerState.SELF_CLOSING_START_TAG
                 return False
             if c == ">":
                 self._finish_attribute()
                 if not self._emit_current_tag():
-                    self.state = self.DATA
+                    self.state = TokenizerState.DATA
                 return False
             if c == "=":
                 self._emit_error("unexpected-equals-sign-before-attribute-name")
@@ -711,7 +719,7 @@ class Tokenizer:
                 self.current_attr_value.clear()
                 self.current_attr_value_has_amp = False
                 self.current_attr_name.append("=")
-                self.state = self.ATTRIBUTE_NAME
+                self.state = TokenizerState.ATTRIBUTE_NAME
                 return False  # Let main loop dispatch to avoid recursion
 
             self.current_attr_name.clear()
@@ -724,7 +732,7 @@ class Tokenizer:
                 c = chr(ord(c) + 32)
 
             self.current_attr_name.append(c)
-            self.state = self.ATTRIBUTE_NAME
+            self.state = TokenizerState.ATTRIBUTE_NAME
             return False  # Let main loop dispatch to avoid recursion
 
     def _state_attribute_name(self) -> bool:
@@ -754,25 +762,25 @@ class Tokenizer:
                             c = buffer[self.pos]
                             if c == "=":
                                 self.pos += 1
-                                self.state = self.BEFORE_ATTRIBUTE_VALUE
+                                self.state = TokenizerState.BEFORE_ATTRIBUTE_VALUE
                                 return self._state_before_attribute_value()
                             if c in (" ", "\t", "\n", "\f", "\r"):
                                 self.pos += 1
                                 if c == "\r":
                                     self.ignore_lf = True
                                 self._finish_attribute()
-                                self.state = self.AFTER_ATTRIBUTE_NAME
+                                self.state = TokenizerState.AFTER_ATTRIBUTE_NAME
                                 return False  # Let main loop dispatch to avoid recursion
                             if c == ">":
                                 self.pos += 1
                                 self._finish_attribute()
                                 if not self._emit_current_tag():
-                                    self.state = self.DATA
+                                    self.state = TokenizerState.DATA
                                 return False
                             if c == "/":
                                 self.pos += 1
                                 self._finish_attribute()
-                                self.state = self.SELF_CLOSING_START_TAG
+                                self.state = TokenizerState.SELF_CLOSING_START_TAG
                                 return self._state_self_closing_start_tag()
 
             ch: str | None = self._get_char()
@@ -783,19 +791,19 @@ class Tokenizer:
                 return True
             if ch in ("\t", "\n", "\f", " "):
                 self._finish_attribute()
-                self.state = self.AFTER_ATTRIBUTE_NAME
+                self.state = TokenizerState.AFTER_ATTRIBUTE_NAME
                 return False  # Let main loop dispatch to avoid recursion
             if ch == "/":
                 self._finish_attribute()
-                self.state = self.SELF_CLOSING_START_TAG
+                self.state = TokenizerState.SELF_CLOSING_START_TAG
                 return self._state_self_closing_start_tag()
             if ch == "=":
-                self.state = self.BEFORE_ATTRIBUTE_VALUE
+                self.state = TokenizerState.BEFORE_ATTRIBUTE_VALUE
                 return self._state_before_attribute_value()
             if ch == ">":
                 self._finish_attribute()
                 if not self._emit_current_tag():
-                    self.state = self.DATA
+                    self.state = TokenizerState.DATA
                 return False
             if ch == "\0":
                 self._emit_error("unexpected-null-character")
@@ -850,15 +858,15 @@ class Tokenizer:
                 return True
             if c == "/":
                 self._finish_attribute()
-                self.state = self.SELF_CLOSING_START_TAG
+                self.state = TokenizerState.SELF_CLOSING_START_TAG
                 return False
             if c == "=":
-                self.state = self.BEFORE_ATTRIBUTE_VALUE
+                self.state = TokenizerState.BEFORE_ATTRIBUTE_VALUE
                 return False
             if c == ">":
                 self._finish_attribute()
                 if not self._emit_current_tag():
-                    self.state = self.DATA
+                    self.state = TokenizerState.DATA
                 return False
             self._finish_attribute()
             self.current_attr_name.clear()
@@ -870,7 +878,7 @@ class Tokenizer:
             elif "A" <= c <= "Z":
                 c = chr(ord(c) + 32)
             self.current_attr_name.append(c)
-            self.state = self.ATTRIBUTE_NAME
+            self.state = TokenizerState.ATTRIBUTE_NAME
             return False  # Let main loop dispatch to avoid recursion
 
     def _state_before_attribute_value(self) -> bool:
@@ -883,20 +891,20 @@ class Tokenizer:
                 return True
             if c in ("\t", "\n", "\f", " "):
                 continue
-            if c == '"':
-                self.state = self.ATTRIBUTE_VALUE_DOUBLE
+            if c == "\"":
+                self.state = TokenizerState.ATTRIBUTE_VALUE_DOUBLE
                 return self._state_attribute_value_double()
             if c == "'":
-                self.state = self.ATTRIBUTE_VALUE_SINGLE
+                self.state = TokenizerState.ATTRIBUTE_VALUE_SINGLE
                 return self._state_attribute_value_single()
             if c == ">":
                 self._emit_error("missing-attribute-value")
                 self._finish_attribute()
                 if not self._emit_current_tag():
-                    self.state = self.DATA
+                    self.state = TokenizerState.DATA
                 return False
             self._reconsume_current()
-            self.state = self.ATTRIBUTE_VALUE_UNQUOTED
+            self.state = TokenizerState.ATTRIBUTE_VALUE_UNQUOTED
             return self._state_attribute_value_unquoted()
 
     def _state_attribute_value_double(self) -> bool:
@@ -948,7 +956,7 @@ class Tokenizer:
             self.current_char = c
 
             if c == '"':
-                self.state = self.AFTER_ATTRIBUTE_VALUE_QUOTED
+                self.state = TokenizerState.AFTER_ATTRIBUTE_VALUE_QUOTED
                 return self._state_after_attribute_value_quoted()
             if c == "&":
                 self._append_attr_value_char("&")
@@ -1007,7 +1015,7 @@ class Tokenizer:
             self.current_char = c
 
             if c == "'":
-                self.state = self.AFTER_ATTRIBUTE_VALUE_QUOTED
+                self.state = TokenizerState.AFTER_ATTRIBUTE_VALUE_QUOTED
                 return self._state_after_attribute_value_quoted()
             if c == "&":
                 self._append_attr_value_char("&")
@@ -1045,12 +1053,12 @@ class Tokenizer:
                 return True
             if c in ("\t", "\n", "\f", " "):
                 self._finish_attribute()
-                self.state = self.BEFORE_ATTRIBUTE_NAME
+                self.state = TokenizerState.BEFORE_ATTRIBUTE_NAME
                 return False
             if c == ">":
                 self._finish_attribute()
                 if not self._emit_current_tag():
-                    self.state = self.DATA
+                    self.state = TokenizerState.DATA
                 return False
             if c == "&":
                 self._append_attr_value_char("&")
@@ -1074,22 +1082,22 @@ class Tokenizer:
             return True
         if c in ("\t", "\n", "\f", " "):
             self._finish_attribute()
-            self.state = self.BEFORE_ATTRIBUTE_NAME
+            self.state = TokenizerState.BEFORE_ATTRIBUTE_NAME
             return False
         if c == "/":
             self._finish_attribute()
-            self.state = self.SELF_CLOSING_START_TAG
+            self.state = TokenizerState.SELF_CLOSING_START_TAG
             return False
         if c == ">":
             self._finish_attribute()
             if not self._emit_current_tag():
-                self.state = self.DATA
+                self.state = TokenizerState.DATA
             return False
         # Anything else: parse error, reconsume in before attribute name state
         self._emit_error("missing-whitespace-between-attributes")
         self._finish_attribute()
         self._reconsume_current()
-        self.state = self.BEFORE_ATTRIBUTE_NAME
+        self.state = TokenizerState.BEFORE_ATTRIBUTE_NAME
         return False
 
     def _state_self_closing_start_tag(self) -> bool:
@@ -1102,11 +1110,11 @@ class Tokenizer:
         if c == ">":
             self.current_tag_self_closing = True
             self._emit_current_tag()
-            self.state = self.DATA
+            self.state = TokenizerState.DATA
             return False
         self._emit_error("unexpected-character-after-solidus-in-tag")
         self._reconsume_current()
-        self.state = self.BEFORE_ATTRIBUTE_NAME
+        self.state = TokenizerState.BEFORE_ATTRIBUTE_NAME
         return False
 
     def _state_markup_declaration_open(self) -> bool:
@@ -1117,7 +1125,7 @@ class Tokenizer:
             self.current_doctype_public = None
             self.current_doctype_system = None
             self.current_doctype_force_quirks = False
-            self.state = self.DOCTYPE
+            self.state = TokenizerState.DOCTYPE
             return False
         if self._consume_if("[CDATA["):
             # CDATA sections are only valid in foreign content (SVG/MathML)
@@ -1127,7 +1135,7 @@ class Tokenizer:
                 current = stack[-1]
                 if current and current.namespace not in {None, "html"}:
                     # Proper CDATA section in foreign content
-                    self.state = self.CDATA_SECTION
+                    self.state = TokenizerState.CDATA_SECTION
                     return False
             # Treat as bogus comment in HTML context, preserving "[CDATA[" prefix
             self._emit_error("cdata-in-html-content")
@@ -1135,12 +1143,12 @@ class Tokenizer:
             # Add the consumed "[CDATA[" text to the comment
             for ch in "[CDATA[":
                 self.current_comment.append(ch)
-            self.state = self.BOGUS_COMMENT
+            self.state = TokenizerState.BOGUS_COMMENT
             return False
         self._emit_error("incorrectly-opened-comment")
         self.current_comment.clear()
         # Don't reconsume - bogus comment starts from current position
-        self.state = self.BOGUS_COMMENT
+        self.state = TokenizerState.BOGUS_COMMENT
         return False
 
     def _state_comment_start(self) -> bool:
@@ -1152,19 +1160,19 @@ class Tokenizer:
             self._emit_token(EOFToken())
             return True
         if c == "-":
-            self.state = self.COMMENT_START_DASH
+            self.state = TokenizerState.COMMENT_START_DASH
             return False
         if c == ">":
             self._emit_error("abrupt-closing-of-empty-comment")
             self._emit_comment()
-            self.state = self.DATA
+            self.state = TokenizerState.DATA
             return False
         if c == "\0":
             self._emit_error("unexpected-null-character")
             self.current_comment.append(replacement)
         else:
             self.current_comment.append(c)
-        self.state = self.COMMENT
+        self.state = TokenizerState.COMMENT
         return False
 
     def _state_comment_start_dash(self) -> bool:
@@ -1176,19 +1184,19 @@ class Tokenizer:
             self._emit_token(EOFToken())
             return True
         if c == "-":
-            self.state = self.COMMENT_END
+            self.state = TokenizerState.COMMENT_END
             return False
         if c == ">":
             self._emit_error("abrupt-closing-of-empty-comment")
             self._emit_comment()
-            self.state = self.DATA
+            self.state = TokenizerState.DATA
             return False
         if c == "\0":
             self._emit_error("unexpected-null-character")
             self.current_comment.extend(("-", replacement))
         else:
             self.current_comment.extend(("-", c))
-        self.state = self.COMMENT
+        self.state = TokenizerState.COMMENT
         return False
 
     def _state_comment(self) -> bool:
@@ -1203,7 +1211,7 @@ class Tokenizer:
                 self._emit_token(EOFToken())
                 return True
             if c == "-":
-                self.state = self.COMMENT_END_DASH
+                self.state = TokenizerState.COMMENT_END_DASH
                 return False
             # c == "\0" - the only remaining possibility after _consume_comment_run
             self._emit_error("unexpected-null-character")
@@ -1218,16 +1226,16 @@ class Tokenizer:
             self._emit_token(EOFToken())
             return True
         if c == "-":
-            self.state = self.COMMENT_END
+            self.state = TokenizerState.COMMENT_END
             return False
         if c == "\0":
             self._emit_error("unexpected-null-character")
             self.current_comment.extend(("-", replacement))
-            self.state = self.COMMENT
+            self.state = TokenizerState.COMMENT
             return False
         # Per spec: append "-" and current char, switch to COMMENT state
         self.current_comment.extend(("-", c))
-        self.state = self.COMMENT
+        self.state = TokenizerState.COMMENT
         return False
 
     def _state_comment_end(self) -> bool:
@@ -1240,10 +1248,10 @@ class Tokenizer:
             return True
         if c == ">":
             self._emit_comment()
-            self.state = self.DATA
+            self.state = TokenizerState.DATA
             return False
         if c == "!":
-            self.state = self.COMMENT_END_BANG
+            self.state = TokenizerState.COMMENT_END_BANG
             return False
         if c == "-":
             self.current_comment.append("-")
@@ -1251,11 +1259,11 @@ class Tokenizer:
         if c == "\0":
             self._emit_error("unexpected-null-character")
             self.current_comment.extend(("--", replacement))
-            self.state = self.COMMENT
+            self.state = TokenizerState.COMMENT
             return False
         self._emit_error("incorrectly-closed-comment")
         self.current_comment.extend(("--", c))
-        self.state = self.COMMENT
+        self.state = TokenizerState.COMMENT
         return False
 
     def _state_comment_end_bang(self) -> bool:
@@ -1270,12 +1278,12 @@ class Tokenizer:
             self.current_comment.append("-")
             self.current_comment.append("-")
             self.current_comment.append("!")
-            self.state = self.COMMENT_END_DASH
+            self.state = TokenizerState.COMMENT_END_DASH
             return False
         if c == ">":
             self._emit_error("incorrectly-closed-comment")
             self._emit_comment()
-            self.state = self.DATA
+            self.state = TokenizerState.DATA
             return False
         if c == "\0":
             self._emit_error("unexpected-null-character")
@@ -1283,13 +1291,13 @@ class Tokenizer:
             self.current_comment.append("-")
             self.current_comment.append("!")
             self.current_comment.append(replacement)
-            self.state = self.COMMENT
+            self.state = TokenizerState.COMMENT
             return False
         self.current_comment.append("-")
         self.current_comment.append("-")
         self.current_comment.append("!")
         self.current_comment.append(c)
-        self.state = self.COMMENT
+        self.state = TokenizerState.COMMENT
         return False
 
     def _state_bogus_comment(self) -> bool:
@@ -1302,7 +1310,7 @@ class Tokenizer:
                 return True
             if c == ">":
                 self._emit_comment()
-                self.state = self.DATA
+                self.state = TokenizerState.DATA
                 return False
             if c == "\0":
                 self.current_comment.append(replacement)
@@ -1318,17 +1326,17 @@ class Tokenizer:
             self._emit_token(EOFToken())
             return True
         if c in ("\t", "\n", "\f", " "):
-            self.state = self.BEFORE_DOCTYPE_NAME
+            self.state = TokenizerState.BEFORE_DOCTYPE_NAME
             return False
         if c == ">":
             self._emit_error("expected-doctype-name-but-got-right-bracket")
             self.current_doctype_force_quirks = True
             self._emit_doctype()
-            self.state = self.DATA
+            self.state = TokenizerState.DATA
             return False
         self._emit_error("missing-whitespace-before-doctype-name")
         self._reconsume_current()
-        self.state = self.BEFORE_DOCTYPE_NAME
+        self.state = TokenizerState.BEFORE_DOCTYPE_NAME
         return False
 
     def _state_before_doctype_name(self) -> bool:
@@ -1346,7 +1354,7 @@ class Tokenizer:
                 self._emit_error("expected-doctype-name-but-got-right-bracket")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
-                self.state = self.DATA
+                self.state = TokenizerState.DATA
                 return False
             if "A" <= c <= "Z":
                 self.current_doctype_name.append(chr(ord(c) + 32))
@@ -1355,7 +1363,7 @@ class Tokenizer:
                 self.current_doctype_name.append("\ufffd")
             else:
                 self.current_doctype_name.append(c)
-            self.state = self.DOCTYPE_NAME
+            self.state = TokenizerState.DOCTYPE_NAME
             return False
 
     def _state_doctype_name(self) -> bool:
@@ -1368,11 +1376,11 @@ class Tokenizer:
                 self._emit_token(EOFToken())
                 return True
             if c in ("\t", "\n", "\f", " "):
-                self.state = self.AFTER_DOCTYPE_NAME
+                self.state = TokenizerState.AFTER_DOCTYPE_NAME
                 return False
             if c == ">":
                 self._emit_doctype()
-                self.state = self.DATA
+                self.state = TokenizerState.DATA
                 return False
             if "A" <= c <= "Z":
                 self.current_doctype_name.append(chr(ord(c) + 32))
@@ -1385,10 +1393,10 @@ class Tokenizer:
 
     def _state_after_doctype_name(self) -> bool:
         if self._consume_case_insensitive("PUBLIC"):
-            self.state = self.AFTER_DOCTYPE_PUBLIC_KEYWORD
+            self.state = TokenizerState.AFTER_DOCTYPE_PUBLIC_KEYWORD
             return False
         if self._consume_case_insensitive("SYSTEM"):
-            self.state = self.AFTER_DOCTYPE_SYSTEM_KEYWORD
+            self.state = TokenizerState.AFTER_DOCTYPE_SYSTEM_KEYWORD
             return False
         while True:
             c = self._get_char()
@@ -1402,12 +1410,12 @@ class Tokenizer:
                 continue
             if c == ">":
                 self._emit_doctype()
-                self.state = self.DATA
+                self.state = TokenizerState.DATA
                 return False
             self._emit_error("missing-whitespace-after-doctype-name")
             self.current_doctype_force_quirks = True
             self._reconsume_current()
-            self.state = self.BOGUS_DOCTYPE
+            self.state = TokenizerState.BOGUS_DOCTYPE
             return False
 
     def _state_after_doctype_public_keyword(self) -> bool:
@@ -1420,28 +1428,28 @@ class Tokenizer:
                 self._emit_token(EOFToken())
                 return True
             if c in ("\t", "\n", "\f", " "):
-                self.state = self.BEFORE_DOCTYPE_PUBLIC_IDENTIFIER
+                self.state = TokenizerState.BEFORE_DOCTYPE_PUBLIC_IDENTIFIER
                 return False
-            if c == '"':
+            if c == "\"":
                 self._emit_error("missing-whitespace-before-doctype-public-identifier")
                 self.current_doctype_public = []
-                self.state = self.DOCTYPE_PUBLIC_IDENTIFIER_DOUBLE_QUOTED
+                self.state = TokenizerState.DOCTYPE_PUBLIC_IDENTIFIER_DOUBLE_QUOTED
                 return False
             if c == "'":
                 self._emit_error("missing-whitespace-before-doctype-public-identifier")
                 self.current_doctype_public = []
-                self.state = self.DOCTYPE_PUBLIC_IDENTIFIER_SINGLE_QUOTED
+                self.state = TokenizerState.DOCTYPE_PUBLIC_IDENTIFIER_SINGLE_QUOTED
                 return False
             if c == ">":
                 self._emit_error("missing-doctype-public-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
-                self.state = self.DATA
+                self.state = TokenizerState.DATA
                 return False
             self._emit_error("unexpected-character-after-doctype-public-keyword")
             self.current_doctype_force_quirks = True
             self._reconsume_current()
-            self.state = self.BOGUS_DOCTYPE
+            self.state = TokenizerState.BOGUS_DOCTYPE
             return False
 
     def _state_after_doctype_system_keyword(self) -> bool:
@@ -1454,28 +1462,28 @@ class Tokenizer:
                 self._emit_token(EOFToken())
                 return True
             if c in ("\t", "\n", "\f", " "):
-                self.state = self.BEFORE_DOCTYPE_SYSTEM_IDENTIFIER
+                self.state = TokenizerState.BEFORE_DOCTYPE_SYSTEM_IDENTIFIER
                 return False
-            if c == '"':
+            if c == "\"":
                 self._emit_error("missing-whitespace-after-doctype-public-identifier")
                 self.current_doctype_system = []
-                self.state = self.DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE_QUOTED
+                self.state = TokenizerState.DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE_QUOTED
                 return False
             if c == "'":
                 self._emit_error("missing-whitespace-after-doctype-public-identifier")
                 self.current_doctype_system = []
-                self.state = self.DOCTYPE_SYSTEM_IDENTIFIER_SINGLE_QUOTED
+                self.state = TokenizerState.DOCTYPE_SYSTEM_IDENTIFIER_SINGLE_QUOTED
                 return False
             if c == ">":
                 self._emit_error("missing-doctype-system-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
-                self.state = self.DATA
+                self.state = TokenizerState.DATA
                 return False
             self._emit_error("unexpected-character-after-doctype-system-keyword")
             self.current_doctype_force_quirks = True
             self._reconsume_current()
-            self.state = self.BOGUS_DOCTYPE
+            self.state = TokenizerState.BOGUS_DOCTYPE
             return False
 
     def _state_before_doctype_public_identifier(self) -> bool:
@@ -1489,24 +1497,24 @@ class Tokenizer:
                 return True
             if c in ("\t", "\n", "\f", " "):
                 continue
-            if c == '"':
+            if c == "\"":
                 self.current_doctype_public = []
-                self.state = self.DOCTYPE_PUBLIC_IDENTIFIER_DOUBLE_QUOTED
+                self.state = TokenizerState.DOCTYPE_PUBLIC_IDENTIFIER_DOUBLE_QUOTED
                 return False
             if c == "'":
                 self.current_doctype_public = []
-                self.state = self.DOCTYPE_PUBLIC_IDENTIFIER_SINGLE_QUOTED
+                self.state = TokenizerState.DOCTYPE_PUBLIC_IDENTIFIER_SINGLE_QUOTED
                 return False
             if c == ">":
                 self._emit_error("missing-doctype-public-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
-                self.state = self.DATA
+                self.state = TokenizerState.DATA
                 return False
             self._emit_error("missing-quote-before-doctype-public-identifier")
             self.current_doctype_force_quirks = True
             self._reconsume_current()
-            self.state = self.BOGUS_DOCTYPE
+            self.state = TokenizerState.BOGUS_DOCTYPE
             return False
 
     def _state_doctype_public_identifier_double_quoted(self) -> bool:
@@ -1521,7 +1529,7 @@ class Tokenizer:
                 self._emit_token(EOFToken())
                 return True
             if c == '"':
-                self.state = self.AFTER_DOCTYPE_PUBLIC_IDENTIFIER
+                self.state = TokenizerState.AFTER_DOCTYPE_PUBLIC_IDENTIFIER
                 return False
             if c == "\0":
                 self._emit_error("unexpected-null-character")
@@ -1531,7 +1539,7 @@ class Tokenizer:
                 self._emit_error("abrupt-doctype-public-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
-                self.state = self.DATA
+                self.state = TokenizerState.DATA
                 return False
             self.current_doctype_public.append(c)
 
@@ -1547,7 +1555,7 @@ class Tokenizer:
                 self._emit_token(EOFToken())
                 return True
             if c == "'":
-                self.state = self.AFTER_DOCTYPE_PUBLIC_IDENTIFIER
+                self.state = TokenizerState.AFTER_DOCTYPE_PUBLIC_IDENTIFIER
                 return False
             if c == "\0":
                 self._emit_error("unexpected-null-character")
@@ -1557,7 +1565,7 @@ class Tokenizer:
                 self._emit_error("abrupt-doctype-public-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
-                self.state = self.DATA
+                self.state = TokenizerState.DATA
                 return False
             self.current_doctype_public.append(c)
 
@@ -1571,26 +1579,26 @@ class Tokenizer:
                 self._emit_token(EOFToken())
                 return True
             if c in ("\t", "\n", "\f", " "):
-                self.state = self.BETWEEN_DOCTYPE_PUBLIC_AND_SYSTEM_IDENTIFIERS
+                self.state = TokenizerState.BETWEEN_DOCTYPE_PUBLIC_AND_SYSTEM_IDENTIFIERS
                 return False
             if c == ">":
                 self._emit_doctype()
-                self.state = self.DATA
+                self.state = TokenizerState.DATA
                 return False
-            if c == '"':
+            if c == "\"":
                 self._emit_error("missing-whitespace-between-doctype-public-and-system-identifiers")
                 self.current_doctype_system = []
-                self.state = self.DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE_QUOTED
+                self.state = TokenizerState.DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE_QUOTED
                 return False
             if c == "'":
                 self._emit_error("missing-whitespace-between-doctype-public-and-system-identifiers")
                 self.current_doctype_system = []
-                self.state = self.DOCTYPE_SYSTEM_IDENTIFIER_SINGLE_QUOTED
+                self.state = TokenizerState.DOCTYPE_SYSTEM_IDENTIFIER_SINGLE_QUOTED
                 return False
             self._emit_error("unexpected-character-after-doctype-public-identifier")
             self.current_doctype_force_quirks = True
             self._reconsume_current()
-            self.state = self.BOGUS_DOCTYPE
+            self.state = TokenizerState.BOGUS_DOCTYPE
             return False
 
     def _state_between_doctype_public_and_system_identifiers(self) -> bool:
@@ -1606,20 +1614,20 @@ class Tokenizer:
                 continue
             if c == ">":
                 self._emit_doctype()
-                self.state = self.DATA
+                self.state = TokenizerState.DATA
                 return False
-            if c == '"':
+            if c == "\"":
                 self.current_doctype_system = []
-                self.state = self.DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE_QUOTED
+                self.state = TokenizerState.DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE_QUOTED
                 return False
             if c == "'":
                 self.current_doctype_system = []
-                self.state = self.DOCTYPE_SYSTEM_IDENTIFIER_SINGLE_QUOTED
+                self.state = TokenizerState.DOCTYPE_SYSTEM_IDENTIFIER_SINGLE_QUOTED
                 return False
             self._emit_error("missing-quote-before-doctype-system-identifier")
             self.current_doctype_force_quirks = True
             self._reconsume_current()
-            self.state = self.BOGUS_DOCTYPE
+            self.state = TokenizerState.BOGUS_DOCTYPE
             return False
 
     def _state_before_doctype_system_identifier(self) -> bool:
@@ -1633,24 +1641,24 @@ class Tokenizer:
                 return True
             if c in ("\t", "\n", "\f", " "):
                 continue
-            if c == '"':
+            if c == "\"":
                 self.current_doctype_system = []
-                self.state = self.DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE_QUOTED
+                self.state = TokenizerState.DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE_QUOTED
                 return False
             if c == "'":
                 self.current_doctype_system = []
-                self.state = self.DOCTYPE_SYSTEM_IDENTIFIER_SINGLE_QUOTED
+                self.state = TokenizerState.DOCTYPE_SYSTEM_IDENTIFIER_SINGLE_QUOTED
                 return False
             if c == ">":
                 self._emit_error("missing-doctype-system-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
-                self.state = self.DATA
+                self.state = TokenizerState.DATA
                 return False
             self._emit_error("missing-quote-before-doctype-system-identifier")
             self.current_doctype_force_quirks = True
             self._reconsume_current()
-            self.state = self.BOGUS_DOCTYPE
+            self.state = TokenizerState.BOGUS_DOCTYPE
             return False
 
     def _state_doctype_system_identifier_double_quoted(self) -> bool:
@@ -1665,7 +1673,7 @@ class Tokenizer:
                 self._emit_token(EOFToken())
                 return True
             if c == '"':
-                self.state = self.AFTER_DOCTYPE_SYSTEM_IDENTIFIER
+                self.state = TokenizerState.AFTER_DOCTYPE_SYSTEM_IDENTIFIER
                 return False
             if c == "\0":
                 self._emit_error("unexpected-null-character")
@@ -1675,7 +1683,7 @@ class Tokenizer:
                 self._emit_error("abrupt-doctype-system-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
-                self.state = self.DATA
+                self.state = TokenizerState.DATA
                 return False
             self.current_doctype_system.append(c)
 
@@ -1691,7 +1699,7 @@ class Tokenizer:
                 self._emit_token(EOFToken())
                 return True
             if c == "'":
-                self.state = self.AFTER_DOCTYPE_SYSTEM_IDENTIFIER
+                self.state = TokenizerState.AFTER_DOCTYPE_SYSTEM_IDENTIFIER
                 return False
             if c == "\0":
                 self._emit_error("unexpected-null-character")
@@ -1701,7 +1709,7 @@ class Tokenizer:
                 self._emit_error("abrupt-doctype-system-identifier")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
-                self.state = self.DATA
+                self.state = TokenizerState.DATA
                 return False
             self.current_doctype_system.append(c)
 
@@ -1718,11 +1726,11 @@ class Tokenizer:
                 continue
             if c == ">":
                 self._emit_doctype()
-                self.state = self.DATA
+                self.state = TokenizerState.DATA
                 return False
             self._emit_error("unexpected-character-after-doctype-system-identifier")
             self._reconsume_current()
-            self.state = self.BOGUS_DOCTYPE
+            self.state = TokenizerState.BOGUS_DOCTYPE
             return False
 
     def _state_bogus_doctype(self) -> bool:
@@ -1734,7 +1742,7 @@ class Tokenizer:
                 return True
             if c == ">":
                 self._emit_doctype()
-                self.state = self.DATA
+                self.state = TokenizerState.DATA
                 return False
 
     # ---------------------
@@ -1802,7 +1810,7 @@ class Tokenizer:
         raw_len = len(data)
 
         self.text_buffer.clear()
-        if self.state == self.DATA and "\0" in data:
+        if self.state == TokenizerState.DATA and "\0" in data:
             count = data.count("\0")
             for _ in range(count):
                 self._emit_error("unexpected-null-character")
@@ -1812,9 +1820,9 @@ class Tokenizer:
         # - RAWTEXT state (style, script, etc): do NOT decode
         # - PLAINTEXT state: do NOT decode
         # - CDATA sections: do NOT decode
-        if self.state >= self.PLAINTEXT or self.CDATA_SECTION <= self.state <= self.CDATA_SECTION_END:
+        if self.state >= TokenizerState.PLAINTEXT or TokenizerState.CDATA_SECTION <= self.state <= TokenizerState.CDATA_SECTION_END:
             pass
-        elif self.state >= self.RAWTEXT:
+        elif self.state >= TokenizerState.RAWTEXT:
             pass
         else:
             if "&" in data:
@@ -1888,16 +1896,16 @@ class Tokenizer:
                 namespace = current_node.namespace if current_node else None
                 if namespace is None or namespace == "html":
                     if name in _RCDATA_ELEMENTS:
-                        self.state = self.RCDATA
+                        self.state = TokenizerState.RCDATA
                         self.rawtext_tag_name = name
                         switched_to_rawtext = True
                     elif name in _RAWTEXT_SWITCH_TAGS:
-                        self.state = self.RAWTEXT
+                        self.state = TokenizerState.RAWTEXT
                         self.rawtext_tag_name = name
                         switched_to_rawtext = True
                     else:
                         # Must be "plaintext" - the only other way needs_rawtext_check can be True
-                        self.state = self.PLAINTEXT
+                        self.state = TokenizerState.PLAINTEXT
                         switched_to_rawtext = True
         # Remember current state before emitting
 
@@ -1905,7 +1913,7 @@ class Tokenizer:
         self._record_token_position()
         result = self.sink.process_token(tag)
         if result == 1:  # TokenSinkResult.Plaintext
-            self.state = self.PLAINTEXT
+            self.state = TokenizerState.PLAINTEXT
             switched_to_rawtext = True
 
         self.current_tag_name.clear()
@@ -2054,7 +2062,7 @@ class Tokenizer:
                 self._emit_token(EOFToken())
                 return True
             if c == "]":
-                self.state = self.CDATA_SECTION_BRACKET
+                self.state = TokenizerState.CDATA_SECTION_BRACKET
                 return False
             self._append_text(c)
 
@@ -2062,7 +2070,7 @@ class Tokenizer:
         # Seen one ']', check for second ']'
         c = self._get_char()
         if c == "]":
-            self.state = self.CDATA_SECTION_END
+            self.state = TokenizerState.CDATA_SECTION_END
             return False
         # False alarm, emit the ']' we saw and continue
         self._append_text("]")
@@ -2072,7 +2080,7 @@ class Tokenizer:
             self._emit_token(EOFToken())
             return True
         self._reconsume_current()
-        self.state = self.CDATA_SECTION
+        self.state = TokenizerState.CDATA_SECTION
         return False
 
     def _state_cdata_section_end(self) -> bool:
@@ -2081,7 +2089,7 @@ class Tokenizer:
         if c == ">":
             # End of CDATA section
             self._flush_text()
-            self.state = self.DATA
+            self.state = TokenizerState.DATA
             return False
         # Not the end - we saw ']]' but not '>'. Emit one ']' and check if the next char is another ']'
         self._append_text("]")
@@ -2098,7 +2106,7 @@ class Tokenizer:
         # Not a bracket, so emit the second ']', reconsume current char and go back to CDATA_SECTION
         self._append_text("]")
         self._reconsume_current()
-        self.state = self.CDATA_SECTION
+        self.state = TokenizerState.CDATA_SECTION
         return False
 
     def _state_rcdata(self) -> bool:
@@ -2154,23 +2162,22 @@ class Tokenizer:
                 self._append_text("&")
                 pos += 1
                 self.pos = pos
-            else:
-                # lt_index == pos - the only remaining possibility
+            else: # lt_index == pos - the only remaining possibility
                 # Less-than sign - might be start of end tag
                 pos += 1
                 self.pos = pos
-                self.state = self.RCDATA_LESS_THAN_SIGN
+                self.state = TokenizerState.RCDATA_LESS_THAN_SIGN
                 return False
 
     def _state_rcdata_less_than_sign(self) -> bool:
         c = self._get_char()
         if c == "/":
             self.current_tag_name.clear()
-            self.state = self.RCDATA_END_TAG_OPEN
+            self.state = TokenizerState.RCDATA_END_TAG_OPEN
             return False
         self._append_text("<")
         self._reconsume_current()
-        self.state = self.RCDATA
+        self.state = TokenizerState.RCDATA
         return False
 
     def _state_rcdata_end_tag_open(self) -> bool:
@@ -2178,11 +2185,11 @@ class Tokenizer:
         if c is not None and ("A" <= c <= "Z" or "a" <= c <= "z"):
             self.current_tag_name.append(c.lower())
             self.original_tag_name.append(c)
-            self.state = self.RCDATA_END_TAG_NAME
+            self.state = TokenizerState.RCDATA_END_TAG_NAME
             return False
         self.text_buffer.extend(("<", "/"))
         self._reconsume_current()
-        self.state = self.RCDATA
+        self.state = TokenizerState.RCDATA
         return False
 
     def _state_rcdata_end_tag_name(self) -> bool:
@@ -2201,7 +2208,7 @@ class Tokenizer:
                     tag = Tag(Tag.END, tag_name, attrs, False)
                     self._flush_text()
                     self._emit_token(tag)
-                    self.state = self.DATA
+                    self.state = TokenizerState.DATA
                     self.rawtext_tag_name = None
                     self.original_tag_name.clear()
                     return False
@@ -2209,13 +2216,13 @@ class Tokenizer:
                     # Whitespace after tag name - switch to BEFORE_ATTRIBUTE_NAME
                     self.current_tag_kind = Tag.END
                     self.current_tag_attrs = {}
-                    self.state = self.BEFORE_ATTRIBUTE_NAME
+                    self.state = TokenizerState.BEFORE_ATTRIBUTE_NAME
                     return False
                 if c == "/":
                     self._flush_text()
                     self.current_tag_kind = Tag.END
                     self.current_tag_attrs = {}
-                    self.state = self.SELF_CLOSING_START_TAG
+                    self.state = TokenizerState.SELF_CLOSING_START_TAG
                     return False
             # If we hit EOF or tag doesn't match, emit as text
             if c is None:
@@ -2235,7 +2242,7 @@ class Tokenizer:
             self.current_tag_name.clear()
             self.original_tag_name.clear()
             self._reconsume_current()
-            self.state = self.RCDATA
+            self.state = TokenizerState.RCDATA
             return False
 
     def _state_rawtext(self) -> bool:
@@ -2290,20 +2297,20 @@ class Tokenizer:
                     self._get_char()
                     self._get_char()
                     self._get_char()
-                    self.state = self.SCRIPT_DATA_ESCAPED
+                    self.state = TokenizerState.SCRIPT_DATA_ESCAPED
                     return False
-            self.state = self.RAWTEXT_LESS_THAN_SIGN
+            self.state = TokenizerState.RAWTEXT_LESS_THAN_SIGN
             return False
 
     def _state_rawtext_less_than_sign(self) -> bool:
         c = self._get_char()
         if c == "/":
             self.current_tag_name.clear()
-            self.state = self.RAWTEXT_END_TAG_OPEN
+            self.state = TokenizerState.RAWTEXT_END_TAG_OPEN
             return False
         self._append_text("<")
         self._reconsume_current()
-        self.state = self.RAWTEXT
+        self.state = TokenizerState.RAWTEXT
         return False
 
     def _state_rawtext_end_tag_open(self) -> bool:
@@ -2311,11 +2318,11 @@ class Tokenizer:
         if c is not None and ("A" <= c <= "Z" or "a" <= c <= "z"):
             self.current_tag_name.append(c.lower())
             self.original_tag_name.append(c)
-            self.state = self.RAWTEXT_END_TAG_NAME
+            self.state = TokenizerState.RAWTEXT_END_TAG_NAME
             return False
         self.text_buffer.extend(("<", "/"))
         self._reconsume_current()
-        self.state = self.RAWTEXT
+        self.state = TokenizerState.RAWTEXT
         return False
 
     def _state_rawtext_end_tag_name(self) -> bool:
@@ -2334,7 +2341,7 @@ class Tokenizer:
                     tag = Tag(Tag.END, tag_name, attrs, False)
                     self._flush_text()
                     self._emit_token(tag)
-                    self.state = self.DATA
+                    self.state = TokenizerState.DATA
                     self.rawtext_tag_name = None
                     self.original_tag_name.clear()
                     return False
@@ -2342,13 +2349,13 @@ class Tokenizer:
                     # Whitespace after tag name - switch to BEFORE_ATTRIBUTE_NAME
                     self.current_tag_kind = Tag.END
                     self.current_tag_attrs = {}
-                    self.state = self.BEFORE_ATTRIBUTE_NAME
+                    self.state = TokenizerState.BEFORE_ATTRIBUTE_NAME
                     return False
                 if c == "/":
                     self._flush_text()
                     self.current_tag_kind = Tag.END
                     self.current_tag_attrs = {}
-                    self.state = self.SELF_CLOSING_START_TAG
+                    self.state = TokenizerState.SELF_CLOSING_START_TAG
                     return False
             # If we hit EOF or tag doesn't match, emit as text
             if c is None:
@@ -2368,7 +2375,7 @@ class Tokenizer:
             self.current_tag_name.clear()
             self.original_tag_name.clear()
             self._reconsume_current()
-            self.state = self.RAWTEXT
+            self.state = TokenizerState.RAWTEXT
             return False
 
     def _state_plaintext(self) -> bool:
@@ -2393,10 +2400,10 @@ class Tokenizer:
             return True
         if c == "-":
             self._append_text("-")
-            self.state = self.SCRIPT_DATA_ESCAPED_DASH
+            self.state = TokenizerState.SCRIPT_DATA_ESCAPED_DASH
             return False
         if c == "<":
-            self.state = self.SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN
+            self.state = TokenizerState.SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN
             return False
         if c == "\0":
             self._emit_error("unexpected-null-character")
@@ -2413,18 +2420,18 @@ class Tokenizer:
             return True
         if c == "-":
             self._append_text("-")
-            self.state = self.SCRIPT_DATA_ESCAPED_DASH_DASH
+            self.state = TokenizerState.SCRIPT_DATA_ESCAPED_DASH_DASH
             return False
         if c == "<":
-            self.state = self.SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN
+            self.state = TokenizerState.SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN
             return False
         if c == "\0":
             self._emit_error("unexpected-null-character")
             self._append_text("\ufffd")
-            self.state = self.SCRIPT_DATA_ESCAPED
+            self.state = TokenizerState.SCRIPT_DATA_ESCAPED
             return False
         self._append_text(c)
-        self.state = self.SCRIPT_DATA_ESCAPED
+        self.state = TokenizerState.SCRIPT_DATA_ESCAPED
         return False
 
     def _state_script_data_escaped_dash_dash(self) -> bool:
@@ -2438,36 +2445,36 @@ class Tokenizer:
             return False
         if c == "<":
             self._append_text("<")
-            self.state = self.SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN
+            self.state = TokenizerState.SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN
             return False
         if c == ">":
             self._append_text(">")
-            self.state = self.RAWTEXT
+            self.state = TokenizerState.RAWTEXT
             return False
         if c == "\0":
             self._emit_error("unexpected-null-character")
             self._append_text("\ufffd")
-            self.state = self.SCRIPT_DATA_ESCAPED
+            self.state = TokenizerState.SCRIPT_DATA_ESCAPED
             return False
         self._append_text(c)
-        self.state = self.SCRIPT_DATA_ESCAPED
+        self.state = TokenizerState.SCRIPT_DATA_ESCAPED
         return False
 
     def _state_script_data_escaped_less_than_sign(self) -> bool:
         c = self._get_char()
         if c == "/":
             self.temp_buffer.clear()
-            self.state = self.SCRIPT_DATA_ESCAPED_END_TAG_OPEN
+            self.state = TokenizerState.SCRIPT_DATA_ESCAPED_END_TAG_OPEN
             return False
         if c is not None and ("A" <= c <= "Z" or "a" <= c <= "z"):
             self.temp_buffer.clear()
             self._append_text("<")
             self._reconsume_current()
-            self.state = self.SCRIPT_DATA_DOUBLE_ESCAPE_START
+            self.state = TokenizerState.SCRIPT_DATA_DOUBLE_ESCAPE_START
             return False
         self._append_text("<")
         self._reconsume_current()
-        self.state = self.SCRIPT_DATA_ESCAPED
+        self.state = TokenizerState.SCRIPT_DATA_ESCAPED
 
         return False
 
@@ -2477,11 +2484,11 @@ class Tokenizer:
             self.current_tag_name.clear()
             self.original_tag_name.clear()
             self._reconsume_current()
-            self.state = self.SCRIPT_DATA_ESCAPED_END_TAG_NAME
+            self.state = TokenizerState.SCRIPT_DATA_ESCAPED_END_TAG_NAME
             return False
         self.text_buffer.extend(("<", "/"))
         self._reconsume_current()
-        self.state = self.SCRIPT_DATA_ESCAPED
+        self.state = TokenizerState.SCRIPT_DATA_ESCAPED
         return False
 
     def _state_script_data_escaped_end_tag_name(self) -> bool:
@@ -2499,20 +2506,20 @@ class Tokenizer:
             if c in (" ", "\t", "\n", "\r", "\f"):
                 self.current_tag_kind = Tag.END
                 self.current_tag_attrs = {}
-                self.state = self.BEFORE_ATTRIBUTE_NAME
+                self.state = TokenizerState.BEFORE_ATTRIBUTE_NAME
                 return False
             if c == "/":
                 self._flush_text()
                 self.current_tag_kind = Tag.END
                 self.current_tag_attrs = {}
-                self.state = self.SELF_CLOSING_START_TAG
+                self.state = TokenizerState.SELF_CLOSING_START_TAG
                 return False
             if c == ">":
                 self._flush_text()
                 attrs: dict[str, str | None] = {}
                 tag = Tag(Tag.END, tag_name, attrs, False)
                 self._emit_token(tag)
-                self.state = self.DATA
+                self.state = TokenizerState.DATA
                 self.rawtext_tag_name = None
                 self.current_tag_name.clear()
                 self.original_tag_name.clear()
@@ -2522,7 +2529,7 @@ class Tokenizer:
         for ch in self.temp_buffer:
             self._append_text(ch)
         self._reconsume_current()
-        self.state = self.SCRIPT_DATA_ESCAPED
+        self.state = TokenizerState.SCRIPT_DATA_ESCAPED
         return False
 
     def _state_script_data_double_escape_start(self) -> bool:
@@ -2531,9 +2538,9 @@ class Tokenizer:
             # Check if temp_buffer contains "script"
             temp = "".join(self.temp_buffer).lower()
             if temp == "script":
-                self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
+                self.state = TokenizerState.SCRIPT_DATA_DOUBLE_ESCAPED
             else:
-                self.state = self.SCRIPT_DATA_ESCAPED
+                self.state = TokenizerState.SCRIPT_DATA_ESCAPED
             self._append_text(c)
             return False
         if c is not None and ("A" <= c <= "Z" or "a" <= c <= "z"):
@@ -2541,7 +2548,7 @@ class Tokenizer:
             self._append_text(c)
             return False
         self._reconsume_current()
-        self.state = self.SCRIPT_DATA_ESCAPED
+        self.state = TokenizerState.SCRIPT_DATA_ESCAPED
         return False
 
     def _state_script_data_double_escaped(self) -> bool:
@@ -2552,11 +2559,11 @@ class Tokenizer:
             return True
         if c == "-":
             self._append_text("-")
-            self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED_DASH
+            self.state = TokenizerState.SCRIPT_DATA_DOUBLE_ESCAPED_DASH
             return False
         if c == "<":
             self._append_text("<")
-            self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN
+            self.state = TokenizerState.SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN
             return False
         if c == "\0":
             self._emit_error("unexpected-null-character")
@@ -2573,19 +2580,19 @@ class Tokenizer:
             return True
         if c == "-":
             self._append_text("-")
-            self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED_DASH_DASH
+            self.state = TokenizerState.SCRIPT_DATA_DOUBLE_ESCAPED_DASH_DASH
             return False
         if c == "<":
             self._append_text("<")
-            self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN
+            self.state = TokenizerState.SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN
             return False
         if c == "\0":
             self._emit_error("unexpected-null-character")
             self._append_text("\ufffd")
-            self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
+            self.state = TokenizerState.SCRIPT_DATA_DOUBLE_ESCAPED
             return False
         self._append_text(c)
-        self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
+        self.state = TokenizerState.SCRIPT_DATA_DOUBLE_ESCAPED
         return False
 
     def _state_script_data_double_escaped_dash_dash(self) -> bool:
@@ -2599,21 +2606,21 @@ class Tokenizer:
             return False
         if c == "<":
             self._append_text("<")
-            self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN
+            self.state = TokenizerState.SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN
 
             return False
         if c == ">":
             self._append_text(">")
-            self.state = self.RAWTEXT
+            self.state = TokenizerState.RAWTEXT
 
             return False
         if c == "\0":
             self._emit_error("unexpected-null-character")
             self._append_text("\ufffd")
-            self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
+            self.state = TokenizerState.SCRIPT_DATA_DOUBLE_ESCAPED
             return False
         self._append_text(c)
-        self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
+        self.state = TokenizerState.SCRIPT_DATA_DOUBLE_ESCAPED
         return False
 
     def _state_script_data_double_escaped_less_than_sign(self) -> bool:
@@ -2621,15 +2628,15 @@ class Tokenizer:
         if c == "/":
             self.temp_buffer.clear()
             self._append_text("/")
-            self.state = self.SCRIPT_DATA_DOUBLE_ESCAPE_END
+            self.state = TokenizerState.SCRIPT_DATA_DOUBLE_ESCAPE_END
             return False
         if c is not None and ("A" <= c <= "Z" or "a" <= c <= "z"):
             self.temp_buffer.clear()
             self._reconsume_current()
-            self.state = self.SCRIPT_DATA_DOUBLE_ESCAPE_START
+            self.state = TokenizerState.SCRIPT_DATA_DOUBLE_ESCAPE_START
             return False
         self._reconsume_current()
-        self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
+        self.state = TokenizerState.SCRIPT_DATA_DOUBLE_ESCAPED
         return False
 
     def _state_script_data_double_escape_end(self) -> bool:
@@ -2639,9 +2646,9 @@ class Tokenizer:
             temp = "".join(self.temp_buffer).lower()
 
             if temp == "script":
-                self.state = self.SCRIPT_DATA_ESCAPED
+                self.state = TokenizerState.SCRIPT_DATA_ESCAPED
             else:
-                self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
+                self.state = TokenizerState.SCRIPT_DATA_DOUBLE_ESCAPED
             self._append_text(c)
             return False
         if c is not None and ("A" <= c <= "Z" or "a" <= c <= "z"):
@@ -2649,5 +2656,5 @@ class Tokenizer:
             self._append_text(c)
             return False
         self._reconsume_current()
-        self.state = self.SCRIPT_DATA_DOUBLE_ESCAPED
+        self.state = TokenizerState.SCRIPT_DATA_DOUBLE_ESCAPED
         return False
