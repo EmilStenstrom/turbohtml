@@ -64,6 +64,13 @@ class TestCLI(unittest.TestCase):
         # Pretty-printing should not inject whitespace/newlines inside <pre>.
         self.assertIn("</code>-&gt;<code>", out)
 
+    def test_fragment_parsing_does_not_insert_document_wrappers(self):
+        html = "<li>Hi</li>"
+        code, out, err = self._run_cli(["-", "--fragment"], stdin_text=html)
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "")
+        self.assertEqual(out, "<li>Hi</li>\n")
+
     def test_stdin_non_utf8_bytes_does_not_crash(self):
         stdout = StringIO()
         stderr = StringIO()

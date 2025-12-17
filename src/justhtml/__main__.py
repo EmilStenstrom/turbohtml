@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import cast
 
 from . import JustHTML
+from .context import FragmentContext
 from .selector import SelectorError
 
 
@@ -61,6 +62,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--fragment",
+        action="store_true",
+        help="Parse input as an HTML fragment (context: <div>)",
+    )
+
+    parser.add_argument(
         "--separator",
         default=" ",
         help="Text-only: join string between text nodes (default: a single space)",
@@ -108,7 +115,8 @@ def _read_html(path: str) -> str | bytes:
 def main() -> None:
     args = _parse_args(sys.argv[1:])
     html = _read_html(args.path)
-    doc = JustHTML(html)
+    fragment_context = FragmentContext("div") if args.fragment else None
+    doc = JustHTML(html, fragment_context=fragment_context)
 
     try:
         nodes = doc.query(args.selector) if args.selector else [doc.root]
