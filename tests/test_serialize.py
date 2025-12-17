@@ -72,11 +72,29 @@ class TestSerialize(unittest.TestCase):
     def test_mixed_children(self):
         html = "<div>Text <span>Span</span></div>"
         doc = JustHTML(html)
-        output = doc.root.to_html()
-        # This might be rendered with indentation
-        assert "<div>" in output
-        assert "Text" in output
-        assert "<span>Span</span>" in output
+        div = doc.query("div")[0]
+        output = div.to_html(pretty=True)
+        assert output == "<div>Text <span>Span</span></div>"
+
+    def test_pretty_print_does_not_insert_spaces_in_inline_mixed_content(self):
+        html = (
+            '<code class="constructorsynopsis cpp">'
+            '<span class="methodname">BApplication</span>'
+            '(<span class="methodparam">'
+            '<span class="modifier">const </span>'
+            '<span class="type">char* </span>'
+            '<span class="parameter">signature</span>'
+            "</span>);"
+            "</code>"
+        )
+        doc = JustHTML(html)
+        code = doc.query("code")[0]
+
+        pretty_html = code.to_html(pretty=True)
+        assert "</span>(<span" in pretty_html
+
+        rendered_text = JustHTML(pretty_html).to_text(separator="", strip=False)
+        assert rendered_text == "BApplication(const char* signature);"
 
     def test_empty_attributes(self):
         html = "<input disabled>"
@@ -129,6 +147,27 @@ class TestSerialize(unittest.TestCase):
         assert "<div>" in output
         assert "<p></p>" in output
 
+    def test_pretty_indent_skips_whitespace_text_nodes(self):
+        div = Node("div")
+        div.append_child(Node("#text", data="\n  "))
+        div.append_child(Node("p"))
+        div.append_child(Node("#text", data="\n"))
+        output = div.to_html(pretty=True)
+        assert output == "<div>\n  <p></p>\n</div>"
+
+    def test_pretty_indent_children_does_not_indent_inline_elements(self):
+        div = Node("div")
+        div.append_child(Node("span"))
+        output = div.to_html(pretty=True)
+        assert output == "<div><span></span></div>"
+
+    def test_pretty_indent_children_does_not_indent_comments(self):
+        div = Node("div")
+        div.append_child(Node("#comment", data="x"))
+        div.append_child(Node("p"))
+        output = div.to_html(pretty=True)
+        assert output == "<div><!--x--><p></p></div>"
+
     def test_whitespace_in_fragment(self):
         frag = Node("#document-fragment")
         # SimpleDomNode constructor: name, attrs=None, data=None, namespace=None
@@ -136,6 +175,18 @@ class TestSerialize(unittest.TestCase):
         frag.append_child(text_node)
         output = to_html(frag)
         assert output == ""
+
+    def test_text_node_pretty_strips_and_renders(self):
+        frag = Node("#document-fragment")
+        frag.append_child(Node("#text", data="  hi  "))
+        output = to_html(frag, pretty=True)
+        assert output == "hi"
+
+    def test_empty_text_node_is_dropped_when_not_pretty(self):
+        div = Node("div")
+        div.append_child(Node("#text", data=""))
+        output = to_html(div, pretty=False)
+        assert output == "<div></div>"
 
     def test_element_with_nested_children(self):
         # Test serialize.py line 82->86: all_text branch when NOT all text
