@@ -512,11 +512,11 @@ class Tokenizer:
         append_tag_char = self.current_tag_name.append
         buffer = self.buffer
         length = self.length
+        pos = self.pos
 
         while True:
             # Inline _consume_tag_name_run
             # Note: reconsume is never True when entering TAG_NAME
-            pos = self.pos
             if pos < length:
                 # Optimization: Check for common terminators before regex
                 match = None
@@ -528,51 +528,59 @@ class Tokenizer:
                     if not chunk.islower():
                         chunk = chunk.translate(_ASCII_LOWER_TABLE)
                     append_tag_char(chunk)
-                    self.pos = match.end()
+                    pos = match.end()
 
-                    if self.pos < length:
-                        next_char = buffer[self.pos]
+                    if pos < length:
+                        next_char = buffer[pos]
                         if next_char in (" ", "\t", "\n", "\f"):
-                            self.pos += 1
+                            pos += 1
+                            self.pos = pos
                             self.state = self.BEFORE_ATTRIBUTE_NAME
                             return self._state_before_attribute_name()
                         if next_char == ">":
-                            self.pos += 1
+                            pos += 1
+                            self.pos = pos
                             if not self._emit_current_tag():
                                 self.state = self.DATA
                             return False
                         if next_char == "/":
-                            self.pos += 1
+                            pos += 1
+                            self.pos = pos
                             self.state = self.SELF_CLOSING_START_TAG
                             return self._state_self_closing_start_tag()
 
             # Inline _get_char
             # Note: reconsume is never True in this state.
-            if self.pos >= length:
+            if pos >= length:
                 c: str | None = None
             else:
-                c = buffer[self.pos]
-                self.pos += 1
+                c = buffer[pos]
+                pos += 1
             self.current_char = c
             if c is None:
+                self.pos = pos
                 self._emit_error("eof-in-tag")
                 # Per HTML5 spec: EOF in tag name is a parse error, emit EOF token only
                 # The incomplete tag is discarded (not emitted as text)
                 self._emit_token(EOFToken())
                 return True
             if c in ("\t", "\n", "\f", " "):
+                self.pos = pos
                 self.state = self.BEFORE_ATTRIBUTE_NAME
                 return self._state_before_attribute_name()
             if c == "/":
+                self.pos = pos
                 self.state = self.SELF_CLOSING_START_TAG
                 return self._state_self_closing_start_tag()
             if c == ">":
                 # In slow path, tag name is only first char (from DATA),
                 # so no rawtext elements possible - always set DATA state
+                self.pos = pos
                 self._emit_current_tag()
                 self.state = self.DATA
                 return False
             # c == "\0" - the only remaining possibility after fast-path
+            self.pos = pos
             self._emit_error("unexpected-null-character")
             append_tag_char(replacement)
 
@@ -646,11 +654,11 @@ class Tokenizer:
         append_attr_char = self.current_attr_name.append
         buffer = self.buffer
         length = self.length
+        pos = self.pos
 
         while True:
             # Inline _consume_attribute_name_run
             # Note: reconsume is never True in this state.
-            pos = self.pos
             if pos < length:
                 # Optimization: Check for common terminators before regex
                 match = None
@@ -662,32 +670,38 @@ class Tokenizer:
                     if not chunk.islower():
                         chunk = chunk.translate(_ASCII_LOWER_TABLE)
                     append_attr_char(chunk)
-                    self.pos = match.end()
+                    pos = match.end()
 
-                    if self.pos < length:
-                        c = buffer[self.pos]
+                    if pos < length:
+                        c = buffer[pos]
                         if c == "=":
-                            self.pos += 1
+                            pos += 1
+                            self.pos = pos
                             self.state = self.BEFORE_ATTRIBUTE_VALUE
                             return self._state_before_attribute_value()
                         if c in (" ", "\t", "\n", "\f"):
-                            self.pos += 1
+                            pos += 1
+                            self.pos = pos
                             self._finish_attribute()
                             self.state = self.AFTER_ATTRIBUTE_NAME
                             return False  # Let main loop dispatch to avoid recursion
                         if c == ">":
-                            self.pos += 1
+                            pos += 1
+                            self.pos = pos
                             self._finish_attribute()
                             if not self._emit_current_tag():
                                 self.state = self.DATA
                             return False
                         if c == "/":
-                            self.pos += 1
+                            pos += 1
+                            self.pos = pos
                             self._finish_attribute()
                             self.state = self.SELF_CLOSING_START_TAG
                             return self._state_self_closing_start_tag()
 
+            self.pos = pos
             c = self._get_char()  # type: ignore[assignment]
+            pos = self.pos
             if c is None:
                 self._emit_error("eof-in-tag")
                 self._flush_text()
