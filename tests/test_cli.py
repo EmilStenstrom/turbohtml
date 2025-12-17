@@ -56,6 +56,14 @@ class TestCLI(unittest.TestCase):
         self.assertIn("world", out)
         self.assertEqual(err, "")
 
+    def test_format_html_preserves_preformatted_text(self):
+        html = "<pre><code>a</code>-&gt;<code>b</code></pre>"
+        code, out, err = self._run_cli(["-", "--format", "html"], stdin_text=html)
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "")
+        # Pretty-printing should not inject whitespace/newlines inside <pre>.
+        self.assertIn("</code>-&gt;<code>", out)
+
     def test_stdin_non_utf8_bytes_does_not_crash(self):
         stdout = StringIO()
         stderr = StringIO()

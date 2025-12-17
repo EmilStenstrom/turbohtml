@@ -81,21 +81,25 @@ def to_html(node: Any, indent: int = 0, indent_size: int = 2, *, pretty: bool = 
         # Document root - just render children
         parts: list[str] = []
         for child in node.children or []:
-            parts.append(_node_to_html(child, indent, indent_size, pretty))
+            parts.append(_node_to_html(child, indent, indent_size, pretty, in_pre=False))
         return "\n".join(parts) if pretty else "".join(parts)
-    return _node_to_html(node, indent, indent_size, pretty)
+    return _node_to_html(node, indent, indent_size, pretty, in_pre=False)
 
 
-def _node_to_html(node: Any, indent: int = 0, indent_size: int = 2, pretty: bool = True) -> str:
+_PREFORMATTED_ELEMENTS: set[str] = {"pre", "textarea"}
+
+
+def _node_to_html(node: Any, indent: int = 0, indent_size: int = 2, pretty: bool = True, *, in_pre: bool) -> str:
     """Helper to convert a node to HTML."""
-    prefix = " " * (indent * indent_size) if pretty else ""
-    newline = "\n" if pretty else ""
+    prefix = " " * (indent * indent_size) if pretty and not in_pre else ""
     name: str = node.name
+    content_pre = in_pre or name in _PREFORMATTED_ELEMENTS
+    newline = "\n" if pretty and not content_pre else ""
 
     # Text node
     if name == "#text":
         text: str | None = node.data
-        if pretty:
+        if pretty and not in_pre:
             text = text.strip() if text else ""
             if text:
                 return f"{prefix}{_escape_text(text)}"
@@ -114,7 +118,7 @@ def _node_to_html(node: Any, indent: int = 0, indent_size: int = 2, pretty: bool
     if name == "#document-fragment":
         parts: list[str] = []
         for child in node.children or []:
-            child_html = _node_to_html(child, indent, indent_size, pretty)
+            child_html = _node_to_html(child, indent, indent_size, pretty, in_pre=in_pre)
             if child_html:
                 parts.append(child_html)
         return newline.join(parts) if pretty else "".join(parts)
@@ -137,13 +141,21 @@ def _node_to_html(node: Any, indent: int = 0, indent_size: int = 2, pretty: bool
     # Check if all children are text-only (inline rendering)
     all_text = all(c.name == "#text" for c in children)
 
-    if all_text and pretty:
+    if all_text and pretty and not content_pre:
         return f"{prefix}{open_tag}{_escape_text(node.to_text(separator='', strip=False))}{serialize_end_tag(name)}"
+
+    if pretty and content_pre:
+        inner = "".join(
+            _node_to_html(child, indent + 1, indent_size, pretty, in_pre=True)
+            for child in children
+            if child is not None
+        )
+        return f"{prefix}{open_tag}{inner}{serialize_end_tag(name)}"
 
     # Render with child indentation
     parts = [f"{prefix}{open_tag}"]
     for child in children:
-        child_html = _node_to_html(child, indent + 1, indent_size, pretty)
+        child_html = _node_to_html(child, indent + 1, indent_size, pretty, in_pre=content_pre)
         if child_html:
             parts.append(child_html)
     parts.append(f"{prefix}{serialize_end_tag(name)}")
