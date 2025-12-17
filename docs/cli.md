@@ -32,6 +32,14 @@ justhtml page.html --selector "p" --format text
 justhtml page.html --selector "main p" --format text --first
 ```
 
+## Fragments
+
+Use `--fragment` to parse the input as an HTML fragment (instead of a full document). This avoids implicit `<html>`, `<head>`, and `<body>` insertion.
+
+```bash
+echo '<li>Hi</li>' | justhtml - --fragment
+```
+
 ## Output formats
 
 `--format` controls what is printed:
