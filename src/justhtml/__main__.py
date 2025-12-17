@@ -46,6 +46,10 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="HTML file to parse, or '-' to read from stdin",
     )
     parser.add_argument(
+        "--output",
+        help="File to write output to"
+	)
+    parser.add_argument(
         "--selector",
         help="CSS selector for choosing nodes (defaults to the document root)",
     )
@@ -117,6 +121,7 @@ def main() -> None:
     html = _read_html(args.path)
     fragment_context = FragmentContext("div") if args.fragment else None
     doc = JustHTML(html, fragment_context=fragment_context)
+    outfile = Path.open(args.output, mode="w", encoding="utf-8") if args.output else sys.stdout
 
     try:
         nodes = doc.query(args.selector) if args.selector else [doc.root]
@@ -132,19 +137,19 @@ def main() -> None:
 
     if args.format == "html":
         outputs = [node.to_html() for node in nodes]
-        sys.stdout.write("\n".join(outputs))
-        sys.stdout.write("\n")
+        outfile.write("\n".join(outputs))
+        outfile.write("\n")
         return
 
     if args.format == "text":
         outputs = [node.to_text(separator=args.separator, strip=args.strip) for node in nodes]
-        sys.stdout.write("\n".join(outputs))
-        sys.stdout.write("\n")
+        outfile.write("\n".join(outputs))
+        outfile.write("\n")
         return
 
     outputs = [node.to_markdown() for node in nodes]
-    sys.stdout.write("\n\n".join(outputs))
-    sys.stdout.write("\n")
+    outfile.write("\n\n".join(outputs))
+    outfile.write("\n")
     return
 
 
