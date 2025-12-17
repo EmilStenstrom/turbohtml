@@ -102,14 +102,29 @@ python benchmarks/compare_mypyc.py --mode compiled
 # 4. Save results to a timestamped file
 ```
 
+> **Tip:** The compiled extensions are CPython-version specific. Run the script from the same interpreter that built them (e.g. `source .venv/bin/activate` to use the project's Python 3.11) or the benchmarks will silently fall back to the pure Python modules.
+
+### Latest Benchmark (2025‑12‑17 · CPython 3.13.7)
+
+`./compare_pure_vs_compiled.sh` (see `benchmark_results_20251217_155343.txt`) produced:
+
+| Benchmark                | Pure Python Time | mypyc Time | Speedup |
+| ------------------------ | ---------------- | ---------- | ------- |
+| Simple HTML Parsing¹     | 0.3875s / 10,000 | 0.2538s    | 1.53×   |
+| Complex HTML Parsing     | 2.5933s / 1,000  | 1.5411s    | 1.68×   |
+| HTML Serialization       | 0.2529s / 1,000  | 0.1600s    | 1.58×   |
+| Entity Decoding          | 6.3085s / 1,000  | 3.1904s    | 1.98×   |
+
+¹Simple parsing runs 10,000 iterations; the others run 1,000 iterations.
+
 ### Expected Performance Improvements
 
-With tokenizer, treebuilder, serialize, and entities compiled, the hot path is fully native. Typical speedups (from `compare_pure_vs_compiled.sh`) are:
+With tokenizer, treebuilder, serialize, and entities compiled, the hot path is fully native. Typical speedups (from the latest run) are now:
 
-- **Simple HTML Parsing**: ~1.1–1.2×
-- **Complex HTML Parsing**: ~1.2×
+- **Simple HTML Parsing**: ~1.5×
+- **Complex HTML Parsing**: ~1.7×
 - **HTML Serialization**: ~1.6×
-- **Entity Decoding**: ~1.4×
+- **Entity Decoding**: ~2.0×
 
 Further gains now depend on making the remaining Python-heavy helpers (e.g., `treebuilder_modes.py`, `node.py`) mypyc-friendly.
 

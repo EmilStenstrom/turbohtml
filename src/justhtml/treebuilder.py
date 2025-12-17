@@ -59,6 +59,7 @@ class TreeBuilder(TreeBuilderModesMixin):
         "open_elements",
         "original_mode",
         "pending_table_text",
+        "pending_table_has_non_ws",
         "quirks_mode",
         "table_text_original_mode",
         "template_modes",
@@ -87,6 +88,7 @@ class TreeBuilder(TreeBuilderModesMixin):
     open_elements: list[Any]
     original_mode: InsertionMode | None  # type: ignore[assignment]
     pending_table_text: list[str]
+    pending_table_has_non_ws: bool
     quirks_mode: str
     table_text_original_mode: InsertionMode | None  # type: ignore[assignment]
     template_modes: list[InsertionMode]
@@ -122,6 +124,7 @@ class TreeBuilder(TreeBuilderModesMixin):
         self.active_formatting = []
         self.insert_from_table = False
         self.pending_table_text = []
+        self.pending_table_has_non_ws = False
         self.template_modes = []
         self.tokenizer_state_override = None
         self.token_observer = None
@@ -863,12 +866,22 @@ class TreeBuilder(TreeBuilderModesMixin):
         self.mode = InsertionMode.IN_ROW
 
     def _flush_pending_table_text(self) -> None:
+        if not self.pending_table_text:
+            self.pending_table_has_non_ws = False
+            return
+
+        if not self.pending_table_has_non_ws:
+            data = "".join(self.pending_table_text)
+            self.pending_table_text.clear()
+            self.pending_table_has_non_ws = False
+            if data:
+                self._append_text(data)
+            return
+
         data = "".join(self.pending_table_text)
         self.pending_table_text.clear()
+        self.pending_table_has_non_ws = False
         if not data:
-            return
-        if is_all_whitespace(data):
-            self._append_text(data)
             return
         self._parse_error("foster-parenting-character")
         previous = self.insert_from_table

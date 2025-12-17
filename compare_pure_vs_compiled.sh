@@ -24,7 +24,8 @@ RESULTS_FILE="benchmark_results_$(date +%Y%m%d_%H%M%S).txt"
 echo -e "${YELLOW}Step 1: Building Pure Python version${NC}"
 echo "----------------------------------------------------------------------"
 echo "Removing any compiled .so files..."
-find src/justhtml -name "*.so" -delete 2>/dev/null || true
+find src/ -name "*.so"
+find src/ -name "*.so" -delete 
 echo "Reinstalling in pure Python mode..."
 uv pip install -e . -q
 echo -e "${GREEN}✓ Pure Python version ready${NC}"
@@ -32,7 +33,7 @@ echo ""
 
 echo -e "${YELLOW}Step 2: Running Pure Python benchmarks${NC}"
 echo "----------------------------------------------------------------------"
-PYTHONPATH=src python benchmarks/compare_mypyc.py --mode compiled > /tmp/pure_results.txt 2>&1
+python benchmarks/compare_mypyc.py --mode pure > /tmp/pure_results.txt 2>&1
 cat /tmp/pure_results.txt
 cat /tmp/pure_results.txt >> "$RESULTS_FILE"
 echo "" >> "$RESULTS_FILE"
@@ -41,20 +42,21 @@ echo ""
 echo -e "${YELLOW}Step 3: Building Mypyc-compiled version${NC}"
 echo "----------------------------------------------------------------------"
 echo "Compiling with mypyc (this may take a minute)..."
-JUSTHTML_USE_MYPYC=1 uv pip install -e . --no-build-isolation -q
+JUSTHTML_USE_MYPYC=1 uv pip install -e .[mypyc] --no-build-isolation -q
 echo -e "${GREEN}✓ Mypyc-compiled version ready${NC}"
 
 # Show what was compiled
 if ls src/justhtml/*.so 2>/dev/null; then
     echo ""
     echo "Compiled modules:"
-    ls -lh src/justhtml/*.so | awk '{print "  -", $9, "("$5")"}'
+    ls -lh src/justhtml/*.so | awk '{print "  -", $9, "("$5" - "$6" "$7" "$8")"}'
+    ls -lh src/*.so | awk '{print "  -", $9, "("$5" - "$6" "$7" "$8")"}'
 fi
 echo ""
 
 echo -e "${YELLOW}Step 4: Running Mypyc-compiled benchmarks${NC}"
 echo "----------------------------------------------------------------------"
-PYTHONPATH=src python benchmarks/compare_mypyc.py --mode compiled > /tmp/compiled_results.txt 2>&1
+python benchmarks/compare_mypyc.py --mode compiled > /tmp/compiled_results.txt 2>&1
 cat /tmp/compiled_results.txt
 cat /tmp/compiled_results.txt >> "$RESULTS_FILE"
 echo "" >> "$RESULTS_FILE"

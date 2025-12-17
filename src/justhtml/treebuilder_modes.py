@@ -984,6 +984,7 @@ class TreeBuilderModesMixin:
                     return None
                 token = CharacterTokens(data)
             self.pending_table_text = []
+            self.pending_table_has_non_ws = False
             self.table_text_original_mode = self.mode
             self.mode = InsertionMode.IN_TABLE_TEXT
             return ("reprocess", InsertionMode.IN_TABLE_TEXT, token)
@@ -1094,6 +1095,8 @@ class TreeBuilderModesMixin:
                 data = data.replace("\x0c", "")
             if data:
                 self.pending_table_text.append(data)
+                if not self.pending_table_has_non_ws and not is_all_whitespace(data):
+                    self.pending_table_has_non_ws = True
             return None
         self._flush_pending_table_text()
         original = self.table_text_original_mode or InsertionMode.IN_TABLE

@@ -8,8 +8,6 @@ This script measures performance differences for:
 - Entity decoding (compiled in mypyc version)
 """
 
-import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -114,11 +112,29 @@ def run_benchmarks():
     print("JustHTML mypyc Benchmark Comparison")
     print("=" * 70)
 
+    def print_module_files():
+        import importlib
+
+        module_names = [
+            "justhtml.tokenizer",
+            "justhtml.treebuilder",
+            "justhtml.serialize",
+            "justhtml.entities",
+        ]
+        for name in module_names:
+            try:
+                mod = importlib.import_module(name)
+                print(f"  {name}: {getattr(mod, '__file__', '<?>')}")
+            except Exception as exc:  # pragma: no cover - defensive
+                print(f"  {name}: <import failed: {exc}>")
+
     compiled_modules = check_compiled_modules()
     if compiled_modules:
         print(f"\n✓ Compiled modules detected: {', '.join(compiled_modules)}")
     else:
         print("\n✗ No compiled modules detected (running pure Python)")
+    print("\nModule locations:")
+    print_module_files()
 
     print("\n" + "-" * 70)
     print("Benchmark 1: Simple HTML Parsing")
@@ -167,14 +183,14 @@ def main():
     )
     parser.add_argument(
         '--mode',
-        choices=['pure', 'compiled', 'both'],
-        default='both',
-        help="Which version to benchmark (default: both)"
+        choices=['pure', 'compiled'],
+        default='compiled',
+        help="Which version to benchmark (default: compiled)",
     )
 
     args = parser.parse_args()
 
-    if args.mode in ('pure', 'both'):
+    if args.mode == 'pure':
         print("\n" + "=" * 70)
         print("RUNNING PURE PYTHON BENCHMARKS")
         print("=" * 70)
@@ -185,34 +201,25 @@ def main():
         justhtml_path = Path(justhtml.__file__).parent
         so_files = list(justhtml_path.glob("*.so"))
 
-        if so_files and args.mode == 'both':
+        if so_files:
             print(f"\nWarning: Found {len(so_files)} compiled modules.")
             print("To run pure Python benchmarks, first build without mypyc:")
-            print("  1. Remove .so files: find src/justhtml -name '*.so' -delete")
+            print("  1. Remove .so files: find src -name '*.so' -delete")
             print("  2. Reinstall: uv pip install -e .")
-            print("\nSkipping pure Python benchmarks...\n")
-        else:
-            pure_results = run_benchmarks()
+            print("\nAborting pure benchmarks to avoid mixed results.\n")
+            sys.exit(1)
 
-    if args.mode in ('compiled', 'both'):
-        if args.mode == 'both':
-            print("\n" + "=" * 70)
-            print("RUNNING MYPYC-COMPILED BENCHMARKS")
-            print("=" * 70)
-            print("\nTo build with mypyc:")
-            print("  JUSTHTML_USE_MYPYC=1 uv pip install -e . --no-build-isolation")
-            print()
+        run_benchmarks()
 
-        compiled_results = run_benchmarks()
+    elif args.mode == 'compiled':
+        print("\n" + "=" * 70)
+        print("RUNNING MYPYC-COMPILED BENCHMARKS")
+        print("=" * 70)
+        print("\nTo build with mypyc:")
+        print("  JUSTHTML_USE_MYPYC=1 uv pip install -e[mypyc] . --no-build-isolation")
+        print()
 
-        # Show speedup if we have both results
-        if args.mode == 'both' and 'pure_results' in locals():
-            print("\n" + "=" * 70)
-            print("SPEEDUP COMPARISON")
-            print("=" * 70)
-            for key in pure_results:
-                speedup = pure_results[key] / compiled_results[key]
-                print(f"{key:20s}: {speedup:5.2f}x")
+        run_benchmarks()
 
 
 if __name__ == "__main__":

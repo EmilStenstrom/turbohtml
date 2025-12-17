@@ -27,11 +27,12 @@ dev = [
     "build",
     "twine",
     "pre-commit",
-    "mypy>=1.0; platform_python_implementation != 'PyPy'",
+    "setuptools==80.9.0",
+    "mypy==1.19.1",
 ]
 mypyc = [
-    "mypy>=1.0",
-    "setuptools>=61",
+    "mypy>=1.19.1",
+    "setuptools==80.9.0",
 ]
 
 [project.urls]
@@ -43,9 +44,9 @@ justhtml = "justhtml.__main__:main"
 
 [build-system]
 requires = [
-    "setuptools>=61",
+    "setuptools==80.9.0",
     "wheel",
-    "mypy>=1.0; python_version>='3.10'",
+    "mypy>=1.19.1; python_version>='3.10'",
 ]
 build-backend = "setuptools.build_meta"
 
