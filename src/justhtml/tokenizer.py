@@ -11,7 +11,7 @@ from .entities import decode_entities_in_text
 from .errors import generate_error_message
 from .tokens import CommentToken, Doctype, DoctypeToken, EOFToken, ParseError, Tag
 
-_ATTR_VALUE_UNQUOTED_TERMINATORS = "\t\n\f >&\"'<=`\r\0"
+_ATTR_VALUE_UNQUOTED_TERMINATORS = "\t\n\f >&\"'<=`\0"
 _ASCII_LOWER_TABLE = str.maketrans({chr(code): chr(code + 32) for code in range(65, 91)})
 _RCDATA_ELEMENTS = {"title", "textarea"}
 _RAWTEXT_SWITCH_TAGS = {
@@ -29,8 +29,8 @@ _ATTR_VALUE_DOUBLE_PATTERN = re.compile(r'["&\0]')
 _ATTR_VALUE_SINGLE_PATTERN = re.compile(r"['&\0]")
 _ATTR_VALUE_UNQUOTED_PATTERN = re.compile(f"[{re.escape(_ATTR_VALUE_UNQUOTED_TERMINATORS)}]")
 
-_TAG_NAME_RUN_PATTERN = re.compile(r"[^\t\n\f />\0\r]+")
-_ATTR_NAME_RUN_PATTERN = re.compile(r"[^\t\n\f />=\0\"'<\r]+")
+_TAG_NAME_RUN_PATTERN = re.compile(r"[^\t\n\f />\0]+")
+_ATTR_NAME_RUN_PATTERN = re.compile(r"[^\t\n\f />=\0\"'<]+")
 _COMMENT_RUN_PATTERN = re.compile(r"[^-\0]+")
 _WHITESPACE_PATTERN = re.compile(r"[ \t\n\f]+")
 
@@ -179,7 +179,6 @@ class Tokenizer:
         "current_tag_name",
         "current_tag_self_closing",
         "errors",
-        "ignore_lf",
         "last_start_tag_name",
         "last_token_column",
         "last_token_line",
@@ -216,7 +215,6 @@ class Tokenizer:
     current_tag_name: list[str]
     current_tag_self_closing: bool
     errors: list[ParseError]
-    ignore_lf: bool
     last_start_tag_name: str | None
     last_token_column: int
     last_token_line: int
@@ -246,7 +244,6 @@ class Tokenizer:
         self.pos = 0
         self.reconsume = False
         self.current_char = ""
-        self.ignore_lf = False
         self.last_token_line = 1
         self.last_token_column = 0
 
@@ -276,12 +273,16 @@ class Tokenizer:
         if html and html[0] == "\ufeff" and self.opts.discard_bom:
             html = html[1:]
 
+        # Normalize newlines per §13.2.2.5
+        if html:
+            if "\r" in html:
+                html = html.replace("\r\n", "\n").replace("\r", "\n")
+
         self.buffer = html or ""
         self.length = len(self.buffer)
         self.pos = 0
         self.reconsume = False
         self.current_char = ""
-        self.ignore_lf = False
         self.last_token_line = 1
         self.last_token_column = 0
         self.errors = []
@@ -356,9 +357,8 @@ class Tokenizer:
             return self.buffer[peek_pos]
         return None
 
-    def _append_text_chunk(self, chunk: str, *, ends_with_cr: bool = False) -> None:
+    def _append_text_chunk(self, chunk: str) -> None:
         self._append_text(chunk)
-        self.ignore_lf = ends_with_cr
 
     # ---------------------
     # State handlers
@@ -392,12 +392,7 @@ class Tokenizer:
 
             if end > pos:
                 chunk = buffer[pos:end]
-
-                if "\r" in chunk:
-                    chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
-
                 self._append_text(chunk)
-                self.ignore_lf = chunk.endswith("\r")
 
                 pos = end
                 self.pos = pos
@@ -410,7 +405,6 @@ class Tokenizer:
             pos += 1
             self.pos = pos
             self.current_char = c
-            self.ignore_lf = False
             # c is always '<' here due to find() optimization above
             # Optimization: Peek ahead for common tag starts
             if pos < length:
@@ -521,12 +515,12 @@ class Tokenizer:
 
         while True:
             # Inline _consume_tag_name_run
-            # Note: reconsume and ignore_lf are never True when entering TAG_NAME
+            # Note: reconsume is never True when entering TAG_NAME
             pos = self.pos
             if pos < length:
                 # Optimization: Check for common terminators before regex
                 match = None
-                if buffer[pos] not in "\t\n\f />\0\r":
+                if buffer[pos] not in "\t\n\f />\0":
                     match = _TAG_NAME_RUN_PATTERN.match(buffer, pos)
 
                 if match:
@@ -537,24 +531,29 @@ class Tokenizer:
                     self.pos = match.end()
 
                     if self.pos < length:
-                        c = buffer[self.pos]
-                        if c in (" ", "\t", "\n", "\f", "\r"):
+                        next_char = buffer[self.pos]
+                        if next_char in (" ", "\t", "\n", "\f"):
                             self.pos += 1
-                            if c == "\r":
-                                self.ignore_lf = True
                             self.state = self.BEFORE_ATTRIBUTE_NAME
                             return self._state_before_attribute_name()
-                        if c == ">":
+                        if next_char == ">":
                             self.pos += 1
                             if not self._emit_current_tag():
                                 self.state = self.DATA
                             return False
-                        if c == "/":
+                        if next_char == "/":
                             self.pos += 1
                             self.state = self.SELF_CLOSING_START_TAG
                             return self._state_self_closing_start_tag()
 
-            c = self._get_char()  # type: ignore[assignment]
+            # Inline _get_char
+            # Note: reconsume is never True in this state.
+            if self.pos >= length:
+                c: str | None = None
+            else:
+                c = buffer[self.pos]
+                self.pos += 1
+            self.current_char = c
             if c is None:
                 self._emit_error("eof-in-tag")
                 # Per HTML5 spec: EOF in tag name is a parse error, emit EOF token only
@@ -583,7 +582,7 @@ class Tokenizer:
 
         while True:
             # Optimization: Skip whitespace
-            if not self.reconsume and not self.ignore_lf:
+            if not self.reconsume:
                 if self.pos < length:
                     # Check if current char is whitespace before running regex
                     if buffer[self.pos] in " \t\n\f":
@@ -603,21 +602,7 @@ class Tokenizer:
 
             self.current_char = c
 
-            if c == " ":
-                self.ignore_lf = False
-                continue
-            if c == "\n":
-                if self.ignore_lf:
-                    self.ignore_lf = False
-                # Line tracking now computed on-demand via _get_line_at_pos()
-                continue
-            if c == "\t" or c == "\f":
-                self.ignore_lf = False
-                continue
-            if c == "\r":
-                self.ignore_lf = False
-                if self.pos < length and buffer[self.pos] == "\n":
-                    self.pos += 1
+            if c in (" ", "\n", "\t", "\f"):
                 continue
 
             if c is None:
@@ -664,45 +649,43 @@ class Tokenizer:
 
         while True:
             # Inline _consume_attribute_name_run
-            if not self.reconsume and not self.ignore_lf:
-                pos = self.pos
-                if pos < length:
-                    # Optimization: Check for common terminators before regex
-                    match = None
-                    if buffer[pos] not in "\t\n\f />=\0\"'<\r":
-                        match = _ATTR_NAME_RUN_PATTERN.match(buffer, pos)
+            # Note: reconsume is never True in this state.
+            pos = self.pos
+            if pos < length:
+                # Optimization: Check for common terminators before regex
+                match = None
+                if buffer[pos] not in "\t\n\f />=\0\"'<":
+                    match = _ATTR_NAME_RUN_PATTERN.match(buffer, pos)
 
-                    if match:
-                        chunk = match.group(0)
-                        if not chunk.islower():
-                            chunk = chunk.translate(_ASCII_LOWER_TABLE)
-                        append_attr_char(chunk)
-                        self.pos = match.end()
+                if match:
+                    chunk = match.group(0)
+                    if not chunk.islower():
+                        chunk = chunk.translate(_ASCII_LOWER_TABLE)
+                    append_attr_char(chunk)
+                    self.pos = match.end()
 
-                        if self.pos < length:
-                            c = buffer[self.pos]
-                            if c == "=":
-                                self.pos += 1
-                                self.state = self.BEFORE_ATTRIBUTE_VALUE
-                                return self._state_before_attribute_value()
-                            if c in (" ", "\t", "\n", "\f", "\r"):
-                                self.pos += 1
-                                if c == "\r":
-                                    self.ignore_lf = True
-                                self._finish_attribute()
-                                self.state = self.AFTER_ATTRIBUTE_NAME
-                                return False  # Let main loop dispatch to avoid recursion
-                            if c == ">":
-                                self.pos += 1
-                                self._finish_attribute()
-                                if not self._emit_current_tag():
-                                    self.state = self.DATA
-                                return False
-                            if c == "/":
-                                self.pos += 1
-                                self._finish_attribute()
-                                self.state = self.SELF_CLOSING_START_TAG
-                                return self._state_self_closing_start_tag()
+                    if self.pos < length:
+                        c = buffer[self.pos]
+                        if c == "=":
+                            self.pos += 1
+                            self.state = self.BEFORE_ATTRIBUTE_VALUE
+                            return self._state_before_attribute_value()
+                        if c in (" ", "\t", "\n", "\f"):
+                            self.pos += 1
+                            self._finish_attribute()
+                            self.state = self.AFTER_ATTRIBUTE_NAME
+                            return False  # Let main loop dispatch to avoid recursion
+                        if c == ">":
+                            self.pos += 1
+                            self._finish_attribute()
+                            if not self._emit_current_tag():
+                                self.state = self.DATA
+                            return False
+                        if c == "/":
+                            self.pos += 1
+                            self._finish_attribute()
+                            self.state = self.SELF_CLOSING_START_TAG
+                            return self._state_self_closing_start_tag()
 
             c = self._get_char()  # type: ignore[assignment]
             if c is None:
@@ -730,8 +713,7 @@ class Tokenizer:
                 self._emit_error("unexpected-null-character")
                 append_attr_char(replacement)
                 continue
-            if c in ('"', "'", "<"):
-                self._emit_error("unexpected-character-in-attribute-name")
+            self._emit_error("unexpected-character-in-attribute-name")
             append_attr_char(c)
 
     def _state_after_attribute_name(self) -> bool:
@@ -740,7 +722,7 @@ class Tokenizer:
 
         while True:
             # Optimization: Skip whitespace
-            if not self.reconsume and not self.ignore_lf:
+            if not self.reconsume:
                 if self.pos < length:
                     match = _WHITESPACE_PATTERN.match(buffer, self.pos)
                     if match:
@@ -755,22 +737,8 @@ class Tokenizer:
 
             self.current_char = c
 
-            if c == " ":
-                self.ignore_lf = False
+            if c in (" ", "\n", "\t", "\f"):
                 continue
-            if c == "\n":
-                # Note: Only reachable when ignore_lf=True (CR-LF handling)
-                # Standalone \n is caught by whitespace optimization
-                self.ignore_lf = False
-                continue
-            if c == "\r":
-                self.ignore_lf = True
-                continue
-            if c == "\t" or c == "\f":
-                self.ignore_lf = False
-                continue
-
-            self.ignore_lf = False
 
             if c is None:
                 self._emit_error("eof-in-tag")
@@ -857,10 +825,6 @@ class Tokenizer:
                     if end != next_quote:
                         chunk = buffer[pos:end]
 
-                    # Normalize chunk for value if needed
-                    if "\r" in chunk:
-                        chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
-
                     self.current_attr_value.append(chunk)
                     self.pos = end
 
@@ -916,10 +880,6 @@ class Tokenizer:
                     if end != next_quote:
                         chunk = buffer[pos:end]
 
-                    # Normalize chunk for value if needed
-                    if "\r" in chunk:
-                        chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
-
                     self.current_attr_value.append(chunk)
                     self.pos = end
 
@@ -965,7 +925,17 @@ class Tokenizer:
                         self.current_attr_value.append(buffer[pos:end])
                         self.pos = end
 
-            c = self._get_char()
+            # Inline _get_char
+            if self.reconsume:
+                self.reconsume = False
+                c = self.current_char
+            elif self.pos >= length:
+                c = None
+            else:
+                c = buffer[self.pos]
+                self.pos += 1
+            self.current_char = c
+
             if c is None:
                 # Per HTML5 spec: EOF in attribute value is a parse error
                 # The incomplete tag is discarded (not emitted)
@@ -995,7 +965,14 @@ class Tokenizer:
 
     def _state_after_attribute_value_quoted(self) -> bool:
         """After attribute value (quoted) state per HTML5 spec §13.2.5.42"""
-        c = self._get_char()
+        # Inline _get_char
+        if self.pos >= self.length:
+            c: str | None = None
+        else:
+            c = self.buffer[self.pos]
+            self.pos += 1
+        self.current_char = c
+
         if c is None:
             self._emit_error("eof-in-tag")
             self._flush_text()
@@ -1125,7 +1102,14 @@ class Tokenizer:
         while True:
             if self._consume_comment_run():
                 continue
-            c = self._get_char()
+            # Inline _get_char
+            if self.pos >= self.length:
+                c: str | None = None
+            else:
+                c = self.buffer[self.pos]
+                self.pos += 1
+            self.current_char = c
+
             if c is None:
                 self._emit_error("eof-in-comment")
                 self._emit_comment()
@@ -1675,36 +1659,15 @@ class Tokenizer:
             self.reconsume = False
             return self.current_char
 
-        buffer = self.buffer
         pos = self.pos
-        length = self.length
-        while True:
-            if pos >= length:
-                self.pos = pos
-                self.current_char = None
-                return None
+        if pos >= self.length:
+            self.current_char = None
+            return None
 
-            c = buffer[pos]
-            pos += 1
-
-            if c == "\r":
-                self.ignore_lf = True
-                self.current_char = "\n"
-                self.pos = pos
-                return "\n"
-
-            if c == "\n":
-                if self.ignore_lf:
-                    self.ignore_lf = False
-                    continue
-                # Line tracking now computed on-demand via _get_line_at_pos()
-
-            else:
-                self.ignore_lf = False
-
-            self.current_char = c
-            self.pos = pos
-            return c
+        c = self.buffer[pos]
+        self.pos = pos + 1
+        self.current_char = c
+        return c
 
     def _reconsume_current(self) -> None:
         self.reconsume = True
@@ -1753,7 +1716,8 @@ class Tokenizer:
             data = _coerce_text_for_xml(data)
 
         # Record position at END of raw text (1-indexed column = raw_len)
-        self._record_text_end_position(raw_len)
+        if self.collect_errors:
+            self._record_text_end_position(raw_len)
         self.sink.process_characters(data)
         # Note: process_characters never returns Plaintext or RawData
         # State switches happen via _emit_current_tag instead
@@ -1831,7 +1795,8 @@ class Tokenizer:
         # Remember current state before emitting
 
         # Emit token to sink
-        self._record_token_position()
+        if self.collect_errors:
+            self._record_token_position()
         result = self.sink.process_token(tag)
         if result == 1:  # TokenSinkResult.Plaintext
             self.state = self.PLAINTEXT
@@ -1871,7 +1836,8 @@ class Tokenizer:
         self._emit_token(DoctypeToken(doctype))
 
     def _emit_token(self, token: Any) -> None:
-        self._record_token_position()
+        if self.collect_errors:
+            self._record_token_position()
         self.sink.process_token(token)
         # Note: process_token never returns Plaintext or RawData for state switches
         # State switches happen via _emit_current_tag checking sink response
@@ -1881,8 +1847,6 @@ class Tokenizer:
 
         Per the spec, the position should be at the end of the token (after the last char).
         """
-        if not self.collect_errors:
-            return
         # pos points after the last consumed character, which is exactly what we want
         pos = self.pos
         last_newline = self.buffer.rfind("\n", 0, pos)
@@ -1899,8 +1863,6 @@ class Tokenizer:
         Uses text_start_pos + raw_len to compute where text ends, matching html5lib's
         behavior of reporting the column of the last character (1-indexed).
         """
-        if not self.collect_errors:
-            return
         # Position of last character of text (0-indexed)
         end_pos = self.text_start_pos + raw_len
         last_newline = self.buffer.rfind("\n", 0, end_pos)
@@ -1953,21 +1915,9 @@ class Tokenizer:
         if pos >= length:
             return False
 
-        # Handle ignore_lf for CRLF sequences
-        if self.ignore_lf and pos < length and self.buffer[pos] == "\n":
-            self.ignore_lf = False
-            pos += 1
-            self.pos = pos
-            if pos >= length:
-                return False
-
         match = _COMMENT_RUN_PATTERN.match(self.buffer, pos)
         if match:
             chunk = match.group(0)
-            # Handle CRLF normalization for comments
-            if "\r" in chunk:
-                chunk = chunk.replace("\r\n", "\n").replace("\r", "\n")
-                self.ignore_lf = chunk.endswith("\r")
             self.current_comment.append(chunk)
             self.pos = match.end()
             return True
@@ -2061,7 +2011,7 @@ class Tokenizer:
             # Consume everything up to the special character
             if next_special > pos:
                 chunk = buffer[pos:next_special]
-                self._append_text_chunk(chunk, ends_with_cr=chunk.endswith("\r"))
+                self._append_text_chunk(chunk)
                 pos = next_special
                 self.pos = pos
 
@@ -2073,7 +2023,6 @@ class Tokenizer:
 
             # Handle special characters - we're at one of them after find()
             if null_index == pos:
-                self.ignore_lf = False
                 self._emit_error("unexpected-null-character")
                 self._append_text("\ufffd")
                 pos += 1
@@ -2188,9 +2137,7 @@ class Tokenizer:
             if null_index != -1 and null_index < next_special:
                 if null_index > pos:
                     chunk = buffer[pos:null_index]
-                    self._append_text_chunk(chunk, ends_with_cr=chunk.endswith("\r"))
-                else:
-                    self.ignore_lf = False
+                    self._append_text_chunk(chunk)
                 self._emit_error("unexpected-null-character")
                 self._append_text("\ufffd")
                 pos = null_index + 1
@@ -2199,14 +2146,14 @@ class Tokenizer:
             if lt_index == -1:
                 if pos < length:
                     chunk = buffer[pos:length]
-                    self._append_text_chunk(chunk, ends_with_cr=chunk.endswith("\r"))
+                    self._append_text_chunk(chunk)
                 self.pos = length
                 self._flush_text()
                 self._emit_token(EOFToken())
                 return True
             if lt_index > pos:
                 chunk = buffer[pos:lt_index]
-                self._append_text_chunk(chunk, ends_with_cr=chunk.endswith("\r"))
+                self._append_text_chunk(chunk)
             pos = lt_index + 1
             self.pos = pos
             # Handle script escaped transition before treating '<' as markup boundary

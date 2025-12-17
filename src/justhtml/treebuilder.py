@@ -1259,19 +1259,22 @@ class TreeBuilder(TreeBuilderModesMixin):
             return self.process_token(CharacterTokens(data))
 
         if self.mode == InsertionMode.IN_BODY:
+            if not data:
+                return TokenSinkResult.Continue
             if "\x00" in data:
                 self._parse_error("invalid-codepoint")
                 data = data.replace("\x00", "")
-
-            if not data:
-                return TokenSinkResult.Continue
+                if not data:
+                    return TokenSinkResult.Continue
 
             if is_all_whitespace(data):
-                self._reconstruct_active_formatting_elements()
+                if self.active_formatting:
+                    self._reconstruct_active_formatting_elements()
                 self._append_text(data)
                 return TokenSinkResult.Continue
 
-            self._reconstruct_active_formatting_elements()
+            if self.active_formatting:
+                self._reconstruct_active_formatting_elements()
             self.frameset_ok = False
             self._append_text(data)
             return TokenSinkResult.Continue
