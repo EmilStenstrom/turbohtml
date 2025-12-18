@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Performance benchmark for JustHTML against other HTML parsers.
-Uses the web100k dataset.
+Uses the web100k dataset:
+    https://github.com/EmilStenstrom/web100k
 
 Defaults assume a sibling-folder layout (next to the repo):
     ../web100k/batches/
