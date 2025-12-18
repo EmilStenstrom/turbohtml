@@ -8,7 +8,7 @@ import io
 import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import cast
+from typing import TextIO, cast
 
 from . import JustHTML
 from .context import FragmentContext
@@ -118,7 +118,6 @@ def main() -> None:
     html = _read_html(args.path)
     fragment_context = FragmentContext("div") if args.fragment else None
     doc = JustHTML(html, fragment_context=fragment_context)
-    outfile = Path.open(args.output, mode="w", encoding="utf-8") if args.output else sys.stdout
 
     try:
         nodes = doc.query(args.selector) if args.selector else [doc.root]
@@ -132,22 +131,39 @@ def main() -> None:
     if args.first:
         nodes = [nodes[0]]
 
-    if args.format == "html":
-        outputs = [node.to_html() for node in nodes]
-        outfile.write("\n".join(outputs))
-        outfile.write("\n")
+    def write_output(out: TextIO) -> None:
+        if args.format == "html":
+            outputs = [node.to_html() for node in nodes]
+            out.write("\n".join(outputs))
+            out.write("\n")
+            return
+
+        if args.format == "text":
+            # Keep these branches explicit so coverage will highlight untested CLI options.
+            if args.separator == " ":
+                if args.strip:
+                    outputs = [node.to_text(strip=True) for node in nodes]
+                else:
+                    outputs = [node.to_text(strip=False) for node in nodes]
+            else:
+                if args.strip:
+                    outputs = [node.to_text(separator=args.separator, strip=True) for node in nodes]
+                else:
+                    outputs = [node.to_text(separator=args.separator, strip=False) for node in nodes]
+            out.write("\n".join(outputs))
+            out.write("\n")
+            return
+
+        outputs = [node.to_markdown() for node in nodes]
+        out.write("\n\n".join(outputs))
+        out.write("\n")
+
+    if args.output:
+        with Path(args.output).open(mode="w", encoding="utf-8") as outfile:
+            write_output(outfile)
         return
 
-    if args.format == "text":
-        outputs = [node.to_text(separator=args.separator, strip=args.strip) for node in nodes]
-        outfile.write("\n".join(outputs))
-        outfile.write("\n")
-        return
-
-    outputs = [node.to_markdown() for node in nodes]
-    outfile.write("\n\n".join(outputs))
-    outfile.write("\n")
-    return
+    write_output(sys.stdout)
 
 
 if __name__ == "__main__":

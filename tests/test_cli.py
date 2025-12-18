@@ -139,3 +139,34 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(out, "Hello\n")
         self.assertEqual(err, "")
+
+    def test_output_writes_to_file_and_not_stdout(self):
+        html = "<p>Hello</p>"
+        with NamedTemporaryFile("r+", suffix=".txt") as out_file:
+            code, out, err = self._run_cli(["-", "--format", "text", "--output", out_file.name], stdin_text=html)
+            self.assertEqual(code, 0)
+            self.assertEqual(out, "")
+            self.assertEqual(err, "")
+            out_file.seek(0)
+            self.assertEqual(out_file.read(), "Hello\n")
+
+    def test_separator_changes_text_joining(self):
+        html = "<p>Hello <b>world</b></p>"
+        code, out, err = self._run_cli(["-", "--format", "text", "--separator", "|"], stdin_text=html)
+        self.assertEqual(code, 0)
+        self.assertEqual(out, "Hello|world\n")
+        self.assertEqual(err, "")
+
+    def test_no_strip_preserves_whitespace(self):
+        html = "<p>  Hello  <b>world</b>  </p>"
+        code, out, err = self._run_cli(["-", "--format", "text", "--separator", "|", "--no-strip"], stdin_text=html)
+        self.assertEqual(code, 0)
+        self.assertEqual(out, "  Hello  |world|  \n")
+        self.assertEqual(err, "")
+
+    def test_no_strip_with_default_separator(self):
+        html = "<p>Hello<b>world</b></p>"
+        code, out, err = self._run_cli(["-", "--format", "text", "--no-strip"], stdin_text=html)
+        self.assertEqual(code, 0)
+        self.assertEqual(out, "Hello world\n")
+        self.assertEqual(err, "")
