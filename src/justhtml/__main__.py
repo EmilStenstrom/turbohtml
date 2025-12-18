@@ -45,10 +45,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         nargs="?",
         help="HTML file to parse, or '-' to read from stdin",
     )
-    parser.add_argument(
-        "--output",
-        help="File to write output to"
-	)
+    parser.add_argument("--output", help="File to write output to")
     parser.add_argument(
         "--selector",
         help="CSS selector for choosing nodes (defaults to the document root)",
