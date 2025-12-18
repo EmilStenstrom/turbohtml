@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """
 Performance benchmark for JustHTML against other HTML parsers.
-Uses web100k dataset from /home/emilstenstrom/Projects/web100k/batches/
+Uses the web100k dataset.
+
+Defaults assume a sibling-folder layout (next to the repo):
+    ../web100k/batches/
+    ../web100k/html.dict
+
+Override with `--batches-dir` / `--dict` or set `WEB100K_DIR`.
 Decompresses at runtime (no disk writes) using html.dict for optimal performance.
 """
 
@@ -15,6 +21,16 @@ import sys
 import tarfile
 import threading  # MEMORY: added
 import time
+
+
+def _default_web100k_dir() -> pathlib.Path:
+    """Resolve a portable default location for the web100k dataset."""
+    env = os.environ.get("WEB100K_DIR") or os.environ.get("WEB100K_PATH")
+    if env:
+        return pathlib.Path(env)
+    # Default to a sibling folder next to the repo: <repo_parent>/web100k
+    return pathlib.Path(__file__).resolve().parents[2] / "web100k"
+
 
 try:
     import zstandard as zstd
@@ -611,20 +627,22 @@ def main():
         description="Benchmark HTML parsers using web100k dataset",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+
+    default_web100k = _default_web100k_dir()
     parser.add_argument("--batch", type=pathlib.Path, help="Path to single batch file")
     parser.add_argument(
         "--batches-dir",
         type=pathlib.Path,
-        default=pathlib.Path("/home/emilstenstrom/Projects/web100k/batches"),
-        help="Path to directory containing all batch files (default: web100k/batches)",
+        default=default_web100k / "batches",
+        help="Path to directory containing all batch files (default: ../web100k/batches; override with WEB100K_DIR)",
     )
     parser.add_argument("--downloaded", type=pathlib.Path, help="Path to downloaded directory with .html.zst files")
     parser.add_argument("--all-batches", action="store_true", help="Process all batch files in batches-dir")
     parser.add_argument(
         "--dict",
         type=pathlib.Path,
-        default=pathlib.Path("/home/emilstenstrom/Projects/web100k/html.dict"),
-        help="Path to html.dict file",
+        default=default_web100k / "html.dict",
+        help="Path to html.dict file (default: ../web100k/html.dict; override with WEB100K_DIR)",
     )
     parser.add_argument(
         "--limit",
