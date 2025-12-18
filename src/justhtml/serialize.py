@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .constants import FOREIGN_ATTRIBUTE_ADJUSTMENTS, VOID_ELEMENTS
+from .constants import FOREIGN_ATTRIBUTE_ADJUSTMENTS, SPECIAL_ELEMENTS, VOID_ELEMENTS
 
 
 def _escape_text(text: str | None) -> str:
@@ -89,6 +89,37 @@ def to_html(node: Any, indent: int = 0, indent_size: int = 2, *, pretty: bool = 
 _PREFORMATTED_ELEMENTS: set[str] = {"pre", "textarea"}
 
 
+def _is_whitespace_text_node(node: Any) -> bool:
+    return node.name == "#text" and (node.data or "").strip() == ""
+
+
+def _should_pretty_indent_children(children: list[Any]) -> bool:
+    has_comment = False
+    has_non_whitespace_text = False
+    for child in children:
+        name = child.name
+        if name == "#comment":
+            has_comment = True
+            break
+        if name == "#text":
+            if (child.data or "").strip():
+                has_non_whitespace_text = True
+                break
+
+    if has_comment or has_non_whitespace_text:
+        return False
+
+    for child in children:
+        name = child.name
+        if name in {"#text", "#comment"}:
+            continue
+        # Only indent safely when children are known "blockish" HTML elements.
+        # If we guess wrong and indent inline elements, we can introduce rendering spaces.
+        if name not in SPECIAL_ELEMENTS:
+            return False
+    return True
+
+
 def _node_to_html(node: Any, indent: int = 0, indent_size: int = 2, pretty: bool = True, *, in_pre: bool) -> str:
     """Helper to convert a node to HTML."""
     prefix = " " * (indent * indent_size) if pretty and not in_pre else ""
@@ -152,9 +183,19 @@ def _node_to_html(node: Any, indent: int = 0, indent_size: int = 2, pretty: bool
         )
         return f"{prefix}{open_tag}{inner}{serialize_end_tag(name)}"
 
+    if pretty and not content_pre and not _should_pretty_indent_children(children):
+        inner = "".join(
+            _node_to_html(child, 0, indent_size, pretty=False, in_pre=content_pre)
+            for child in children
+            if child is not None
+        )
+        return f"{prefix}{open_tag}{inner}{serialize_end_tag(name)}"
+
     # Render with child indentation
     parts = [f"{prefix}{open_tag}"]
     for child in children:
+        if pretty and not content_pre and _is_whitespace_text_node(child):
+            continue
         child_html = _node_to_html(child, indent + 1, indent_size, pretty, in_pre=content_pre)
         if child_html:
             parts.append(child_html)
