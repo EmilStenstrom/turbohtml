@@ -265,11 +265,7 @@ class TreeBuilderModesMixin:
         if isinstance(token, CharacterTokens):
             data = token.data or ""
             if "\x00" in data:
-                self._parse_error("invalid-codepoint-in-body")
                 data = data.replace("\x00", "")
-            if "\x0c" in data:
-                self._parse_error("invalid-codepoint-in-body")
-                data = data.replace("\x0c", "")
             if not data or is_all_whitespace(data):
                 if data:
                     self._append_text(data)
@@ -1089,11 +1085,7 @@ class TreeBuilderModesMixin:
         if isinstance(token, CharacterTokens):
             # IN_TABLE mode guarantees non-empty data
             data = token.data
-            if "\x0c" in data:
-                self._parse_error("invalid-codepoint-in-table-text")
-                data = data.replace("\x0c", "")
-            if data:
-                self.pending_table_text.append(data)
+            self.pending_table_text.append(data)
             return None
         self._flush_pending_table_text()
         original = self.table_text_original_mode or InsertionMode.IN_TABLE
@@ -1443,11 +1435,7 @@ class TreeBuilderModesMixin:
         if isinstance(token, CharacterTokens):
             data = token.data or ""
             if "\x00" in data:
-                self._parse_error("invalid-codepoint-in-select")
                 data = data.replace("\x00", "")
-            if "\x0c" in data:
-                self._parse_error("invalid-codepoint-in-select")
-                data = data.replace("\x0c", "")
             if data:
                 self._reconstruct_active_formatting_elements()
                 self._append_text(data)

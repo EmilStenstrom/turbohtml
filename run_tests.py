@@ -456,6 +456,32 @@ class TestReporter:
     def __init__(self, config):
         self.config = config
 
+    @staticmethod
+    def _escape_control_chars_for_display(text: str) -> str:
+        """Make control chars visible in failure output.
+
+        Keeps newlines as-is for readability, but escapes other C0 controls and DEL
+        using familiar sequences (e.g. '\\x00', '\\x0c').
+        """
+        if not text:
+            return text
+        out = []
+        for ch in text:
+            code = ord(ch)
+            if ch == "\n":
+                out.append(ch)
+            elif ch == "\t":
+                out.append("\\t")
+            elif ch == "\r":
+                out.append("\\r")
+            elif ch == "\f":
+                out.append("\\x0c")
+            elif code < 0x20 or code == 0x7F:
+                out.append(f"\\x{code:02x}")
+            else:
+                out.append(ch)
+        return "".join(out)
+
     # A "full" run means no narrowing flags were supplied. Only then do we write test-summary.txt.
     def is_full_run(self):
         return not (
@@ -482,7 +508,7 @@ class TestReporter:
         if verbosity >= 1:
             lines = [
                 "FAILED:",
-                f"=== INCOMING HTML ===\n{result.input_html}\n",
+                f"=== INCOMING HTML ===\n{self._escape_control_chars_for_display(result.input_html)}\n",
             ]
             # Show error diff if --check-errors and errors don't match
             if self.config.get("check_errors") and not result.errors_matched:

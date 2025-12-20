@@ -17,7 +17,7 @@
 |   <body>
 |     <math math>
 |       <math mi>
-|         "text"
+|         " text"
 
 
 #data
@@ -62,7 +62,7 @@
 |   <head>
 |   <body>
 |     <select>
-|       "text"
+|       " text"
 
 
 #data
@@ -98,6 +98,17 @@
 
 
 #data
+<table>text</table>
+#errors
+#document
+| <html>
+|   <head>
+|   <body>
+|     "text"
+|     <table>
+
+
+#data
 <table><td><!-- comment in cell --></td></table>
 #errors
 #document
@@ -128,6 +139,7 @@
 |   <head>
 |   <body>
 |     <table>
+|       " "
 
 
 #data

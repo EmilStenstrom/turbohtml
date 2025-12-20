@@ -1708,10 +1708,37 @@ class Tokenizer:
         raw_len = len(data)
 
         self.text_buffer.clear()
-        if self.state == self.DATA and "\0" in data:
-            count = data.count("\0")
-            for _ in range(count):
-                self._emit_error("unexpected-null-character")
+        # U+0000 NULL is a parse error in text.
+        # Emit one error per NULL at the *actual* character position.
+        if "\0" in data:
+            base_pos = self.text_start_pos
+            search_from = 0
+            while True:
+                idx = data.find("\0", search_from)
+                if idx == -1:
+                    break
+                error_pos = base_pos + idx
+
+                # Compute column at error_pos (1-indexed).
+                last_newline = self.buffer.rfind("\n", 0, error_pos + 1)
+                if last_newline == -1:
+                    column = error_pos + 1
+                else:
+                    column = error_pos - last_newline
+                line = self._get_line_at_pos(error_pos)
+
+                message = generate_error_message("unexpected-null-character")
+                self.errors.append(
+                    ParseError(
+                        "unexpected-null-character",
+                        line=line,
+                        column=column,
+                        message=message,
+                        source_html=self.buffer,
+                    )
+                )
+
+                search_from = idx + 1
 
         # Per HTML5 spec:
         # - RCDATA state (title, textarea): decode character references

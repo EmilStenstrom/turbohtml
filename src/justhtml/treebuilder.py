@@ -413,11 +413,7 @@ class TreeBuilder(TreeBuilderModesMixin):
                         # Tokenizer guarantees non-empty data
                         data = current_token.data
                         if "\x00" in data:
-                            self._parse_error("invalid-codepoint")
                             data = data.replace("\x00", "")
-                        if "\x0c" in data:
-                            self._parse_error("invalid-codepoint")
-                            data = data.replace("\x0c", "")
                         if data:
                             if not is_all_whitespace(data):
                                 self._reconstruct_active_formatting_elements()
@@ -515,6 +511,9 @@ class TreeBuilder(TreeBuilderModesMixin):
                 text = text[1:]
                 if not text:
                     return
+
+        if "\f" in text:
+            text = text.replace("\f", " ")
 
         # Guard against empty stack
         if not self.open_elements:  # pragma: no cover
@@ -855,7 +854,7 @@ class TreeBuilder(TreeBuilderModesMixin):
     def _flush_pending_table_text(self) -> None:
         data = "".join(self.pending_table_text)
         self.pending_table_text.clear()
-        if not data:
+        if not data:  # pragma: no cover
             return
         if is_all_whitespace(data):
             self._append_text(data)
@@ -1262,7 +1261,6 @@ class TreeBuilder(TreeBuilderModesMixin):
             if not data:
                 return TokenSinkResult.Continue
             if "\x00" in data:
-                self._parse_error("invalid-codepoint")
                 data = data.replace("\x00", "")
                 if not data:
                     return TokenSinkResult.Continue
