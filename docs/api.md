@@ -21,7 +21,7 @@ JustHTML(html, strict=False, collect_errors=False, encoding=None, fragment_conte
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `html` | `str \| bytes \| bytearray \| memoryview` | required | HTML input to parse. Bytes are decoded using HTML encoding sniffing. |
-| `strict` | `bool` | `False` | Raise `StrictModeError` on first parse error |
+| `strict` | `bool` | `False` | Raise `StrictModeError` on the earliest parse error by source position |
 | `collect_errors` | `bool` | `False` | Collect all parse errors (enables `errors` property) |
 | `encoding` | `str \| None` | `None` | Transport-supplied encoding label used as an override for byte input. See [Encoding & Byte Input](encoding.md). |
 | `fragment_context` | `FragmentContext` | `None` | Parse as fragment inside this context element |
@@ -31,7 +31,7 @@ JustHTML(html, strict=False, collect_errors=False, encoding=None, fragment_conte
 | Property | Type | Description |
 |----------|------|-------------|
 | `root` | `SimpleDomNode` | The document root (`#document` or `#document-fragment`) |
-| `errors` | `list[ParseError]` | Parse errors (only if `collect_errors=True`) |
+| `errors` | `list[ParseError]` | Parse errors, ordered by source position (only if `collect_errors=True`) |
 
 ### Methods
 

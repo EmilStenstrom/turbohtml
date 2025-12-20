@@ -107,8 +107,11 @@ def generate_error_message(code: str, tag_name: str | None = None) -> str:
         # Foster parenting / table errors
         "foster-parenting-character": "Text content in table requires foster parenting",
         "foster-parenting-start-tag": "Start tag in table requires foster parenting",
+        "unexpected-character-implies-table-voodoo": "Unexpected character in table triggers foster parenting",
         "unexpected-start-tag-implies-table-voodoo": f"<{tag_name}> start tag in table triggers foster parenting",
         "unexpected-end-tag-implies-table-voodoo": f"</{tag_name}> end tag in table triggers foster parenting",
+        "unexpected-implied-end-tag-in-table-view": "Unexpected implied end tag while closing table",
+        "eof-in-table": "Unexpected end of file in table",
         "unexpected-cell-in-table-body": "Unexpected table cell outside of table row",
         "unexpected-form-in-table": "Form element not allowed in table context",
         "unexpected-hidden-input-in-table": "Hidden input in table triggers foster parenting",
@@ -134,6 +137,10 @@ def generate_error_message(code: str, tag_name: str | None = None) -> str:
         "adoption-agency-1.3": "Misnested tags require adoption agency algorithm",
         "non-void-html-element-start-tag-with-trailing-solidus": f"<{tag_name}/> self-closing syntax on non-void element",
         "image-start-tag": f"Deprecated <{tag_name}> tag (use <img> instead)",
+        # Select insertion mode (context-specific taxonomy)
+        "unexpected-start-tag-in-select": f"Unexpected <{tag_name}> start tag in <select>",
+        "unexpected-end-tag-in-select": f"Unexpected </{tag_name}> end tag in <select>",
+        "unexpected-select-in-select": "Unexpected nested <select> in <select>",
     }
 
     # Return message or fall back to the code itself if not found

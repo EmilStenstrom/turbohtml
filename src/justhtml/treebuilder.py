@@ -251,7 +251,7 @@ class TreeBuilder(TreeBuilderModesMixin):
         if self._has_element_in_button_scope("p"):
             self._generate_implied_end_tags("p")
             if self.open_elements[-1].name != "p":
-                self._parse_error("end-tag-too-early", tag_name="p")
+                self._parse_error("unexpected-end-tag", tag_name="p")
             self._pop_until_inclusive("p")
             return True
         return False
@@ -859,7 +859,6 @@ class TreeBuilder(TreeBuilderModesMixin):
         if is_all_whitespace(data):
             self._append_text(data)
             return
-        self._parse_error("foster-parenting-character")
         previous = self.insert_from_table
         self.insert_from_table = True
         try:
@@ -1117,7 +1116,7 @@ class TreeBuilder(TreeBuilderModesMixin):
 
             # Per HTML5 spec: if first node doesn't match, it's a parse error
             if first:
-                self._parse_error("unexpected-end-tag-in-foreign-content", tag_name=token.name)
+                self._parse_error("unexpected-end-tag", tag_name=token.name)
                 first = False
 
             # If we hit an HTML element that doesn't match, process in secondary mode

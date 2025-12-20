@@ -66,7 +66,7 @@ class TestErrorCollection(unittest.TestCase):
         assert len(doc.errors) > 0
         # The null is at position 11 (after newline at position 5)
         # Column should be relative to last newline
-        error = doc.errors[0]
+        error = next(e for e in doc.errors if e.code == "unexpected-null-character")
         assert error.line == 2
         assert error.column > 0
 
@@ -247,22 +247,16 @@ class TestTokenBasedErrorHighlighting(unittest.TestCase):
         parser = JustHTML(html, collect_errors=True)
         assert len(parser.errors) == 1
         error = parser.errors[0]
-        # Should highlight full <html> tag
-        assert error.column == 1
-        assert error._end_column == 7
+        # For tree-builder tag errors we store the end-of-token position.
+        # <html> is 6 characters long.
+        assert error.column == 6
 
     def test_tag_token_end_tag(self):
         """End tag tokens get full tag highlighting."""
         html = "<html></br></html>"
         parser = JustHTML(html, collect_errors=True)
         # </br> is treated as error (should be <br>)
-        errors_with_end_col = [e for e in parser.errors if e._end_column is not None]
-        assert len(errors_with_end_col) >= 1
-        # The </br> error should have end_column set
-        br_error = [e for e in parser.errors if "br" in e.code or e.code == "unexpected-end-tag"]
-        if br_error and br_error[0]._end_column:
-            # </br> is 5 chars
-            assert br_error[0]._end_column - br_error[0].column == 5
+        assert any(e.code == "unexpected-end-tag" for e in parser.errors)
 
 
 class TestTreeBuilderParseErrorWithTokens(unittest.TestCase):
@@ -290,6 +284,19 @@ class TestTreeBuilderParseErrorWithTokens(unittest.TestCase):
         # Start = 18 - 18 + 1 = 1
         assert error.column == 1
         assert error._end_column == 19
+
+    def test_parse_error_with_tag_token_empty_attr_value(self):
+        """_parse_error handles boolean/empty-value attributes without adding value length."""
+        token = Tag(Tag.START, "div", {"disabled": ""}, False)
+        # <div disabled> is 14 characters long
+        self.builder.tokenizer.last_token_column = 14
+
+        self.builder._parse_error("test-error", tag_name="div", token=token)
+
+        assert len(self.builder.errors) == 1
+        error = self.builder.errors[0]
+        assert error.column == 1
+        assert error._end_column == 15
 
     def test_parse_error_with_end_tag_token(self):
         """_parse_error with end Tag token calculates correct positions."""

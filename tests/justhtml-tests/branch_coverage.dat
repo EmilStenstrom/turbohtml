@@ -1,6 +1,9 @@
 #data
 <math><mi>\x00</mi></math>
 #errors
+(1,6): expected-doctype-but-got-start-tag
+(1,11): unexpected-null-character
+
 #document
 | <html>
 |   <head>
@@ -12,6 +15,9 @@
 #data
 <math><mi>\x00\x0c</mi></math>
 #errors
+(1,6): expected-doctype-but-got-start-tag
+(1,11): unexpected-null-character
+
 #document
 | <html>
 |   <head>
@@ -24,6 +30,8 @@
 #data
 <math><mi>   </mi></math>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+
 #document
 | <html>
 |   <head>
@@ -36,6 +44,9 @@
 #data
 </template>
 #errors
+(1,1): expected-doctype-but-got-end-tag
+(1,11): unexpected-end-tag-before-html
+
 #document
 | <html>
 |   <head>
@@ -45,6 +56,8 @@
 #data
 <body><input type="hidden">
 #errors
+(1,1): expected-doctype-but-got-start-tag
+
 #document
 | <html>
 |   <head>
@@ -56,6 +69,9 @@
 #data
 <html><body><html attr="test">
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,30): unexpected-start-tag
+
 #document
 | <html>
 |   attr="test"
@@ -66,6 +82,8 @@
 #data
 <select><optgroup><option>1</option></optgroup></select>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+
 #document
 | <html>
 |   <head>
@@ -79,6 +97,9 @@
 #data
 <select><option>1</option></optgroup></select>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,37): unexpected-end-tag-in-select
+
 #document
 | <html>
 |   <head>
@@ -91,6 +112,7 @@
 #data
 <!DOCTYPE html><html><head></head><frameset></frameset>
 #errors
+
 #document
 | <!DOCTYPE html>
 | <html>
@@ -102,6 +124,8 @@
 #data
 <!DOCTYPE html><html><head></head><frameset></frameset>abc
 #errors
+(1,58): unexpected-token-after-frameset
+
 #document
 | <!DOCTYPE html>
 | <html>
@@ -112,6 +136,9 @@
 #data
 <table><input id="x" class="y" type="hidden"></table>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,45): unexpected-hidden-input-in-table
+
 #document
 | <html>
 |   <head>
@@ -126,6 +153,11 @@
 #data
 <math><annotation-xml encoding="text/plain"><div></div></annotation-xml></math>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,49): unexpected-html-element-in-foreign-content
+(1,72): unexpected-end-tag
+(1,79): unexpected-end-tag
+
 #document
 | <html>
 |   <head>
@@ -139,6 +171,11 @@
 #data
 <math><annotation-xml><div></div></annotation-xml></math>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,27): unexpected-html-element-in-foreign-content
+(1,50): unexpected-end-tag
+(1,57): unexpected-end-tag
+
 #document
 | <html>
 |   <head>
@@ -151,6 +188,10 @@
 #data
 <svg><font color="red">text</font></svg>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,23): unexpected-html-element-in-foreign-content
+(1,40): unexpected-end-tag
+
 #document
 | <html>
 |   <head>
@@ -164,6 +205,10 @@
 #data
 <select><selectedcontent></selectedcontent><option>A</option><option selected>B</option></select>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,25): unexpected-start-tag-in-select
+(1,43): unexpected-end-tag-in-select
+
 #document
 | <html>
 |   <head>
@@ -181,6 +226,10 @@
 #data
 <select><selectedcontent></selectedcontent><option>A</option><option>B</option></select>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,25): unexpected-start-tag-in-select
+(1,43): unexpected-end-tag-in-select
+
 #document
 | <html>
 |   <head>
@@ -197,6 +246,10 @@
 #data
 <b><select></b></select>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,15): unexpected-end-tag-in-select
+(1,24): expected-closing-tag-but-got-eof
+
 #document
 | <html>
 |   <head>
@@ -208,6 +261,10 @@
 #data
 <a href="x"><select></a></select>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,24): unexpected-end-tag-in-select
+(1,33): expected-closing-tag-but-got-eof
+
 #document
 | <html>
 |   <head>
@@ -220,6 +277,10 @@
 #data
 <select><plaintext></select>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,19): unexpected-start-tag-in-select
+(1,28): expected-closing-tag-but-got-eof
+
 #document
 | <html>
 |   <head>
@@ -232,6 +293,8 @@
 #data
 <svg><g><rect></rect><circle></circle><path></path></g></svg><div></div>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+
 #document
 | <html>
 |   <head>
@@ -247,6 +310,8 @@
 #data
 <math><annotation-xml encoding="text/html"><div><table><tr></tr></table></div></annotation-xml></math>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+
 #document
 | <html>
 |   <head>
@@ -263,6 +328,9 @@
 #data
 <select></a></select>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,12): unexpected-end-tag-in-select
+
 #document
 | <html>
 |   <head>
@@ -273,6 +341,9 @@
 #data
 <select></b></select>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,12): unexpected-end-tag-in-select
+
 #document
 | <html>
 |   <head>
@@ -283,6 +354,11 @@
 #data
 <math><annotation-xml foo="bar"><div>test</div></annotation-xml></math>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,37): unexpected-html-element-in-foreign-content
+(1,64): unexpected-end-tag
+(1,71): unexpected-end-tag
+
 #document
 | <html>
 |   <head>
@@ -297,6 +373,14 @@
 #data
 <svg><g><rect><circle><path><div>text</div></path></circle></rect></g></svg>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,33): unexpected-html-element-in-foreign-content
+(1,50): unexpected-end-tag
+(1,59): unexpected-end-tag
+(1,66): unexpected-end-tag
+(1,70): unexpected-end-tag
+(1,76): unexpected-end-tag
+
 #document
 | <html>
 |   <head>
@@ -313,6 +397,10 @@
 #data
 <select><aside>text</aside></select>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,15): unexpected-start-tag-in-select
+(1,27): unexpected-end-tag
+
 #document
 | <html>
 |   <head>
@@ -324,6 +412,10 @@
 #data
 <select><selectedcontent></selectedcontent><option disabled>A</option></select>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,25): unexpected-start-tag-in-select
+(1,43): unexpected-end-tag-in-select
+
 #document
 | <html>
 |   <head>
@@ -339,6 +431,10 @@
 #data
 <select><selectedcontent></selectedcontent><option class="x">A</option><option selected>B</option></select>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,25): unexpected-start-tag-in-select
+(1,43): unexpected-end-tag-in-select
+
 #document
 | <html>
 |   <head>

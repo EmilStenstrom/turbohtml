@@ -16,6 +16,8 @@ for error in doc.errors:
     print(f"{error.line}:{error.column} - {error.code}")
 ```
 
+`doc.errors` is ordered by source position (line, column), with unknown positions (if any) appearing last.
+
 ## Strict Mode
 
 To reject malformed HTML entirely:
@@ -29,6 +31,8 @@ except StrictModeError as e:
     print(e)  # Shows source location
 ```
 
+In strict mode, JustHTML raises on the earliest error by source position.
+
 ## Error Locations (Line/Column)
 
 JustHTML reports a source location for each parse error as a best-effort pointer to where the parser detected the problem in the input stream.
@@ -36,7 +40,8 @@ JustHTML reports a source location for each parse error as a best-effort pointer
 - Coordinates are 1-based: the first character in the input is `(line=1, column=1)`.
 - Tokenizer-detected character errors (for example `unexpected-null-character`) should point at the exact offending character within the input, even if that character is emitted as part of a larger run of text.
 - Tree-builder (structure) errors are associated with the token that triggered the error.
-    - In practice this usually means the error points to the start position of the most recently emitted token, because the tree builder operates on tokens rather than individual characters.
+    - In practice this usually means the error points at (or near) the triggering token location, because the tree builder operates on tokens rather than individual characters.
+    - When available, JustHTML will highlight the full triggering tag range.
 - EOF-related errors point to the end-of-input position where the parser realized it could not continue.
 
 This means error locations are not universally “at the beginning” or “at the end” of a token: character-level errors point at the character, while token-level (tree builder) errors generally point at the triggering token’s start.
@@ -52,6 +57,10 @@ Errors detected during tokenization (lexical analysis).
 | Code | Description |
 |------|-------------|
 | `eof-in-doctype` | Unexpected end of file in DOCTYPE declaration |
+| `eof-in-doctype-name` | Unexpected end of file while reading DOCTYPE name |
+| `eof-in-doctype-public-identifier` | Unexpected end of file in DOCTYPE public identifier |
+| `eof-in-doctype-system-identifier` | Unexpected end of file in DOCTYPE system identifier |
+| `expected-doctype-name-but-got-right-bracket` | Expected DOCTYPE name but got `>` |
 | `missing-whitespace-before-doctype-name` | Missing whitespace after `<!DOCTYPE` |
 | `abrupt-doctype-public-identifier` | DOCTYPE public identifier ended abruptly |
 | `abrupt-doctype-system-identifier` | DOCTYPE system identifier ended abruptly |
@@ -59,6 +68,14 @@ Errors detected during tokenization (lexical analysis).
 | `missing-quote-before-doctype-system-identifier` | Missing quote before DOCTYPE system identifier |
 | `missing-doctype-public-identifier` | Missing DOCTYPE public identifier |
 | `missing-doctype-system-identifier` | Missing DOCTYPE system identifier |
+| `missing-whitespace-before-doctype-public-identifier` | Missing whitespace before DOCTYPE public identifier |
+| `missing-whitespace-after-doctype-public-identifier` | Missing whitespace after DOCTYPE public identifier |
+| `missing-whitespace-between-doctype-public-and-system-identifiers` | Missing whitespace between DOCTYPE identifiers |
+| `missing-whitespace-after-doctype-name` | Missing whitespace after DOCTYPE name |
+| `unexpected-character-after-doctype-public-keyword` | Unexpected character after PUBLIC keyword |
+| `unexpected-character-after-doctype-system-keyword` | Unexpected character after SYSTEM keyword |
+| `unexpected-character-after-doctype-public-identifier` | Unexpected character after public identifier |
+| `unexpected-character-after-doctype-system-identifier` | Unexpected character after system identifier |
 
 ### Comment Errors
 
@@ -143,6 +160,9 @@ Errors detected during tree construction.
 |------|-------------|
 | `unexpected-start-tag` | Unexpected start tag in current context |
 | `unexpected-end-tag` | Unexpected end tag in current context |
+| `unexpected-end-tag-before-html` | Unexpected end tag before `<html>` |
+| `unexpected-end-tag-before-head` | Unexpected end tag before `<head>` |
+| `unexpected-end-tag-after-head` | Unexpected end tag after `<head>` |
 | `unexpected-start-tag-ignored` | Start tag ignored in current context |
 | `unexpected-start-tag-implies-end-tag` | Start tag implicitly closes previous element |
 
@@ -153,15 +173,69 @@ Errors detected during tree construction.
 | `expected-closing-tag-but-got-eof` | Expected closing tag but reached end of file |
 | `expected-named-closing-tag-but-got-eof` | Expected specific closing tag but reached end of file |
 
+### Invalid Character Errors
+
+| Code | Description |
+|------|-------------|
+| `invalid-codepoint` | Invalid character (U+0000 NULL or U+000C FORM FEED) |
+| `invalid-codepoint-before-head` | Invalid character before `<head>` |
+| `invalid-codepoint-in-body` | Invalid character in `<body>` |
+| `invalid-codepoint-in-table-text` | Invalid character in table text |
+| `invalid-codepoint-in-select` | Invalid character in `<select>` |
+| `invalid-codepoint-in-foreign-content` | Invalid character in SVG/MathML content |
+
 ### Table Errors
 
 | Code | Description |
 |------|-------------|
 | `foster-parenting-character` | Text content in table requires foster parenting |
 | `foster-parenting-start-tag` | Start tag in table requires foster parenting |
+| `unexpected-character-implies-table-voodoo` | Unexpected character in table triggers foster parenting |
 | `unexpected-start-tag-implies-table-voodoo` | Start tag in table triggers foster parenting |
+| `unexpected-end-tag-implies-table-voodoo` | End tag in table triggers foster parenting |
+| `unexpected-implied-end-tag-in-table-view` | Unexpected implied end tag while closing table |
+| `eof-in-table` | Unexpected end of file in table |
 | `unexpected-cell-in-table-body` | Unexpected table cell outside of table row |
 | `unexpected-form-in-table` | Form element not allowed in table context |
+| `unexpected-hidden-input-in-table` | Hidden input in table triggers foster parenting |
+
+### Frameset Errors
+
+| Code | Description |
+|------|-------------|
+| `unexpected-token-in-frameset` | Unexpected content in `<frameset>` |
+| `unexpected-token-after-frameset` | Unexpected content after `<frameset>` |
+| `unexpected-token-after-after-frameset` | Unexpected content after frameset closed |
+
+### After-Body Errors
+
+| Code | Description |
+|------|-------------|
+| `unexpected-token-after-body` | Unexpected content after `</body>` |
+| `unexpected-char-after-body` | Unexpected character after `</body>` |
+
+### Column Group / Template Table Context Errors
+
+| Code | Description |
+|------|-------------|
+| `unexpected-characters-in-column-group` | Text not allowed in `<colgroup>` |
+| `unexpected-characters-in-template-column-group` | Text not allowed in template column group |
+| `unexpected-start-tag-in-column-group` | Start tag not allowed in `<colgroup>` |
+| `unexpected-start-tag-in-template-column-group` | Start tag not allowed in template column group |
+| `unexpected-start-tag-in-template-table-context` | Start tag not allowed in template table context |
+
+### Fragment Context Errors
+
+| Code | Description |
+|------|-------------|
+| `unexpected-start-tag-in-cell-fragment` | Start tag not allowed in cell fragment context |
+| `unexpected-end-tag-in-fragment-context` | End tag not allowed in fragment parsing context |
+
+### Head/Body Context Errors
+
+| Code | Description |
+|------|-------------|
+| `unexpected-hidden-input-after-head` | Unexpected hidden input after `<head>` |
 
 ### Foreign Content Errors
 
@@ -170,6 +244,14 @@ Errors detected during tree construction.
 | `unexpected-doctype-in-foreign-content` | Unexpected DOCTYPE in SVG/MathML content |
 | `unexpected-html-element-in-foreign-content` | HTML element breaks out of SVG/MathML content |
 | `unexpected-end-tag-in-foreign-content` | Mismatched end tag in SVG/MathML content |
+
+### Select Errors
+
+| Code | Description |
+|------|-------------|
+| `unexpected-start-tag-in-select` | Unexpected start tag in `<select>` |
+| `unexpected-end-tag-in-select` | Unexpected end tag in `<select>` |
+| `unexpected-select-in-select` | Unexpected nested `<select>` in `<select>` |
 
 ### Miscellaneous Errors
 

@@ -2,6 +2,8 @@
 #iframe-srcdoc
 <!DOCTYPE foo><p><table></table>
 #errors
+(1,14): unknown-doctype
+
 #document
 | <!DOCTYPE foo>
 | <html>

@@ -1,6 +1,8 @@
 #data
 <!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//" "http://www.w3.org/TR/html4/loose.dtd">
 #errors
+(1,100): unknown-doctype
+
 #document
 | <!DOCTYPE html "-//W3C//DTD HTML 4.01 Transitional//" "http://www.w3.org/TR/html4/loose.dtd">
 | <html>
@@ -11,6 +13,8 @@
 #data
 <math><mi>\x0ctext</mi></math>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+
 #document
 | <html>
 |   <head>
@@ -23,6 +27,9 @@
 #data
 <head></head></template>text
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,24): unexpected-end-tag
+
 #document
 | <html>
 |   <head>
@@ -33,6 +40,8 @@
 #data
 <dl><dd>x</dd></dl>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+
 #document
 | <html>
 |   <head>
@@ -45,6 +54,8 @@
 #data
 <table><caption><!--comment--></caption></table>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+
 #document
 | <html>
 |   <head>
@@ -57,6 +68,8 @@
 #data
 <select>\x0ctext</select>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+
 #document
 | <html>
 |   <head>
@@ -68,6 +81,9 @@
 #data
 <frameset></frameset></frameset>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,32): unexpected-token-after-frameset
+
 #document
 | <html>
 |   <head>
@@ -78,6 +94,12 @@
 #data
 <table><caption><table></table></caption></table>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,23): unexpected-start-tag-implies-end-tag
+(1,23): unexpected-start-tag-implies-end-tag
+(1,41): unexpected-end-tag
+(1,49): unexpected-end-tag
+
 #document
 | <html>
 |   <head>
@@ -90,6 +112,9 @@
 #data
 <table>\x00</table>
 #errors
+(1,7): expected-doctype-but-got-start-tag
+(1,8): unexpected-null-character
+
 #document
 | <html>
 |   <head>
@@ -100,6 +125,9 @@
 #data
 <table>text</table>
 #errors
+(1,7): expected-doctype-but-got-start-tag
+(1,11): unexpected-character-implies-table-voodoo
+
 #document
 | <html>
 |   <head>
@@ -111,6 +139,9 @@
 #data
 <table><td><!-- comment in cell --></td></table>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,11): unexpected-cell-in-table-body
+
 #document
 | <html>
 |   <head>
@@ -125,6 +156,9 @@
 #data
 <head></head>\x00
 #errors
+(1,6): expected-doctype-but-got-start-tag
+(1,14): unexpected-null-character
+
 #document
 | <html>
 |   <head>
@@ -134,6 +168,8 @@
 #data
 <table>\x0c</table>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+
 #document
 | <html>
 |   <head>
@@ -145,6 +181,10 @@
 #data
 <select></regularitem>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,22): unexpected-end-tag
+(1,22): expected-closing-tag-but-got-eof
+
 #document
 | <html>
 |   <head>
@@ -155,6 +195,10 @@
 #data
 <div><select></div>text
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,19): unexpected-end-tag-in-select
+(1,23): expected-closing-tag-but-got-eof
+
 #document
 | <html>
 |   <head>
@@ -167,16 +211,27 @@
 #data
 <figure><frameset><h1><aside><figcaption><html><frameset>
 #errors
+(1,1): expected-doctype-but-got-start-tag
+(1,22): unexpected-token-in-frameset
+(1,29): unexpected-token-in-frameset
+(1,41): unexpected-token-in-frameset
+(1,47): unexpected-start-tag
+(1,57): unexpected-start-tag-ignored
+(1,57): expected-closing-tag-but-got-eof
+
 #document
 | <html>
 |   <head>
 |   <frameset>
 
 
+#script-off
 #data
 <head><noscript><!DOCTYPE html></noscript>
 #errors
-#script-off
+(1,1): expected-doctype-but-got-start-tag
+(1,31): unexpected-doctype
+
 #document
 | <html>
 |   <head>
@@ -184,10 +239,13 @@
 |   <body>
 
 
+#script-off
 #data
 <head><noscript></p></noscript>
 #errors
-#script-off
+(1,1): expected-doctype-but-got-start-tag
+(1,20): unexpected-end-tag
+
 #document
 | <html>
 |   <head>
