@@ -29,6 +29,18 @@ except StrictModeError as e:
     print(e)  # Shows source location
 ```
 
+## Error Locations (Line/Column)
+
+JustHTML reports a source location for each parse error as a best-effort pointer to where the parser detected the problem in the input stream.
+
+- Coordinates are 1-based: the first character in the input is `(line=1, column=1)`.
+- Tokenizer-detected character errors (for example `unexpected-null-character`) should point at the exact offending character within the input, even if that character is emitted as part of a larger run of text.
+- Tree-builder (structure) errors are associated with the token that triggered the error.
+    - In practice this usually means the error points to the start position of the most recently emitted token, because the tree builder operates on tokens rather than individual characters.
+- EOF-related errors point to the end-of-input position where the parser realized it could not continue.
+
+This means error locations are not universally “at the beginning” or “at the end” of a token: character-level errors point at the character, while token-level (tree builder) errors generally point at the triggering token’s start.
+
 ---
 
 ## Tokenizer Errors
