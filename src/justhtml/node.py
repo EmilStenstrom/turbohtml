@@ -133,25 +133,31 @@ NodeType = "SimpleDomNode | ElementNode | TemplateNode | TextNode"
 
 
 def _to_text_collect(node: Any, parts: list[str], strip: bool) -> None:
-    name: str = node.name
+    # Iterative traversal avoids recursion overhead on large documents.
+    stack: list[Any] = [node]
+    while stack:
+        current = stack.pop()
+        name: str = current.name
 
-    if name == "#text":
-        data: str | None = node.data
-        if not data:
-            return
-        if strip:
-            data = data.strip()
+        if name == "#text":
+            data: str | None = current.data
             if not data:
-                return
-        parts.append(data)
-        return
+                continue
+            if strip:
+                data = data.strip()
+                if not data:
+                    continue
+            parts.append(data)
+            continue
 
-    if node.children:
-        for child in node.children:
-            _to_text_collect(child, parts, strip=strip)
+        # Preserve the same traversal order as the recursive implementation:
+        # children first, then template content.
+        if type(current) is TemplateNode and current.template_content:
+            stack.append(current.template_content)
 
-    if isinstance(node, ElementNode) and node.template_content:
-        _to_text_collect(node.template_content, parts, strip=strip)
+        children = current.children
+        if children:
+            stack.extend(reversed(children))
 
 
 class SimpleDomNode:
