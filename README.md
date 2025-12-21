@@ -49,7 +49,7 @@ But for most use cases, JustHTML is **fast enough**. It parses the Wikipedia hom
 | `html.parser` | 🔴 4% | ✅ Yes | ⚡ Fast | ❌ None | Standard library. Chokes on malformed HTML. |
 | `lxml` | 🔴 1% | ❌ No | 🚀 Very Fast | 🟡 XPath | C-based (libxml2). Fast but not HTML5 compliant. |
 
-*Compliance scores from running the [html5lib-tests](https://github.com/html5lib/html5lib-tests) suite (1,743 tree-construction tests). See `benchmarks/correctness.py`.*
+*Compliance scores from a strict run of the [html5lib-tests](https://github.com/html5lib/html5lib-tests) tree-construction fixtures (1,743 non-script tests). See `benchmarks/correctness.py` and `docs/correctness.md` for details*.
 
 ## Installation
 

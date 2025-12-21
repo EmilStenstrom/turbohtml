@@ -933,14 +933,14 @@ def run_correctness_tests(args):
     print("=" * 70)
     print("CORRECTNESS RESULTS")
     print("=" * 70)
-    print(f"{'Parser':<15} {'Passed':>10} {'Failed':>10} {'Errors':>10} {'Pass Rate':>12}")
+    print(f"{'Parser':<15} {'Passed':>10} {'Failed':>10} {'Errors':>10} {'Skipped':>10} {'Pass Rate':>12}")
     print("-" * 70)
 
     for name in available_parsers:
         r = results[name]
         total = r["passed"] + r["failed"] + r["errors"]
         rate = (r["passed"] / total * 100) if total > 0 else 0
-        print(f"{name:<15} {r['passed']:>10} {r['failed']:>10} {r['errors']:>10} {rate:>11.2f}%")
+        print(f"{name:<15} {r['passed']:>10} {r['failed']:>10} {r['errors']:>10} {r['skipped']:>10} {rate:>11.2f}%")
 
     print("-" * 70)
     print(f"Total test cases: {total_tests}")

@@ -58,14 +58,16 @@ We run the same test suite against other Python parsers to compare compliance:
 | Parser | Tests Passed | Compliance | Notes |
 |--------|-------------|------------|-------|
 | **JustHTML** | 1743/1743 | **100%** | Full spec compliance |
-| html5lib | 1537/1743 | 88% | Reference implementation, but incomplete |
-| html5_parser | 1464/1743 | 84% | C-based (Gumbo), mostly correct |
-| selectolax | 1185/1743 | 68% | C-based (Lexbor), fast but less compliant |
-| BeautifulSoup | 70/1743 | 4% | Uses html.parser, not HTML5 compliant |
-| html.parser | 70/1743 | 4% | Python stdlib, basic error recovery only |
-| lxml | 17/1743 | 1% | XML-based, not HTML5 compliant |
+| html5lib | 1538/1743 | 88% | Reference implementation, but incomplete |
+| html5_parser | 1462/1743 | 84% | C-based (Gumbo), mostly correct |
+| selectolax | 1187/1743 | 68% | C-based (Lexbor), fast but less compliant |
+| BeautifulSoup | 78/1743 | 4% | Uses html.parser, not HTML5 compliant |
+| html.parser | 77/1743 | 4% | Python stdlib, basic error recovery only |
+| lxml | 13/1743 | 1% | XML-based, not HTML5 compliant |
 
 *Run `python benchmarks/correctness.py` to reproduce these results.*
+
+These numbers come from a strict tree comparison against the expected output in the `html5lib-tests` tree-construction fixtures (excluding `#script-on` / `#script-off` cases). They will not match `pytest` results from the `html5lib` project, because `html5lib` runs the suite in multiple configurations and also has its own skip/xfail lists.
 
 ## Our Testing Strategy
 
