@@ -721,7 +721,12 @@ def parse_args():
     parser.add_argument(
         "--check-errors",
         action="store_true",
-        help="Fail tests if error codes and positions don't match expected values.",
+        help=(
+            "Enable additional error validation. For html5lib tree-construction .dat tests, "
+            "validates the number of parse errors; for tests/justhtml-tests, validates the exact "
+            "ordered list of error codes; for html5lib tokenizer .test tests, validates tokenizer "
+            "parse errors (code+line+col) when provided by the fixture."
+        ),
     )
     args = parser.parse_args()
 
@@ -1844,7 +1849,9 @@ def _run_tokenizer_tests(config):
                 continue
 
             total += 1
-            ok = _run_single_tokenizer_test(test, xml_coercion=is_xml_violation)
+            ok = _run_single_tokenizer_test(
+                test, xml_coercion=is_xml_violation, check_errors=config.get("check_errors")
+            )
             status = "pass" if ok else "fail"
             test_indices.append((status, idx))
             if ok:
@@ -1854,7 +1861,13 @@ def _run_tokenizer_tests(config):
                 file_failed += 1
                 # Print verbose output for failures
                 if verbosity >= 1 and not quiet:
-                    _print_tokenizer_failure(test, path.name, idx, xml_coercion=is_xml_violation)
+                    _print_tokenizer_failure(
+                        test,
+                        path.name,
+                        idx,
+                        xml_coercion=is_xml_violation,
+                        check_errors=config.get("check_errors"),
+                    )
         rel_name = str(path.relative_to(Path("tests")))
         file_results[rel_name] = {
             "passed": file_passed,
@@ -1866,10 +1879,11 @@ def _run_tokenizer_tests(config):
     return passed, total, file_results
 
 
-def _print_tokenizer_failure(test, filename, test_index, xml_coercion=False):
+def _print_tokenizer_failure(test, filename, test_index, xml_coercion=False, check_errors=False):
     """Print detailed tokenizer test failure output."""
     input_text = test["input"]
     expected_tokens = test["output"]
+    expected_errors = test.get("errors") or []
 
     if test.get("doubleEscaped"):
         input_text = _unescape_unicode(input_text)
@@ -1888,18 +1902,9 @@ def _print_tokenizer_failure(test, filename, test_index, xml_coercion=False):
     initial_states = test.get("initialStates") or ["Data state"]
     last_start_tag = test.get("lastStartTag")
 
-    print(f"\nFAILED: {filename} test #{test_index}")
-    print(f"Description: {test.get('description', 'N/A')}")
-    print(f"Input: {input_text!r}")
-    print(f"Initial states: {initial_states}")
-    if last_start_tag:
-        print(f"Last start tag: {last_start_tag}")
+    # Gather per-state results first so we can suppress sections that match.
+    state_results = []
 
-    print("\n=== EXPECTED TOKENS ===")
-    for tok in expected_tokens:
-        print(f"  {tok}")
-
-    # Run the test and show actual output
     for state_name in initial_states:
         mapped = _map_initial_state(state_name)
         if not mapped:
@@ -1916,17 +1921,80 @@ def _print_tokenizer_failure(test, filename, test_index, xml_coercion=False):
             discard_bom=discard_bom,
             xml_coercion=xml_coercion,
         )
-        tok = Tokenizer(sink, opts)
+        tok = Tokenizer(sink, opts, collect_errors=bool(check_errors))
         tok.last_start_tag_name = last_start_tag
         tok.run(input_text)
         actual = [r for t in sink.tokens if (r := _token_to_list(t)) is not None]
         actual = _collapse_characters(actual)
 
-        print(f"\n=== ACTUAL TOKENS (state: {state_name}) ===")
-        for t in actual:
-            print(f"  {t}")
+        actual_errors = []
+        if check_errors:
+            # Tokenizer errors are recorded only when collect_errors=True.
+            actual_errors = [{"code": e.code, "line": e.line, "col": e.column} for e in getattr(tok, "errors", [])]
 
-        if actual != expected_tokens:
+        token_mismatch = actual != expected_tokens
+        error_mismatch = False
+        if check_errors:
+            expected_err_codes = [e.get("code") for e in expected_errors]
+            actual_err_codes = [e.get("code") for e in actual_errors]
+            if test.get("ignoreErrorOrder"):
+                expected_err_codes = sorted(expected_err_codes)
+                actual_err_codes = sorted(actual_err_codes)
+            error_mismatch = actual_err_codes != expected_err_codes
+
+        state_results.append(
+            {
+                "state": state_name,
+                "actual_tokens": actual,
+                "actual_errors": actual_errors,
+                "token_mismatch": token_mismatch,
+                "error_mismatch": error_mismatch,
+            }
+        )
+
+    show_tokens = any(r["token_mismatch"] for r in state_results)
+    show_errors = check_errors and any(r["error_mismatch"] for r in state_results)
+
+    print(f"\nFAILED: {filename} test #{test_index}")
+    print(f"Description: {test.get('description', 'N/A')}")
+    print(f"Input: {input_text!r}")
+    print(f"Initial states: {initial_states}")
+    if last_start_tag:
+        print(f"Last start tag: {last_start_tag}")
+
+    if show_tokens:
+        print("\n=== EXPECTED TOKENS ===")
+        for tok in expected_tokens:
+            print(f"  {tok}")
+
+    if show_errors:
+        print("\n=== EXPECTED ERRORS ===")
+        if expected_errors:
+            for e in expected_errors:
+                # html5lib-tests uses one-based line/col
+                print(f"  ({e.get('line')},{e.get('col')}): {e.get('code')}")
+        else:
+            print("  (none)")
+
+    for r in state_results:
+        state_name = r["state"]
+        actual = r["actual_tokens"]
+        actual_errors = r["actual_errors"]
+
+        if show_tokens:
+            print(f"\n=== ACTUAL TOKENS (state: {state_name}) ===")
+            for t in actual:
+                print(f"  {t}")
+
+        if show_errors:
+            print(f"\n=== ACTUAL ERRORS (state: {state_name}) ===")
+            if actual_errors:
+                for e in actual_errors:
+                    print(f"  ({e.get('line')},{e.get('col')}): {e.get('code')}")
+            else:
+                print("  (none)")
+
+        if show_tokens and actual != expected_tokens:
             print("\n=== DIFFERENCES ===")
             max_len = max(len(expected_tokens), len(actual))
             for i in range(max_len):
@@ -1936,9 +2004,11 @@ def _print_tokenizer_failure(test, filename, test_index, xml_coercion=False):
                     print(f"  Token {i}: expected {exp}, got {act}")
 
 
-def _run_single_tokenizer_test(test, xml_coercion=False):
+def _run_single_tokenizer_test(test, xml_coercion=False, check_errors=False):
     input_text = test["input"]
     expected_tokens = test["output"]
+    expected_errors = test.get("errors") or []
+    ignore_error_order = bool(test.get("ignoreErrorOrder"))
     if test.get("doubleEscaped"):
         input_text = _unescape_unicode(input_text)
 
@@ -1972,13 +2042,24 @@ def _run_single_tokenizer_test(test, xml_coercion=False):
             discard_bom=discard_bom,
             xml_coercion=xml_coercion,
         )
-        tok = Tokenizer(sink, opts)
+        tok = Tokenizer(sink, opts, collect_errors=bool(check_errors))
         tok.last_start_tag_name = last_start_tag
         tok.run(input_text)
         actual = [r for t in sink.tokens if (r := _token_to_list(t)) is not None]
         actual = _collapse_characters(actual)
         if actual != expected_tokens:
             return False
+
+        if check_errors:
+            actual_codes = [e.code for e in getattr(tok, "errors", [])]
+            expected_codes = [e.get("code") for e in expected_errors]
+
+            if ignore_error_order:
+                actual_codes = sorted(actual_codes)
+                expected_codes = sorted(expected_codes)
+
+            if actual_codes != expected_codes:
+                return False
     return True
 
 
