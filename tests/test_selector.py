@@ -13,6 +13,10 @@ from justhtml.selector import (
     SimpleSelector,
     Token,
     TokenType,
+    _is_simple_tag_selector,
+    _query_descendants,
+    _query_descendants_tag,
+    parse_selector,
 )
 
 
@@ -810,6 +814,63 @@ class TestTemplateContent(SelectorTestCase):
     def test_template_query(self):
         doc = JustHTML("<html><body><template><div class='inside'>Content</div></template></body></html>").root
         result = query(doc, ".inside")
+        assert len(result) == 1
+
+
+class TestFastPathCoverage(unittest.TestCase):
+    def test_parse_selector_empty_raises(self):
+        with self.assertRaises(SelectorError):
+            parse_selector("   ")
+
+    def test_is_simple_tag_selector_empty(self):
+        assert _is_simple_tag_selector("") is False
+
+    def test_template_content_none_branches(self):
+        class DummyNode:
+            __slots__ = ("attrs", "children", "name", "namespace", "parent", "template_content")
+
+            def __init__(
+                self, *, name: str, namespace: str, children: list[object] | None = None, template_content=None
+            ):
+                self.name = name
+                self.namespace = namespace
+                self.children = children or []
+                self.template_content = template_content
+                self.attrs = {}
+                self.parent = None
+
+        # Cover branches where template_content is None.
+        root_template_no_content = DummyNode(name="template", namespace="html", children=[], template_content=None)
+        root_with_template_child = DummyNode(
+            name="div",
+            namespace="html",
+            children=[DummyNode(name="template", namespace="html", children=[], template_content=None)],
+            template_content=None,
+        )
+
+        _query_descendants_tag(root_template_no_content, "p", [])
+        _query_descendants_tag(root_with_template_child, "p", [])
+
+        selector = parse_selector("p")
+        _query_descendants(root_template_no_content, selector, [])
+        _query_descendants(root_with_template_child, selector, [])
+
+    def test_template_root_tag_query_fast_path(self):
+        jt = JustHTML("<template><div class='inside'>Content</div></template>")
+        template = jt.query("template")[0]
+        result = template.query("div")
+        assert len(result) == 1
+        assert result[0].name == "div"
+
+    def test_template_root_non_tag_query_slow_path(self):
+        jt = JustHTML("<template><div class='inside'>Content</div></template>")
+        template = jt.query("template")[0]
+        result = template.query(".inside")
+        assert len(result) == 1
+
+    def test_simple_tag_selector_rejects_complex(self):
+        doc = JustHTML("<html><body><p id='x'>Hi</p></body></html>").root
+        result = query(doc, "p#x")
         assert len(result) == 1
 
 

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any
 
 
@@ -762,7 +763,7 @@ class SelectorMatcher:
         """Get only element children (exclude text, comments, etc.)."""
         if not parent or not parent.has_child_nodes():
             return []
-        return [c for c in parent.children if hasattr(c, "name") and not c.name.startswith("#")]
+        return [c for c in parent.children if not c.name.startswith("#")]
 
     def _get_previous_sibling(self, node: Any) -> Any | None:
         """Get the previous element sibling. Returns None if node is first or not found."""
@@ -774,7 +775,7 @@ class SelectorMatcher:
         for child in parent.children:
             if child is node:
                 return prev
-            if hasattr(child, "name") and not child.name.startswith("#"):
+            if not child.name.startswith("#"):
                 prev = child
         return None  # node not in parent.children (detached)
 
@@ -922,7 +923,12 @@ def parse_selector(selector_string: str) -> ParsedSelector:
     if not selector_string or not selector_string.strip():
         raise SelectorError("Empty selector")
 
-    tokenizer = SelectorTokenizer(selector_string.strip())
+    return _parse_selector_cached(selector_string.strip())
+
+
+@lru_cache(maxsize=512)
+def _parse_selector_cached(selector_string: str) -> ParsedSelector:
+    tokenizer = SelectorTokenizer(selector_string)
     tokens = tokenizer.tokenize()
     parser = SelectorParser(tokens)
     return parser.parse()
@@ -930,6 +936,51 @@ def parse_selector(selector_string: str) -> ParsedSelector:
 
 # Global matcher instance
 _matcher: SelectorMatcher = SelectorMatcher()
+
+
+def _is_simple_tag_selector(selector: str) -> bool:
+    if not selector:
+        return False
+    ch0 = selector[0]
+    if not (ch0.isalpha() or ch0 == "_" or ch0 == "-" or ord(ch0) > 127):
+        return False
+    for ch in selector[1:]:
+        if ch.isalnum() or ch == "_" or ch == "-" or ord(ch) > 127:
+            continue
+        return False
+    return True
+
+
+def _query_descendants_tag(node: Any, tag_lower: str, results: list[Any]) -> None:
+    results_append = results.append
+
+    stack: list[Any] = []
+
+    root_children = node.children
+    if root_children:
+        stack.extend(reversed(root_children))
+
+    if node.name == "template" and node.namespace == "html":
+        template_content = node.template_content
+        if template_content:
+            stack.append(template_content)
+
+    while stack:
+        current = stack.pop()
+
+        name = current.name
+        if not name.startswith("#"):
+            if name == tag_lower or name.lower() == tag_lower:
+                results_append(current)
+
+        children = current.children
+        if children:
+            stack.extend(reversed(children))
+
+        if name == "template" and current.namespace == "html":
+            template_content = current.template_content
+            if template_content:
+                stack.append(template_content)
 
 
 def query(root: Any, selector_string: str) -> list[Any]:
@@ -946,27 +997,53 @@ def query(root: Any, selector_string: str) -> list[Any]:
     Returns:
         A list of matching nodes
     """
-    selector = parse_selector(selector_string)
+    selector_string = selector_string.strip()
+    if not selector_string:
+        raise SelectorError("Empty selector")
+
     results: list[Any] = []
+
+    if _is_simple_tag_selector(selector_string):
+        _query_descendants_tag(root, selector_string.lower(), results)
+        return results
+
+    selector = _parse_selector_cached(selector_string)
     _query_descendants(root, selector, results)
     return results
 
 
 def _query_descendants(node: Any, selector: ParsedSelector, results: list[Any]) -> None:
-    """Recursively search for matching nodes in descendants."""
-    # Only recurse into children (not the node itself)
-    if node.has_child_nodes():
-        for child in node.children:
-            # Check if this child matches
-            if hasattr(child, "name") and not child.name.startswith("#"):
-                if _matcher.matches(child, selector):
-                    results.append(child)
-            # Recurse into child's descendants
-            _query_descendants(child, selector, results)
+    """Search for matching nodes in descendants."""
+    matcher_matches = _matcher.matches
+    results_append = results.append
 
-    # Also check template content if present
-    if hasattr(node, "template_content") and node.template_content:
-        _query_descendants(node.template_content, selector, results)
+    # querySelectorAll searches descendants of root, not including root itself.
+    stack: list[Any] = []
+
+    root_children = node.children
+    if root_children:
+        stack.extend(reversed(root_children))
+
+    if node.name == "template" and node.namespace == "html":
+        template_content = node.template_content
+        if template_content:
+            stack.append(template_content)
+
+    while stack:
+        current = stack.pop()
+
+        name = current.name
+        if not name.startswith("#") and matcher_matches(current, selector):
+            results_append(current)
+
+        children = current.children
+        if children:
+            stack.extend(reversed(children))
+
+        if name == "template" and current.namespace == "html":
+            template_content = current.template_content
+            if template_content:
+                stack.append(template_content)
 
 
 def matches(node: Any, selector_string: str) -> bool:
