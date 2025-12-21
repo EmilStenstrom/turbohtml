@@ -7,6 +7,10 @@ Supports both named entities (&amp;, &nbsp;) and numeric references (&#60;, &#x3
 from __future__ import annotations
 
 import html.entities
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # Use Python's complete HTML5 entity list (2231 entities)
 # Keys include the trailing semicolon (e.g., "amp;", "lang;")
@@ -168,7 +172,23 @@ NUMERIC_REPLACEMENTS: dict[int, str] = {
 }
 
 
-def decode_numeric_entity(text: str, is_hex: bool = False) -> str:
+def _is_control_character(codepoint: int) -> bool:
+    # C0 controls and C1 controls
+    return (0x00 <= codepoint <= 0x1F) or (0x7F <= codepoint <= 0x9F)
+
+
+def _is_noncharacter(codepoint: int) -> bool:
+    if 0xFDD0 <= codepoint <= 0xFDEF:
+        return True
+    last = codepoint & 0xFFFF
+    return last == 0xFFFE or last == 0xFFFF
+
+
+def decode_numeric_entity(
+    text: str,
+    is_hex: bool = False,
+    report_error: Callable[[str], None] | None = None,
+) -> str:
     """Decode a numeric character reference like &#60; or &#x3C;.
 
     Args:
@@ -181,20 +201,30 @@ def decode_numeric_entity(text: str, is_hex: bool = False) -> str:
     base = 16 if is_hex else 10
     codepoint = int(text, base)
 
-    # Apply HTML5 replacements for certain ranges
-    if codepoint in NUMERIC_REPLACEMENTS:
-        return NUMERIC_REPLACEMENTS[codepoint]
-
     # Invalid ranges per HTML5 spec
     if codepoint > 0x10FFFF:
         return "\ufffd"  # REPLACEMENT CHARACTER
     if 0xD800 <= codepoint <= 0xDFFF:  # Surrogate range
         return "\ufffd"
 
+    if report_error is not None:
+        if _is_control_character(codepoint):
+            report_error("control-character-reference")
+        if _is_noncharacter(codepoint):
+            report_error("noncharacter-character-reference")
+
+    # Apply HTML5 replacements for certain ranges
+    if codepoint in NUMERIC_REPLACEMENTS:
+        return NUMERIC_REPLACEMENTS[codepoint]
+
     return chr(codepoint)
 
 
-def decode_entities_in_text(text: str, in_attribute: bool = False) -> str:
+def decode_entities_in_text(
+    text: str,
+    in_attribute: bool = False,
+    report_error: Callable[[str], None] | None = None,
+) -> str:
     """Decode all HTML entities in text.
 
     This is a simple implementation that handles:
@@ -247,7 +277,9 @@ def decode_entities_in_text(text: str, in_attribute: bool = False) -> str:
             digit_text = text[digit_start:j]
 
             if digit_text:
-                result.append(decode_numeric_entity(digit_text, is_hex=is_hex))
+                if report_error is not None and not has_semicolon:
+                    report_error("missing-semicolon-after-character-reference")
+                result.append(decode_numeric_entity(digit_text, is_hex=is_hex, report_error=report_error))
                 i = j + 1 if has_semicolon else j
                 continue
 
@@ -285,6 +317,8 @@ def decode_entities_in_text(text: str, in_attribute: bool = False) -> str:
                     best_match_len = k
                     break
             if best_match:
+                if report_error is not None:
+                    report_error("missing-semicolon-after-character-reference")
                 result.append(best_match)
                 i = i + 1 + best_match_len
                 continue
@@ -302,6 +336,8 @@ def decode_entities_in_text(text: str, in_attribute: bool = False) -> str:
                 continue
 
             # Decode legacy entity
+            if report_error is not None and not has_semicolon:
+                report_error("missing-semicolon-after-character-reference")
             result.append(NAMED_ENTITIES[entity_name])
             i = j
             continue
@@ -329,6 +365,8 @@ def decode_entities_in_text(text: str, in_attribute: bool = False) -> str:
                 i += 1
                 continue
 
+            if report_error is not None:
+                report_error("missing-semicolon-after-character-reference")
             result.append(best_match)
             i = i + 1 + best_match_len
             continue

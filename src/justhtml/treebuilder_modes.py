@@ -1011,7 +1011,9 @@ class TreeBuilderModesMixin:
                         break
 
             if not suppress_table_char_error:
-                self._parse_error("unexpected-character-implies-table-voodoo")
+                self.pending_table_text_should_error = True
+            else:
+                self.pending_table_text_should_error = False
             self.pending_table_text = []
             self.table_text_original_mode = self.mode
             self.mode = InsertionMode.IN_TABLE_TEXT
@@ -1084,7 +1086,7 @@ class TreeBuilderModesMixin:
                         self.form_element = node
                         self.open_elements.pop()  # push=True always adds to stack
                     return None
-                self._parse_error("unexpected-start-tag-implies-table-voodoo", tag_name=name)
+                self._parse_error("foster-parenting-start-tag", tag_name=name)
                 previous = self.insert_from_table
                 self.insert_from_table = True
                 try:

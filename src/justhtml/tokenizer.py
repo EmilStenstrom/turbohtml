@@ -44,6 +44,13 @@ for _plane in range(17):
 _XML_COERCION_PATTERN = re.compile(r"[\f\uFDD0-\uFDEF" + "".join(_xml_invalid_single_chars) + "]")
 
 
+def _is_noncharacter_codepoint(codepoint: int) -> bool:
+    if 0xFDD0 <= codepoint <= 0xFDEF:
+        return True
+    last = codepoint & 0xFFFF
+    return last == 0xFFFE or last == 0xFFFF
+
+
 def _xml_coercion_callback(match: re.Match[str]) -> str:
     if match.group(0) == "\f":
         return " "
@@ -392,6 +399,11 @@ class Tokenizer:
 
             if end > pos:
                 chunk = buffer[pos:end]
+                if self.collect_errors and not chunk.isascii():
+                    base_pos = pos
+                    for offset, ch in enumerate(chunk):
+                        if _is_noncharacter_codepoint(ord(ch)):
+                            self._emit_error_at_pos("noncharacter-in-input-stream", base_pos + offset)
                 self._append_text(chunk)
 
                 pos = end
@@ -1262,7 +1274,7 @@ class Tokenizer:
         while True:
             c = self._get_char()
             if c is None:
-                self._emit_error("eof-in-doctype-name")
+                self._emit_error("eof-in-doctype")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self._emit_token(EOFToken())
@@ -1289,7 +1301,7 @@ class Tokenizer:
         while True:
             c = self._get_char()
             if c is None:
-                self._emit_error("eof-in-doctype-name")
+                self._emit_error("eof-in-doctype")
                 self.current_doctype_force_quirks = True
                 self._emit_doctype()
                 self._emit_token(EOFToken())
@@ -1681,6 +1693,8 @@ class Tokenizer:
         c = self.buffer[pos]
         self.pos = pos + 1
         self.current_char = c
+        if self.collect_errors and not c.isascii() and _is_noncharacter_codepoint(ord(c)):
+            self._emit_error_at_pos("noncharacter-in-input-stream", pos)
         return c
 
     def _reconsume_current(self) -> None:
@@ -1751,7 +1765,8 @@ class Tokenizer:
             pass
         else:
             if "&" in data:
-                data = decode_entities_in_text(data)
+                report_error = self._emit_error if self.collect_errors else None
+                data = decode_entities_in_text(data, report_error=report_error)
         # Apply XML coercion if enabled
         if self.opts.xml_coercion:
             data = _coerce_text_for_xml(data)
@@ -1790,7 +1805,8 @@ class Tokenizer:
         else:
             value = "".join(attr_value_buffer)
         if self.current_attr_value_has_amp:
-            value = decode_entities_in_text(value, in_attribute=True)
+            report_error = self._emit_error if self.collect_errors else None
+            value = decode_entities_in_text(value, in_attribute=True, report_error=report_error)
         attrs[name] = value
         attr_value_buffer.clear()
         self.current_attr_value_has_amp = False
@@ -1927,6 +1943,17 @@ class Tokenizer:
 
         message = generate_error_message(code)
         line = self._get_line_at_pos(self.pos)
+        self.errors.append(ParseError(code, line=line, column=column, message=message, source_html=self.buffer))
+
+    def _emit_error_at_pos(self, code: str, pos: int) -> None:
+        last_newline = self.buffer.rfind("\n", 0, pos + 1)
+        if last_newline == -1:
+            column = pos + 1
+        else:
+            column = pos - last_newline
+
+        message = generate_error_message(code)
+        line = self._get_line_at_pos(pos)
         self.errors.append(ParseError(code, line=line, column=column, message=message, source_html=self.buffer))
 
     def _consume_if(self, literal: str) -> bool:

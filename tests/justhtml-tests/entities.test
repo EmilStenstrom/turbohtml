@@ -1,0 +1,47 @@
+{"tests": [
+    {
+        "description": "Numeric character reference missing semicolon (no error collection)",
+        "input": "&#65",
+        "output": [["Character", "A"]]
+    },
+    {
+        "description": "Control character reference (C1) with missing semicolon (collect errors)",
+        "input": "&#x80",
+        "output": [["Character", "\u20ac"]],
+        "collectErrors": true
+    },
+    {
+        "description": "Noncharacter numeric reference (collect errors)",
+        "input": "&#xFDD0;",
+        "output": [["Character", "\uFDD0"]],
+        "collectErrors": true
+    },
+    {
+        "description": "Named legacy prefix match with semicolon (collect errors)",
+        "input": "&notit;",
+        "output": [["Character", "\u00acit;"]],
+        "collectErrors": true
+    },
+    {
+        "description": "Legacy entity without semicolon (no error collection)",
+        "input": "&not",
+        "output": [["Character", "\u00ac"]]
+    },
+    {
+        "description": "Legacy entity without semicolon (collect errors)",
+        "input": "&not",
+        "output": [["Character", "\u00ac"]],
+        "collectErrors": true
+    },
+    {
+        "description": "Legacy prefix match without semicolon (no error collection)",
+        "input": "&notit",
+        "output": [["Character", "\u00acit"]]
+    },
+    {
+        "description": "Legacy prefix match without semicolon (collect errors)",
+        "input": "&notit",
+        "output": [["Character", "\u00acit"]],
+        "collectErrors": true
+    }
+]}

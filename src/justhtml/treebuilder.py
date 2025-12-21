@@ -59,6 +59,7 @@ class TreeBuilder(TreeBuilderModesMixin):
         "open_elements",
         "original_mode",
         "pending_table_text",
+        "pending_table_text_should_error",
         "quirks_mode",
         "table_text_original_mode",
         "template_modes",
@@ -86,6 +87,7 @@ class TreeBuilder(TreeBuilderModesMixin):
     open_elements: list[Any]
     original_mode: InsertionMode | None  # type: ignore[assignment]
     pending_table_text: list[str]
+    pending_table_text_should_error: bool
     quirks_mode: str
     table_text_original_mode: InsertionMode | None  # type: ignore[assignment]
     template_modes: list[InsertionMode]
@@ -118,6 +120,7 @@ class TreeBuilder(TreeBuilderModesMixin):
         self.quirks_mode = "no-quirks"
         self.ignore_lf = False
         self.active_formatting = []
+        self.pending_table_text_should_error = False
         self.insert_from_table = False
         self.pending_table_text = []
         self.template_modes = []
@@ -859,6 +862,14 @@ class TreeBuilder(TreeBuilderModesMixin):
         if is_all_whitespace(data):
             self._append_text(data)
             return
+
+        if self.pending_table_text_should_error:
+            # html5lib reports one foster-parenting error per non-whitespace character.
+            for ch in data:
+                if ch not in " \t\n\r\f":
+                    self._parse_error("foster-parenting-character")
+        self.pending_table_text_should_error = False
+
         previous = self.insert_from_table
         self.insert_from_table = True
         try:

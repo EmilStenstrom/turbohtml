@@ -195,5 +195,23 @@
         "input": "<div foo='a\u0000b'>",
         "output": [["StartTag", "div", {"foo": "a\ufffdb"}]],
         "errors": [{"code": "unexpected-null-character", "line": 1, "col": 13}]
+    },
+    {
+        "description": "Noncharacter in input stream (DATA fast path)",
+        "input": "ab\uFDD0cd",
+        "output": [["Character", "ab\uFDD0cd"]],
+        "collectErrors": true
+    },
+    {
+        "description": "Noncharacter in input stream after newline (column calc)",
+        "input": "a\nb\uFDD0c",
+        "output": [["Character", "a\nb\uFDD0c"]],
+        "collectErrors": true
+    },
+    {
+        "description": "Noncharacter read via _get_char",
+        "input": "<\uFDD0",
+        "output": [["Character", "<\uFDD0"]],
+        "collectErrors": true
     }
 ]}

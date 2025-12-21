@@ -1921,7 +1921,8 @@ def _print_tokenizer_failure(test, filename, test_index, xml_coercion=False, che
             discard_bom=discard_bom,
             xml_coercion=xml_coercion,
         )
-        tok = Tokenizer(sink, opts, collect_errors=bool(check_errors))
+        collect_errors = bool(check_errors) or bool(test.get("collectErrors"))
+        tok = Tokenizer(sink, opts, collect_errors=collect_errors)
         tok.last_start_tag_name = last_start_tag
         tok.run(input_text)
         actual = [r for t in sink.tokens if (r := _token_to_list(t)) is not None]
@@ -2042,7 +2043,8 @@ def _run_single_tokenizer_test(test, xml_coercion=False, check_errors=False):
             discard_bom=discard_bom,
             xml_coercion=xml_coercion,
         )
-        tok = Tokenizer(sink, opts, collect_errors=bool(check_errors))
+        collect_errors = bool(check_errors) or bool(test.get("collectErrors"))
+        tok = Tokenizer(sink, opts, collect_errors=collect_errors)
         tok.last_start_tag_name = last_start_tag
         tok.run(input_text)
         actual = [r for t in sink.tokens if (r := _token_to_list(t)) is not None]

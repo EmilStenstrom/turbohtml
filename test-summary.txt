@@ -83,8 +83,9 @@ html5lib-tests-tree/webkit02.dat: 48/48 (100%) [.s..............................
 justhtml-tests/branch_coverage.dat: 28/28 (100%) [............................]
 justhtml-tests/coverage_gaps.test: 9/9 (100%) [.........]
 justhtml-tests/empty_stack_edge_cases.dat: 3/3 (100%) [...]
+justhtml-tests/entities.test: 8/8 (100%) [........]
 justhtml-tests/iframe_srcdoc.dat: 1/1 (100%) [.]
-justhtml-tests/tokenizer_edge_cases.test: 35/35 (100%) [...................................]
+justhtml-tests/tokenizer_edge_cases.test: 38/38 (100%) [......................................]
 justhtml-tests/treebuilder_coverage.dat: 18/18 (100%) [..................]
 justhtml-tests/xml_coercion.dat: 4/4 (100%) [....]
 justhtml-tests/xml_coercion_coverage.test: 2/2 (100%) [..]
@@ -98,4 +99,4 @@ test_selector.py: 232/232 (100%) [..............................................
 test_serialize.py: 26/26 (100%) [..........................]
 test_stream.py: 7/7 (100%) [.......]
 
-PASSED: 9412/9412 passed (100.0%), 13 skipped
+PASSED: 9423/9423 passed (100.0%), 13 skipped

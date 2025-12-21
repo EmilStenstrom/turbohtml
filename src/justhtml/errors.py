@@ -75,6 +75,8 @@ def generate_error_message(code: str, tag_name: str | None = None) -> str:
         "illegal-codepoint-for-numeric-entity": "Invalid codepoint in numeric character reference",
         "missing-semicolon-after-character-reference": "Missing semicolon after character reference",
         "named-entity-without-semicolon": "Named entity used without semicolon",
+        "noncharacter-character-reference": "Noncharacter in character reference",
+        "noncharacter-in-input-stream": "Noncharacter in input stream",
         # ================================================================
         # TREE BUILDER ERRORS
         # ================================================================
