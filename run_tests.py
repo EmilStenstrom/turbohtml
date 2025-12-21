@@ -71,14 +71,18 @@ class TestResult:
     """Result object for a single test (typing removed)."""
 
     __slots__ = [
+        "actual_error_count",
         "actual_errors",
         "actual_output",
         "debug_output",
+        "error_check_mode",
         "errors_matched",
+        "expected_error_count",
         "expected_errors",
         "expected_output",
         "input_html",
         "passed",
+        "tree_matched",
     ]
 
     def __init__(
@@ -90,6 +94,10 @@ class TestResult:
         actual_output,
         actual_errors=None,
         errors_matched=False,
+        error_check_mode="codes",
+        expected_error_count=None,
+        actual_error_count=None,
+        tree_matched=False,
         debug_output="",
     ):
         self.passed = passed
@@ -99,6 +107,10 @@ class TestResult:
         self.actual_output = actual_output
         self.actual_errors = actual_errors or []
         self.errors_matched = errors_matched
+        self.error_check_mode = error_check_mode
+        self.expected_error_count = expected_error_count
+        self.actual_error_count = actual_error_count
+        self.tree_matched = tree_matched
         self.debug_output = debug_output
 
 
@@ -209,6 +221,10 @@ class TestRunner:
                     xml_coercion = True
                 elif directive == "iframe-srcdoc":
                     iframe_srcdoc = True
+                elif directive == "new-errors":
+                    # Per upstream html5lib-tests tree-construction format, #new-errors
+                    # adds additional expected errors (i.e., increases the expected count).
+                    mode = "errors"
                 else:
                     mode = directive
             elif mode == "data":
@@ -401,10 +417,24 @@ class TestRunner:
 
         tree_passed = compare_outputs(test.document, actual_tree)
 
-        # Extract just error codes for comparison (ignore positions)
-        actual_codes = [e.code for e in parser.errors]
-        expected_codes = self._extract_error_codes(test.errors)
-        errors_matched = actual_codes == expected_codes
+        # Error checking: upstream html5lib tree-construction tests only specify error
+        # *count* in #errors/#new-errors. Our custom justhtml-tests specify concrete
+        # error codes.
+        error_check_mode = "count" if self.test_dir.name == "html5lib-tests-tree" else "codes"
+
+        if error_check_mode == "count":
+            expected_count = len([line for line in test.errors if line.strip()])
+            actual_count = len(parser.errors)
+            errors_matched = actual_count == expected_count
+            expected_errors = test.errors
+        else:
+            # Extract just error codes for comparison (ignore positions)
+            actual_codes = [e.code for e in parser.errors]
+            expected_codes = self._extract_error_codes(test.errors)
+            errors_matched = actual_codes == expected_codes
+            expected_count = None
+            actual_count = None
+            expected_errors = test.errors
 
         # Format actual errors for display
         actual_error_strs = [f"({e.line},{e.column}): {e.code}" for e in parser.errors]
@@ -418,11 +448,15 @@ class TestRunner:
         return TestResult(
             passed=passed,
             input_html=test.data,
-            expected_errors=test.errors,
+            expected_errors=expected_errors,
             expected_output=test.document,
             actual_output=actual_tree,
             actual_errors=actual_error_strs,
             errors_matched=errors_matched,
+            error_check_mode=error_check_mode,
+            expected_error_count=expected_count,
+            actual_error_count=actual_count,
+            tree_matched=tree_passed,
             debug_output=debug_output,
         )
 
@@ -506,20 +540,23 @@ class TestReporter:
             # At present we do not print passing tests even at highest verbosity to avoid log noise.
             return
         if verbosity >= 1:
+            show_error_diff = self.config.get("check_errors") and not result.errors_matched
+            show_tree_diff = not result.tree_matched
             lines = [
                 "FAILED:",
                 f"=== INCOMING HTML ===\n{self._escape_control_chars_for_display(result.input_html)}\n",
             ]
-            # Show error diff if --check-errors and errors don't match
-            if self.config.get("check_errors") and not result.errors_matched:
+            # Show error diff only when errors mismatch (and only in --check-errors mode)
+            if show_error_diff:
                 expected_str = "\n".join(result.expected_errors) if result.expected_errors else "(none)"
                 actual_str = "\n".join(result.actual_errors) if result.actual_errors else "(none)"
                 lines.append(f"=== EXPECTED ERRORS ===\n{expected_str}\n")
                 lines.append(f"=== ACTUAL ERRORS ===\n{actual_str}\n")
-            else:
-                lines.append(f"Errors to handle when parsing: {result.expected_errors}\n")
-            lines.append(f"=== WHATWG HTML5 SPEC COMPLIANT TREE ===\n{result.expected_output}\n")
-            lines.append(f"=== CURRENT PARSER OUTPUT TREE ===\n{result.actual_output}")
+
+            # Show trees only when the tree mismatches
+            if show_tree_diff:
+                lines.append(f"=== WHATWG HTML5 SPEC COMPLIANT TREE ===\n{result.expected_output}\n")
+                lines.append(f"=== CURRENT PARSER OUTPUT TREE ===\n{result.actual_output}")
             if verbosity >= 2 and result.debug_output:
                 # Insert debug block before trees maybe? Keep after errors for readability.
                 lines.insert(3, f"=== DEBUG PRINTS WHEN PARSING ===\n{result.debug_output.rstrip()}\n")
@@ -827,11 +864,19 @@ def main():
 
     tree_passed, tree_failed, skipped = runner.run()
 
+    # With fail-fast enabled, stop after the first failing suite to avoid
+    # printing large summaries of unrelated passing tests.
+    if config.get("fail_fast") and tree_failed:
+        sys.exit(1)
+
     # Run JustHTML-specific tree-construction tests (custom .dat fixtures).
     # These live outside the upstream html5lib-tests checkout.
     justhtml_tree_tests = test_dir / "justhtml-tests"
     justhtml_runner = TestRunner(justhtml_tree_tests, config)
     justhtml_tree_passed, justhtml_tree_failed, justhtml_tree_skipped = justhtml_runner.run()
+
+    if config.get("fail_fast") and justhtml_tree_failed:
+        sys.exit(1)
 
     # Merge justhtml-tests results into the main runner for reporting and regression checks.
     for filename, result in justhtml_runner.file_results.items():
@@ -839,11 +884,23 @@ def main():
 
     tok_passed, tok_total, tok_file_results = _run_tokenizer_tests(config)
 
+    if config.get("fail_fast") and (tok_total - tok_passed):
+        sys.exit(1)
+
     ser_passed, ser_total, ser_skipped, ser_file_results = _run_serializer_tests(config)
+
+    if config.get("fail_fast") and (ser_total - ser_passed - ser_skipped):
+        sys.exit(1)
 
     enc_passed, enc_total, enc_skipped, enc_file_results = _run_encoding_tests(config)
 
+    if config.get("fail_fast") and (enc_total - enc_passed - enc_skipped):
+        sys.exit(1)
+
     unit_passed, unit_failed, unit_file_results = _run_unit_tests(config)
+
+    if config.get("fail_fast") and unit_failed:
+        sys.exit(1)
 
     total_passed = tree_passed + justhtml_tree_passed + tok_passed + ser_passed + enc_passed + unit_passed
     total_failed = (
