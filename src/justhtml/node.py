@@ -6,6 +6,7 @@ from .selector import query
 from .serialize import to_html
 
 if TYPE_CHECKING:
+    from .sanitize import SanitizationPolicy
     from .tokens import Doctype
 
 
@@ -204,9 +205,17 @@ class SimpleDomNode:
             self.children.remove(node)
             node.parent = None
 
-    def to_html(self, indent: int = 0, indent_size: int = 2, pretty: bool = True) -> str:
+    def to_html(
+        self,
+        indent: int = 0,
+        indent_size: int = 2,
+        pretty: bool = True,
+        *,
+        safe: bool = True,
+        policy: SanitizationPolicy | None = None,
+    ) -> str:
         """Convert node to HTML string."""
-        return to_html(self, indent, indent_size, pretty=pretty)
+        return to_html(self, indent, indent_size, pretty=pretty, safe=safe, policy=policy)
 
     def query(self, selector: str) -> list[Any]:
         """
