@@ -3,7 +3,15 @@ from __future__ import annotations
 import unittest
 
 from justhtml.node import SimpleDomNode, TemplateNode, TextNode
-from justhtml.sanitize import DEFAULT_POLICY, SanitizationPolicy, UrlRule, sanitize
+from justhtml.sanitize import (
+    DEFAULT_POLICY,
+    SanitizationPolicy,
+    UrlRule,
+    _css_value_may_load_external_resource,
+    _is_valid_css_property_name,
+    _sanitize_inline_style,
+    sanitize,
+)
 from justhtml.serialize import to_html
 
 
@@ -23,11 +31,47 @@ class TestSanitizePlumbing(unittest.TestCase):
             url_rules={},
             drop_content_tags=["script", "style"],
             force_link_rel=["noopener"],
+            allowed_css_properties=["color"],
         )
         assert isinstance(policy.allowed_tags, set)
         assert isinstance(policy.allowed_attributes, dict)
         assert isinstance(policy.drop_content_tags, set)
         assert isinstance(policy.force_link_rel, set)
+        assert isinstance(policy.allowed_css_properties, set)
+
+    def test_is_valid_css_property_name(self) -> None:
+        assert _is_valid_css_property_name("border-top") is True
+        assert _is_valid_css_property_name("") is False
+        assert _is_valid_css_property_name("co_lor") is False
+
+    def test_sanitize_inline_style_edge_cases(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["div"],
+            allowed_attributes={"*": [], "div": ["style"]},
+            url_rules={},
+            allowed_css_properties={"color"},
+        )
+
+        assert _sanitize_inline_style(policy=policy, value="") is None
+
+        assert _sanitize_inline_style(policy=policy, value="margin: 0") is None
+
+        value = "color; co_lor: red; margin: 0; color: ; COLOR: red"
+        assert _sanitize_inline_style(policy=policy, value=value) == "color: red"
+
+    def test_css_value_may_load_external_resource(self) -> None:
+        assert _css_value_may_load_external_resource("url(https://evil.example/x)") is True
+        assert _css_value_may_load_external_resource("URL(https://evil.example/x)") is True
+        assert _css_value_may_load_external_resource("u r l (https://evil.example/x)") is True
+        assert _css_value_may_load_external_resource("u\\72l(https://evil.example/x)") is True
+        assert _css_value_may_load_external_resource("IMAGE-SET(foo)") is True
+        assert _css_value_may_load_external_resource("expression(alert(1))") is True
+        assert _css_value_may_load_external_resource("progid:DXImageTransform.Microsoft.AlphaImageLoader") is True
+        assert _css_value_may_load_external_resource("AlphaImageLoader") is True
+        assert _css_value_may_load_external_resource("behavior: url(x)") is True
+        assert _css_value_may_load_external_resource("-moz-binding: url(x)") is True
+        assert _css_value_may_load_external_resource("a" * 64) is False
+        assert _css_value_may_load_external_resource("red") is False
 
     def test_policy_accepts_pre_normalized_sets(self) -> None:
         policy = SanitizationPolicy(

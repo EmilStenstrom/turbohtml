@@ -71,6 +71,71 @@
     "expected_html": "<div></div>"
   },
   {
+    "name": "inline_style_sanitization_allows_selected_properties",
+    "policy": {
+      "allowed_tags": ["div"],
+      "allowed_attributes": {"*": [], "div": ["style"]},
+      "url_rules": [],
+      "allowed_css_properties": ["color", "border"]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<div style='color: red; position: absolute; BORDER: 1px solid red; ; invalid'></div>",
+    "expected_html": "<div style=\"color: red; border: 1px solid red\"></div>"
+  },
+  {
+    "name": "inline_style_is_dropped_when_allowlist_empty",
+    "policy": {
+      "allowed_tags": ["div"],
+      "allowed_attributes": {"*": [], "div": ["style"]},
+      "url_rules": [],
+      "allowed_css_properties": []
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<div style='color: red'></div>",
+    "expected_html": "<div></div>"
+  },
+  {
+    "name": "inline_style_drops_resource_loading_url_function",
+    "policy": {
+      "allowed_tags": ["div"],
+      "allowed_attributes": {"*": [], "div": ["style"]},
+      "url_rules": [],
+      "allowed_css_properties": ["background-image", "color"]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<div style='background-image: url(https://evil.example/x); color: red'></div>",
+    "expected_html": "<div style=\"color: red\"></div>"
+  },
+  {
+    "name": "inline_style_drops_resource_loading_obfuscated_url_function",
+    "policy": {
+      "allowed_tags": ["div"],
+      "allowed_attributes": {"*": [], "div": ["style"]},
+      "url_rules": [],
+      "allowed_css_properties": ["background-image", "color"]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<div style='background-image: u\\72l(https://evil.example/x); color: red'></div>",
+    "expected_html": "<div style=\"color: red\"></div>"
+  },
+  {
+    "name": "inline_style_drops_expression_even_when_allowlisted",
+    "policy": {
+      "allowed_tags": ["div"],
+      "allowed_attributes": {"*": [], "div": ["style"]},
+      "url_rules": [],
+      "allowed_css_properties": ["width", "color"]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<div style='width: expression(alert(1)); color: red'></div>",
+    "expected_html": "<div style=\"color: red\"></div>"
+  },
+  {
     "name": "url_rules_drop_javascript_and_force_rel",
     "policy": {
       "allowed_tags": ["a"],

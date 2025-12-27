@@ -110,6 +110,11 @@ class SanitizationPolicy:
     # Dangerous containers whose text payload should not be preserved.
     drop_content_tags: Collection[str] = field(default_factory=lambda: {"script", "style"})
 
+    # Inline style allowlist.
+    # Only applies when the `style` attribute is allowed for a tag.
+    # If empty, inline styles are effectively disabled (style attributes are dropped).
+    allowed_css_properties: Collection[str] = field(default_factory=set)
+
     # Link hardening.
     # If non-empty, ensure these tokens are present in <a rel="...">.
     # (The sanitizer will merge tokens; it will not remove existing ones.)
@@ -130,6 +135,9 @@ class SanitizationPolicy:
 
         if not isinstance(self.drop_content_tags, set):
             object.__setattr__(self, "drop_content_tags", set(self.drop_content_tags))
+
+        if not isinstance(self.allowed_css_properties, set):
+            object.__setattr__(self, "allowed_css_properties", set(self.allowed_css_properties))
 
         if not isinstance(self.force_link_rel, set):
             object.__setattr__(self, "force_link_rel", set(self.force_link_rel))
@@ -197,7 +205,165 @@ DEFAULT_POLICY: SanitizationPolicy = SanitizationPolicy(
         ("a", "href"): UrlRule(allowed_schemes=["http", "https", "mailto", "tel"]),
         ("img", "src"): UrlRule(allowed_schemes=[]),
     },
+    allowed_css_properties=set(),
 )
+
+
+def _is_valid_css_property_name(name: str) -> bool:
+    # Conservative: allow only ASCII letters/digits/hyphen.
+    # This keeps parsing deterministic and avoids surprises with escapes.
+    if not name:
+        return False
+    for ch in name:
+        if "a" <= ch <= "z" or "0" <= ch <= "9" or ch == "-":
+            continue
+        return False
+    return True
+
+
+def _css_value_may_load_external_resource(value: str) -> bool:
+    # Extremely conservative check: drop any declaration value that contains a
+    # CSS function call that can load external resources.
+    #
+    # We intentionally do not try to parse full CSS (escapes, comments, strings,
+    # etc.). Instead, we reject values that contain backslashes (common escape
+    # obfuscation) or that *look* like they contain url(…) / image-set(…). This
+    # ensures style attributes can't be used to trigger network requests even
+    # when users allow potentially dangerous properties.
+    if "\\" in value:
+        return True
+
+    # Scan while ignoring ASCII whitespace/control chars.
+    # Keep a small rolling buffer to avoid extra allocations.
+    buf: list[str] = []
+    max_len = len("alphaimageloader")
+
+    for ch in value:
+        o = ord(ch)
+        if o <= 0x20 or o == 0x7F:
+            continue
+        if "A" <= ch <= "Z":
+            lower_ch = chr(o + 0x20)
+        else:
+            lower_ch = ch
+        buf.append(lower_ch)
+        if len(buf) > max_len:
+            buf.pop(0)
+
+        # Check for url( and image-set( anywhere in the normalized stream.
+        if len(buf) >= 4 and buf[-4:] == ["u", "r", "l", "("]:
+            return True
+        if len(buf) >= 10 and buf[-10:] == [
+            "i",
+            "m",
+            "a",
+            "g",
+            "e",
+            "-",
+            "s",
+            "e",
+            "t",
+            "(",
+        ]:
+            return True
+
+        # IE-only but still worth blocking defensively.
+        if len(buf) >= 11 and buf[-11:] == [
+            "e",
+            "x",
+            "p",
+            "r",
+            "e",
+            "s",
+            "s",
+            "i",
+            "o",
+            "n",
+            "(",
+        ]:
+            return True
+
+        # Legacy IE CSS filters that can fetch remote resources.
+        if len(buf) >= 7 and buf[-7:] == ["p", "r", "o", "g", "i", "d", ":"]:
+            return True
+        if len(buf) >= 16 and buf[-16:] == [
+            "a",
+            "l",
+            "p",
+            "h",
+            "a",
+            "i",
+            "m",
+            "a",
+            "g",
+            "e",
+            "l",
+            "o",
+            "a",
+            "d",
+            "e",
+            "r",
+        ]:
+            return True
+
+        # Legacy bindings/behaviors that can pull remote content.
+        if len(buf) >= 9 and buf[-9:] == ["b", "e", "h", "a", "v", "i", "o", "r", ":"]:
+            return True
+        if len(buf) >= 12 and buf[-12:] == [
+            "-",
+            "m",
+            "o",
+            "z",
+            "-",
+            "b",
+            "i",
+            "n",
+            "d",
+            "i",
+            "n",
+            "g",
+        ]:
+            return True
+
+    return False
+
+
+def _sanitize_inline_style(*, policy: SanitizationPolicy, value: str) -> str | None:
+    allowed = policy.allowed_css_properties
+    if not allowed:
+        return None
+
+    v = str(value)
+    if not v:
+        return None
+
+    out_parts: list[str] = []
+    for decl in v.split(";"):
+        d = decl.strip()
+        if not d:
+            continue
+        colon = d.find(":")
+        if colon <= 0:
+            continue
+
+        prop = d[:colon].strip().lower()
+        if not _is_valid_css_property_name(prop):
+            continue
+        if prop not in allowed:
+            continue
+
+        prop_value = d[colon + 1 :].strip()
+        if not prop_value:
+            continue
+
+        if _css_value_may_load_external_resource(prop_value):
+            continue
+
+        out_parts.append(f"{prop}: {prop_value}")
+
+    if not out_parts:
+        return None
+    return "; ".join(out_parts)
 
 
 def _normalize_url_for_checking(value: str) -> str:
@@ -363,6 +529,11 @@ def _sanitize_attrs(
             if sanitized is None:
                 continue
             out[name] = sanitized
+        elif name == "style":
+            sanitized_style = _sanitize_inline_style(policy=policy, value=value)
+            if sanitized_style is None:
+                continue
+            out[name] = sanitized_style
         else:
             out[name] = value
 
