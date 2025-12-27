@@ -439,7 +439,9 @@ def _sanitize_url_value(
     stripped = str(v).strip()
     normalized = _normalize_url_for_checking(stripped)
     if not normalized:
-        return stripped if rule.allow_relative else None
+        # If normalization removes everything, the value was empty/whitespace/
+        # control-only. Drop it rather than keeping weird control characters.
+        return None
 
     if normalized.startswith("#"):
         return stripped if rule.allow_fragment else None

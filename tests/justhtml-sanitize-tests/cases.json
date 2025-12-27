@@ -136,6 +136,20 @@
     "expected_html": "<div style=\"color: red\"></div>"
   },
   {
+    "name": "img_valueless_src_is_dropped",
+    "policy": {
+      "allowed_tags": ["img"],
+      "allowed_attributes": {"*": [], "img": ["src"]},
+      "url_rules": [
+        {"tag": "img", "attr": "src", "allowed_schemes": [], "allow_relative": true, "allow_fragment": false}
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<img/src/onerror=prompt(8)>",
+    "expected_html": "<img>"
+  },
+  {
     "name": "url_rules_drop_javascript_and_force_rel",
     "policy": {
       "allowed_tags": ["a"],

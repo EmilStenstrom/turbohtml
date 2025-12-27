@@ -10,6 +10,7 @@ from justhtml.sanitize import (
     _css_value_may_load_external_resource,
     _is_valid_css_property_name,
     _sanitize_inline_style,
+    _sanitize_url_value,
     sanitize,
 )
 from justhtml.serialize import to_html
@@ -72,6 +73,12 @@ class TestSanitizePlumbing(unittest.TestCase):
         assert _css_value_may_load_external_resource("-moz-binding: url(x)") is True
         assert _css_value_may_load_external_resource("a" * 64) is False
         assert _css_value_may_load_external_resource("red") is False
+
+    def test_sanitize_url_value_keeps_non_empty_relative_url(self) -> None:
+        policy = DEFAULT_POLICY
+        rule = UrlRule(allowed_schemes=[], allow_relative=True)
+        assert _sanitize_url_value(policy=policy, rule=rule, tag="img", attr="src", value="/x.png") == "/x.png"
+        assert _sanitize_url_value(policy=policy, rule=rule, tag="img", attr="src", value="\x00") is None
 
     def test_policy_accepts_pre_normalized_sets(self) -> None:
         policy = SanitizationPolicy(
