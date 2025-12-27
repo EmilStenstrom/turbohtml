@@ -11,6 +11,7 @@ from .treebuilder import TreeBuilder
 if TYPE_CHECKING:
     from .context import FragmentContext
     from .node import SimpleDomNode
+    from .sanitize import SanitizationPolicy
     from .tokens import ParseError
 
 
@@ -125,9 +126,26 @@ class JustHTML:
         """Query the document using a CSS selector. Delegates to root.query()."""
         return self.root.query(selector)
 
-    def to_html(self, pretty: bool = True, indent_size: int = 2) -> str:
-        """Serialize the document to HTML. Delegates to root.to_html()."""
-        return self.root.to_html(indent=0, indent_size=indent_size, pretty=pretty)
+    def to_html(
+        self,
+        pretty: bool = True,
+        indent_size: int = 2,
+        *,
+        safe: bool = True,
+        policy: SanitizationPolicy | None = None,
+    ) -> str:
+        """Serialize the document to HTML.
+
+        - `safe=True` sanitizes untrusted content before serialization.
+        - `policy` overrides the default sanitization policy.
+        """
+        return self.root.to_html(
+            indent=0,
+            indent_size=indent_size,
+            pretty=pretty,
+            safe=safe,
+            policy=policy,
+        )
 
     def to_text(self, separator: str = " ", strip: bool = True) -> str:
         """Return the document's concatenated text.
@@ -136,9 +154,10 @@ class JustHTML:
         """
         return self.root.to_text(separator=separator, strip=strip)
 
-    def to_markdown(self) -> str:
+    def to_markdown(self, *, safe: bool = True, policy: SanitizationPolicy | None = None) -> str:
         """Return a GitHub Flavored Markdown representation.
 
-        Delegates to `root.to_markdown()`.
+        - `safe=True` sanitizes untrusted content before conversion.
+        - `policy` overrides the default sanitization policy.
         """
-        return self.root.to_markdown()
+        return self.root.to_markdown(safe=safe, policy=policy)

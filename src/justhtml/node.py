@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .sanitize import DEFAULT_POLICY, sanitize
 from .selector import query
 from .serialize import to_html
 
@@ -261,13 +262,19 @@ class SimpleDomNode:
             return ""
         return separator.join(parts)
 
-    def to_markdown(self) -> str:
+    def to_markdown(self, *, safe: bool = True, policy: SanitizationPolicy | None = None) -> str:
         """Return a GitHub Flavored Markdown representation of this subtree.
 
         This is a pragmatic HTML->Markdown converter intended for readability.
         - Tables and images are preserved as raw HTML.
         - Unknown elements fall back to rendering their children.
         """
+        if safe:
+            node = sanitize(self, policy=policy or DEFAULT_POLICY)
+            builder = _MarkdownBuilder()
+            _to_markdown_walk(node, builder, preserve_whitespace=False, list_depth=0)
+            return builder.finish()
+
         builder = _MarkdownBuilder()
         _to_markdown_walk(self, builder, preserve_whitespace=False, list_depth=0)
         return builder.finish()

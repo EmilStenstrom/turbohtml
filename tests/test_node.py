@@ -136,7 +136,7 @@ class TestNode(unittest.TestCase):
     def test_to_markdown_tables_and_images_are_html(self):
         doc = JustHTML("<p>Hi<img src=x alt=y>there</p><table><tr><td>A</td></tr></table>")
         md = doc.to_markdown()
-        assert "<img src=x alt=y>" in md
+        assert '<img src="x" alt="y">' in md
         # HTML5 parsing inserts <tbody>; ensure the table subtree is preserved as HTML.
         assert "<table" in md
         assert "<td>A</td>" in md
@@ -148,6 +148,7 @@ class TestNode(unittest.TestCase):
         root.append_child(SimpleDomNode("!doctype", data="html"))
         root.append_child(TextNode("ok"))
         assert root.to_markdown() == "ok"
+        assert root.to_markdown(safe=False) == "ok"
 
     def test_to_markdown_preserves_script_whitespace(self):
         # script/style are treated as whitespace-preserving containers.
@@ -156,7 +157,8 @@ class TestNode(unittest.TestCase):
         # Include a trailing newline to exercise raw-newline tracking.
         script.append_child(TextNode("var x = 1;\nvar y = 2;\n"))
         root.append_child(script)
-        assert root.to_markdown() == "var x = 1;\nvar y = 2;"
+        assert root.to_markdown() == ""
+        assert root.to_markdown(safe=False) == "var x = 1;\nvar y = 2;"
 
     def test_to_markdown_textnode_method(self):
         t = TextNode("a*b")
@@ -222,7 +224,8 @@ class TestNode(unittest.TestCase):
         style = SimpleDomNode("style")
         style.append_child(TextNode("a {\n  b: c; }"))
         root.append_child(style)
-        assert "a {\n  b: c; }" in root.to_markdown()
+        assert root.to_markdown() == ""
+        assert "a {\n  b: c; }" in root.to_markdown(safe=False)
 
     def test_to_markdown_unknown_container_walks_children(self):
         doc = JustHTML("<span>Hi</span>")
@@ -258,6 +261,7 @@ class TestNode(unittest.TestCase):
         template = TemplateNode("template", namespace="html")
         template.template_content.append_child(TextNode("T"))
         assert template.to_markdown() == "T"
+        assert template.to_markdown(safe=False) == "T"
 
     def test_markdown_walk_unknown_tag_children_loop(self):
         b = _MarkdownBuilder()

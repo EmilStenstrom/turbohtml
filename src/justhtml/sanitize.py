@@ -2,13 +2,8 @@
 
 This module defines the public API for JustHTML sanitization.
 
-Implementation note:
-- The sanitizer itself is intentionally conservative and policy-driven.
-- For now, `sanitize()` is a no-op stub; the policy engine will be
-  implemented next and used by the xss-bench harness.
-
-The goal is that serialization helpers (`to_html`, `to_markdown`) can
-produce safe-by-default output for untrusted HTML.
+The sanitizer operates on the parsed JustHTML DOM and is intentionally
+policy-driven.
 """
 
 from __future__ import annotations
@@ -16,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 UrlFilter = Callable[[str, str, str], str | None]
 
@@ -99,7 +95,7 @@ class SanitizationPolicy:
     # Link hardening.
     # If non-empty, ensure these tokens are present in <a rel="...">.
     # (The sanitizer will merge tokens; it will not remove existing ones.)
-    force_link_rel: Collection[str] = field(default_factory=lambda: {"noopener", "noreferrer"})
+    force_link_rel: Collection[str] = field(default_factory=set)
 
     def __post_init__(self) -> None:
         # Normalize to sets so the sanitizer can do fast membership checks.
@@ -123,10 +119,15 @@ class SanitizationPolicy:
 
 DEFAULT_POLICY: SanitizationPolicy = SanitizationPolicy(
     allowed_tags=[
-        # Structure
+        # Text / structure
         "p",
+        "br",
+        # Structure
         "div",
         "span",
+        "blockquote",
+        "pre",
+        "code",
         # Headings
         "h1",
         "h2",
@@ -138,6 +139,14 @@ DEFAULT_POLICY: SanitizationPolicy = SanitizationPolicy(
         "ul",
         "ol",
         "li",
+        # Tables
+        "table",
+        "thead",
+        "tbody",
+        "tfoot",
+        "tr",
+        "th",
+        "td",
         # Text formatting
         "b",
         "strong",
@@ -150,42 +159,322 @@ DEFAULT_POLICY: SanitizationPolicy = SanitizationPolicy(
         "small",
         "mark",
         # Quotes/code
-        "blockquote",
-        "code",
-        "pre",
         # Line breaks
-        "br",
         "hr",
         # Links and images
         "a",
         "img",
     ],
     allowed_attributes={
-        "*": [],
+        "*": ["class", "id", "title", "lang", "dir"],
         "a": ["href", "title"],
         "img": ["src", "alt", "title", "width", "height", "loading", "decoding"],
+        "th": ["colspan", "rowspan"],
+        "td": ["colspan", "rowspan"],
     },
     # Default URL stance:
-    # - Links may point to http/https/mailto and relative URLs.
-    # - Images default to relative-only to avoid unexpected remote loads in
-    #   contexts like HTML email rendering.
+    # - Links may point to http/https/mailto/tel and relative URLs.
+    # - Images may point to relative URLs only.
     url_rules={
-        ("a", "href"): UrlRule(allowed_schemes=["http", "https", "mailto"]),
+        ("a", "href"): UrlRule(allowed_schemes=["http", "https", "mailto", "tel"]),
         ("img", "src"): UrlRule(allowed_schemes=[]),
     },
 )
 
 
+def _normalize_url_for_checking(value: str) -> str:
+    # Strip whitespace/control chars commonly used for scheme obfuscation.
+    # Note: do not strip backslashes; they are not whitespace/control chars,
+    # and removing them can turn invalid schemes into valid ones.
+    out: list[str] = []
+    for ch in value:
+        o = ord(ch)
+        if o <= 0x20 or o == 0x7F:
+            continue
+        out.append(ch)
+    return "".join(out)
+
+
+def _is_valid_scheme(scheme: str) -> bool:
+    first = scheme[0]
+    if not ("a" <= first <= "z" or "A" <= first <= "Z"):
+        return False
+    for ch in scheme[1:]:
+        if "a" <= ch <= "z" or "A" <= ch <= "Z" or "0" <= ch <= "9" or ch in "+-.":
+            continue
+        return False
+    return True
+
+
+def _has_scheme(value: str) -> bool:
+    idx = value.find(":")
+    if idx <= 0:
+        return False
+    # Scheme must appear before any path/query/fragment separator.
+    end = len(value)
+    for sep in ("/", "?", "#"):
+        j = value.find(sep)
+        if j != -1 and j < end:
+            end = j
+    if idx >= end:
+        return False
+    return _is_valid_scheme(value[:idx])
+
+
+def _sanitize_url_value(
+    *,
+    policy: SanitizationPolicy,
+    rule: UrlRule,
+    tag: str,
+    attr: str,
+    value: str,
+) -> str | None:
+    v = value
+    if policy.url_filter is not None:
+        rewritten = policy.url_filter(tag, attr, v)
+        if rewritten is None:
+            return None
+        v = rewritten
+
+    stripped = str(v).strip()
+    normalized = _normalize_url_for_checking(stripped)
+    if not normalized:
+        return stripped if rule.allow_relative else None
+
+    if normalized.startswith("#"):
+        return stripped if rule.allow_fragment else None
+
+    if normalized.startswith("//"):
+        if not rule.allow_protocol_relative:
+            return None
+        parsed = urlsplit("http:" + normalized)
+        if rule.allowed_hosts is not None:
+            host = (parsed.hostname or "").lower()
+            if not host or host not in rule.allowed_hosts:
+                return None
+        return stripped
+
+    if _has_scheme(normalized):
+        parsed = urlsplit(normalized)
+        scheme = (parsed.scheme or "").lower()
+        if scheme not in rule.allowed_schemes:
+            return None
+        if rule.allowed_hosts is not None:
+            host = (parsed.hostname or "").lower()
+            if not host or host not in rule.allowed_hosts:
+                return None
+        return stripped
+
+    return stripped if rule.allow_relative else None
+
+
+def _sanitize_attrs(
+    *,
+    policy: SanitizationPolicy,
+    tag: str,
+    attrs: dict[str, str | None] | None,
+) -> dict[str, str | None]:
+    if not attrs:
+        attrs = {}
+
+    allowed_global = set(policy.allowed_attributes.get("*", ()))
+    allowed_tag = set(policy.allowed_attributes.get(tag, ()))
+    allowed = allowed_global | allowed_tag
+
+    out: dict[str, str | None] = {}
+    for raw_name, raw_value in attrs.items():
+        if not raw_name:
+            continue
+
+        name = str(raw_name).strip().lower()
+        if not name:
+            continue
+
+        # Disallow namespace-ish attributes by default.
+        if ":" in name:
+            continue
+
+        # Always drop event handlers.
+        if name.startswith("on"):
+            continue
+
+        # Dangerous attribute contexts.
+        if name == "srcdoc":
+            continue
+
+        if name not in allowed and not (tag == "a" and name == "rel" and policy.force_link_rel):
+            continue
+
+        if raw_value is None:
+            out[name] = None
+            continue
+
+        value = str(raw_value)
+        rule = policy.url_rules.get((tag, name))
+        if rule is not None:
+            sanitized = _sanitize_url_value(policy=policy, rule=rule, tag=tag, attr=name, value=value)
+            if sanitized is None:
+                continue
+            out[name] = sanitized
+        else:
+            out[name] = value
+
+    # Link hardening (merge tokens; do not remove existing ones).
+    forced_tokens = [t.strip().lower() for t in policy.force_link_rel if str(t).strip()]
+    if tag == "a" and forced_tokens:
+        existing_raw = out.get("rel")
+        existing: list[str] = []
+        if isinstance(existing_raw, str) and existing_raw:
+            for tok in existing_raw.split():
+                t = tok.strip().lower()
+                if t and t not in existing:
+                    existing.append(t)
+        for tok in sorted(forced_tokens):
+            if tok not in existing:
+                existing.append(tok)
+        out["rel"] = " ".join(existing)
+
+    return out
+
+
+def _append_sanitized_subtree(*, policy: SanitizationPolicy, original: Any, parent_out: Any) -> None:
+    stack: list[tuple[Any, Any]] = [(original, parent_out)]
+    while stack:
+        current, out_parent = stack.pop()
+        name: str = current.name
+
+        if name == "#text":
+            out_parent.append_child(current.clone_node(deep=False))
+            continue
+
+        if name == "#comment":
+            if policy.drop_comments:
+                continue
+            out_parent.append_child(current.clone_node(deep=False))
+            continue
+
+        if name == "!doctype":
+            if policy.drop_doctype:
+                continue
+            out_parent.append_child(current.clone_node(deep=False))
+            continue
+
+        # Document containers.
+        if name.startswith("#"):
+            clone = current.clone_node(deep=False)
+            clone.children.clear()
+            out_parent.append_child(clone)
+            children = current.children or []
+            stack.extend((child, clone) for child in reversed(children))
+            continue
+
+        # Element.
+        tag = str(name).lower()
+        if policy.drop_foreign_namespaces:
+            ns = current.namespace
+            if ns not in (None, "html"):
+                continue
+
+        if tag in policy.drop_content_tags:
+            continue
+
+        if tag not in policy.allowed_tags:
+            if policy.strip_disallowed_tags:
+                children = current.children or []
+                stack.extend((child, out_parent) for child in reversed(children))
+
+                if tag == "template" and current.namespace in (None, "html") and current.template_content:
+                    tc_children = current.template_content.children or []
+                    stack.extend((child, out_parent) for child in reversed(tc_children))
+            continue
+
+        clone = current.clone_node(deep=False)
+        # Ensure children list is empty before we append sanitized descendants.
+        clone.children.clear()
+        # Filter attributes.
+        clone.attrs = _sanitize_attrs(policy=policy, tag=tag, attrs=current.attrs)
+
+        out_parent.append_child(clone)
+
+        # Template content is a separate subtree.
+        if tag == "template" and current.namespace in (None, "html"):
+            if current.template_content and clone.template_content:
+                clone.template_content.children.clear()
+                tc_children = current.template_content.children or []
+                stack.extend((child, clone.template_content) for child in reversed(tc_children))
+
+        children = current.children or []
+        stack.extend((child, clone) for child in reversed(children))
+
+
 def sanitize(node: Any, *, policy: SanitizationPolicy = DEFAULT_POLICY) -> Any:
-    """Return a sanitized view of `node` according to `policy`.
+    """Return a sanitized clone of `node` according to `policy`."""
 
-    Current status: API stub.
+    # Root handling.
+    root_name: str = node.name
 
-    The implementation will be a DOM pass that removes/rewrites nodes and
-    attributes according to an allowlist policy.
+    if root_name == "#text":
+        return node.clone_node(deep=False)
 
-    For now, this function returns the input node unchanged.
-    """
+    if root_name == "#comment":
+        out_root = node.clone_node(deep=False)
+        if policy.drop_comments:
+            out_root.name = "#document-fragment"
+        return out_root
 
-    _ = policy
-    return node
+    if root_name == "!doctype":
+        out_root = node.clone_node(deep=False)
+        if policy.drop_doctype:
+            out_root.name = "#document-fragment"
+        return out_root
+
+    # Containers.
+    if root_name.startswith("#"):
+        out_root = node.clone_node(deep=False)
+        out_root.children.clear()
+        for child in node.children or []:
+            _append_sanitized_subtree(policy=policy, original=child, parent_out=out_root)
+        return out_root
+
+    # Element root: keep element if allowed, otherwise unwrap into a fragment.
+    tag = str(root_name).lower()
+    if policy.drop_foreign_namespaces and node.namespace not in (None, "html"):
+        out_root = node.clone_node(deep=False)
+        out_root.name = "#document-fragment"
+        out_root.children.clear()
+        out_root.attrs.clear()
+        return out_root
+
+    if tag in policy.drop_content_tags or (tag not in policy.allowed_tags and not policy.strip_disallowed_tags):
+        out_root = node.clone_node(deep=False)
+        out_root.name = "#document-fragment"
+        out_root.children.clear()
+        out_root.attrs.clear()
+        return out_root
+
+    if tag not in policy.allowed_tags and policy.strip_disallowed_tags:
+        out_root = node.clone_node(deep=False)
+        out_root.name = "#document-fragment"
+        out_root.children.clear()
+        out_root.attrs.clear()
+        for child in node.children or []:
+            _append_sanitized_subtree(policy=policy, original=child, parent_out=out_root)
+
+        if tag == "template" and node.namespace in (None, "html") and node.template_content:
+            for child in node.template_content.children or []:
+                _append_sanitized_subtree(policy=policy, original=child, parent_out=out_root)
+        return out_root
+
+    out_root = node.clone_node(deep=False)
+    out_root.children.clear()
+    out_root.attrs = _sanitize_attrs(policy=policy, tag=tag, attrs=node.attrs)
+    for child in node.children or []:
+        _append_sanitized_subtree(policy=policy, original=child, parent_out=out_root)
+
+    if tag == "template" and node.namespace in (None, "html"):
+        if node.template_content and out_root.template_content:
+            out_root.template_content.children.clear()
+            for child in node.template_content.children or []:
+                _append_sanitized_subtree(policy=policy, original=child, parent_out=out_root.template_content)
+
+    return out_root

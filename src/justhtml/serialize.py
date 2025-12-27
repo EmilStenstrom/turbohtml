@@ -37,22 +37,6 @@ def _escape_attr_value(value: str | None, quote_char: str) -> str:
     return value.replace("'", "&#39;")
 
 
-def _can_unquote_attr_value(value: str | None) -> bool:
-    if value is None:
-        return False
-    value = str(value)
-    # html5lib's serializer unquotes aggressively; match fixture expectations.
-    # Disallow whitespace and characters that would terminate/ambiguate the value.
-    for ch in value:
-        if ch == ">":
-            return False
-        if ch in {'"', "'", "="}:
-            return False
-        if ch in {" ", "\t", "\n", "\f", "\r"}:
-            return False
-    return True
-
-
 def serialize_start_tag(name: str, attrs: dict[str, str | None] | None) -> str:
     attrs = attrs or {}
     parts: list[str] = ["<", name]
@@ -61,13 +45,9 @@ def serialize_start_tag(name: str, attrs: dict[str, str | None] | None) -> str:
             if value is None or value == "":
                 parts.extend([" ", key])
             else:
-                if _can_unquote_attr_value(value):
-                    escaped = str(value).replace("&", "&amp;")
-                    parts.extend([" ", key, "=", escaped])
-                else:
-                    quote = _choose_attr_quote(value)
-                    escaped = _escape_attr_value(value, quote)
-                    parts.extend([" ", key, "=", quote, escaped, quote])
+                quote = _choose_attr_quote(value)
+                escaped = _escape_attr_value(value, quote)
+                parts.extend([" ", key, "=", quote, escaped, quote])
     parts.append(">")
     return "".join(parts)
 
@@ -176,7 +156,11 @@ def _node_to_html(node: Any, indent: int = 0, indent_size: int = 2, pretty: bool
         return f"{prefix}{open_tag}"
 
     # Elements with children
-    children: list[Any] = node.children or []
+    # Template special handling: HTML templates store contents in `template_content`.
+    if name == "template" and node.namespace in {None, "html"} and node.template_content:
+        children: list[Any] = node.template_content.children or []
+    else:
+        children = node.children or []
     if not children:
         return f"{prefix}{open_tag}{serialize_end_tag(name)}"
 
