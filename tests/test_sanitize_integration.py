@@ -12,116 +12,6 @@ from justhtml.sanitize import SanitizationPolicy, UrlRule
 _CASES_DIR = Path(__file__).with_name("justhtml-sanitize-tests")
 
 
-def _quote_unquoted_attrs(html: str) -> str:
-    # Canonicalize HTML by quoting any unquoted attribute values in start tags.
-    # This keeps fixtures readable and avoids coupling them to the serializer's
-    # unquoted-attribute optimization.
-    out: list[str] = []
-    i = 0
-    n = len(html)
-    while i < n:
-        ch = html[i]
-        if ch != "<":
-            out.append(ch)
-            i += 1
-            continue
-
-        # Comments / doctypes: copy through unchanged.
-        if html.startswith("<!--", i):
-            j = html.find("-->", i + 4)
-            if j == -1:
-                out.append(html[i:])
-                break
-            out.append(html[i : j + 3])
-            i = j + 3
-            continue
-        if html.startswith("<!", i) and not html.startswith("</", i):
-            j = html.find(">", i + 2)
-            if j == -1:
-                out.append(html[i:])
-                break
-            out.append(html[i : j + 1])
-            i = j + 1
-            continue
-
-        # End tags: copy through unchanged.
-        if html.startswith("</", i):
-            j = html.find(">", i + 2)
-            if j == -1:
-                out.append(html[i:])
-                break
-            out.append(html[i : j + 1])
-            i = j + 1
-            continue
-
-        # Start tag: rewrite attributes.
-        j = html.find(">", i + 1)
-        if j == -1:
-            out.append(html[i:])
-            break
-        tag_inner = html[i + 1 : j]
-
-        k = 0
-        m = len(tag_inner)
-        # Copy tag name (up to whitespace).
-        while k < m and not tag_inner[k].isspace():
-            k += 1
-        tag_name = tag_inner[:k]
-        rebuilt: list[str] = ["<", tag_name]
-
-        while k < m:
-            # whitespace
-            ws_start = k
-            while k < m and tag_inner[k].isspace():
-                k += 1
-            if k > ws_start:
-                rebuilt.append(tag_inner[ws_start:k])
-            if k >= m:
-                break
-
-            # attribute name
-            name_start = k
-            while k < m and not tag_inner[k].isspace() and tag_inner[k] not in "=":
-                k += 1
-            attr_name = tag_inner[name_start:k]
-            if not attr_name:
-                break
-            rebuilt.append(attr_name)
-
-            # optional =value
-            if k < m and tag_inner[k] == "=":
-                rebuilt.append("=")
-                k += 1
-                if k >= m:
-                    rebuilt.append('""')
-                    break
-
-                q = tag_inner[k]
-                if q in {'"', "'"}:
-                    rebuilt.append(q)
-                    k += 1
-                    val_start = k
-                    while k < m and tag_inner[k] != q:
-                        k += 1
-                    rebuilt.append(tag_inner[val_start:k])
-                    if k < m and tag_inner[k] == q:
-                        rebuilt.append(q)
-                        k += 1
-                else:
-                    val_start = k
-                    while k < m and not tag_inner[k].isspace():
-                        k += 1
-                    rebuilt.append('"')
-                    rebuilt.append(tag_inner[val_start:k])
-                    rebuilt.append('"')
-
-        rebuilt.append(">")
-        out.append("".join(rebuilt))
-        i = j + 1
-
-    return "".join(out)
-
-
 def _url_filter_by_name(name: str):
     if name == "drop_or_rewrite":
 
@@ -202,16 +92,14 @@ class TestSanitizeIntegration(unittest.TestCase):
                 raise ValueError(f"Unknown parse mode in {name}: {parse_mode}")
 
             actual = doc.to_html(pretty=False, safe=True, policy=policy)
-            actual_q = _quote_unquoted_attrs(actual)
-            expected_q = _quote_unquoted_attrs(expected_html)
-            if actual_q != expected_q:
+            if actual != expected_html:
                 self.fail(
                     "\n".join(
                         [
                             f"Case: {name}",
                             f"Input: {input_html}",
-                            f"Expected: {expected_q}",
-                            f"Actual:   {actual_q}",
+                            f"Expected: {expected_html}",
+                            f"Actual:   {actual}",
                         ]
                     )
                 )
