@@ -17,7 +17,7 @@ from justhtml import JustHTML, to_test_format
 from justhtml.constants import VOID_ELEMENTS
 from justhtml.context import FragmentContext
 from justhtml.encoding import normalize_encoding_label, sniff_html_encoding
-from justhtml.serialize import serialize_end_tag
+from justhtml.serialize import serialize_end_tag, serialize_start_tag
 from justhtml.tokenizer import Tokenizer, TokenizerOpts
 from justhtml.tokens import CharacterTokens, CommentToken, Doctype, DoctypeToken, EOFToken, Tag
 from justhtml.treebuilder import InsertionMode, TreeBuilder
@@ -967,102 +967,6 @@ def _escape_text_for_serializer_tests(text):
     return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _escape_attr_value_for_serializer_tests(value, quote_char, escape_lt_in_attrs):
-    if value is None:
-        return ""
-    value = str(value)
-    value = value.replace("&", "&amp;")
-    if escape_lt_in_attrs:
-        value = value.replace("<", "&lt;")
-    if quote_char == '"':
-        return value.replace('"', "&quot;")
-    return value.replace("'", "&#39;")
-
-
-def _choose_attr_quote_for_serializer_tests(value, forced_quote_char=None):
-    if forced_quote_char in {'"', "'"}:
-        return forced_quote_char
-    if value is None:
-        return '"'
-    value = str(value)
-    if '"' in value and "'" not in value:
-        return "'"
-    return '"'
-
-
-def _can_unquote_attr_value_for_serializer_tests(value):
-    if value is None:
-        return False
-    value = str(value)
-    for ch in value:
-        if ch == ">":
-            return False
-        if ch in {'"', "'", "="}:
-            return False
-        if ch in {" ", "\t", "\n", "\f", "\r"}:
-            return False
-    return True
-
-
-def _serializer_minimize_attr_value(name, value, minimize_boolean_attributes):
-    if not minimize_boolean_attributes:
-        return False
-    if value is None or value == "":
-        return True
-    return str(value).lower() == str(name).lower()
-
-
-def _serialize_start_tag_for_serializer_tests(name, attrs, options, is_void):
-    options = options or {}
-    attrs = attrs or {}
-
-    quote_attr_values = bool(options.get("quote_attr_values"))
-    minimize_boolean_attributes = options.get("minimize_boolean_attributes", True)
-    use_trailing_solidus = bool(options.get("use_trailing_solidus"))
-    escape_lt_in_attrs = bool(options.get("escape_lt_in_attrs"))
-    forced_quote = options.get("quote_char")
-
-    parts = ["<", name]
-
-    if attrs:
-        for key in sorted(attrs.keys()):
-            value = attrs[key]
-
-            if _serializer_minimize_attr_value(key, value, minimize_boolean_attributes):
-                parts.extend([" ", key])
-                continue
-
-            if value is None:
-                # Non-minimized None becomes an explicit empty value.
-                parts.extend([" ", key, '=""'])
-                continue
-
-            value = str(value)
-            if value == "":
-                if minimize_boolean_attributes:
-                    parts.extend([" ", key])
-                else:
-                    parts.extend([" ", key, '=""'])
-                continue
-
-            if not quote_attr_values and _can_unquote_attr_value_for_serializer_tests(value):
-                escaped = value.replace("&", "&amp;")
-                if escape_lt_in_attrs:
-                    escaped = escaped.replace("<", "&lt;")
-                parts.extend([" ", key, "=", escaped])
-            else:
-                quote = _choose_attr_quote_for_serializer_tests(value, forced_quote)
-                escaped = _escape_attr_value_for_serializer_tests(value, quote, escape_lt_in_attrs)
-                parts.extend([" ", key, "=", quote, escaped, quote])
-
-    if use_trailing_solidus and is_void:
-        parts.append(" />")
-    else:
-        parts.append(">")
-
-    return "".join(parts)
-
-
 def _strip_whitespace_for_serializer_tests(text):
     # Maps \t\r\n\f to spaces, then collapses runs of spaces to a single space.
     if not text:
@@ -1380,12 +1284,27 @@ def _serialize_serializer_token_stream(tokens, options=None):
             name = t[2]
             attrs = _serializer_attr_list_to_dict(t[3] if len(t) > 3 else {})
 
+            # Match upstream serializer fixture behavior by sorting attributes.
+            if attrs:
+                attrs = {k: attrs[k] for k in sorted(attrs.keys())}
+
             open_elements.append(name)
 
             if _serializer_should_omit_start_tag(name, attrs, prev_tok, next_tok):
                 continue
 
-            parts.append(_serialize_start_tag_for_serializer_tests(name, attrs, options, name in VOID_ELEMENTS))
+            parts.append(
+                serialize_start_tag(
+                    name,
+                    attrs,
+                    quote_attr_values=bool(options.get("quote_attr_values")),
+                    minimize_boolean_attributes=options.get("minimize_boolean_attributes", True),
+                    quote_char=options.get("quote_char"),
+                    escape_lt_in_attrs=bool(options.get("escape_lt_in_attrs")),
+                    use_trailing_solidus=bool(options.get("use_trailing_solidus")),
+                    is_void=name in VOID_ELEMENTS,
+                )
+            )
             if name in {"script", "style"} and not escape_rcdata:
                 rawtext = name
         elif kind == "EndTag":
@@ -1411,7 +1330,22 @@ def _serialize_serializer_token_stream(tokens, options=None):
             # html5lib serializer tests use EmptyTag to mean "emit start tag for a void element" in HTML mode.
             name = t[1]
             attrs = t[2] if len(t) > 2 else {}
-            parts.append(_serialize_start_tag_for_serializer_tests(name, attrs, options, True))
+
+            if attrs:
+                attrs = {k: attrs[k] for k in sorted(attrs.keys())}
+
+            parts.append(
+                serialize_start_tag(
+                    name,
+                    attrs,
+                    quote_attr_values=bool(options.get("quote_attr_values")),
+                    minimize_boolean_attributes=options.get("minimize_boolean_attributes", True),
+                    quote_char=options.get("quote_char"),
+                    escape_lt_in_attrs=bool(options.get("escape_lt_in_attrs")),
+                    use_trailing_solidus=bool(options.get("use_trailing_solidus")),
+                    is_void=True,
+                )
+            )
         elif kind == "Characters":
             if rawtext is not None:
                 parts.append(t[1])

@@ -2,6 +2,7 @@ import unittest
 
 from justhtml import JustHTML
 from justhtml.serialize import (
+    _can_unquote_attr_value,
     _choose_attr_quote,
     _escape_attr_value,
     _escape_text,
@@ -126,6 +127,29 @@ class TestSerialize(unittest.TestCase):
         # Always quote normal attribute values
         assert serialize_start_tag("span", {"title": "foo"}) == '<span title="foo">'
 
+    def test_serialize_start_tag_unquoted_mode_and_escape_lt(self):
+        # In unquoted mode, escape '&' always and optionally '<' when configured.
+        assert (
+            serialize_start_tag(
+                "span",
+                {"title": "a<b&c"},
+                quote_attr_values=False,
+                escape_lt_in_attrs=True,
+            )
+            == "<span title=a&lt;b&amp;c>"
+        )
+
+    def test_serialize_start_tag_none_attr_non_minimized(self):
+        # When boolean minimization is disabled, None becomes an explicit empty value.
+        assert (
+            serialize_start_tag(
+                "span",
+                {"disabled": None},
+                minimize_boolean_attributes=False,
+            )
+            == '<span disabled="">'
+        )
+
     def test_serialize_end_tag(self):
         assert serialize_end_tag("span") == "</span>"
 
@@ -133,6 +157,9 @@ class TestSerialize(unittest.TestCase):
         assert _escape_text(None) == ""
         assert _choose_attr_quote(None) == '"'
         assert _escape_attr_value(None, '"') == ""
+
+        # Covered for branch completeness: unquote check rejects None.
+        assert _can_unquote_attr_value(None) is False
 
     def test_mixed_content_whitespace(self):
         html = "<div>   <p></p></div>"

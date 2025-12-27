@@ -17,7 +17,9 @@ def _escape_text(text: str | None) -> str:
     return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _choose_attr_quote(value: str | None) -> str:
+def _choose_attr_quote(value: str | None, forced_quote_char: str | None = None) -> str:
+    if forced_quote_char in {'"', "'"}:
+        return forced_quote_char
     if value is None:
         return '"'
     value = str(value)
@@ -26,29 +28,83 @@ def _choose_attr_quote(value: str | None) -> str:
     return '"'
 
 
-def _escape_attr_value(value: str | None, quote_char: str) -> str:
+def _escape_attr_value(value: str | None, quote_char: str, *, escape_lt_in_attrs: bool = False) -> str:
     if value is None:
         return ""
     value = str(value)
     value = value.replace("&", "&amp;")
+    if escape_lt_in_attrs:
+        value = value.replace("<", "&lt;")
     # Note: html5lib's default serializer does not escape '>' in attrs.
     if quote_char == '"':
         return value.replace('"', "&quot;")
     return value.replace("'", "&#39;")
 
 
-def serialize_start_tag(name: str, attrs: dict[str, str | None] | None) -> str:
+def _can_unquote_attr_value(value: str | None) -> bool:
+    if value is None:
+        return False
+    value = str(value)
+    for ch in value:
+        if ch == ">":
+            return False
+        if ch in {'"', "'", "="}:
+            return False
+        if ch in {" ", "\t", "\n", "\f", "\r"}:
+            return False
+    return True
+
+
+def _serializer_minimize_attr_value(name: str, value: str | None, minimize_boolean_attributes: bool) -> bool:
+    if not minimize_boolean_attributes:
+        return False
+    if value is None or value == "":
+        return True
+    return str(value).lower() == str(name).lower()
+
+
+def serialize_start_tag(
+    name: str,
+    attrs: dict[str, str | None] | None,
+    *,
+    quote_attr_values: bool = True,
+    minimize_boolean_attributes: bool = True,
+    quote_char: str | None = None,
+    escape_lt_in_attrs: bool = False,
+    use_trailing_solidus: bool = False,
+    is_void: bool = False,
+) -> str:
     attrs = attrs or {}
     parts: list[str] = ["<", name]
     if attrs:
         for key, value in attrs.items():
-            if value is None or value == "":
+            if _serializer_minimize_attr_value(key, value, minimize_boolean_attributes):
                 parts.extend([" ", key])
+                continue
+
+            if value is None:
+                parts.extend([" ", key, '=""'])
+                continue
+
+            value_str = str(value)
+            if value_str == "":
+                parts.extend([" ", key, '=""'])
+                continue
+
+            if not quote_attr_values and _can_unquote_attr_value(value_str):
+                escaped = value_str.replace("&", "&amp;")
+                if escape_lt_in_attrs:
+                    escaped = escaped.replace("<", "&lt;")
+                parts.extend([" ", key, "=", escaped])
             else:
-                quote = _choose_attr_quote(value)
-                escaped = _escape_attr_value(value, quote)
+                quote = _choose_attr_quote(value_str, quote_char)
+                escaped = _escape_attr_value(value_str, quote, escape_lt_in_attrs=escape_lt_in_attrs)
                 parts.extend([" ", key, "=", quote, escaped, quote])
-    parts.append(">")
+
+    if use_trailing_solidus and is_void:
+        parts.append(" />")
+    else:
+        parts.append(">")
     return "".join(parts)
 
 
