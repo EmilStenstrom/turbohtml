@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 UrlFilter = Callable[[str, str, str], str | None]
 
@@ -45,12 +45,30 @@ class UrlRule:
     # allowlist.
     allowed_hosts: Collection[str] | None = None
 
+    # Optional proxy rewrite for allowed absolute/protocol-relative URLs.
+    # Example: proxy_url="/proxy" -> https://google.com becomes
+    # /proxy?url=https%3A%2F%2Fgoogle.com
+    proxy_url: str | None = None
+
+    # Query parameter name used when proxy_url is set.
+    proxy_param: str = "url"
+
     def __post_init__(self) -> None:
         # Accept lists/tuples from user code, normalize for internal use.
         if not isinstance(self.allowed_schemes, set):
             object.__setattr__(self, "allowed_schemes", set(self.allowed_schemes))
         if self.allowed_hosts is not None and not isinstance(self.allowed_hosts, set):
             object.__setattr__(self, "allowed_hosts", set(self.allowed_hosts))
+
+        if self.proxy_url is not None:
+            proxy_url = str(self.proxy_url)
+            object.__setattr__(self, "proxy_url", proxy_url if proxy_url else None)
+        object.__setattr__(self, "proxy_param", str(self.proxy_param))
+
+
+def _proxy_url_value(*, proxy_url: str, proxy_param: str, value: str) -> str:
+    sep = "&" if "?" in proxy_url else "?"
+    return f"{proxy_url}{sep}{proxy_param}={quote(value, safe='')}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,6 +239,22 @@ def _has_scheme(value: str) -> bool:
     return _is_valid_scheme(value[:idx])
 
 
+def _has_invalid_scheme_like_prefix(value: str) -> bool:
+    idx = value.find(":")
+    if idx <= 0:
+        return False
+
+    end = len(value)
+    for sep in ("/", "?", "#"):
+        j = value.find(sep)
+        if j != -1 and j < end:
+            end = j
+    if idx >= end:
+        return False
+
+    return not _is_valid_scheme(value[:idx])
+
+
 def _sanitize_url_value(
     *,
     policy: SanitizationPolicy,
@@ -244,6 +278,11 @@ def _sanitize_url_value(
     if normalized.startswith("#"):
         return stripped if rule.allow_fragment else None
 
+    # If proxying is enabled, do not treat scheme-obfuscation as a relative URL.
+    # Some user agents normalize backslashes and other characters during navigation.
+    if rule.proxy_url and _has_invalid_scheme_like_prefix(normalized):
+        return None
+
     if normalized.startswith("//"):
         if not rule.allow_protocol_relative:
             return None
@@ -252,7 +291,11 @@ def _sanitize_url_value(
             host = (parsed.hostname or "").lower()
             if not host or host not in rule.allowed_hosts:
                 return None
-        return stripped
+        return (
+            _proxy_url_value(proxy_url=rule.proxy_url, proxy_param=rule.proxy_param, value=stripped)
+            if rule.proxy_url
+            else stripped
+        )
 
     if _has_scheme(normalized):
         parsed = urlsplit(normalized)
@@ -263,7 +306,11 @@ def _sanitize_url_value(
             host = (parsed.hostname or "").lower()
             if not host or host not in rule.allowed_hosts:
                 return None
-        return stripped
+        return (
+            _proxy_url_value(proxy_url=rule.proxy_url, proxy_param=rule.proxy_param, value=stripped)
+            if rule.proxy_url
+            else stripped
+        )
 
     return stripped if rule.allow_relative else None
 

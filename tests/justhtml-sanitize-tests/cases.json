@@ -86,6 +86,94 @@
     "expected_html": "<a rel=\"nofollow noopener noreferrer\">x</a><a href=\"https://example.com\" rel=\"noopener noreferrer\">y</a>"
   },
   {
+    "name": "url_rules_proxy_absolute_https_img_src",
+    "policy": {
+      "allowed_tags": ["img"],
+      "allowed_attributes": {"*": [], "img": ["src"]},
+      "url_rules": [
+        {"tag": "img", "attr": "src", "allowed_schemes": ["https"], "proxy_url": "/proxy"}
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<img src='https://google.com'>",
+    "expected_html": "<img src=\"/proxy?url=https%3A%2F%2Fgoogle.com\">"
+  },
+  {
+    "name": "url_rules_proxy_absolute_https_existing_query_img_src",
+    "policy": {
+      "allowed_tags": ["img"],
+      "allowed_attributes": {"*": [], "img": ["src"]},
+      "url_rules": [
+        {"tag": "img", "attr": "src", "allowed_schemes": ["https"], "proxy_url": "/proxy?x=1"}
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<img src='https://google.com'>",
+    "expected_html": "<img src=\"/proxy?x=1&amp;url=https%3A%2F%2Fgoogle.com\">"
+  },
+  {
+    "name": "url_rules_proxy_allows_relative_without_colon",
+    "policy": {
+      "allowed_tags": ["img"],
+      "allowed_attributes": {"*": [], "img": ["src"]},
+      "url_rules": [
+        {
+          "tag": "img",
+          "attr": "src",
+          "allowed_schemes": ["https"],
+          "proxy_url": "/proxy",
+          "allow_relative": true
+        }
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<img src='noscheme'>",
+    "expected_html": "<img src=\"noscheme\">"
+  },
+  {
+    "name": "url_rules_proxy_allows_relative_colon_in_path",
+    "policy": {
+      "allowed_tags": ["img"],
+      "allowed_attributes": {"*": [], "img": ["src"]},
+      "url_rules": [
+        {
+          "tag": "img",
+          "attr": "src",
+          "allowed_schemes": ["https"],
+          "proxy_url": "/proxy",
+          "allow_relative": true
+        }
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<img src='/path:foo'>",
+    "expected_html": "<img src=\"/path:foo\">"
+  },
+  {
+    "name": "url_rules_proxy_blocks_scheme_obfuscation_backslash",
+    "policy": {
+      "allowed_tags": ["img"],
+      "allowed_attributes": {"*": [], "img": ["src"]},
+      "url_rules": [
+        {
+          "tag": "img",
+          "attr": "src",
+          "allowed_schemes": ["https"],
+          "proxy_url": "/proxy",
+          "allow_relative": true
+        }
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<img src='https\\://google.com'>",
+    "expected_html": "<img>"
+  },
+  {
     "name": "rel_deduplicates_tokens",
     "policy": {
       "allowed_tags": ["a"],

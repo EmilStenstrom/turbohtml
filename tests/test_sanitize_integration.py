@@ -50,6 +50,8 @@ def _build_policy(spec: Any) -> SanitizationPolicy:
             allow_protocol_relative=rule_spec.get("allow_protocol_relative", False),
             allowed_schemes=rule_spec.get("allowed_schemes", []),
             allowed_hosts=rule_spec.get("allowed_hosts", None),
+            proxy_url=rule_spec.get("proxy_url"),
+            proxy_param=rule_spec.get("proxy_param", "url"),
         )
 
     url_filter_name = spec.get("url_filter")
