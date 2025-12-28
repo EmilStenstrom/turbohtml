@@ -136,7 +136,90 @@ def to_html(
     return _node_to_html(node, indent, indent_size, pretty, in_pre=False)
 
 
-_PREFORMATTED_ELEMENTS: set[str] = {"pre", "textarea"}
+_PREFORMATTED_ELEMENTS: set[str] = {"pre", "textarea", "code"}
+
+# Elements whose text content must not be normalized (e.g. scripts/styles).
+_RAWTEXT_ELEMENTS: set[str] = {"script", "style"}
+
+
+def _collapse_html_whitespace(text: str) -> str:
+    """Collapse HTML whitespace runs to a single space and trim edges.
+
+    This matches how HTML rendering treats most whitespace in text nodes, and is
+    used only for pretty-printing in non-preformatted contexts.
+    """
+    if not text:
+        return ""
+
+    parts: list[str] = []
+    in_whitespace = False
+    for ch in text:
+        if ch in {" ", "\t", "\n", "\f", "\r"}:
+            if not in_whitespace:
+                parts.append(" ")
+                in_whitespace = True
+            continue
+
+        parts.append(ch)
+        in_whitespace = False
+
+    collapsed = "".join(parts)
+    return collapsed.strip(" ")
+
+
+def _normalize_formatting_whitespace(text: str) -> str:
+    """Normalize formatting whitespace within a text node.
+
+    Converts newlines/tabs/CR/FF to regular spaces and collapses runs that
+    include such formatting whitespace to a single space.
+
+    Pure space runs are preserved as-is (so existing double-spaces remain).
+    """
+    if not text:
+        return ""
+
+    if "\n" not in text and "\r" not in text and "\t" not in text and "\f" not in text:
+        return text
+
+    starts_with_formatting = text[0] in {"\n", "\r", "\t", "\f"}
+    ends_with_formatting = text[-1] in {"\n", "\r", "\t", "\f"}
+
+    out: list[str] = []
+    in_ws = False
+    saw_formatting_ws = False
+
+    for ch in text:
+        if ch == " ":
+            if in_ws:
+                # Only collapse if this whitespace run included formatting whitespace.
+                if saw_formatting_ws:
+                    continue
+                out.append(" ")
+                continue
+            in_ws = True
+            saw_formatting_ws = False
+            out.append(" ")
+            continue
+
+        if ch in {"\n", "\r", "\t", "\f"}:
+            if in_ws:
+                saw_formatting_ws = True
+                continue
+            in_ws = True
+            saw_formatting_ws = True
+            out.append(" ")
+            continue
+
+        in_ws = False
+        saw_formatting_ws = False
+        out.append(ch)
+
+    normalized = "".join(out)
+    if starts_with_formatting and normalized.startswith(" "):
+        normalized = normalized[1:]
+    if ends_with_formatting and normalized.endswith(" "):
+        normalized = normalized[:-1]
+    return normalized
 
 
 def _is_whitespace_text_node(node: Any) -> bool:
@@ -144,29 +227,42 @@ def _is_whitespace_text_node(node: Any) -> bool:
 
 
 def _should_pretty_indent_children(children: list[Any]) -> bool:
-    has_comment = False
-    has_non_whitespace_text = False
     for child in children:
+        if child is None:
+            continue
         name = child.name
         if name == "#comment":
-            has_comment = True
-            break
-        if name == "#text":
-            if (child.data or "").strip():
-                has_non_whitespace_text = True
-                break
+            return False
+        if name == "#text" and (child.data or "").strip():
+            return False
 
-    if has_comment or has_non_whitespace_text:
+    element_children: list[Any] = [
+        child for child in children if child is not None and child.name not in {"#text", "#comment"}
+    ]
+    if not element_children:
+        return True
+    if len(element_children) == 1:
+        only_child = element_children[0]
+        if only_child.name in SPECIAL_ELEMENTS:
+            return True
+        if only_child.name == "a":
+            # If an anchor wraps block-ish content (valid HTML5), treat it as block-ish
+            # for pretty-printing so the parent can indent it on its own line.
+            for grandchild in only_child.children or []:
+                if grandchild is None:
+                    continue
+                if grandchild.name in SPECIAL_ELEMENTS:
+                    return True
         return False
 
-    for child in children:
-        name = child.name
-        if name in {"#text", "#comment"}:
-            continue
-        # Only indent safely when children are known "blockish" HTML elements.
-        # If we guess wrong and indent inline elements, we can introduce rendering spaces.
-        if name not in SPECIAL_ELEMENTS:
+    # Safe indentation rule: only insert inter-element whitespace when we won't
+    # be placing it between two adjacent inline/phrasing elements.
+    prev_is_special = element_children[0].name in SPECIAL_ELEMENTS
+    for child in element_children[1:]:
+        current_is_special = child.name in SPECIAL_ELEMENTS
+        if not prev_is_special and not current_is_special:
             return False
+        prev_is_special = current_is_special
     return True
 
 
@@ -227,7 +323,10 @@ def _node_to_html(node: Any, indent: int = 0, indent_size: int = 2, pretty: bool
     all_text = all(c.name == "#text" for c in children)
 
     if all_text and pretty and not content_pre:
-        return f"{prefix}{open_tag}{_escape_text(node.to_text(separator='', strip=False))}{serialize_end_tag(name)}"
+        text_content = node.to_text(separator="", strip=False)
+        if name not in _RAWTEXT_ELEMENTS:
+            text_content = _collapse_html_whitespace(text_content)
+        return f"{prefix}{open_tag}{_escape_text(text_content)}{serialize_end_tag(name)}"
 
     if pretty and content_pre:
         inner = "".join(
@@ -238,12 +337,108 @@ def _node_to_html(node: Any, indent: int = 0, indent_size: int = 2, pretty: bool
         return f"{prefix}{open_tag}{inner}{serialize_end_tag(name)}"
 
     if pretty and not content_pre and not _should_pretty_indent_children(children):
-        inner = "".join(
-            _node_to_html(child, 0, indent_size, pretty=False, in_pre=content_pre)
-            for child in children
-            if child is not None
-        )
-        return f"{prefix}{open_tag}{inner}{serialize_end_tag(name)}"
+        # For block-ish elements that contain only element children and whitespace-only
+        # text nodes, we can still format each child on its own line (only when there
+        # is already whitespace separating element siblings).
+        if name in SPECIAL_ELEMENTS:
+            has_comment = False
+            has_element = False
+            has_whitespace_between_elements = False
+
+            first_element_index: int | None = None
+            last_element_index: int | None = None
+
+            previous_was_element = False
+            saw_whitespace_since_last_element = False
+            for i, child in enumerate(children):
+                if child is None:
+                    continue
+                if child.name == "#comment":
+                    has_comment = True
+                    break
+                if child.name == "#text":
+                    # Track whether there is already whitespace between element siblings.
+                    if previous_was_element and not (child.data or "").strip():
+                        saw_whitespace_since_last_element = True
+                    continue
+
+                has_element = True
+                if first_element_index is None:
+                    first_element_index = i
+                last_element_index = i
+                if previous_was_element and saw_whitespace_since_last_element:
+                    has_whitespace_between_elements = True
+                previous_was_element = True
+                saw_whitespace_since_last_element = False
+
+            can_indent_non_whitespace_text = True
+            if has_element and first_element_index is not None and last_element_index is not None:
+                for i, child in enumerate(children):
+                    if child is None or child.name != "#text":
+                        continue
+                    if not (child.data or "").strip():
+                        continue
+                    # Only allow non-whitespace text *after* the last element.
+                    # Leading text or text between elements could gain new spaces
+                    # due to indentation/newlines.
+                    if i < first_element_index or first_element_index < i < last_element_index:
+                        can_indent_non_whitespace_text = False
+                        break
+
+            if has_element and has_whitespace_between_elements and not has_comment and can_indent_non_whitespace_text:
+                inner_lines: list[str] = []
+                for child in children:
+                    if child is None:
+                        continue
+                    if child.name == "#text":
+                        text = _collapse_html_whitespace(child.data or "")
+                        if text:
+                            inner_lines.append(f"{' ' * ((indent + 1) * indent_size)}{_escape_text(text)}")
+                        continue
+                    child_html = _node_to_html(child, indent + 1, indent_size, pretty=True, in_pre=content_pre)
+                    if child_html:
+                        inner_lines.append(child_html)
+                if inner_lines:
+                    inner = "\n".join(inner_lines)
+                    return f"{prefix}{open_tag}\n{inner}\n{prefix}{serialize_end_tag(name)}"
+
+        inner_parts: list[str] = []
+
+        first_non_none_index: int | None = None
+        last_non_none_index: int | None = None
+        for i, child in enumerate(children):
+            if child is None:
+                continue
+            if first_non_none_index is None:
+                first_non_none_index = i
+            last_non_none_index = i
+
+        for i, child in enumerate(children):
+            if child is None:
+                continue
+
+            if child.name == "#text":
+                data = child.data or ""
+                if not data.strip():
+                    # Drop leading/trailing formatting whitespace in compact mode.
+                    if i == first_non_none_index or i == last_non_none_index:
+                        continue
+                    # Preserve intentional small spacing, but collapse large formatting gaps.
+                    if "\n" in data or "\r" in data or "\t" in data or len(data) > 2:
+                        inner_parts.append(" ")
+                        continue
+
+                if not content_pre and name not in _RAWTEXT_ELEMENTS:
+                    data = _normalize_formatting_whitespace(data)
+                child_html = _escape_text(data) if data else ""
+            else:
+                # Even when we can't safely insert whitespace *between* siblings, we can
+                # still pretty-print each element subtree to improve readability.
+                child_html = _node_to_html(child, 0, indent_size, pretty=True, in_pre=content_pre)
+            if child_html:
+                inner_parts.append(child_html)
+
+        return f"{prefix}{open_tag}{''.join(inner_parts)}{serialize_end_tag(name)}"
 
     # Render with child indentation
     parts = [f"{prefix}{open_tag}"]

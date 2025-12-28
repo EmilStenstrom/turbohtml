@@ -1,3 +1,4 @@
+import textwrap
 import unittest
 
 from justhtml import JustHTML
@@ -7,6 +8,8 @@ from justhtml.serialize import (
     _choose_attr_quote,
     _escape_attr_value,
     _escape_text,
+    _normalize_formatting_whitespace,
+    _should_pretty_indent_children,
     serialize_end_tag,
     serialize_start_tag,
     to_html,
@@ -93,12 +96,88 @@ class TestSerialize(unittest.TestCase):
         output = doc.root.to_html(safe=False)
         assert "<div>Text only</div>" in output
 
+    def test_pretty_text_only_element_collapses_whitespace(self):
+        doc = JustHTML("<h3>\n\nSorry to interrupt, but we're short on time to hit our goal.\n</h3>")
+        h3 = doc.query("h3")[0]
+        assert h3.to_html(pretty=True, safe=False) == (
+            "<h3>Sorry to interrupt, but we're short on time to hit our goal.</h3>"
+        )
+
+    def test_pretty_text_only_div_collapses_whitespace(self):
+        html = (
+            '<div class="overlay-banner-main-footer-cta">'
+            "\n\nWe ask you, sincerely: don't skip this, join the 2% of readers who give.\n"
+            "</div>"
+        )
+        doc = JustHTML(html)
+        div = doc.query("div")[0]
+        assert div.to_html(pretty=True, safe=False) == (
+            '<div class="overlay-banner-main-footer-cta">'
+            "We ask you, sincerely: don't skip this, join the 2% of readers who give."
+            "</div>"
+        )
+
+    def test_pretty_text_only_element_empty_text_is_dropped(self):
+        h3 = Node("h3")
+        h3.append_child(Node("#text", data=""))
+        assert h3.to_html(pretty=True, safe=False) == "<h3></h3>"
+
+    def test_pretty_text_only_script_preserves_whitespace(self):
+        doc = JustHTML("<script>\n  var x = 1;\n\n  var y = 2;\n</script>")
+        script = doc.query("script")[0]
+        assert script.to_html(pretty=True, safe=False) == ("<script>\n  var x = 1;\n\n  var y = 2;\n</script>")
+
+    def test_compact_mode_does_not_normalize_script_text_children(self):
+        # Artificial tree to cover serializer branch: skip normalization inside rawtext elements.
+        script = Node("script")
+        script.append_child(Node("#text", data="a\nb"))
+        script.append_child(Node("span"))
+        assert script.to_html(pretty=True, safe=False) == "<script>a\nb<span></span></script>"
+
     def test_mixed_children(self):
         html = "<div>Text <span>Span</span></div>"
         doc = JustHTML(html)
         div = doc.query("div")[0]
         output = div.to_html(pretty=True, safe=False)
         assert output == "<div>Text <span>Span</span></div>"
+
+    def test_mixed_children_normalizes_newlines_in_text_nodes(self):
+        html = '<span>100+\n <span class="jsl10n">articles</span></span>'
+        doc = JustHTML(html)
+        outer = doc.query("span")[0]
+        output = outer.to_html(pretty=True, safe=False)
+        assert "100+ <span" in output
+        assert "100+\n" not in output
+
+        html2 = '<span class="text">\n100+\n <span class="jsl10n">articles</span></span>'
+        doc2 = JustHTML(html2)
+        outer2 = doc2.query("span")[0]
+        output2 = outer2.to_html(pretty=True, safe=False)
+        assert ">100+ <span" in output2
+
+    def test_mixed_children_preserves_pure_space_runs(self):
+        html = "<p>Hello  <b>world</b></p>"
+        doc = JustHTML(html)
+        p = doc.query("p")[0]
+        assert p.to_html(pretty=True, safe=False) == "<p>Hello  <b>world</b></p>"
+
+    def test_normalize_formatting_whitespace_empty(self):
+        assert _normalize_formatting_whitespace("") == ""
+
+    def test_normalize_formatting_whitespace_no_formatting_chars(self):
+        assert _normalize_formatting_whitespace("a  b") == "a  b"
+
+    def test_normalize_formatting_whitespace_preserves_double_spaces(self):
+        # Contains a newline (so normalization runs), but the double-space run does
+        # not include formatting whitespace and should be preserved.
+        assert _normalize_formatting_whitespace("a  b\nc") == "a  b c"
+
+    def test_normalize_formatting_whitespace_collapses_newlines_and_tabs(self):
+        assert _normalize_formatting_whitespace("a\n\t  b") == "a b"
+
+    def test_normalize_formatting_whitespace_trims_edges_from_newlines(self):
+        assert _normalize_formatting_whitespace("\n100+\n ") == "100+ "
+        assert _normalize_formatting_whitespace(" hi\n") == " hi"
 
     def test_pretty_print_does_not_insert_spaces_in_inline_mixed_content(self):
         html = (
@@ -198,13 +277,218 @@ class TestSerialize(unittest.TestCase):
         div.append_child(Node("p"))
         div.append_child(Node("#text", data="\n"))
         output = div.to_html(pretty=True, safe=False)
-        assert output == "<div>\n  <p></p>\n</div>"
+        expected = textwrap.dedent(
+            """\
+            <div>
+              <p></p>
+            </div>
+            """
+        ).strip("\n")
+        assert output == expected
 
     def test_pretty_indent_children_does_not_indent_inline_elements(self):
         div = Node("div")
         div.append_child(Node("span"))
         output = div.to_html(pretty=True, safe=False)
         assert output == "<div><span></span></div>"
+
+    def test_pretty_indent_children_does_not_indent_adjacent_inline_elements(self):
+        div = Node("div")
+        div.append_child(Node("span"))
+        div.append_child(Node("em"))
+        output = div.to_html(pretty=True, safe=False)
+        assert output == "<div><span></span><em></em></div>"
+
+    def test_compact_pretty_collapses_large_whitespace_gaps(self):
+        # Two adjacent inline children are rendered in compact mode.
+        # For block-ish containers with whitespace separators, compact pretty upgrades
+        # to a multiline layout for readability.
+        div = Node("div")
+        div.append_child(Node("span"))
+        div.append_child(Node("#text", data="     "))
+        div.append_child(Node("span"))
+        output = div.to_html(pretty=True, safe=False)
+        expected = textwrap.dedent(
+            """\
+            <div>
+              <span></span>
+              <span></span>
+            </div>
+            """
+        ).strip("\n")
+        assert output == expected
+
+    def test_compact_pretty_collapses_newline_whitespace_to_single_space(self):
+        # Newlines/tabs between inline siblings upgrade to multiline layout.
+        div = Node("div")
+        div.append_child(Node("span"))
+        div.append_child(Node("#text", data="\n  \t"))
+        div.append_child(Node("span"))
+        output = div.to_html(pretty=True, safe=False)
+        expected = textwrap.dedent(
+            """\
+            <div>
+              <span></span>
+              <span></span>
+            </div>
+            """
+        ).strip("\n")
+        assert output == expected
+
+    def test_should_pretty_indent_children_no_element_children(self):
+        children = [Node("#text", data="  "), Node("#text", data="\n")]
+        assert _should_pretty_indent_children(children) is True
+
+    def test_compact_pretty_preserves_small_spacing_exactly(self):
+        # When there is already whitespace separating element siblings in a block-ish
+        # container, prefer multiline formatting over preserving exact whitespace.
+        div = Node("div")
+        div.append_child(Node("span"))
+        div.append_child(Node("#text", data="  "))
+        div.append_child(Node("span"))
+        output = div.to_html(pretty=True, safe=False)
+        expected = textwrap.dedent(
+            """\
+            <div>
+              <span></span>
+              <span></span>
+            </div>
+            """
+        ).strip("\n")
+        assert output == expected
+
+    def test_compact_pretty_skips_none_children(self):
+        div = Node("div")
+        # Manually inject a None child to exercise defensive branch.
+        div.children = [Node("span"), None, Node("em")]
+        output = div.to_html(pretty=True, safe=False)
+        assert output == "<div><span></span><em></em></div>"
+
+    def test_compact_pretty_drops_empty_text_children(self):
+        div = Node("div")
+        div.append_child(Node("span"))
+        div.append_child(Node("#text", data=""))
+        div.append_child(Node("span"))
+        output = div.to_html(pretty=True, safe=False)
+        expected = textwrap.dedent(
+            """\
+            <div>
+              <span></span>
+              <span></span>
+            </div>
+            """
+        ).strip("\n")
+        assert output == expected
+
+    def test_compact_pretty_drops_leading_and_trailing_whitespace(self):
+        div = Node("div")
+        div.append_child(Node("#text", data=" \n"))
+        div.append_child(Node("a"))
+        div.append_child(Node("#text", data=" \t\n"))
+        output = div.to_html(pretty=True, safe=False)
+        assert output == "<div><a></a></div>"
+
+    def test_blockish_compact_multiline_not_used_with_comment_children(self):
+        div = Node("div")
+        div.append_child(Node("span"))
+        div.append_child(Node("#text", data=" "))
+        div.append_child(Node("#comment", data="x"))
+        div.append_child(Node("#text", data=" "))
+        div.append_child(Node("span"))
+        output = div.to_html(pretty=True, safe=False)
+        assert output == "<div><span></span> <!--x--> <span></span></div>"
+
+    def test_blockish_compact_multiline_not_used_with_non_whitespace_text(self):
+        div = Node("div")
+        div.append_child(Node("span"))
+        div.append_child(Node("#text", data="hi"))
+        div.append_child(Node("#text", data=" "))
+        div.append_child(Node("span"))
+        output = div.to_html(pretty=True, safe=False)
+        assert output == "<div><span></span>hi <span></span></div>"
+
+    def test_blockish_compact_multiline_allows_trailing_text(self):
+        div = Node("div")
+        div.append_child(Node("div"))
+        div.append_child(Node("#text", data=" "))
+        div.append_child(Node("div"))
+        div.append_child(Node("#text", data=" Collapse\n"))
+
+        output = div.to_html(pretty=True, safe=False)
+        expected = textwrap.dedent(
+            """\
+            <div>
+              <div></div>
+              <div></div>
+              Collapse
+            </div>
+            """
+        ).strip("\n")
+        assert output == expected
+
+    def test_blockish_compact_multiline_skips_when_inner_lines_are_empty(self):
+        # Exercise the multiline eligibility path where it matches, but each
+        # child renders to an empty string (so we fall back to compact mode).
+        div = Node("div")
+        frag1 = Node("#document-fragment")
+        frag1.append_child(Node("#text", data="  "))
+        frag2 = Node("#document-fragment")
+        frag2.append_child(Node("#text", data="\n"))
+        div.append_child(frag1)
+        div.append_child(Node("#text", data=" "))
+        div.append_child(frag2)
+
+        output = div.to_html(pretty=True, safe=False)
+        assert output == "<div> </div>"
+
+    def test_blockish_compact_multiline_skips_none_children(self):
+        div = Node("div")
+        div.children = [Node("span"), Node("#text", data=" "), None, Node("span")]
+        output = div.to_html(pretty=True, safe=False)
+        expected = textwrap.dedent(
+            """\
+            <div>
+              <span></span>
+              <span></span>
+            </div>
+            """
+        ).strip("\n")
+        assert output == expected
+
+    def test_compact_mode_collapses_newline_whitespace_for_inline_container(self):
+        # For non-block containers, we stay in compact mode and collapse
+        # formatting whitespace to a single space.
+        outer = Node("span")
+        outer.append_child(Node("span"))
+        outer.append_child(Node("#text", data="\n  \t"))
+        outer.append_child(Node("span"))
+        output = outer.to_html(pretty=True, safe=False)
+        assert output == "<span><span></span> <span></span></span>"
+
+    def test_indents_single_anchor_child_when_anchor_wraps_block_elements(self):
+        container = Node("div")
+        link = Node("a")
+        link.append_child(Node("div"))
+        link.append_child(Node("div"))
+        container.append_child(link)
+
+        output = container.to_html(pretty=True, safe=False)
+        expected = textwrap.dedent(
+            """\
+            <div>
+              <a>
+                <div></div>
+                <div></div>
+              </a>
+            </div>
+            """
+        ).strip("\n")
+        assert output == expected
+
+    def test_single_anchor_child_not_blockish_without_special_grandchildren(self):
+        link = Node("a")
+        link.children = [None, Node("span")]
+        assert _should_pretty_indent_children([link]) is False
 
     def test_pretty_indent_children_does_not_indent_comments(self):
         div = Node("div")
