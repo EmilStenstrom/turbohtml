@@ -216,7 +216,7 @@ def _node_to_html(node: Any, indent: int = 0, indent_size: int = 2, pretty: bool
 
     # Elements with children
     # Template special handling: HTML templates store contents in `template_content`.
-    if name == "template" and node.namespace in {None, "html"} and node.template_content:
+    if name == "template" and node.namespace in {None, "html"} and node.template_content is not None:
         children: list[Any] = node.template_content.children or []
     else:
         children = node.children or []
@@ -287,7 +287,7 @@ def _node_to_test_format(node: Any, indent: int) -> str:
     attribute_lines = _attrs_to_test_format(node, indent)
 
     # Template special handling (only HTML namespace templates have template_content)
-    if node.name == "template" and node.namespace in {None, "html"} and node.template_content:
+    if node.name == "template" and node.namespace in {None, "html"} and node.template_content is not None:
         sections: list[str] = [line]
         if attribute_lines:
             sections.extend(attribute_lines)

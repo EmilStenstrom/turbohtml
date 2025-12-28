@@ -63,6 +63,9 @@ class JustHTML:
         tokenizer_opts: TokenizerOpts | None = None,
         tree_builder: TreeBuilder | None = None,
     ) -> None:
+        if fragment_context is not None:
+            fragment = True
+
         if fragment and fragment_context is None:
             fragment_context = FragmentContext("div")
 
