@@ -67,7 +67,7 @@ We run the same test suite against other Python parsers to compare compliance:
 
 *Run `python benchmarks/correctness.py` to reproduce these results.*
 
-These numbers come from a strict tree comparison against the expected output in the `html5lib-tests` tree-construction fixtures (excluding `#script-on` / `#script-off` cases). They will not match `pytest` results from the `html5lib` project, because `html5lib` runs the suite in multiple configurations and also has its own skip/xfail lists.
+These numbers come from a strict tree comparison against the expected output in the `html5lib-tests` tree-construction fixtures (excluding `#script-on` / `#script-off` cases). They will not match the `html5lib` project’s own reported totals, because `html5lib` runs the suite in multiple configurations and also has its own skip/xfail lists.
 
 ## Our Testing Strategy
 
