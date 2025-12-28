@@ -55,6 +55,12 @@ Notes:
   - `html` and `text` print one result per line.
   - `markdown` prints matches separated by a blank line.
 
+## Sanitization
+
+By default, the CLI sanitizes output (same safe-by-default behavior as `to_html()`, `to_text()`, and `to_markdown()`).
+
+To disable sanitization for trusted input, pass `--unsafe`.
+
 ## Text options
 
 When using `--format text`, you can control whitespace handling:

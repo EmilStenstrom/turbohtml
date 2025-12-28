@@ -56,6 +56,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         default="html",
         help="Output format (default: html)",
     )
+
+    parser.add_argument(
+        "--unsafe",
+        action="store_true",
+        help="Disable sanitization (trusted input only)",
+    )
     parser.add_argument(
         "--first",
         action="store_true",
@@ -132,8 +138,9 @@ def main() -> None:
         nodes = [nodes[0]]
 
     def write_output(out: TextIO) -> None:
+        safe = not args.unsafe
         if args.format == "html":
-            outputs = [node.to_html() for node in nodes]
+            outputs = [node.to_html(safe=safe) for node in nodes]
             out.write("\n".join(outputs))
             out.write("\n")
             return
@@ -142,19 +149,19 @@ def main() -> None:
             # Keep these branches explicit so coverage will highlight untested CLI options.
             if args.separator == " ":
                 if args.strip:
-                    outputs = [node.to_text(strip=True) for node in nodes]
+                    outputs = [node.to_text(strip=True, safe=safe) for node in nodes]
                 else:
-                    outputs = [node.to_text(strip=False) for node in nodes]
+                    outputs = [node.to_text(strip=False, safe=safe) for node in nodes]
             else:
                 if args.strip:
-                    outputs = [node.to_text(separator=args.separator, strip=True) for node in nodes]
+                    outputs = [node.to_text(separator=args.separator, strip=True, safe=safe) for node in nodes]
                 else:
-                    outputs = [node.to_text(separator=args.separator, strip=False) for node in nodes]
+                    outputs = [node.to_text(separator=args.separator, strip=False, safe=safe) for node in nodes]
             out.write("\n".join(outputs))
             out.write("\n")
             return
 
-        outputs = [node.to_markdown() for node in nodes]
+        outputs = [node.to_markdown(safe=safe) for node in nodes]
         out.write("\n\n".join(outputs))
         out.write("\n")
 
