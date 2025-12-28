@@ -6,29 +6,11 @@ A pure Python HTML5 parser that just works. No C extensions to compile. No syste
 
 ## Why use JustHTML?
 
-### 1. Just... Correct ✅
-Spec-perfect HTML5 parsing with browser-grade error recovery — passes the official 9k+ [html5lib-tests](https://github.com/html5lib/html5lib-tests) suite, with 100% line+branch coverage.
-Read more: [Correctness](docs/correctness.md)
-
-### 2. Just... Python 🐍
-Pure Python, zero dependencies — no C extensions or system libraries, easy to debug, and works anywhere Python runs (including PyPy and Pyodide).
-Read more: [Quickstart](docs/quickstart.md)
-
-### 3. Just... Secure 🔒
-Safe-by-default output for untrusted HTML — built-in Bleach-style allowlist sanitization on `to_html()` / `to_markdown()` (override with `safe=False`), plus URL/CSS rules.
-Read more: [Sanitization & Security](docs/sanitization.md)
-
-### 4. Just... Query 🔍
-CSS selectors out of the box — one method (`query()`), familiar syntax (combinators, groups, pseudo-classes), and plain Python nodes as results.
-Read more: [CSS Selectors](docs/selectors.md)
-
-### 5. Just... Fast Enough ⚡
-
-If you need to parse terabytes of data, use a C or Rust parser (like `html5ever`). They are 10x-20x faster.
-
-But for most use cases, JustHTML is **fast enough**. It parses the Wikipedia homepage in ~0.1s. It is the fastest pure-Python HTML5 parser available, outperforming `html5lib` and `BeautifulSoup`.
-
-Read more: [Benchmarks](benchmarks/performance.py)
+- **Just... Correct ✅** — Spec-perfect HTML5 parsing with browser-grade error recovery — passes the official 9k+ [html5lib-tests](https://github.com/html5lib/html5lib-tests) suite, with 100% line+branch coverage. ([Correctness](docs/correctness.md))
+- **Just... Python 🐍** — Pure Python, zero dependencies — no C extensions or system libraries, easy to debug, and works anywhere Python runs (including PyPy and Pyodide). ([Quickstart](docs/quickstart.md))
+- **Just... Secure 🔒** — Safe-by-default output for untrusted HTML — built-in Bleach-style allowlist sanitization on `to_html()` / `to_markdown()` (override with `safe=False`), plus URL/CSS rules. ([Sanitization & Security](docs/sanitization.md))
+- **Just... Query 🔍** — CSS selectors out of the box — one method (`query()`), familiar syntax (combinators, groups, pseudo-classes), and plain Python nodes as results. ([CSS Selectors](docs/selectors.md))
+- **Just... Fast Enough ⚡** — Fast for the common case (fastest pure-Python HTML5 parser available); for terabytes, use a C/Rust parser like `html5ever`. ([Benchmarks](benchmarks/performance.py))
 
 ## Comparison to other parsers
 
@@ -108,13 +90,9 @@ A pure Python HTML5 parser that just works. No C extensions to compile. No syste
 
 ## Why use JustHTML?
 
-[](#why-use-justhtml)
-
-### 1. Just... Correct ✅
-
-[](#1-just-correct-)
-
-### 3. Just... Secure 🔒
+- **Just... Correct ✅** — Spec-perfect HTML5 parsing with browser-grade error recovery — passes the official 9k+ [html5lib-tests](https://github.com/html5lib/html5lib-tests) suite, with 100% line+branch coverage. ([Correctness](/EmilStenstrom/justhtml/blob/main/docs/correctness.md))
+- **Just... Python 🐍** — Pure Python, zero dependencies — no C extensions or system libraries, easy to debug, and works anywhere Python runs (including PyPy and Pyodide). ([Quickstart](/EmilStenstrom/justhtml/blob/main/docs/quickstart.md))
+- **Just... Secure 🔒** — Safe-by-default output for untrusted HTML — built-in Bleach-style allowlist sanitization on `to_html()` / `to_markdown()` (override with `safe=False`), plus URL/CSS rules. ([Sanitization & Security](/EmilStenstrom/justhtml/blob/main/docs/sanitization.md))
 ```
 
 ## Contributing
