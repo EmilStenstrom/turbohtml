@@ -57,7 +57,7 @@ Output:
 ```html
 <p>Hello <b>world</b> <script>alert(1)</script> <a href="javascript:alert(1)">bad</a> <a href="https://example.com/?a=1&amp;b=2">ok</a></p>
 
-Hello **world** alert(1) [bad](javascript:alert(1)) [ok](https://example.com/?a=1&b=2)
+Hello **world** alert(1) [bad](<javascript:alert(1)>) [ok](https://example.com/?a=1&b=2)
 ```
 
 ### Use a custom sanitization policy

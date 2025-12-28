@@ -7,6 +7,7 @@ from justhtml.node import (
     TemplateNode,
     TextNode,
     _markdown_code_span,
+    _markdown_link_destination,
     _MarkdownBuilder,
     _to_markdown_walk,
 )
@@ -190,6 +191,15 @@ class TestNode(unittest.TestCase):
         doc = JustHTML("<p><a>text</a></p>")
         assert doc.to_markdown() == "[text]"
 
+    def test_to_markdown_link_destination_wrapped_when_parentheses(self):
+        doc = JustHTML("<p><a href='https://e.com/a(b)c'>x</a></p>")
+        assert doc.to_markdown() == "[x](<https://e.com/a(b)c>)"
+
+    def test_to_markdown_link_destination_wrapped_when_whitespace(self):
+        # Whitespace in href should not be able to break Markdown formatting.
+        doc = JustHTML("<p><a href='https://e.com/a b'>x</a></p>")
+        assert doc.to_markdown() == "[x](<https://e.com/a%20b>)"
+
     def test_to_markdown_in_link_br_and_paragraph_spacing(self):
         a = SimpleDomNode("a", attrs={"href": "https://e.com"})
         a.append_child(TextNode("A"))
@@ -271,6 +281,11 @@ class TestNode(unittest.TestCase):
         assert _markdown_code_span("x`") == "`` x` ``"
         # Exercise backtick runs that don't increase the longest run.
         assert _markdown_code_span("a`b`") == "`` a`b` ``"
+
+    def test_markdown_link_destination_helper_edge_cases(self):
+        assert _markdown_link_destination("") == ""
+        assert _markdown_link_destination("   ") == ""
+        assert _markdown_link_destination("https://e.com/x") == "https://e.com/x"
 
     def test_to_markdown_pre_rstrips_trailing_spaces_before_newline(self):
         doc = JustHTML("<pre>X   \n</pre>")

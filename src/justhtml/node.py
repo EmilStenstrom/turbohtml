@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from .sanitize import sanitize
 from .selector import query
@@ -43,6 +44,30 @@ def _markdown_code_span(s: str | None) -> str:
     if needs_space:
         return f"{fence} {s} {fence}"
     return f"{fence}{s}{fence}"
+
+
+def _markdown_link_destination(url: str) -> str:
+    """Return a Markdown-safe link destination.
+
+    We primarily care about avoiding Markdown formatting injection and broken
+    parsing for URLs that contain whitespace or parentheses.
+
+    CommonMark supports destinations wrapped in angle brackets:
+    `[text](<https://example.com/a(b)c>)`
+    """
+
+    u = (url or "").strip()
+    if not u:
+        return ""
+
+    # If the destination contains characters that can terminate or confuse
+    # the Markdown destination parser, wrap in <...> and percent-encode
+    # whitespace and angle brackets.
+    if any(ch in u for ch in (" ", "\t", "\n", "\r", "(", ")", "<", ">")):
+        u = quote(u, safe=":/?#[]@!$&'*+,;=%-._~()")
+        return f"<{u}>"
+
+    return u
 
 
 class _MarkdownBuilder:
@@ -746,7 +771,7 @@ def _to_markdown_walk(
         builder.raw("]")
         if href:
             builder.raw("(")
-            builder.raw(href)
+            builder.raw(_markdown_link_destination(href))
             builder.raw(")")
         return
 
