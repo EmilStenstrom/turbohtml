@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .sanitize import DEFAULT_POLICY, sanitize
 from .selector import query
 from .serialize import to_html
 
 if TYPE_CHECKING:
+    from .sanitize import SanitizationPolicy
     from .tokens import Doctype
 
 
@@ -204,9 +206,17 @@ class SimpleDomNode:
             self.children.remove(node)
             node.parent = None
 
-    def to_html(self, indent: int = 0, indent_size: int = 2, pretty: bool = True) -> str:
+    def to_html(
+        self,
+        indent: int = 0,
+        indent_size: int = 2,
+        pretty: bool = True,
+        *,
+        safe: bool = True,
+        policy: SanitizationPolicy | None = None,
+    ) -> str:
         """Convert node to HTML string."""
-        return to_html(self, indent, indent_size, pretty=pretty)
+        return to_html(self, indent, indent_size, pretty=pretty, safe=safe, policy=policy)
 
     def query(self, selector: str) -> list[Any]:
         """
@@ -252,13 +262,19 @@ class SimpleDomNode:
             return ""
         return separator.join(parts)
 
-    def to_markdown(self) -> str:
+    def to_markdown(self, *, safe: bool = True, policy: SanitizationPolicy | None = None) -> str:
         """Return a GitHub Flavored Markdown representation of this subtree.
 
         This is a pragmatic HTML->Markdown converter intended for readability.
         - Tables and images are preserved as raw HTML.
         - Unknown elements fall back to rendering their children.
         """
+        if safe:
+            node = sanitize(self, policy=policy or DEFAULT_POLICY)
+            builder = _MarkdownBuilder()
+            _to_markdown_walk(node, builder, preserve_whitespace=False, list_depth=0)
+            return builder.finish()
+
         builder = _MarkdownBuilder()
         _to_markdown_walk(self, builder, preserve_whitespace=False, list_depth=0)
         return builder.finish()

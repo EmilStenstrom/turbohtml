@@ -78,7 +78,7 @@ print(doc.to_markdown())
 
 Output:
 
-```text
+````html
 # Title
 
 Hello **world** and [links](https://example.com).
@@ -89,7 +89,7 @@ Hello **world** and [links](https://example.com).
 ```
 code block
 ```
-```
+````
 
 ## Which should I use?
 - Use `to_text()` for the raw concatenated text of a subtree (textContent semantics).

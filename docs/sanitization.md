@@ -1,265 +1,248 @@
 [← Back to docs](index.md)
 
-# Sanitization (Design Proposal)
+# Sanitization & Security
 
-> **Warning**
-> This is a future design proposal. JustHTML does **not** currently include a built-in HTML sanitizer, and nothing in this document is implemented yet.
+JustHTML includes a built-in, **policy-driven HTML sanitizer** intended for rendering *untrusted HTML safely*.
 
-This document proposes adding an optional, *rendering-oriented* HTML sanitizer to JustHTML.
+JustHTML’s sanitizer is validated against the [`justhtml-xss-bench`](https://github.com/EmilStenstrom/justhtml-xss-bench) suite (a headless-browser harness), currently covering **7,000+ real-world XSS vectors**. The benchmark can be used to compare output with established sanitizers like `nh3` and `bleach`.
 
-The motivating use case is rendering **untrusted HTML** (e.g., user-generated content, scraped HTML) safely by default, without depending on `html5lib`.
+The sanitizer is **DOM-based** (it runs on the parsed JustHTML tree), and JustHTML is **safe-by-default** when you serialize to HTML or Markdown.
 
-This is a design idea for future work; it is not implemented yet.
+## Quickstart
 
-## Summary
+Most real-world untrusted HTML is a **snippet** (a fragment) rather than a full document. In that case, pass `fragment=True` to avoid implicit document wrappers.
 
-- Add a sanitizer that operates on the parsed JustHTML DOM (not regex/string-based).
-- Provide a conservative, security-focused default policy.
-- Support `<a>` and `<img>` by default (for meaning-preserving scraped content).
-- Keep the scope narrow: **no CSS sanitization** and **no SVG/MathML** in the default policy.
+If you *are* sanitizing a full HTML document, safe serialization keeps the document structure (it preserves `<html>`, `<head>`, and `<body>` wrappers by default).
 
-## Goals
+### Safe-by-default serialization
 
-- Prevent script execution when sanitized output is inserted into an HTML document as markup.
-- Avoid common foot-guns by providing a safe default configuration.
-- Keep sanitization logic small, auditable, and testable.
-- Avoid changes to the HTML5 parsing algorithm and keep tokenizer performance unchanged.
+By default, serialization sanitizes:
+
+```python
+from justhtml import JustHTML
+
+user_html = '<p>Hello <b>world</b> <script>alert(1)</script> <a href="javascript:alert(1)">bad</a> <a href="https://example.com/?a=1&b=2">ok</a></p>'
+doc = JustHTML(user_html, fragment=True)
+
+print(doc.to_html())
+print()
+print(doc.to_markdown())
+```
+
+Output:
+
+```html
+<p>Hello <b>world</b>  <a>bad</a> <a href="https://example.com/?a=1&amp;b=2">ok</a></p>
+
+Hello **world** [bad] [ok](https://example.com/?a=1&b=2)
+```
+
+### Disable sanitization (only for trusted input)
+
+If you have trusted HTML and want raw output:
+
+```python
+from justhtml import JustHTML
+
+user_html = '<p>Hello <b>world</b> <script>alert(1)</script> <a href="javascript:alert(1)">bad</a> <a href="https://example.com/?a=1&b=2">ok</a></p>'
+doc = JustHTML(user_html, fragment=True)
+
+print(doc.to_html(safe=False))
+print()
+print(doc.to_markdown(safe=False))
+```
+
+Output:
+
+```html
+<p>Hello <b>world</b> <script>alert(1)</script> <a href="javascript:alert(1)">bad</a> <a href="https://example.com/?a=1&amp;b=2">ok</a></p>
+
+Hello **world** alert(1) [bad](javascript:alert(1)) [ok](https://example.com/?a=1&b=2)
+```
+
+### Use a custom sanitization policy
+
+```python
+from justhtml import JustHTML, SanitizationPolicy, UrlRule
+
+user_html = '<p>Hello <b>world</b> <script>alert(1)</script> <a href="javascript:alert(1)">bad</a> <a href="https://example.com/?a=1&b=2">ok</a></p>'
+
+policy = SanitizationPolicy(
+		allowed_tags=["p", "b", "a"],
+		allowed_attributes={"*": [], "a": ["href"]},
+		url_rules={
+				("a", "href"): UrlRule(allowed_schemes=["https"]),
+		},
+)
+
+doc = JustHTML(user_html, fragment=True)
+print(doc.to_html(policy=policy))
+```
+
+Output:
+
+```html
+<p>Hello <b>world</b>  <a>bad</a> <a href="https://example.com/?a=1&amp;b=2">ok</a></p>
+```
+
+You can also sanitize a DOM directly:
+
+```python
+from justhtml import JustHTML, sanitize, to_html
+
+user_html = '<p>Hello <b>world</b> <script>alert(1)</script> <a href="javascript:alert(1)">bad</a> <a href="https://example.com/?a=1&b=2">ok</a></p>'
+root = JustHTML(user_html, fragment=True).root
+
+clean_root = sanitize(root)
+print(to_html(clean_root))
+```
+
+Output:
+
+```html
+<p>Hello <b>world</b>  <a>bad</a> <a href="https://example.com/?a=1&amp;b=2">ok</a></p>
+```
+
+## Threat model (what “safe” means)
+
+In scope:
+
+- Preventing script execution when you sanitize untrusted HTML and then embed the result into an HTML document as markup.
+
+Out of scope (you must handle these separately):
+
+- Using sanitized output in JavaScript string contexts, CSS contexts, URL contexts, or other non-HTML contexts.
+- Content security beyond markup execution (e.g. phishing / UI redress).
+- Security policies like CSP, sandboxing, and permissions (still recommended for defense-in-depth).
+
+## Default sanitization policy
+
+The built-in default is `DEFAULT_POLICY` (a conservative allowlist).
+
+High-level behavior:
+
+- Disallowed tags are stripped (their children may be kept) but dangerous containers like `script`/`style` have their content dropped.
+- Comments and doctypes are dropped.
+- Foreign namespaces (SVG/MathML) are dropped.
+- Event handlers (`on*`), `srcdoc`, and namespace-style attributes (anything with `:`) are removed.
+- Inline styles are disabled by default.
+
+Default allowlists:
+
+- Allowed tags: `a`, `img`, common text/structure tags, headings, lists, and tables (`table`, `thead`, `tbody`, `tfoot`, `tr`, `th`, `td`).
+- Allowed attributes:
+	- Global: `class`, `id`, `title`, `lang`, `dir`
+	- `a`: `href`, `title`
+	- `img`: `src`, `alt`, `title`, `width`, `height`, `loading`, `decoding`
+	- `th`/`td`: `colspan`, `rowspan`
+
+Default URL rules:
+
+- `a[href]`: allows `http`, `https`, `mailto`, `tel`, plus relative URLs.
+- `img[src]`: allows relative URLs only.
+- Empty/valueless URL attributes (e.g. `<img src>` / `src=""` / control-only) are dropped.
+
+Example (default image URL behavior):
+
+```python
+from justhtml import JustHTML
+
+print(JustHTML('<img src="https://example.com/x" alt="x">', fragment=True).to_html())
+print(JustHTML('<img src="/x" alt="x">', fragment=True).to_html())
+```
+
+Output:
+
+```html
+<img alt="x">
+<img src="/x" alt="x">
+```
+
+## Proxying URLs (optional)
+
+`UrlRule` can proxy allowed absolute/protocol-relative URLs (for example to centralize tracking protection or enforce allowlists server-side).
+
+```python
+from justhtml import JustHTML, SanitizationPolicy, UrlRule
+
+policy = SanitizationPolicy(
+    allowed_tags=["a"],
+    allowed_attributes={"*": [], "a": ["href"]},
+    url_rules={
+        ("a", "href"): UrlRule(
+            allowed_schemes=["https"],
+            proxy_url="/proxy",
+            proxy_param="url",
+        )
+    },
+)
+
+print(JustHTML('<a href="https://example.com/?a=1&b=2">link</a>').to_html(policy=policy))
+```
+
+Output:
+
+```html
+<a href="/proxy?url=https%3A%2F%2Fexample.com%2F%3Fa%3D1%26b%3D2">link</a>
+```
+
+With proxying enabled, scheme-obfuscation that might be treated as “relative” by the sanitizer but normalized to an absolute URL by a user agent is dropped.
+
+## Inline styles (optional)
+
+Inline styles are disabled by default. To allow them you must:
+
+1) Allow the `style` attribute for the relevant tag via `allowed_attributes`, and
+2) Provide a non-empty allowlist via `allowed_css_properties`.
+
+Even then, JustHTML is conservative: it rejects declarations that look like they can load external resources (such as values containing `url(` or `image-set(`), as well as legacy constructs like `expression(`.
+
+```python
+from justhtml import JustHTML, SanitizationPolicy
+
+policy = SanitizationPolicy(
+		allowed_tags=["p"],
+		allowed_attributes={"*": [], "p": ["style"]},
+		url_rules={},
+		allowed_css_properties={"color", "background-image", "width"},
+)
+
+html = '<p style="color: red; background-image: url(https://evil.test/x); width: expression(alert(1));">Hi</p>'
+print(JustHTML(html).to_html(policy=policy))
+```
+
+Output:
+
+```html
+<p style="color: red">Hi</p>
+```
+
+## Writing a safe custom policy
+
+When expanding the default policy, prefer adding small, explicit allowlists.
+
+Treat these as a separate security review if you plan to allow them:
+
+- `iframe`, `object`, `embed`
+- `meta`, `link`, `base`
+- form elements and submission-related attributes
+- `srcset` (it contains multiple URLs)
+
+## Defense in depth
+
+Sanitization is one layer. For untrusted HTML, additional defenses are often appropriate:
+
+- Content Security Policy (CSP)
+- Sandboxed iframes
+- Serving untrusted content from a separate origin
+
+## Reporting issues
+
+If you find a sanitizer bypass, please report it responsibly (see the project’s contributing/security guidance).
 
 ## Non-goals
 
 - Guarantee safety for all contexts (e.g., JavaScript strings, CSS contexts, URL contexts).
 - Provide a complete browser-grade “content security” solution.
-- Support rich sanitization of inline CSS (style attributes or `<style>`).
+- Support sanitization of `<style>` blocks.
 - Support SVG/MathML sanitization by default.
-
-## Threat Model (What “safe” means)
-
-**In scope**: preventing XSS via untrusted HTML that is sanitized and then embedded into an HTML document as markup.
-
-**Out of scope**:
-- If the sanitized HTML is inserted into a JavaScript string, an attribute context, or a URL context without proper escaping.
-- Network/remote resource concerns beyond markup execution (e.g., tracking pixels). Allowing `<img>` implies remote loads can occur; applications may need additional controls.
-
-## Proposed API
-
-### Option A: Default-on safe mode
-
-```python
-from justhtml import JustHTML
-
-# Default behavior: safe rendering output.
-doc = JustHTML(user_html)  # safe mode by default
-html = doc.to_html()
-```
-
-Add an escape hatch:
-
-```python
-from justhtml import JustHTML
-
-doc = JustHTML(html, safe=False)  # raw parse, no sanitization
-```
-
-### Option B: Explicit modes
-
-```python
-JustHTML(html, mode="safe")
-JustHTML(html, mode="raw")
-JustHTML(html, mode=SanitizerPolicy(...))
-```
-
-### Option C: Separate helper (lowest surprise)
-
-```python
-from justhtml import JustHTML
-from justhtml.sanitize import sanitize
-
-root = JustHTML(html, fragment_context=...).root
-clean_root = sanitize(root)  # returns a sanitized clone
-```
-
-**Tradeoff**:
-- Default-on (A) prevents common mistakes but can surprise users expecting faithful parsing.
-- Separate helper (C) avoids surprise but makes it easy to forget sanitization.
-
-If JustHTML targets rendering untrusted HTML as its primary audience, Option A or B is recommended.
-
-## Design Principles
-
-- **Parse first, sanitize second**: the tokenizer and tree builder remain spec-driven; sanitization is a separate DOM pass.
-- **Allowlist policy**: define what is allowed; remove everything else.
-- **Normalization before validation**: URL scheme checks must occur after normalization (entity decoding + stripping control chars).
-- **Conservative defaults**: small allowlists, strict URL schemes.
-- **No exceptions on hot paths**: sanitizer should use deterministic control flow.
-
-## Default Policy (Proposed)
-
-This is a conservative policy intended for untrusted HTML rendering.
-
-### Allowed namespaces
-
-- HTML only.
-- Drop all elements not in the HTML namespace.
-
-### Allowed tags
-
-Suggested initial set:
-
-- Structure: `p`, `div`, `span`
-- Headings: `h1`…`h6`
-- Lists: `ul`, `ol`, `li`
-- Text formatting: `b`, `strong`, `i`, `em`, `u`, `s`, `sub`, `sup`, `small`, `mark`
-- Quotes/code: `blockquote`, `code`, `pre`
-- Line breaks: `br`, `hr`
-- Links: `a`
-- Images: `img`
-
-Explicitly *not* allowed by default:
-
-- Scripting/embedding: `script`, `iframe`, `object`, `embed`, `applet`
-- Metadata: `base`, `meta`, `link`
-- Forms: `form`, `input`, `button`, `textarea`, `select`, `option`
-- Styling: `style`
-
-### Allowed attributes
-
-- Global: none (initially). Consider allowing `title` globally.
-- `a`: `href`, `title` (and optionally `rel` but sanitizer likely sets/overrides it)
-- `img`: `src`, `alt`, `title`, `width`, `height`, `loading`, `decoding`
-
-Always removed regardless of allowlists:
-
-- Event handlers: any attribute name starting with `on` (case-insensitive)
-- `style`
-- `srcdoc`
-
-### URL-valued attribute rules
-
-Attributes treated as URL-valued (initial):
-
-- `a[href]`
-- `img[src]`
-
-Default allowed schemes:
-
-- `http`, `https`, `mailto` (optionally `tel`)
-
-Additionally allow:
-
-- Relative URLs (no scheme) including `/path`, `./path`, `../path`, `#fragment`, and `?query`.
-
-Disallow by default:
-
-- `javascript:`
-- `data:` (even for images, because it can embed SVG payloads and increases edge-case surface)
-- `file:`, `blob:`, and any unknown scheme
-
-### `srcset`
-
-`srcset` is a common bypass surface because it contains **multiple URLs**.
-
-Two safe options:
-
-- **Drop `srcset` by default** (simple and safe).
-- Or implement a proper `srcset` parser and sanitize each candidate URL; keep only safe candidates.
-
-The default should be “drop unless properly parsed and sanitized”.
-
-## Sanitization Algorithm
-
-Sanitization should operate on the DOM produced by `TreeBuilder`.
-
-Two implementation strategies:
-
-1. **In-place mutation**: walk the existing tree and remove/modify nodes.
-2. **Clone-and-filter**: build a new sanitized tree from the old tree.
-
-Clone-and-filter is often easier to reason about and avoids subtle issues with traversal while mutating.
-
-### Handling disallowed elements
-
-Policy choice:
-
-- **Strip tag, keep children** for most disallowed tags (preserves visible content).
-- **Drop subtree** for explicitly dangerous containers (e.g., `script`, `style`) to avoid carrying their text payload into output.
-
-This should be configurable (like Bleach’s `strip=True/False`) but default behavior should be conservative.
-
-### Comments
-
-Drop `#comment` nodes by default.
-
-### Templates
-
-If templates (`<template>`) are supported, sanitize both:
-
-- the template element’s attributes
-- its `template_content` subtree
-
-## URL Normalization Details
-
-To robustly detect obfuscated schemes:
-
-- Decode character references (numeric/named) in the attribute value.
-- Strip ASCII control characters and whitespace commonly used for obfuscation.
-- Lowercase scheme for comparison.
-
-Then:
-
-- If the normalized value begins with a scheme (`[a-z][a-z0-9+.-]*:`), require it to be in the allowed scheme list.
-- Otherwise treat it as relative/fragment and allow.
-
-If any step fails or yields ambiguity, drop the attribute.
-
-## Optional Features (Explicit Opt-in)
-
-These features increase security scope and should not be part of the default policy.
-
-### CSS sanitization
-
-If inline `style` is ever supported:
-
-- Require an explicit `css_sanitizer` implementation.
-- Use a real CSS parser (e.g., `tinycss2`) and an allowlist of properties.
-- Explicitly sanitize or remove `url(...)` references.
-
-If `style` is allowed but no CSS sanitizer is provided, `style` should be stripped (not passed through).
-
-### SVG/MathML support
-
-SVG/MathML are powerful and have many edge cases.
-
-Default safe policy should drop foreign namespaces entirely.
-
-If support is added later, it should be behind explicit enablement and include a separate allowlist and tests for namespace-ejection patterns.
-
-## Testing Strategy
-
-A sanitizer is only as good as its tests.
-
-Recommended test categories:
-
-- **Tag/attribute stripping**: `<script>`, `onerror`, `onclick`, `srcdoc`, unknown tags.
-- **URL scheme checks**: `javascript:`, `data:`, obfuscated schemes using entities/control chars.
-- **Idempotency**: `sanitize(sanitize(html)) == sanitize(html)`.
-- **Namespace handling**: ensure SVG/MathML are removed under default policy.
-- **`srcset` behavior**: ensure it is dropped (or sanitized correctly if implemented).
-
-Also consider maintaining a small corpus of known XSS payloads (hand-curated) and running them as regression tests.
-
-## Security Reporting / Maintenance
-
-If JustHTML includes a built-in sanitizer (especially default-on), it becomes a security-sensitive feature.
-
-To keep the burden manageable:
-
-- Keep default scope narrow (no CSS, no SVG).
-- Provide a clear SECURITY.md with disclosure instructions and response expectations.
-- Be explicit about non-goals and safe usage contexts.
-
-## Open Questions
-
-- Should safe mode be default-on (`safe=True`) or explicit (`mode="safe"`)?
-- Should relative URLs be allowed by default (likely yes for scraped content)?
-- Should `data:` ever be supported for images under opt-in (e.g., allow only `data:image/png|jpeg|gif|webp` and still disallow SVG)?
-- Should sanitized output automatically enforce `rel="nofollow ugc"` on links?

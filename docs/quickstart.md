@@ -19,6 +19,25 @@ html = "<html><body><div id='main'><p>Hello, <b>world</b>!</p></div></body></htm
 doc = JustHTML(html)
 ```
 
+## HTML Snippets (Fragments)
+
+If your input is an HTML **snippet** (like user generated content from a WYSIWYG editor), you usually want fragment parsing to avoid implicit `<html>`, `<head>`, and `<body>` insertion:
+
+```python
+from justhtml import JustHTML
+
+snippet = "<p>Hello <b>world</b></p>"
+doc = JustHTML(snippet, fragment=True)
+
+print(doc.to_html())
+```
+
+Output:
+
+```html
+<p>Hello <b>world</b></p>
+```
+
 ## Parsing Bytes (Encoding Sniffing)
 
 If you pass bytes (for example from a file), JustHTML decodes them using HTML encoding sniffing. If no encoding is found, it falls back to `windows-1252` for browser compatibility.
@@ -39,16 +58,21 @@ See [Encoding & Byte Input](encoding.md) for details and how to override with `e
 The parser returns a tree of `SimpleDomNode` objects:
 
 ```python
+from justhtml import JustHTML
+
+html = "<html><body><div id='main'><p>Hello, <b>world</b>!</p></div></body></html>"
+doc = JustHTML(html)
+
 root = doc.root              # #document
 html_node = root.children[0] # <html>
 body = html_node.children[1] # <body> (children[0] is <head>)
 div = body.children[0]       # <div>
 
 # Each node has:
-print(div.name)       # "div"
-print(div.attrs)      # {"id": "main"}
-print(div.children)   # [<p> node]
-print(div.parent)     # <body> node
+print(div.name)                                # "div"
+print(div.attrs)                               # {"id": "main"}
+print([child.name for child in div.children])  # ['p']
+print(div.parent.name)                         # body
 ```
 
 ## Querying with CSS Selectors
@@ -74,15 +98,21 @@ headings = doc.query("h1, h2, h3")
 Convert any node back to HTML:
 
 ```python
-print(div.to_html())
-# Output:
-# <div id="main">
-#   <p>
-#     Hello,
-#     <b>world</b>
-#     !
-#   </p>
-# </div>
+from justhtml import JustHTML
+
+html = "<html><body><div id='main'><p>Hello, <b>world</b>!</p></div></body></html>"
+doc = JustHTML(html)
+div = doc.query("#main")[0]
+
+print(div.to_html(indent_size=4))
+```
+
+Output:
+
+```html
+<div id="main">
+    <p>Hello, <b>world</b>!</p>
+</div>
 ```
 
 ## Strict Mode
@@ -90,17 +120,26 @@ print(div.to_html())
 Reject malformed HTML instead of silently fixing it:
 
 ```python
-from justhtml import JustHTML, StrictModeError
+from justhtml import JustHTML
 
-try:
-    doc = JustHTML("<html><p>Unclosed", strict=True)
-except StrictModeError as e:
-    print(e)
-# Output (Python 3.11+):
-#   File "<html>", line 1
-#     <html><p>Unclosed
-#                      ^
-# StrictModeError: Expected closing tag </p> but reached end of file
+JustHTML("<!doctype html><p></div>", strict=True)  # doctest: skip
+```
+
+Output:
+
+```text
+Traceback (most recent call last):
+    File "snippet.py", line 3, in <module>
+        JustHTML("<!doctype html><p></div>", strict=True)
+        ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+    File "parser.py", line 127, in __init__
+        raise StrictModeError(self.errors[0])
+
+    File "<html>", line 1
+        <!doctype html><p></div>
+                          ^^^^^^
+justhtml.parser.StrictModeError: Unexpected </div> end tag
 ```
 
 ## Streaming API
@@ -110,6 +149,8 @@ For large files or when you don't need the full DOM:
 ```python
 from justhtml import stream
 
+html = "<p>Hello</p><p>world</p>"
+
 for event, data in stream(html):
     if event == "start":
         tag, attrs = data
@@ -118,6 +159,17 @@ for event, data in stream(html):
         print(f"Text: {data}")
     elif event == "end":
         print(f"End: {data}")
+```
+
+Output:
+
+```html
+Start: p
+Text: Hello
+End: p
+Start: p
+Text: world
+End: p
 ```
 
 ## Next Steps

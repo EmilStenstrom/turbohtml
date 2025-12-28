@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from .constants import FOREIGN_ATTRIBUTE_ADJUSTMENTS, SPECIAL_ELEMENTS, VOID_ELEMENTS
+from .sanitize import DEFAULT_DOCUMENT_POLICY, DEFAULT_POLICY, SanitizationPolicy, sanitize
 
 
 def _escape_text(text: str | None) -> str:
@@ -16,7 +17,9 @@ def _escape_text(text: str | None) -> str:
     return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _choose_attr_quote(value: str | None) -> str:
+def _choose_attr_quote(value: str | None, forced_quote_char: str | None = None) -> str:
+    if forced_quote_char in {'"', "'"}:
+        return forced_quote_char
     if value is None:
         return '"'
     value = str(value)
@@ -25,11 +28,13 @@ def _choose_attr_quote(value: str | None) -> str:
     return '"'
 
 
-def _escape_attr_value(value: str | None, quote_char: str) -> str:
+def _escape_attr_value(value: str | None, quote_char: str, *, escape_lt_in_attrs: bool = False) -> str:
     if value is None:
         return ""
     value = str(value)
     value = value.replace("&", "&amp;")
+    if escape_lt_in_attrs:
+        value = value.replace("<", "&lt;")
     # Note: html5lib's default serializer does not escape '>' in attrs.
     if quote_char == '"':
         return value.replace('"', "&quot;")
@@ -40,8 +45,6 @@ def _can_unquote_attr_value(value: str | None) -> bool:
     if value is None:
         return False
     value = str(value)
-    # html5lib's serializer unquotes aggressively; match fixture expectations.
-    # Disallow whitespace and characters that would terminate/ambiguate the value.
     for ch in value:
         if ch == ">":
             return False
@@ -52,22 +55,56 @@ def _can_unquote_attr_value(value: str | None) -> bool:
     return True
 
 
-def serialize_start_tag(name: str, attrs: dict[str, str | None] | None) -> str:
+def _serializer_minimize_attr_value(name: str, value: str | None, minimize_boolean_attributes: bool) -> bool:
+    if not minimize_boolean_attributes:
+        return False
+    if value is None or value == "":
+        return True
+    return str(value).lower() == str(name).lower()
+
+
+def serialize_start_tag(
+    name: str,
+    attrs: dict[str, str | None] | None,
+    *,
+    quote_attr_values: bool = True,
+    minimize_boolean_attributes: bool = True,
+    quote_char: str | None = None,
+    escape_lt_in_attrs: bool = False,
+    use_trailing_solidus: bool = False,
+    is_void: bool = False,
+) -> str:
     attrs = attrs or {}
     parts: list[str] = ["<", name]
     if attrs:
         for key, value in attrs.items():
-            if value is None or value == "":
+            if _serializer_minimize_attr_value(key, value, minimize_boolean_attributes):
                 parts.extend([" ", key])
+                continue
+
+            if value is None:
+                parts.extend([" ", key, '=""'])
+                continue
+
+            value_str = str(value)
+            if value_str == "":
+                parts.extend([" ", key, '=""'])
+                continue
+
+            if not quote_attr_values and _can_unquote_attr_value(value_str):
+                escaped = value_str.replace("&", "&amp;")
+                if escape_lt_in_attrs:
+                    escaped = escaped.replace("<", "&lt;")
+                parts.extend([" ", key, "=", escaped])
             else:
-                if _can_unquote_attr_value(value):
-                    escaped = str(value).replace("&", "&amp;")
-                    parts.extend([" ", key, "=", escaped])
-                else:
-                    quote = _choose_attr_quote(value)
-                    escaped = _escape_attr_value(value, quote)
-                    parts.extend([" ", key, "=", quote, escaped, quote])
-    parts.append(">")
+                quote = _choose_attr_quote(value_str, quote_char)
+                escaped = _escape_attr_value(value_str, quote, escape_lt_in_attrs=escape_lt_in_attrs)
+                parts.extend([" ", key, "=", quote, escaped, quote])
+
+    if use_trailing_solidus and is_void:
+        parts.append(" />")
+    else:
+        parts.append(">")
     return "".join(parts)
 
 
@@ -75,8 +112,21 @@ def serialize_end_tag(name: str) -> str:
     return f"</{name}>"
 
 
-def to_html(node: Any, indent: int = 0, indent_size: int = 2, *, pretty: bool = True) -> str:
+def to_html(
+    node: Any,
+    indent: int = 0,
+    indent_size: int = 2,
+    *,
+    pretty: bool = True,
+    safe: bool = True,
+    policy: SanitizationPolicy | None = None,
+) -> str:
     """Convert node to HTML string."""
+    if safe:
+        if policy is None and node.name == "#document":
+            node = sanitize(node, policy=DEFAULT_DOCUMENT_POLICY)
+        else:
+            node = sanitize(node, policy=policy or DEFAULT_POLICY)
     if node.name == "#document":
         # Document root - just render children
         parts: list[str] = []
@@ -165,7 +215,11 @@ def _node_to_html(node: Any, indent: int = 0, indent_size: int = 2, pretty: bool
         return f"{prefix}{open_tag}"
 
     # Elements with children
-    children: list[Any] = node.children or []
+    # Template special handling: HTML templates store contents in `template_content`.
+    if name == "template" and node.namespace in {None, "html"} and node.template_content:
+        children: list[Any] = node.template_content.children or []
+    else:
+        children = node.children or []
     if not children:
         return f"{prefix}{open_tag}{serialize_end_tag(name)}"
 

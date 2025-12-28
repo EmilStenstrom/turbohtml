@@ -15,7 +15,7 @@ from justhtml import JustHTML
 ### Constructor
 
 ```python
-JustHTML(html, strict=False, collect_errors=False, encoding=None, fragment_context=None)
+JustHTML(html, strict=False, collect_errors=False, encoding=None, fragment=False, fragment_context=None)
 ```
 
 | Parameter | Type | Default | Description |
@@ -24,6 +24,7 @@ JustHTML(html, strict=False, collect_errors=False, encoding=None, fragment_conte
 | `strict` | `bool` | `False` | Raise `StrictModeError` on the earliest parse error by source position |
 | `collect_errors` | `bool` | `False` | Collect all parse errors (enables `errors` property) |
 | `encoding` | `str \| None` | `None` | Transport-supplied encoding label used as an override for byte input. See [Encoding & Byte Input](encoding.md). |
+| `fragment` | `bool` | `False` | Parse as a fragment in a default `<div>` context (convenience). |
 | `fragment_context` | `FragmentContext` | `None` | Parse as fragment inside this context element |
 
 ### Properties
@@ -60,6 +61,11 @@ doc = JustHTML("<h1>Title</h1><p>Hello <b>world</b></p>")
 doc.to_markdown()  # "# Title\n\nHello **world**"
 ```
 
+Sanitization:
+
+- By default, `to_markdown()` sanitizes untrusted HTML before converting.
+- To disable sanitization for trusted input, pass `safe=False`.
+
 #### `query(selector)`
 
 Find all elements matching a CSS selector.
@@ -91,9 +97,11 @@ Represents an element, text, comment, or document node.
 Serialize the node to HTML string.
 
 ```python
-node.to_html()           # Pretty-printed with 2-space indent
-node.to_html(indent=0)   # Compact, no indentation
-node.to_html(indent=4)   # 4-space indent
+node.to_html()                 # Pretty-printed + sanitized (default)
+node.to_html(indent=0)         # Compact + sanitized
+node.to_html(indent=4)         # 4-space indent + sanitized
+node.to_html(safe=False)       # Raw output (trusted input only)
+node.to_html(policy=...)       # Use a custom SanitizationPolicy
 ```
 
 #### `query(selector)`
@@ -119,6 +127,50 @@ Return a pragmatic subset of GitHub Flavored Markdown (GFM) for this subtree.
 ```python
 node.to_markdown()
 ```
+
+Like `to_html()`, Markdown output is sanitized by default. Use `safe=False` to disable.
+
+---
+
+## Sanitization
+
+JustHTML includes a built-in, policy-driven HTML sanitizer.
+
+```python
+from justhtml import DEFAULT_POLICY, SanitizationPolicy, UrlRule, sanitize
+```
+
+### `sanitize(node, policy=None)`
+
+Sanitize a node (usually a document or fragment root) and return a **sanitized clone**.
+
+If `policy` is omitted:
+
+- Full documents (`#document`) use `DEFAULT_DOCUMENT_POLICY`.
+- Fragments and element roots use `DEFAULT_POLICY`.
+
+```python
+from justhtml import JustHTML, sanitize
+
+root = JustHTML(user_html).root
+clean_root = sanitize(root)
+```
+
+### `DEFAULT_POLICY`
+
+Conservative built-in policy used for safe-by-default output.
+
+### `DEFAULT_DOCUMENT_POLICY`
+
+Conservative built-in policy used when sanitizing full documents (preserves `<html>`, `<head>`, and `<body>` wrappers).
+
+### `SanitizationPolicy`
+
+Defines allowlists for tags and attributes, URL validation rules, and optional inline-style allowlisting.
+
+### `UrlRule`
+
+Controls how URL-valued attributes like `a[href]` and `img[src]` are validated, and optionally proxied.
 
 ---
 

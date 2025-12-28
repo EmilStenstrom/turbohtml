@@ -1,6 +1,7 @@
 import unittest
 
 from justhtml import JustHTML
+from justhtml.context import FragmentContext
 from justhtml.serialize import (
     _can_unquote_attr_value,
     _choose_attr_quote,
@@ -19,31 +20,54 @@ class TestSerialize(unittest.TestCase):
     def test_basic_document(self):
         html = "<!DOCTYPE html><html><head><title>Test</title></head><body><p>Hello</p></body></html>"
         doc = JustHTML(html)
-        output = doc.root.to_html()
+        output = doc.root.to_html(safe=False)
         assert "<!DOCTYPE html>" in output
         assert "<title>Test</title>" in output
         assert "<p>Hello</p>" in output
 
+    def test_safe_document_serialization_preserves_document_wrappers(self):
+        doc = JustHTML("<p>Hi</p>")
+        output = doc.to_html(pretty=False)
+        assert output == "<html><head></head><body><p>Hi</p></body></html>"
+
+    def test_fragment_parameter_default_context(self):
+        doc = JustHTML("<p>Hi</p>", fragment=True)
+        assert doc.root.name == "#document-fragment"
+
+        output = doc.to_html(pretty=False, safe=False)
+        assert "<html>" not in output
+        assert output == "<p>Hi</p>"
+
+    def test_fragment_parameter_respects_explicit_fragment_context(self):
+        # <tr> only parses correctly in table-related fragment contexts.
+        doc = JustHTML(
+            "<tr><td>cell</td></tr>",
+            fragment=True,
+            fragment_context=FragmentContext("tbody"),
+        )
+        output = doc.to_html(pretty=False, safe=False)
+        assert output == "<tr><td>cell</td></tr>"
+
     def test_attributes(self):
         html = '<div id="test" class="foo" data-val="x&y"></div>'
         doc = JustHTML(html)
-        output = doc.root.to_html()
-        assert ("id=test" in output) or ('id="test"' in output)
-        assert ("class=foo" in output) or ('class="foo"' in output)
-        assert ("data-val=x&amp;y" in output) or ('data-val="x&amp;y"' in output)  # Check escaping
+        output = doc.root.to_html(safe=False)
+        assert 'id="test"' in output
+        assert 'class="foo"' in output
+        assert 'data-val="x&amp;y"' in output  # Check escaping
 
     def test_text_escaping(self):
         frag = Node("#document-fragment")
         div = Node("div")
         frag.append_child(div)
         div.append_child(Node("#text", data="a<b&c"))
-        output = to_html(frag, pretty=False)
+        output = to_html(frag, pretty=False, safe=False)
         assert output == "<div>a&lt;b&amp;c</div>"
 
     def test_void_elements(self):
         html = "<br><hr><img>"
         doc = JustHTML(html)
-        output = doc.root.to_html()
+        output = doc.root.to_html(safe=False)
         assert "<br>" in output
         assert "<hr>" in output
         assert "<img>" in output
@@ -52,7 +76,7 @@ class TestSerialize(unittest.TestCase):
     def test_comments(self):
         html = "<!-- hello world -->"
         doc = JustHTML(html)
-        output = doc.root.to_html()
+        output = doc.root.to_html(safe=False)
         assert "<!-- hello world -->" in output
 
     def test_document_fragment(self):
@@ -60,20 +84,20 @@ class TestSerialize(unittest.TestCase):
         frag = Node("#document-fragment")
         child = Node("div")
         frag.append_child(child)
-        output = to_html(frag)
+        output = to_html(frag, safe=False)
         assert "<div></div>" in output
 
     def test_text_only_children(self):
         html = "<div>Text only</div>"
         doc = JustHTML(html)
-        output = doc.root.to_html()
+        output = doc.root.to_html(safe=False)
         assert "<div>Text only</div>" in output
 
     def test_mixed_children(self):
         html = "<div>Text <span>Span</span></div>"
         doc = JustHTML(html)
         div = doc.query("div")[0]
-        output = div.to_html(pretty=True)
+        output = div.to_html(pretty=True, safe=False)
         assert output == "<div>Text <span>Span</span></div>"
 
     def test_pretty_print_does_not_insert_spaces_in_inline_mixed_content(self):
@@ -90,7 +114,7 @@ class TestSerialize(unittest.TestCase):
         doc = JustHTML(html)
         code = doc.query("code")[0]
 
-        pretty_html = code.to_html(pretty=True)
+        pretty_html = code.to_html(pretty=True, safe=False)
         assert "</span>(<span" in pretty_html
 
         rendered_text = JustHTML(pretty_html).to_text(separator="", strip=False)
@@ -99,20 +123,20 @@ class TestSerialize(unittest.TestCase):
     def test_empty_attributes(self):
         html = "<input disabled>"
         doc = JustHTML(html)
-        output = doc.root.to_html()
+        output = doc.root.to_html(safe=False)
         assert "<input disabled>" in output
 
     def test_none_attributes(self):
         # Manually create node with None attribute value
         node = Node("div")
         node.attrs = {"data-test": None}
-        output = to_html(node)
+        output = to_html(node, safe=False)
         assert "<div data-test></div>" in output
 
     def test_empty_string_attribute(self):
         html = '<div data-val=""></div>'
         doc = JustHTML(html)
-        output = doc.root.to_html()
+        output = doc.root.to_html(safe=False)
         assert "<div data-val></div>" in output
 
     def test_serialize_start_tag_quotes(self):
@@ -124,12 +148,31 @@ class TestSerialize(unittest.TestCase):
         tag = serialize_start_tag("span", {"title": "foo'bar\"baz"})
         assert tag == '<span title="foo\'bar&quot;baz">'
 
-        # Unquoted when safe
-        assert serialize_start_tag("span", {"title": "foo"}) == "<span title=foo>"
-        assert _can_unquote_attr_value("foo<bar") is True
-        assert _can_unquote_attr_value("foo>bar") is False
-        assert _can_unquote_attr_value('foo"bar') is False
-        assert _can_unquote_attr_value("foo bar") is False
+        # Always quote normal attribute values
+        assert serialize_start_tag("span", {"title": "foo"}) == '<span title="foo">'
+
+    def test_serialize_start_tag_unquoted_mode_and_escape_lt(self):
+        # In unquoted mode, escape '&' always and optionally '<' when configured.
+        assert (
+            serialize_start_tag(
+                "span",
+                {"title": "a<b&c"},
+                quote_attr_values=False,
+                escape_lt_in_attrs=True,
+            )
+            == "<span title=a&lt;b&amp;c>"
+        )
+
+    def test_serialize_start_tag_none_attr_non_minimized(self):
+        # When boolean minimization is disabled, None becomes an explicit empty value.
+        assert (
+            serialize_start_tag(
+                "span",
+                {"disabled": None},
+                minimize_boolean_attributes=False,
+            )
+            == '<span disabled="">'
+        )
 
     def test_serialize_end_tag(self):
         assert serialize_end_tag("span") == "</span>"
@@ -138,12 +181,14 @@ class TestSerialize(unittest.TestCase):
         assert _escape_text(None) == ""
         assert _choose_attr_quote(None) == '"'
         assert _escape_attr_value(None, '"') == ""
+
+        # Covered for branch completeness: unquote check rejects None.
         assert _can_unquote_attr_value(None) is False
 
     def test_mixed_content_whitespace(self):
         html = "<div>   <p></p></div>"
         doc = JustHTML(html)
-        output = doc.root.to_html()
+        output = doc.root.to_html(safe=False)
         assert "<div>" in output
         assert "<p></p>" in output
 
@@ -152,20 +197,20 @@ class TestSerialize(unittest.TestCase):
         div.append_child(Node("#text", data="\n  "))
         div.append_child(Node("p"))
         div.append_child(Node("#text", data="\n"))
-        output = div.to_html(pretty=True)
+        output = div.to_html(pretty=True, safe=False)
         assert output == "<div>\n  <p></p>\n</div>"
 
     def test_pretty_indent_children_does_not_indent_inline_elements(self):
         div = Node("div")
         div.append_child(Node("span"))
-        output = div.to_html(pretty=True)
+        output = div.to_html(pretty=True, safe=False)
         assert output == "<div><span></span></div>"
 
     def test_pretty_indent_children_does_not_indent_comments(self):
         div = Node("div")
         div.append_child(Node("#comment", data="x"))
         div.append_child(Node("p"))
-        output = div.to_html(pretty=True)
+        output = div.to_html(pretty=True, safe=False)
         assert output == "<div><!--x--><p></p></div>"
 
     def test_whitespace_in_fragment(self):
@@ -173,26 +218,26 @@ class TestSerialize(unittest.TestCase):
         # SimpleDomNode constructor: name, attrs=None, data=None, namespace=None
         text_node = Node("#text", data="   ")
         frag.append_child(text_node)
-        output = to_html(frag)
+        output = to_html(frag, safe=False)
         assert output == ""
 
     def test_text_node_pretty_strips_and_renders(self):
         frag = Node("#document-fragment")
         frag.append_child(Node("#text", data="  hi  "))
-        output = to_html(frag, pretty=True)
+        output = to_html(frag, pretty=True, safe=False)
         assert output == "hi"
 
     def test_empty_text_node_is_dropped_when_not_pretty(self):
         div = Node("div")
         div.append_child(Node("#text", data=""))
-        output = to_html(div, pretty=False)
+        output = to_html(div, pretty=False, safe=False)
         assert output == "<div></div>"
 
     def test_element_with_nested_children(self):
         # Test serialize.py line 82->86: all_text branch when NOT all text
         html = "<div><span>inner</span></div>"
         doc = JustHTML(html)
-        output = doc.root.to_html()
+        output = doc.root.to_html(safe=False)
         assert "<div>" in output
         assert "<span>inner</span>" in output
         assert "</div>" in output
@@ -202,7 +247,7 @@ class TestSerialize(unittest.TestCase):
         node = Node("div")
         text_node = Node("#text", data="hello")
         node.append_child(text_node)
-        output = to_html(node)
+        output = to_html(node, safe=False)
         assert output == "<div>hello</div>"
 
     def test_to_test_format_single_element(self):

@@ -1,0 +1,498 @@
+[
+  {
+    "name": "default_drops_comment_doctype_and_script",
+    "policy": "DEFAULT",
+    "parse": "document",
+    "input_html": "<!DOCTYPE html><!--x--><p>ok</p><script>alert(1)</script>",
+    "expected_html": "<p>ok</p>"
+  },
+  {
+    "name": "keep_comment_and_doctype_when_configured",
+    "policy": {
+      "allowed_tags": ["p"],
+      "allowed_attributes": {"*": [], "p": []},
+      "url_rules": [],
+      "drop_comments": false,
+      "drop_doctype": false,
+      "strip_disallowed_tags": true
+    },
+    "parse": "document",
+    "input_html": "<!DOCTYPE html><!--x--><p>ok</p>",
+    "expected_html": "<!DOCTYPE html><!--x--><p>ok</p>"
+  },
+  {
+    "name": "strip_disallowed_tag_keeps_children",
+    "policy": {
+      "allowed_tags": ["div"],
+      "allowed_attributes": {"*": [], "div": []},
+      "url_rules": [],
+      "strip_disallowed_tags": true
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<span>x</span>",
+    "expected_html": "x"
+  },
+  {
+    "name": "drop_disallowed_subtree_when_strip_false",
+    "policy": {
+      "allowed_tags": ["div"],
+      "allowed_attributes": {"*": [], "div": []},
+      "url_rules": [],
+      "strip_disallowed_tags": false
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<span>x</span>",
+    "expected_html": ""
+  },
+  {
+    "name": "attribute_filtering_drops_on_srcdoc_and_colon",
+    "policy": {
+      "allowed_tags": ["div"],
+      "allowed_attributes": {"*": ["id"], "div": ["title"]},
+      "url_rules": []
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<div id=x onclick=alert(1) srcdoc='<p>p</p>' x:y=z title=t></div>",
+    "expected_html": "<div id=\"x\" title=\"t\"></div>"
+  },
+  {
+    "name": "attribute_not_in_allowlist_is_dropped",
+    "policy": {
+      "allowed_tags": ["div"],
+      "allowed_attributes": {"*": [], "div": []},
+      "url_rules": []
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<div class=x></div>",
+    "expected_html": "<div></div>"
+  },
+  {
+    "name": "inline_style_sanitization_allows_selected_properties",
+    "policy": {
+      "allowed_tags": ["div"],
+      "allowed_attributes": {"*": [], "div": ["style"]},
+      "url_rules": [],
+      "allowed_css_properties": ["color", "border"]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<div style='color: red; position: absolute; BORDER: 1px solid red; ; invalid'></div>",
+    "expected_html": "<div style=\"color: red; border: 1px solid red\"></div>"
+  },
+  {
+    "name": "inline_style_is_dropped_when_allowlist_empty",
+    "policy": {
+      "allowed_tags": ["div"],
+      "allowed_attributes": {"*": [], "div": ["style"]},
+      "url_rules": [],
+      "allowed_css_properties": []
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<div style='color: red'></div>",
+    "expected_html": "<div></div>"
+  },
+  {
+    "name": "inline_style_drops_resource_loading_url_function",
+    "policy": {
+      "allowed_tags": ["div"],
+      "allowed_attributes": {"*": [], "div": ["style"]},
+      "url_rules": [],
+      "allowed_css_properties": ["background-image", "color"]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<div style='background-image: url(https://evil.example/x); color: red'></div>",
+    "expected_html": "<div style=\"color: red\"></div>"
+  },
+  {
+    "name": "inline_style_drops_resource_loading_obfuscated_url_function",
+    "policy": {
+      "allowed_tags": ["div"],
+      "allowed_attributes": {"*": [], "div": ["style"]},
+      "url_rules": [],
+      "allowed_css_properties": ["background-image", "color"]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<div style='background-image: u\\72l(https://evil.example/x); color: red'></div>",
+    "expected_html": "<div style=\"color: red\"></div>"
+  },
+  {
+    "name": "inline_style_drops_expression_even_when_allowlisted",
+    "policy": {
+      "allowed_tags": ["div"],
+      "allowed_attributes": {"*": [], "div": ["style"]},
+      "url_rules": [],
+      "allowed_css_properties": ["width", "color"]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<div style='width: expression(alert(1)); color: red'></div>",
+    "expected_html": "<div style=\"color: red\"></div>"
+  },
+  {
+    "name": "img_valueless_src_is_dropped",
+    "policy": {
+      "allowed_tags": ["img"],
+      "allowed_attributes": {"*": [], "img": ["src"]},
+      "url_rules": [
+        {"tag": "img", "attr": "src", "allowed_schemes": [], "allow_relative": true, "allow_fragment": false}
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<img/src/onerror=prompt(8)>",
+    "expected_html": "<img>"
+  },
+  {
+    "name": "url_rules_drop_javascript_and_force_rel",
+    "policy": {
+      "allowed_tags": ["a"],
+      "allowed_attributes": {"*": [], "a": ["href"]},
+      "url_rules": [
+        {"tag": "a", "attr": "href", "allowed_schemes": ["https"], "allow_relative": true, "allow_fragment": true}
+      ],
+      "force_link_rel": ["noopener", "noreferrer"]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<a href='javascript:alert(1)' rel='nofollow'>x</a><a href='https://example.com'>y</a>",
+    "expected_html": "<a rel=\"nofollow noopener noreferrer\">x</a><a href=\"https://example.com\" rel=\"noopener noreferrer\">y</a>"
+  },
+  {
+    "name": "url_rules_proxy_absolute_https_img_src",
+    "policy": {
+      "allowed_tags": ["img"],
+      "allowed_attributes": {"*": [], "img": ["src"]},
+      "url_rules": [
+        {"tag": "img", "attr": "src", "allowed_schemes": ["https"], "proxy_url": "/proxy"}
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<img src='https://google.com'>",
+    "expected_html": "<img src=\"/proxy?url=https%3A%2F%2Fgoogle.com\">"
+  },
+  {
+    "name": "url_rules_proxy_absolute_https_existing_query_img_src",
+    "policy": {
+      "allowed_tags": ["img"],
+      "allowed_attributes": {"*": [], "img": ["src"]},
+      "url_rules": [
+        {"tag": "img", "attr": "src", "allowed_schemes": ["https"], "proxy_url": "/proxy?x=1"}
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<img src='https://google.com'>",
+    "expected_html": "<img src=\"/proxy?x=1&amp;url=https%3A%2F%2Fgoogle.com\">"
+  },
+  {
+    "name": "url_rules_proxy_allows_relative_without_colon",
+    "policy": {
+      "allowed_tags": ["img"],
+      "allowed_attributes": {"*": [], "img": ["src"]},
+      "url_rules": [
+        {
+          "tag": "img",
+          "attr": "src",
+          "allowed_schemes": ["https"],
+          "proxy_url": "/proxy",
+          "allow_relative": true
+        }
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<img src='noscheme'>",
+    "expected_html": "<img src=\"noscheme\">"
+  },
+  {
+    "name": "url_rules_proxy_allows_relative_colon_in_path",
+    "policy": {
+      "allowed_tags": ["img"],
+      "allowed_attributes": {"*": [], "img": ["src"]},
+      "url_rules": [
+        {
+          "tag": "img",
+          "attr": "src",
+          "allowed_schemes": ["https"],
+          "proxy_url": "/proxy",
+          "allow_relative": true
+        }
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<img src='/path:foo'>",
+    "expected_html": "<img src=\"/path:foo\">"
+  },
+  {
+    "name": "url_rules_proxy_blocks_scheme_obfuscation_backslash",
+    "policy": {
+      "allowed_tags": ["img"],
+      "allowed_attributes": {"*": [], "img": ["src"]},
+      "url_rules": [
+        {
+          "tag": "img",
+          "attr": "src",
+          "allowed_schemes": ["https"],
+          "proxy_url": "/proxy",
+          "allow_relative": true
+        }
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<img src='https\\://google.com'>",
+    "expected_html": "<img>"
+  },
+  {
+    "name": "rel_deduplicates_tokens",
+    "policy": {
+      "allowed_tags": ["a"],
+      "allowed_attributes": {"*": [], "a": ["rel"]},
+      "url_rules": [],
+      "force_link_rel": ["noopener"]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<a rel='noopener noopener'></a>",
+    "expected_html": "<a rel=\"noopener\"></a>"
+  },
+  {
+    "name": "url_rules_disallow_fragment_and_relative",
+    "policy": {
+      "allowed_tags": ["a"],
+      "allowed_attributes": {"*": [], "a": ["href"]},
+      "url_rules": [
+        {"tag": "a", "attr": "href", "allowed_schemes": ["https"], "allow_relative": false, "allow_fragment": false}
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<a href='#frag'></a><a href='/rel'></a><a href='https://ok'></a>",
+    "expected_html": "<a></a><a></a><a href=\"https://ok\"></a>"
+  },
+  {
+    "name": "empty_url_value_dropped_when_allow_relative_false",
+    "policy": {
+      "allowed_tags": ["a"],
+      "allowed_attributes": {"*": [], "a": ["href"]},
+      "url_rules": [
+        {"tag": "a", "attr": "href", "allowed_schemes": ["https"], "allow_relative": false}
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<a href=' \t\n'></a>",
+    "expected_html": "<a></a>"
+  },
+  {
+    "name": "protocol_relative_disallowed",
+    "policy": {
+      "allowed_tags": ["a"],
+      "allowed_attributes": {"*": [], "a": ["href"]},
+      "url_rules": [
+        {"tag": "a", "attr": "href", "allowed_schemes": ["https"], "allow_protocol_relative": false}
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<a href='//example.com/path'></a>",
+    "expected_html": "<a></a>"
+  },
+  {
+    "name": "protocol_relative_allowed_hosts",
+    "policy": {
+      "allowed_tags": ["a"],
+      "allowed_attributes": {"*": [], "a": ["href"]},
+      "url_rules": [
+        {
+          "tag": "a",
+          "attr": "href",
+          "allowed_schemes": ["https"],
+          "allow_protocol_relative": true,
+          "allowed_hosts": ["example.com"]
+        }
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<a href='//example.com/path'></a><a href='//evil.com/path'></a>",
+    "expected_html": "<a href=\"//example.com/path\"></a><a></a>"
+  },
+  {
+    "name": "protocol_relative_allowed_when_allowed_hosts_null",
+    "policy": {
+      "allowed_tags": ["a"],
+      "allowed_attributes": {"*": [], "a": ["href"]},
+      "url_rules": [
+        {
+          "tag": "a",
+          "attr": "href",
+          "allowed_schemes": ["https"],
+          "allow_protocol_relative": true,
+          "allowed_hosts": null
+        }
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<a href='//any.example/path'></a>",
+    "expected_html": "<a href=\"//any.example/path\"></a>"
+  },
+  {
+    "name": "absolute_allowed_hosts_allows",
+    "policy": {
+      "allowed_tags": ["a"],
+      "allowed_attributes": {"*": [], "a": ["href"]},
+      "url_rules": [
+        {"tag": "a", "attr": "href", "allowed_schemes": ["https"], "allowed_hosts": ["example.com"]}
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<a href='https://example.com/x'></a>",
+    "expected_html": "<a href=\"https://example.com/x\"></a>"
+  },
+  {
+    "name": "absolute_allowed_hosts_blocks",
+    "policy": {
+      "allowed_tags": ["a"],
+      "allowed_attributes": {"*": [], "a": ["href"]},
+      "url_rules": [
+        {"tag": "a", "attr": "href", "allowed_schemes": ["https"], "allowed_hosts": ["example.com"]}
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<a href='https://evil.com'></a>",
+    "expected_html": "<a></a>"
+  },
+  {
+    "name": "url_filter_drop_and_rewrite",
+    "policy": {
+      "allowed_tags": ["a"],
+      "allowed_attributes": {"*": [], "a": ["href"]},
+      "url_rules": [
+        {"tag": "a", "attr": "href", "allowed_schemes": ["https"]}
+      ],
+      "url_filter": "drop_or_rewrite"
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<a href='https://drop.me'></a><a href='https://rewrite.me'></a>",
+    "expected_html": "<a></a><a href=\"https://example.com\"></a>"
+  },
+  {
+    "name": "invalid_scheme_treated_as_relative_and_blocked_when_allow_relative_false",
+    "policy": {
+      "allowed_tags": ["a"],
+      "allowed_attributes": {"*": [], "a": ["href"]},
+      "url_rules": [
+        {"tag": "a", "attr": "href", "allowed_schemes": ["https"], "allow_relative": false}
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<a href='1http://x'></a><a href='ht$tp://x'></a>",
+    "expected_html": "<a></a><a></a>"
+  },
+  {
+    "name": "scheme_separator_before_path_is_not_a_scheme",
+    "policy": {
+      "allowed_tags": ["a"],
+      "allowed_attributes": {"*": [], "a": ["href"]},
+      "url_rules": [
+        {"tag": "a", "attr": "href", "allowed_schemes": ["https"], "allow_relative": false}
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<a href='/path:foo'></a>",
+    "expected_html": "<a></a>"
+  },
+  {
+    "name": "url_normalization_strips_whitespace_in_scheme_obfuscation",
+    "policy": {
+      "allowed_tags": ["a"],
+      "allowed_attributes": {"*": [], "a": ["href"]},
+      "url_rules": [
+        {"tag": "a", "attr": "href", "allowed_schemes": ["https"]}
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<a href='java\t\nscript:alert(1)'></a>",
+    "expected_html": "<a></a>"
+  },
+  {
+    "name": "boolean_attribute_value_none_is_preserved_when_allowed",
+    "policy": {
+      "allowed_tags": ["div"],
+      "allowed_attributes": {"*": [], "div": ["disabled"]},
+      "url_rules": []
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<div disabled></div>",
+    "expected_html": "<div disabled></div>"
+  },
+  {
+    "name": "foreign_namespace_element_dropped_when_enabled",
+    "policy": {
+      "allowed_tags": ["svg"],
+      "allowed_attributes": {"*": [], "svg": []},
+      "url_rules": [],
+      "drop_foreign_namespaces": true
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<svg></svg>",
+    "expected_html": ""
+  },
+  {
+    "name": "foreign_namespace_element_kept_when_disabled",
+    "policy": {
+      "allowed_tags": ["svg"],
+      "allowed_attributes": {"*": [], "svg": []},
+      "url_rules": [],
+      "drop_foreign_namespaces": false
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<svg></svg>",
+    "expected_html": "<svg></svg>"
+  },
+  {
+    "name": "template_allowed_sanitizes_template_content",
+    "policy": {
+      "allowed_tags": ["template", "p"],
+      "allowed_attributes": {"*": [], "template": [], "p": []},
+      "url_rules": []
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<template><p>ok</p></template>",
+    "expected_html": "<template><p>ok</p></template>"
+  },
+  {
+    "name": "template_disallowed_but_strip_true_keeps_template_content",
+    "policy": {
+      "allowed_tags": ["p"],
+      "allowed_attributes": {"*": [], "p": []},
+      "url_rules": [],
+      "strip_disallowed_tags": true
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<template><p>ok</p></template>",
+    "expected_html": "<p>ok</p>"
+  }
+]

@@ -10,6 +10,7 @@ A pure Python HTML5 parser that just works.
 - **[Extracting Text](text.md)** - `to_text()` and `to_markdown()`
 - **[CSS Selectors](selectors.md)** - Query elements with familiar CSS syntax
 - **[Fragment Parsing](fragments.md)** - Parse HTML fragments in context
+- **[Sanitization & Security](sanitization.md)** - Safe-by-default HTML/Markdown output and policy configuration
 - **[Streaming](streaming.md)** - Memory-efficient parsing for large files
 - **[Encoding & Byte Input](encoding.md)** - How byte streams are decoded (including `windows-1252` fallback)
 - **[Error Codes](errors.md)** - Parse error codes and their meanings
@@ -38,7 +39,7 @@ for p in doc.query("p.intro"):
 
 Output:
 
-```text
+```html
 <p class="intro">Hello!</p>
 ```
 
@@ -57,7 +58,7 @@ for p in doc.query("main p.x"):
 
 Output:
 
-```text
+```html
 <p class="x">World</p>
 ```
 
@@ -74,7 +75,7 @@ print("Markdown:\n" + doc.to_markdown())
 
 Output:
 
-```text
+```html
 Text: Title Hello world
 Markdown:
 # Title
@@ -95,7 +96,7 @@ for event, data in stream(html):
 
 Output:
 
-```text
+```html
 Hello
 world
 ```
