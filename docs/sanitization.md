@@ -138,8 +138,8 @@ Default allowlists:
 
 Default URL rules:
 
-- `a[href]`: allows `http`, `https`, `mailto`, `tel`, plus relative URLs.
-- `img[src]`: allows relative URLs only.
+- `a[href]`: allows `http`, `https`, `mailto`, `tel`. Relative URLs are allowed. Protocol-relative URLs (`//example.com`) are resolved to `https` (`https://example.com`) before checking the scheme.
+- `img[src]`: allows `http`, `https`. Relative URLs are allowed. Protocol-relative URLs are resolved to `https`.
 - Empty/valueless URL attributes (e.g. `<img src>` / `src=""` / control-only) are dropped.
 
 Example (default image URL behavior):
@@ -154,7 +154,7 @@ print(JustHTML('<img src="/x" alt="x">', fragment=True).to_html())
 Output:
 
 ```html
-<img alt="x">
+<img src="https://example.com/x" alt="x">
 <img src="/x" alt="x">
 ```
 
@@ -187,6 +187,25 @@ Output:
 ```
 
 With proxying enabled, scheme-obfuscation that might be treated as “relative” by the sanitizer but normalized to an absolute URL by a user agent is dropped.
+
+## Protocol-relative URLs
+
+By default, protocol-relative URLs (starting with `//`) are resolved to `https` before validation. This ensures they are checked against the allowed schemes (e.g. `https`) and prevents them from inheriting an insecure protocol (like `http` or `file`) from the embedding page.
+
+You can configure this behavior in `UrlRule`:
+
+```python
+from justhtml import UrlRule
+
+# Default behavior: resolve to https
+rule = UrlRule(allowed_schemes=["https"], resolve_protocol_relative="https")
+
+# Resolve to http
+rule = UrlRule(allowed_schemes=["http", "https"], resolve_protocol_relative="http")
+
+# Disallow protocol-relative URLs entirely
+rule = UrlRule(allowed_schemes=["https"], resolve_protocol_relative=None)
+```
 
 ## Inline styles (optional)
 

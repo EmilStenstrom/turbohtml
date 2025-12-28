@@ -172,6 +172,28 @@ Defines allowlists for tags and attributes, URL validation rules, and optional i
 
 Controls how URL-valued attributes like `a[href]` and `img[src]` are validated, and optionally proxied.
 
+```python
+UrlRule(
+    allow_relative=True,
+    allow_fragment=True,
+    resolve_protocol_relative="https",
+    allowed_schemes=set(),
+    allowed_hosts=None,
+    proxy_url=None,
+    proxy_param="url"
+)
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `allow_relative` | `bool` | `True` | Allow relative URLs (e.g. `/path`, `?query`) |
+| `allow_fragment` | `bool` | `True` | Allow fragment-only URLs (e.g. `#anchor`) |
+| `resolve_protocol_relative` | `str \| None` | `"https"` | Scheme to resolve protocol-relative URLs (`//...`) to before checking. If `None`, they are dropped. |
+| `allowed_schemes` | `set[str]` | `set()` | Allowed schemes for absolute URLs (e.g. `{"https", "mailto"}`) |
+| `allowed_hosts` | `set[str] \| None` | `None` | If set, only allow these hosts (e.g. `{"example.com"}`) |
+| `proxy_url` | `str \| None` | `None` | If set, rewrite allowed URLs to pass through this proxy |
+| `proxy_param` | `str` | `"url"` | Query parameter name for the proxied URL |
+
 ---
 
 ## stream

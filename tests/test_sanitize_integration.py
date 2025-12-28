@@ -47,7 +47,7 @@ def _build_policy(spec: Any) -> SanitizationPolicy:
         url_rules[(tag, attr)] = UrlRule(
             allow_relative=rule_spec.get("allow_relative", True),
             allow_fragment=rule_spec.get("allow_fragment", True),
-            allow_protocol_relative=rule_spec.get("allow_protocol_relative", False),
+            resolve_protocol_relative=rule_spec.get("resolve_protocol_relative", "https"),
             allowed_schemes=rule_spec.get("allowed_schemes", []),
             allowed_hosts=rule_spec.get("allowed_hosts", None),
             proxy_url=rule_spec.get("proxy_url"),

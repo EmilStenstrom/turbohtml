@@ -190,6 +190,80 @@ class TestNode(unittest.TestCase):
         doc = JustHTML("<p><a>text</a></p>")
         assert doc.to_markdown() == "[text]"
 
+    def test_to_markdown_in_link_br_and_paragraph_spacing(self):
+        a = SimpleDomNode("a", attrs={"href": "https://e.com"})
+        a.append_child(TextNode("A"))
+        a.append_child(SimpleDomNode("br"))
+        a.append_child(TextNode("B"))
+        p = SimpleDomNode("p")
+        p.append_child(TextNode("C"))
+        a.append_child(p)
+        a.append_child(TextNode("D"))
+        assert a.to_markdown() == "[A BC D](https://e.com)"
+
+    def test_to_markdown_in_link_block_elements_are_flattened(self):
+        a = SimpleDomNode("a", attrs={"href": "https://e.com"})
+        bq = SimpleDomNode("blockquote")
+        p = SimpleDomNode("p")
+        p.append_child(TextNode("Q"))
+        bq.append_child(p)
+        a.append_child(bq)
+
+        ul = SimpleDomNode("ul")
+        li1 = SimpleDomNode("li")
+        li1.append_child(TextNode("One"))
+        li2 = SimpleDomNode("li")
+        li2.append_child(TextNode("Two"))
+        ul.append_child(li1)
+        ul.append_child(li2)
+        a.append_child(ul)
+
+        assert a.to_markdown() == "[Q One Two](https://e.com)"
+
+    def test_to_markdown_in_link_table_heading_pre_and_hr(self):
+        a = SimpleDomNode("a", attrs={"href": "https://e.com"})
+        a.append_child(SimpleDomNode("hr"))
+
+        h2 = SimpleDomNode("h2")
+        h2.append_child(TextNode("T"))
+        a.append_child(h2)
+
+        pre = SimpleDomNode("pre")
+        pre.append_child(TextNode("code"))
+        a.append_child(pre)
+
+        table = SimpleDomNode("table")
+        tr = SimpleDomNode("tr")
+        td = SimpleDomNode("td")
+        td.append_child(TextNode("A"))
+        tr.append_child(td)
+        table.append_child(tr)
+        a.append_child(table)
+
+        md = a.to_markdown()
+        assert md.startswith("[")
+        assert md.endswith("](https://e.com)")
+        assert "T" in md
+        assert "`code`" in md
+        assert "<table" in md
+        assert "---" not in md
+
+    def test_to_markdown_in_link_blockquote_empty_and_list_skips_non_li(self):
+        a = SimpleDomNode("a", attrs={"href": "https://e.com"})
+
+        # Covers blockquote in-link branch with no children.
+        a.append_child(SimpleDomNode("blockquote"))
+
+        # Covers list-in-link branch where a non-li child is skipped.
+        ul = SimpleDomNode("ul")
+        ul.append_child(TextNode("\n"))
+        li = SimpleDomNode("li")
+        li.append_child(TextNode("One"))
+        ul.append_child(li)
+        a.append_child(ul)
+
+        assert a.to_markdown() == "[One](https://e.com)"
+
     def test_markdown_code_span_edge_cases(self):
         # Cover helper edge cases (None input and leading/trailing backticks).
         assert _markdown_code_span(None) == "``"

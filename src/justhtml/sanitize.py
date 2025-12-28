@@ -33,9 +33,10 @@ class UrlRule:
     # Allow same-document fragments (#foo). Typically safe.
     allow_fragment: bool = True
 
-    # Allow protocol-relative URLs (//example.com). Default False because they
-    # are surprising and effectively network URLs.
-    allow_protocol_relative: bool = False
+    # If set, protocol-relative URLs (//example.com) are resolved to this scheme
+    # (e.g. "https") before checking allowed_schemes.
+    # If None, protocol-relative URLs are disallowed.
+    resolve_protocol_relative: str | None = "https"
 
     # Allow absolute URLs with these schemes (lowercase), e.g. {"https"}.
     # If empty, all absolute URLs with a scheme are disallowed.
@@ -202,8 +203,14 @@ DEFAULT_POLICY: SanitizationPolicy = SanitizationPolicy(
     # - Links may point to http/https/mailto/tel and relative URLs.
     # - Images may point to relative URLs only.
     url_rules={
-        ("a", "href"): UrlRule(allowed_schemes=["http", "https", "mailto", "tel"]),
-        ("img", "src"): UrlRule(allowed_schemes=[]),
+        ("a", "href"): UrlRule(
+            allowed_schemes=["http", "https", "mailto", "tel"],
+            resolve_protocol_relative="https",
+        ),
+        ("img", "src"): UrlRule(
+            allowed_schemes=["http", "https"],
+            resolve_protocol_relative="https",
+        ),
     },
     allowed_css_properties=set(),
 )
@@ -467,17 +474,28 @@ def _sanitize_url_value(
         return None
 
     if normalized.startswith("//"):
-        if not rule.allow_protocol_relative:
+        if not rule.resolve_protocol_relative:
             return None
-        parsed = urlsplit("http:" + normalized)
+
+        # Resolve to absolute URL for checking.
+        resolved_scheme = rule.resolve_protocol_relative.lower()
+        resolved_url = f"{resolved_scheme}:{normalized}"
+
+        parsed = urlsplit(resolved_url)
+        scheme = (parsed.scheme or "").lower()
+        if scheme not in rule.allowed_schemes:
+            return None
+
         if rule.allowed_hosts is not None:
             host = (parsed.hostname or "").lower()
             if not host or host not in rule.allowed_hosts:
                 return None
+
+        # Return the resolved URL.
         return (
-            _proxy_url_value(proxy_url=rule.proxy_url, proxy_param=rule.proxy_param, value=stripped)
+            _proxy_url_value(proxy_url=rule.proxy_url, proxy_param=rule.proxy_param, value=resolved_url)
             if rule.proxy_url
-            else stripped
+            else resolved_url
         )
 
     if _has_scheme(normalized):

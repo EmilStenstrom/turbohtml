@@ -299,7 +299,7 @@
       "allowed_tags": ["a"],
       "allowed_attributes": {"*": [], "a": ["href"]},
       "url_rules": [
-        {"tag": "a", "attr": "href", "allowed_schemes": ["https"], "allow_protocol_relative": false}
+        {"tag": "a", "attr": "href", "allowed_schemes": ["https"], "resolve_protocol_relative": null}
       ]
     },
     "parse": "fragment",
@@ -317,7 +317,7 @@
           "tag": "a",
           "attr": "href",
           "allowed_schemes": ["https"],
-          "allow_protocol_relative": true,
+          "resolve_protocol_relative": "https",
           "allowed_hosts": ["example.com"]
         }
       ]
@@ -325,7 +325,7 @@
     "parse": "fragment",
     "fragment_context": "div",
     "input_html": "<a href='//example.com/path'></a><a href='//evil.com/path'></a>",
-    "expected_html": "<a href=\"//example.com/path\"></a><a></a>"
+    "expected_html": "<a href=\"https://example.com/path\"></a><a></a>"
   },
   {
     "name": "protocol_relative_allowed_when_allowed_hosts_null",
@@ -337,7 +337,7 @@
           "tag": "a",
           "attr": "href",
           "allowed_schemes": ["https"],
-          "allow_protocol_relative": true,
+          "resolve_protocol_relative": "https",
           "allowed_hosts": null
         }
       ]
@@ -345,7 +345,27 @@
     "parse": "fragment",
     "fragment_context": "div",
     "input_html": "<a href='//any.example/path'></a>",
-    "expected_html": "<a href=\"//any.example/path\"></a>"
+    "expected_html": "<a href=\"https://any.example/path\"></a>"
+  },
+  {
+    "name": "protocol_relative_resolved_scheme_mismatch",
+    "policy": {
+      "allowed_tags": ["a"],
+      "allowed_attributes": {"*": [], "a": ["href"]},
+      "url_rules": [
+        {
+          "tag": "a",
+          "attr": "href",
+          "allowed_schemes": ["http"],
+          "resolve_protocol_relative": "https",
+          "allowed_hosts": null
+        }
+      ]
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<a href='//example.com'></a>",
+    "expected_html": "<a></a>"
   },
   {
     "name": "absolute_allowed_hosts_allows",
