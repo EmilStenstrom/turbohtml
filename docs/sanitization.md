@@ -147,8 +147,8 @@ Example (default image URL behavior):
 ```python
 from justhtml import JustHTML
 
-print(JustHTML('<img src="https://example.com/x" alt="x">').to_html())
-print(JustHTML('<img src="/x" alt="x">').to_html())
+print(JustHTML('<img src="https://example.com/x" alt="x">', fragment=True).to_html())
+print(JustHTML('<img src="/x" alt="x">', fragment=True).to_html())
 ```
 
 Output:
@@ -166,15 +166,15 @@ Output:
 from justhtml import JustHTML, SanitizationPolicy, UrlRule
 
 policy = SanitizationPolicy(
-		allowed_tags=["a"],
-		allowed_attributes={"*": [], "a": ["href"]},
-		url_rules={
-				("a", "href"): UrlRule(
-						allowed_schemes=["https"],
-						proxy_url="/proxy",
-						proxy_param="url",
-				)
-		},
+    allowed_tags=["a"],
+    allowed_attributes={"*": [], "a": ["href"]},
+    url_rules={
+        ("a", "href"): UrlRule(
+            allowed_schemes=["https"],
+            proxy_url="/proxy",
+            proxy_param="url",
+        )
+    },
 )
 
 print(JustHTML('<a href="https://example.com/?a=1&b=2">link</a>').to_html(policy=policy))

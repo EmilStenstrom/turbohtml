@@ -13,13 +13,16 @@ from justhtml import JustHTML
 
 # "<tr>" at document level gets moved outside tables
 doc = JustHTML("<tr><td>cell</td></tr>")
-print(doc.root.to_html())
-# <html>
-#   <head></head>
-#   <body>
-#     cell    ← The <tr> and <td> are stripped!
-#   </body>
-# </html>
+print(doc.root.to_html(indent_size=4))
+```
+
+Output:
+
+```html
+<html>
+    <head></head>
+    <body>cell</body>
+</html>
 ```
 
 But if we tell the parser this HTML will be inserted into a `<tbody>`:
@@ -31,10 +34,15 @@ from justhtml.context import FragmentContext
 html = "<tr><td>cell</td></tr>"
 ctx = FragmentContext("tbody")
 doc = JustHTML(html, fragment_context=ctx)
-print(doc.root.to_html())
-# <tr>
-#   <td>cell</td>
-# </tr>  ← Preserved correctly!
+print(doc.root.to_html(indent_size=4))
+```
+
+Output:
+
+```html
+<tr>
+    <td>cell</td>
+</tr>
 ```
 
 ## Basic Usage
@@ -51,10 +59,16 @@ print(doc.root.name)  # "#document-fragment"
 
 # No implicit <html>, <head>, or <body> are inserted
 print(doc.root.to_html())
-# <p>User's <b>content</b></p>
 
 # Query and serialize work normally
 paragraphs = doc.query("p")
+```
+
+Output:
+
+```html
+#document-fragment
+<p>User's <b>content</b></p>
 ```
 
 ## Common Use Cases
@@ -120,11 +134,19 @@ The context element affects parsing rules:
 Some elements treat their content as raw text:
 
 ```python
+from justhtml import JustHTML
+from justhtml.context import FragmentContext
+
 # Content in <textarea> is not parsed as HTML
 ctx = FragmentContext("textarea")
 doc = JustHTML("<b>not bold</b>", fragment_context=ctx)
 print(doc.root.to_html())
-# <b>not bold</b>  ← Literal text, not a <b> element
+```
+
+Output:
+
+```html
+&lt;b&gt;not bold&lt;/b&gt;
 ```
 
 ## SVG and MathML Fragments
@@ -195,7 +217,7 @@ def sanitize_fragment(html: str) -> str:
     )
 
     clean_root = sanitize(doc.root, policy=policy)
-    return to_html(clean_root)
+    return to_html(clean_root, pretty=False, safe=False)
 
 # Usage
 dirty = '<p>Hello</p><script>alert("xss")</script><b>world</b>'

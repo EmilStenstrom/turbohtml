@@ -91,6 +91,7 @@ justhtml-tests/xml_coercion.dat: 4/4 (100%) [....]
 justhtml-tests/xml_coercion_coverage.test: 2/2 (100%) [..]
 test_cli.py: 17/17 (100%) [.................]
 test_coverage.py: 11/11 (100%) [...........]
+test_docs_examples.py: 1/1 (100%) [.]
 test_encoding.py: 9/9 (100%) [.........]
 test_errors.py: 42/42 (100%) [..........................................]
 test_node.py: 70/70 (100%) [......................................................................]
@@ -101,4 +102,4 @@ test_selector.py: 238/238 (100%) [..............................................
 test_serialize.py: 31/31 (100%) [...............................]
 test_stream.py: 7/7 (100%) [.......]
 
-PASSED: 9448/9448 passed (100.0%), 13 skipped
+PASSED: 9449/9449 passed (100.0%), 13 skipped
