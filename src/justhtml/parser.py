@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .context import FragmentContext
 from .encoding import decode_html
 from .tokenizer import Tokenizer, TokenizerOpts
 from .treebuilder import TreeBuilder
 
 if TYPE_CHECKING:
-    from .context import FragmentContext
     from .node import SimpleDomNode
     from .sanitize import SanitizationPolicy
     from .tokens import ParseError
@@ -56,12 +56,16 @@ class JustHTML:
         collect_errors: bool = False,
         debug: bool = False,
         encoding: str | None = None,
+        fragment: bool = False,
         fragment_context: FragmentContext | None = None,
         iframe_srcdoc: bool = False,
         strict: bool = False,
         tokenizer_opts: TokenizerOpts | None = None,
         tree_builder: TreeBuilder | None = None,
     ) -> None:
+        if fragment and fragment_context is None:
+            fragment_context = FragmentContext("div")
+
         self.debug = bool(debug)
         self.fragment_context = fragment_context
         self.encoding = None

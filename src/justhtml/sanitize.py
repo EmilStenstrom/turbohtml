@@ -209,6 +209,21 @@ DEFAULT_POLICY: SanitizationPolicy = SanitizationPolicy(
 )
 
 
+DEFAULT_DOCUMENT_POLICY: SanitizationPolicy = SanitizationPolicy(
+    allowed_tags=sorted(set(DEFAULT_POLICY.allowed_tags) | {"html", "head", "body", "title"}),
+    allowed_attributes=DEFAULT_POLICY.allowed_attributes,
+    url_rules=DEFAULT_POLICY.url_rules,
+    url_filter=DEFAULT_POLICY.url_filter,
+    drop_comments=DEFAULT_POLICY.drop_comments,
+    drop_doctype=DEFAULT_POLICY.drop_doctype,
+    drop_foreign_namespaces=DEFAULT_POLICY.drop_foreign_namespaces,
+    strip_disallowed_tags=DEFAULT_POLICY.strip_disallowed_tags,
+    drop_content_tags=DEFAULT_POLICY.drop_content_tags,
+    allowed_css_properties=DEFAULT_POLICY.allowed_css_properties,
+    force_link_rel=DEFAULT_POLICY.force_link_rel,
+)
+
+
 def _is_valid_css_property_name(name: str) -> bool:
     # Conservative: allow only ASCII letters/digits/hyphen.
     # This keeps parsing deterministic and avoids surprises with escapes.
@@ -627,8 +642,16 @@ def _append_sanitized_subtree(*, policy: SanitizationPolicy, original: Any, pare
         stack.extend((child, clone) for child in reversed(children))
 
 
-def sanitize(node: Any, *, policy: SanitizationPolicy = DEFAULT_POLICY) -> Any:
-    """Return a sanitized clone of `node` according to `policy`."""
+def sanitize(node: Any, *, policy: SanitizationPolicy | None = None) -> Any:
+    """Return a sanitized clone of `node`.
+
+    If `policy` is not provided, JustHTML uses a conservative default policy.
+    For full documents (`#document` roots) it preserves `<html>`, `<head>`, and
+    `<body>` wrappers; for fragments it prefers snippet-shaped output.
+    """
+
+    if policy is None:
+        policy = DEFAULT_DOCUMENT_POLICY if node.name == "#document" else DEFAULT_POLICY
 
     # Root handling.
     root_name: str = node.name

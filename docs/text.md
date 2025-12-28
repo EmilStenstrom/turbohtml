@@ -78,7 +78,7 @@ print(doc.to_markdown())
 
 Output:
 
-```text
+```html
 # Title
 
 Hello **world** and [links](https://example.com).

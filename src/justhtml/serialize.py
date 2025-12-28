@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from .constants import FOREIGN_ATTRIBUTE_ADJUSTMENTS, SPECIAL_ELEMENTS, VOID_ELEMENTS
-from .sanitize import DEFAULT_POLICY, SanitizationPolicy, sanitize
+from .sanitize import DEFAULT_DOCUMENT_POLICY, DEFAULT_POLICY, SanitizationPolicy, sanitize
 
 
 def _escape_text(text: str | None) -> str:
@@ -123,7 +123,10 @@ def to_html(
 ) -> str:
     """Convert node to HTML string."""
     if safe:
-        node = sanitize(node, policy=policy or DEFAULT_POLICY)
+        if policy is None and node.name == "#document":
+            node = sanitize(node, policy=DEFAULT_DOCUMENT_POLICY)
+        else:
+            node = sanitize(node, policy=policy or DEFAULT_POLICY)
     if node.name == "#document":
         # Document root - just render children
         parts: list[str] = []

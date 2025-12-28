@@ -1,6 +1,7 @@
 import unittest
 
 from justhtml import JustHTML
+from justhtml.context import FragmentContext
 from justhtml.serialize import (
     _can_unquote_attr_value,
     _choose_attr_quote,
@@ -23,6 +24,29 @@ class TestSerialize(unittest.TestCase):
         assert "<!DOCTYPE html>" in output
         assert "<title>Test</title>" in output
         assert "<p>Hello</p>" in output
+
+    def test_safe_document_serialization_preserves_document_wrappers(self):
+        doc = JustHTML("<p>Hi</p>")
+        output = doc.to_html(pretty=False)
+        assert output == "<html><head></head><body><p>Hi</p></body></html>"
+
+    def test_fragment_parameter_default_context(self):
+        doc = JustHTML("<p>Hi</p>", fragment=True)
+        assert doc.root.name == "#document-fragment"
+
+        output = doc.to_html(pretty=False, safe=False)
+        assert "<html>" not in output
+        assert output == "<p>Hi</p>"
+
+    def test_fragment_parameter_respects_explicit_fragment_context(self):
+        # <tr> only parses correctly in table-related fragment contexts.
+        doc = JustHTML(
+            "<tr><td>cell</td></tr>",
+            fragment=True,
+            fragment_context=FragmentContext("tbody"),
+        )
+        output = doc.to_html(pretty=False, safe=False)
+        assert output == "<tr><td>cell</td></tr>"
 
     def test_attributes(self):
         html = '<div id="test" class="foo" data-val="x&y"></div>'

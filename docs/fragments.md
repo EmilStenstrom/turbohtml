@@ -41,12 +41,10 @@ print(doc.root.to_html())
 
 ```python
 from justhtml import JustHTML
-from justhtml.context import FragmentContext
 
 # Parse as if inside a <div> (common for WYSIWYG editors)
 html = "<p>User's <b>content</b></p>"
-ctx = FragmentContext("div")
-doc = JustHTML(html, fragment_context=ctx)
+doc = JustHTML(html, fragment=True)
 
 # The root is #document-fragment, not #document
 print(doc.root.name)  # "#document-fragment"
@@ -70,8 +68,7 @@ When users edit HTML in a rich text editor, the content will be inserted into a 
 user_html = "<p>Hello</p><ul><li>Item 1</li><li>Item 2</li></ul>"
 
 # Parse as fragment inside a div
-ctx = FragmentContext("div")
-doc = JustHTML(user_html, fragment_context=ctx)
+doc = JustHTML(user_html, fragment=True)
 
 # Sanitize, transform, or validate...
 clean_html = doc.root.to_html()
@@ -184,28 +181,29 @@ ctx = FragmentContext("math", namespace="math")
 from justhtml import JustHTML
 from justhtml.context import FragmentContext
 
-ALLOWED_TAGS = {"p", "b", "i", "a", "ul", "ol", "li"}
+from justhtml import SanitizationPolicy, UrlRule, sanitize, to_html
 
-def sanitize(html):
-    """Remove disallowed tags from user HTML."""
+def sanitize_fragment(html: str) -> str:
+    """Sanitize user HTML as if it was inserted into a <div>."""
     ctx = FragmentContext("div")
     doc = JustHTML(html, fragment_context=ctx)
 
-    def clean(node):
-        if node.name.startswith("#"):
-            # Text or comment node - keep text, remove comments
-            return node.name == "#text"
-        if node.name not in ALLOWED_TAGS:
-            return False  # Remove this element
-        # Recursively clean children
-        node.children = [c for c in node.children if clean(c)]
-        return True
+    policy = SanitizationPolicy(
+        allowed_tags={"p", "b", "i", "a", "ul", "ol", "li"},
+        allowed_attributes={"*": [], "a": ["href"]},
+        url_rules={("a", "href"): UrlRule(allowed_schemes=["https"], allow_relative=True)},
+    )
 
-    doc.root.children = [c for c in doc.root.children if clean(c)]
-    return doc.root.to_html()
+    clean_root = sanitize(doc.root, policy=policy)
+    return to_html(clean_root)
 
 # Usage
 dirty = '<p>Hello</p><script>alert("xss")</script><b>world</b>'
-print(sanitize(dirty))
-# <p>Hello</p><b>world</b>
+print(sanitize_fragment(dirty))
+```
+
+Output:
+
+```html
+<p>Hello</p><b>world</b>
 ```

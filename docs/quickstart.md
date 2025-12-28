@@ -19,6 +19,25 @@ html = "<html><body><div id='main'><p>Hello, <b>world</b>!</p></div></body></htm
 doc = JustHTML(html)
 ```
 
+## HTML Snippets (Fragments)
+
+If your input is an HTML **snippet** (like user generated content from a WYSIWYG editor), you usually want fragment parsing to avoid implicit `<html>`, `<head>`, and `<body>` insertion:
+
+```python
+from justhtml import JustHTML
+
+snippet = "<p>Hello <b>world</b></p>"
+doc = JustHTML(snippet, fragment=True)
+
+print(doc.to_html())
+```
+
+Output:
+
+```html
+<p>Hello <b>world</b></p>
+```
+
 ## Parsing Bytes (Encoding Sniffing)
 
 If you pass bytes (for example from a file), JustHTML decodes them using HTML encoding sniffing. If no encoding is found, it falls back to `windows-1252` for browser compatibility.
@@ -75,14 +94,18 @@ Convert any node back to HTML:
 
 ```python
 print(div.to_html())
-# Output:
-# <div id="main">
-#   <p>
-#     Hello,
-#     <b>world</b>
-#     !
-#   </p>
-# </div>
+```
+
+Output:
+
+```html
+<div id="main">
+    <p>
+        Hello,
+        <b>world</b>
+        !
+    </p>
+</div>
 ```
 
 ## Strict Mode

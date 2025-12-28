@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from justhtml import JustHTML
 from justhtml.node import SimpleDomNode, TemplateNode, TextNode
 from justhtml.sanitize import (
     DEFAULT_POLICY,
@@ -157,6 +158,11 @@ class TestSanitizePlumbing(unittest.TestCase):
         # Default policy drops these root nodes (turned into empty fragments).
         assert to_html(sanitize(c), pretty=False, safe=False) == ""
         assert to_html(sanitize(d), pretty=False, safe=False) == ""
+
+        def test_sanitize_default_policy_differs_for_document_vs_fragment(self) -> None:
+            root = JustHTML("<p>Hi</p>").root
+            out = sanitize(root)
+            assert to_html(out, pretty=False, safe=False) == "<html><head></head><body><p>Hi</p></body></html>"
 
     def test_sanitize_root_element_edge_cases(self) -> None:
         policy = SanitizationPolicy(
