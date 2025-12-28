@@ -273,16 +273,26 @@ class SimpleDomNode:
             return ""
         return ""
 
-    def to_text(self, separator: str = " ", strip: bool = True) -> str:
+    def to_text(
+        self,
+        separator: str = " ",
+        strip: bool = True,
+        *,
+        safe: bool = True,
+        policy: SanitizationPolicy | None = None,
+    ) -> str:
         """Return the concatenated text of this node's descendants.
 
         - `separator` controls how text nodes are joined (default: a single space).
         - `strip=True` strips each text node and drops empty segments.
+        - `safe=True` sanitizes untrusted HTML before extracting text.
+        - `policy` overrides the default sanitization policy.
 
         Template element contents are included via `template_content`.
         """
+        node: Any = sanitize(self, policy=policy) if safe else self
         parts: list[str] = []
-        _to_text_collect(self, parts, strip=strip)
+        _to_text_collect(node, parts, strip=strip)
         if not parts:
             return ""
         return separator.join(parts)
@@ -456,8 +466,19 @@ class TextNode:
         """Return the text content of this node."""
         return self.data or ""
 
-    def to_text(self, separator: str = " ", strip: bool = True) -> str:
+    def to_text(
+        self,
+        separator: str = " ",
+        strip: bool = True,
+        *,
+        safe: bool = True,
+        policy: SanitizationPolicy | None = None,
+    ) -> str:
         # Parameters are accepted for API consistency; they don't affect leaf nodes.
+        _ = separator
+        _ = safe
+        _ = policy
+
         if self.data is None:
             return ""
         if strip:

@@ -154,12 +154,22 @@ class JustHTML:
             policy=policy,
         )
 
-    def to_text(self, separator: str = " ", strip: bool = True) -> str:
+    def to_text(
+        self,
+        separator: str = " ",
+        strip: bool = True,
+        *,
+        safe: bool = True,
+        policy: SanitizationPolicy | None = None,
+    ) -> str:
         """Return the document's concatenated text.
 
-        Delegates to `root.to_text(separator=..., strip=...)`.
+        - `safe=True` sanitizes untrusted content before text extraction.
+        - `policy` overrides the default sanitization policy.
+
+        Delegates to `root.to_text(...)`.
         """
-        return self.root.to_text(separator=separator, strip=strip)
+        return self.root.to_text(separator=separator, strip=strip, safe=safe, policy=policy)
 
     def to_markdown(self, *, safe: bool = True, policy: SanitizationPolicy | None = None) -> str:
         """Return a GitHub Flavored Markdown representation.

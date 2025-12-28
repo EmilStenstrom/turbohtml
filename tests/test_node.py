@@ -11,6 +11,7 @@ from justhtml.node import (
     _MarkdownBuilder,
     _to_markdown_walk,
 )
+from justhtml.sanitize import DEFAULT_POLICY, SanitizationPolicy
 
 
 class TestNode(unittest.TestCase):
@@ -109,6 +110,26 @@ class TestNode(unittest.TestCase):
         doc = JustHTML("<p>Hello</p><p>World</p>")
         assert doc.to_text() == "Hello World"
         assert doc.to_text(separator="", strip=True) == "HelloWorld"
+
+    def test_to_text_sanitizes_by_default(self):
+        doc = JustHTML("<p>ok</p><script>alert(1)</script>")
+        assert doc.to_text() == "ok"
+
+    def test_to_text_safe_false_includes_script_text(self):
+        doc = JustHTML("<p>ok</p><script>alert(1)</script>")
+        assert doc.to_text(safe=False) == "ok alert(1)"
+
+    def test_to_text_policy_override_can_preserve_script_text(self):
+        # With a custom policy that *doesn't* treat <script> as a drop-content tag,
+        # the sanitizer will strip the <script> element but keep its children.
+        policy = SanitizationPolicy(
+            allowed_tags=DEFAULT_POLICY.allowed_tags,
+            allowed_attributes=DEFAULT_POLICY.allowed_attributes,
+            url_rules=DEFAULT_POLICY.url_rules,
+            drop_content_tags=set(),
+        )
+        doc = JustHTML("<p>ok</p><script>alert(1)</script>")
+        assert doc.to_text(policy=policy) == "ok alert(1)"
 
     def test_to_markdown_headings_paragraphs_and_inline(self):
         doc = JustHTML("<h1>Title</h1><p>Hello <b>world</b> <em>ok</em> <a href='https://e.com'>link</a> a*b</p>")

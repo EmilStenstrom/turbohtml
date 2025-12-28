@@ -323,7 +323,9 @@ def _node_to_html(node: Any, indent: int = 0, indent_size: int = 2, pretty: bool
     all_text = all(c.name == "#text" for c in children)
 
     if all_text and pretty and not content_pre:
-        text_content = node.to_text(separator="", strip=False)
+        # Serializer controls sanitization at the to_html() entry point; avoid
+        # implicit re-sanitization during rendering.
+        text_content = node.to_text(separator="", strip=False, safe=False)
         if name not in _RAWTEXT_ELEMENTS:
             text_content = _collapse_html_whitespace(text_content)
         return f"{prefix}{open_tag}{_escape_text(text_content)}{serialize_end_tag(name)}"

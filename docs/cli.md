@@ -45,7 +45,7 @@ echo '<li>Hi</li>' | justhtml - --fragment
 `--format` controls what is printed:
 
 - `html` (default): pretty-printed HTML for each match
-- `text`: concatenated text (same semantics as `to_text(separator=" ", strip=True)`)
+- `text`: concatenated text (same semantics as `to_text(separator=" ", strip=True)`; sanitized by default)
 - `markdown`: a pragmatic subset of GitHub Flavored Markdown (GFM)
 
 Notes:

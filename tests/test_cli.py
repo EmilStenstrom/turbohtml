@@ -99,6 +99,13 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(out, "Hi there\nBye\n")
         self.assertEqual(err, "")
 
+    def test_format_text_sanitizes_by_default(self):
+        html = "<p>Hello<script>alert(1)</script>World</p>"
+        code, out, err = self._run_cli(["-", "--format", "text"], stdin_text=html)
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "")
+        self.assertEqual(out, "Hello World\n")
+
     def test_selector_text_first(self):
         html = "<article><p>Hi <b>there</b></p><p>Bye</p></article>"
         code, out, err = self._run_cli(

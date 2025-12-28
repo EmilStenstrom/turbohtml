@@ -12,22 +12,58 @@ Use `to_text()` when you want the concatenated text from a whole subtree:
 - Joins text nodes using `separator` (default: a single space).
 - Strips each text node by default (`strip=True`) and drops empty segments.
 - Includes `<template>` contents (via `template_content`).
+- Sanitizes untrusted HTML by default (`safe=True`).
 
 ```python
 from justhtml import JustHTML
 
-html = """
-<article>
-  <h1>Title</h1>
-  <p>Hello <b>world</b></p>
-</article>
-"""
+doc = JustHTML("<article><h1>Title</h1><p>Hello <b>world</b></p></article>", fragment=True)
+print(doc.to_text())
+```
 
-doc = JustHTML(html)
-doc.to_text()  # "Title Hello world"
+Output:
 
-# Preserve original text node whitespace and concatenate without separators
-doc.root.to_text(separator="", strip=False)  # "Hello world"
+```text
+Title Hello world
+```
+
+```python
+from justhtml import JustHTML
+
+untrusted = JustHTML("<p>Hello<script>alert(1)</script>World</p>", fragment=True)
+print(untrusted.to_text())
+```
+
+Output:
+
+```text
+Hello World
+```
+
+```python
+from justhtml import JustHTML
+
+untrusted = JustHTML("<p>Hello<script>alert(1)</script>World</p>", fragment=True)
+print(untrusted.to_text(safe=False))
+```
+
+Output:
+
+```text
+Hello alert(1) World
+```
+
+```python
+from justhtml import JustHTML
+
+doc = JustHTML("<p>Hello <b>world</b></p>", fragment=True)
+print(doc.root.to_text(separator="", strip=False))
+```
+
+Output:
+
+```text
+Hello world
 ```
 
 The default `separator=" "` avoids accidentally smashing words together when the HTML splits text across nodes:
@@ -37,8 +73,15 @@ from justhtml import JustHTML
 
 doc = JustHTML("<p>Hello<b>world</b></p>")
 
-doc.to_text()                          # "Hello world"
-doc.to_text(separator="", strip=True)  # "Helloworld"
+print(doc.to_text())
+print(doc.to_text(separator="", strip=True))
+```
+
+Output:
+
+```text
+Hello world
+Helloworld
 ```
 
 ## 2) `to_markdown()` (GitHub Flavored Markdown)
@@ -52,7 +95,15 @@ doc.to_text(separator="", strip=True)  # "Helloworld"
 from justhtml import JustHTML
 
 doc = JustHTML("<h1>Title</h1><p>Hello <b>world</b></p>")
-doc.to_markdown()  # "# Title\n\nHello **world**"
+print(doc.to_markdown())
+```
+
+Output:
+
+```text
+# Title
+
+Hello **world**
 ```
 
 Example:

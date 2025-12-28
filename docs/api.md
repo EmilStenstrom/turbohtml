@@ -49,6 +49,8 @@ Parameters:
 
 - `separator` (default: `" "`): join string between text nodes
 - `strip` (default: `True`): strip each text node and drop empties
+- `safe` (default: `True`): sanitize untrusted HTML before extracting text
+- `policy` (default: `None`): override the default sanitization policy
 
 #### `to_markdown()`
 
@@ -119,6 +121,8 @@ Return the node's concatenated text.
 ```python
 node.to_text()
 ```
+
+Like `to_html()` and `to_markdown()`, text extraction is sanitized by default. Use `safe=False` to disable sanitization for trusted input.
 
 #### `to_markdown()`
 
