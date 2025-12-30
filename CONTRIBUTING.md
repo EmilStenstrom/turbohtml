@@ -34,6 +34,7 @@ python run_tests.py
 
 # Run one suite (faster iteration)
 python run_tests.py --suite tree
+python run_tests.py --suite justhtml
 python run_tests.py --suite tokenizer
 
 # Run with coverage report

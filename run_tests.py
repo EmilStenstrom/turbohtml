@@ -90,11 +90,11 @@ def parse_args():
     )
     parser.add_argument(
         "--suite",
-        choices=["all", "tree", "tokenizer", "serializer", "encoding", "unit"],
+        choices=["all", "tree", "justhtml", "tokenizer", "serializer", "encoding", "unit"],
         default="all",
         help=(
             "Run a single suite instead of the full test run. "
-            "Choices: all, tree, tokenizer, serializer, encoding, unit (default: all)."
+            "Choices: all, tree, justhtml, tokenizer, serializer, encoding, unit (default: all)."
         ),
     )
     parser.add_argument(
@@ -261,6 +261,7 @@ def main():
 
     suite = config.get("suite", "all")
     run_tree = suite in {"all", "tree"}
+    run_justhtml_tree = suite in {"all", "justhtml"}
     run_tokenizer = suite in {"all", "tokenizer"}
     run_serializer = suite in {"all", "serializer"}
     run_encoding = suite in {"all", "encoding"}
@@ -316,6 +317,9 @@ def main():
         if config.get("fail_fast") and tree_failed:
             sys.exit(1)
 
+        combined_results.update(runner.file_results)
+
+    if run_justhtml_tree:
         # Run JustHTML-specific tree-construction tests (custom .dat fixtures).
         # These live outside the upstream html5lib-tests checkout.
         justhtml_tree_tests = test_dir / "justhtml-tests"
@@ -328,11 +332,7 @@ def main():
         if config.get("fail_fast") and justhtml_tree_failed:
             sys.exit(1)
 
-        # Merge justhtml-tests results into the main runner for reporting and regression checks.
-        for filename, result in justhtml_runner.file_results.items():
-            runner.file_results[filename] = result
-
-        combined_results.update(runner.file_results)
+        combined_results.update(justhtml_runner.file_results)
 
     if run_tokenizer:
         tok_passed, tok_total, tok_file_results = harness_run_tokenizer_tests(config)

@@ -34,6 +34,7 @@ To run only one suite:
 
 ```bash
 python run_tests.py --suite tree
+python run_tests.py --suite justhtml
 python run_tests.py --suite tokenizer
 python run_tests.py --suite serializer
 python run_tests.py --suite encoding
