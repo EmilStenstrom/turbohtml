@@ -46,6 +46,57 @@ JustHTML reports a source location for each parse error as a best-effort pointer
 
 This means error locations are not universally “at the beginning” or “at the end” of a token: character-level errors point at the character, while token-level (tree builder) errors generally point at the triggering token’s start.
 
+## Node Locations (Optional)
+
+Sometimes you want a source location for a *node*, not just for parse errors.
+
+For performance reasons, node locations are **disabled by default**. To enable them, pass `track_node_locations=True` when parsing:
+
+```python
+from justhtml import JustHTML
+
+doc = JustHTML("<p>hi</p>", track_node_locations=True)
+p = doc.query("p")[0]
+
+print(p.origin_location)  # (1, 1)
+print(p.origin_line)      # 1
+print(p.origin_col)       # 1
+print(p.origin_offset)    # 0 (0-indexed)
+```
+
+Each node exposes best-effort origin metadata:
+
+- `origin_location -> (line, col) | None` (both 1-indexed)
+- `origin_line -> int | None` (1-indexed)
+- `origin_col -> int | None` (1-indexed)
+- `origin_offset -> int | None` (0-indexed offset into the input)
+
+Notes:
+
+- If `track_node_locations=False` (default), these are typically `None`.
+- Locations are best-effort. When the tree builder creates or moves nodes as part of error recovery, the reported origin is the location of the token that created the node (or the closest available source position).
+- Enabling node tracking adds overhead. If you only need error locations, prefer `collect_errors=True` / `strict=True`.
+
+### Example: Reporting missing includes
+
+```python
+import sys
+from pathlib import Path
+
+from justhtml import JustHTML
+
+
+with open(sys.argv[1]) as f:
+    html = f.read()
+
+doc = JustHTML(html, track_node_locations=True)
+for include_node in doc.query("x-include"):
+    src = include_node.attrs.get("src", "")
+    if not Path(src).exists():
+        line, col = include_node.origin_location or (0, 0)
+        print(f"Missing include source: {src} ({sys.argv[1]}:{line}.{col})")
+```
+
 ---
 
 ## Tokenizer Errors
