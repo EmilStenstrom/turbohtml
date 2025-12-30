@@ -496,6 +496,10 @@ class TreeBuilder(TreeBuilderModesMixin):
 
     def _append_comment_to_document(self, text: str) -> None:
         node = SimpleDomNode("#comment", data=text)
+        if self.tokenizer is not None and self.tokenizer.track_node_locations:
+            node._origin_pos = self.tokenizer.last_token_start_pos
+            if node._origin_pos is not None:
+                node._origin_line, node._origin_col = self.tokenizer.location_at_pos(node._origin_pos)
         self.document.append_child(node)
 
     def _append_comment(self, text: str, parent: Any | None = None) -> None:
@@ -505,6 +509,10 @@ class TreeBuilder(TreeBuilderModesMixin):
         if type(parent) is TemplateNode and parent.template_content:
             parent = parent.template_content
         node = SimpleDomNode("#comment", data=text)
+        if self.tokenizer is not None and self.tokenizer.track_node_locations:
+            node._origin_pos = self.tokenizer.last_token_start_pos
+            if node._origin_pos is not None:
+                node._origin_line, node._origin_col = self.tokenizer.location_at_pos(node._origin_pos)
         parent.append_child(node)
 
     def _append_text(self, text: str) -> None:
@@ -534,6 +542,10 @@ class TreeBuilder(TreeBuilderModesMixin):
                     return
 
             node = TextNode(text)
+            if self.tokenizer is not None and self.tokenizer.track_node_locations:
+                node._origin_pos = self.tokenizer.last_token_start_pos
+                if node._origin_pos is not None:
+                    node._origin_line, node._origin_col = self.tokenizer.location_at_pos(node._origin_pos)
             children.append(node)
             node.parent = target
             return
@@ -554,6 +566,10 @@ class TreeBuilder(TreeBuilderModesMixin):
             return
 
         node = TextNode(text)
+        if self.tokenizer is not None and self.tokenizer.track_node_locations:
+            node._origin_pos = self.tokenizer.last_token_start_pos
+            if node._origin_pos is not None:
+                node._origin_line, node._origin_col = self.tokenizer.location_at_pos(node._origin_pos)
         reference_node = parent.children[position] if position < len(parent.children) else None
         parent.insert_before(node, reference_node)
 
@@ -583,6 +599,11 @@ class TreeBuilder(TreeBuilderModesMixin):
             node = TemplateNode(tag.name, attrs=tag.attrs, namespace=namespace)
         else:
             node = ElementNode(tag.name, attrs=tag.attrs, namespace=namespace)
+
+        if self.tokenizer is not None and self.tokenizer.track_node_locations:
+            node._origin_pos = tag.start_pos
+            if node._origin_pos is not None:
+                node._origin_line, node._origin_col = self.tokenizer.location_at_pos(node._origin_pos)
 
         # Fast path for common case: not inserting from table
         if not self.insert_from_table:
@@ -801,6 +822,10 @@ class TreeBuilder(TreeBuilderModesMixin):
             entry = self.active_formatting[index]
             tag = Tag(Tag.START, entry["name"], self._clone_attributes(entry["attrs"]), False)
             new_node = self._insert_element(tag, push=True)
+            if self.tokenizer is not None and self.tokenizer.track_node_locations:
+                new_node._origin_pos = entry["node"].origin_offset
+                new_node._origin_line = entry["node"].origin_line
+                new_node._origin_col = entry["node"].origin_col
             entry["node"] = new_node
             index += 1
 

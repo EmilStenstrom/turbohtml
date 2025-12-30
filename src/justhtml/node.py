@@ -188,7 +188,17 @@ def _to_text_collect(node: Any, parts: list[str], strip: bool) -> None:
 
 
 class SimpleDomNode:
-    __slots__ = ("attrs", "children", "data", "name", "namespace", "parent")
+    __slots__ = (
+        "_origin_col",
+        "_origin_line",
+        "_origin_pos",
+        "attrs",
+        "children",
+        "data",
+        "name",
+        "namespace",
+        "parent",
+    )
 
     name: str
     parent: SimpleDomNode | ElementNode | TemplateNode | None
@@ -196,6 +206,9 @@ class SimpleDomNode:
     children: list[Any] | None
     data: str | Doctype | None
     namespace: str | None
+    _origin_pos: int | None
+    _origin_line: int | None
+    _origin_col: int | None
 
     def __init__(
         self,
@@ -207,6 +220,9 @@ class SimpleDomNode:
         self.name = name
         self.parent = None
         self.data = data
+        self._origin_pos = None
+        self._origin_line = None
+        self._origin_col = None
 
         if name.startswith("#") or name == "!doctype":
             self.namespace = namespace
@@ -225,6 +241,25 @@ class SimpleDomNode:
         if self.children is not None:
             self.children.append(node)
             node.parent = self
+
+    @property
+    def origin_offset(self) -> int | None:
+        """Best-effort origin offset (0-indexed) in the source HTML, if known."""
+        return self._origin_pos
+
+    @property
+    def origin_line(self) -> int | None:
+        return self._origin_line
+
+    @property
+    def origin_col(self) -> int | None:
+        return self._origin_col
+
+    @property
+    def origin_location(self) -> tuple[int, int] | None:
+        if self._origin_line is None or self._origin_col is None:
+            return None
+        return (self._origin_line, self._origin_col)
 
     def remove_child(self, node: Any) -> None:
         if self.children is not None:
@@ -386,6 +421,9 @@ class SimpleDomNode:
             self.data,
             self.namespace,
         )
+        clone._origin_pos = self._origin_pos
+        clone._origin_line = self._origin_line
+        clone._origin_col = self._origin_col
         if deep and self.children:
             for child in self.children:
                 clone.append_child(child.clone_node(deep=True))
@@ -407,9 +445,15 @@ class ElementNode(SimpleDomNode):
         self.children = []
         self.attrs = attrs if attrs is not None else {}
         self.template_content = None
+        self._origin_pos = None
+        self._origin_line = None
+        self._origin_col = None
 
     def clone_node(self, deep: bool = False) -> ElementNode:
         clone = ElementNode(self.name, self.attrs.copy() if self.attrs else {}, self.namespace)
+        clone._origin_pos = self._origin_pos
+        clone._origin_line = self._origin_line
+        clone._origin_col = self._origin_col
         if deep:
             for child in self.children:
                 clone.append_child(child.clone_node(deep=True))
@@ -439,6 +483,9 @@ class TemplateNode(ElementNode):
             None,
             self.namespace,
         )
+        clone._origin_pos = self._origin_pos
+        clone._origin_line = self._origin_line
+        clone._origin_col = self._origin_col
         if deep:
             if self.template_content:
                 clone.template_content = self.template_content.clone_node(deep=True)
@@ -448,18 +495,43 @@ class TemplateNode(ElementNode):
 
 
 class TextNode:
-    __slots__ = ("data", "name", "namespace", "parent")
+    __slots__ = ("_origin_col", "_origin_line", "_origin_pos", "data", "name", "namespace", "parent")
 
     data: str | None
     name: str
     namespace: None
     parent: SimpleDomNode | ElementNode | TemplateNode | None
+    _origin_pos: int | None
+    _origin_line: int | None
+    _origin_col: int | None
 
     def __init__(self, data: str | None) -> None:
         self.data = data
         self.parent = None
         self.name = "#text"
         self.namespace = None
+        self._origin_pos = None
+        self._origin_line = None
+        self._origin_col = None
+
+    @property
+    def origin_offset(self) -> int | None:
+        """Best-effort origin offset (0-indexed) in the source HTML, if known."""
+        return self._origin_pos
+
+    @property
+    def origin_line(self) -> int | None:
+        return self._origin_line
+
+    @property
+    def origin_col(self) -> int | None:
+        return self._origin_col
+
+    @property
+    def origin_location(self) -> tuple[int, int] | None:
+        if self._origin_line is None or self._origin_col is None:
+            return None
+        return (self._origin_line, self._origin_col)
 
     @property
     def text(self) -> str:
@@ -500,7 +572,11 @@ class TextNode:
         return False
 
     def clone_node(self, deep: bool = False) -> TextNode:
-        return TextNode(self.data)
+        clone = TextNode(self.data)
+        clone._origin_pos = self._origin_pos
+        clone._origin_line = self._origin_line
+        clone._origin_col = self._origin_col
+        return clone
 
 
 _MARKDOWN_BLOCK_ELEMENTS: frozenset[str] = frozenset(

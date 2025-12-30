@@ -54,6 +54,7 @@ class JustHTML:
         html: str | bytes | bytearray | memoryview | None,
         *,
         collect_errors: bool = False,
+        track_node_locations: bool = False,
         debug: bool = False,
         encoding: str | None = None,
         fragment: bool = False,
@@ -82,7 +83,8 @@ class JustHTML:
         else:
             html_str = ""
 
-        # Enable error collection if strict mode is on
+        # Enable error collection if strict mode is on.
+        # Node location tracking is opt-in to avoid slowing down the common case.
         should_collect = collect_errors or strict
 
         self.tree_builder = tree_builder or TreeBuilder(
@@ -102,7 +104,12 @@ class JustHTML:
             elif tag_name in ("plaintext", "script"):
                 opts.initial_state = Tokenizer.PLAINTEXT
 
-        self.tokenizer = Tokenizer(self.tree_builder, opts, collect_errors=should_collect)
+        self.tokenizer = Tokenizer(
+            self.tree_builder,
+            opts,
+            collect_errors=should_collect,
+            track_node_locations=bool(track_node_locations),
+        )
         # Link tokenizer to tree_builder for position info
         self.tree_builder.tokenizer = self.tokenizer
 

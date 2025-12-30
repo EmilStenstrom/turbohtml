@@ -70,6 +70,13 @@ class TestErrorCollection(unittest.TestCase):
         assert error.line == 2
         assert error.column > 0
 
+    def test_location_at_offset_lazy_without_error_collection(self):
+        doc = JustHTML("<p>a\nb</p>", track_node_locations=True)
+        p = doc.query("p")[0]
+        text = p.children[0]
+        assert text.name == "#text"
+        assert text.origin_location == (1, 4)
+
 
 class TestStrictMode(unittest.TestCase):
     """Test strict mode that raises on parse errors."""

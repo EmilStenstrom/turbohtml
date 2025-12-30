@@ -126,3 +126,130 @@ class TestCoverage(unittest.TestCase):
         done = tokenizer._state_after_attribute_name()
         self.assertFalse(done)
         self.assertEqual(tokenizer.state, Tokenizer.BEFORE_ATTRIBUTE_VALUE)
+
+    def test_tokenizer_location_at_pos_lazy_newline_index(self) -> None:
+        tokenizer = Tokenizer(None, None, collect_errors=False)
+        tokenizer.initialize("a\nb\nc")
+        # _newline_positions is None when not collecting errors and not tracking node locations.
+        # Calling location_at_pos should build the newline index lazily.
+        self.assertIsNone(tokenizer._newline_positions)
+
+        # Offset 0 -> (1, 1)
+        self.assertEqual(tokenizer.location_at_pos(0), (1, 1))
+        self.assertIsNotNone(tokenizer._newline_positions)
+
+        # Offset 2 is 'b' after first newline -> (2, 1)
+        self.assertEqual(tokenizer.location_at_pos(2), (2, 1))
+
+    def test_treebuilder_append_comment_tracking_when_start_pos_unknown(self) -> None:
+        tree_builder = TreeBuilder(collect_errors=False)
+        tokenizer = Tokenizer(
+            tree_builder,
+            TokenizerOpts(),
+            collect_errors=False,
+            track_node_locations=True,
+        )
+        tokenizer.initialize("")
+        tokenizer.last_token_start_pos = None
+        tree_builder.tokenizer = tokenizer
+
+        tree_builder._append_comment_to_document("x")
+        assert tree_builder.document.children is not None
+        node = tree_builder.document.children[-1]
+        assert node.name == "#comment"
+        assert node.origin_offset is None
+        assert node.origin_location is None
+
+    def test_treebuilder_append_comment_inside_element_start_pos_unknown(self) -> None:
+        tree_builder = TreeBuilder(collect_errors=False)
+
+        html = tree_builder._create_element("html", None, {})
+        body = tree_builder._create_element("body", None, {})
+        tree_builder.document.append_child(html)
+        html.append_child(body)
+        tree_builder.open_elements = [html, body]
+
+        tokenizer = Tokenizer(
+            tree_builder,
+            TokenizerOpts(),
+            collect_errors=False,
+            track_node_locations=True,
+        )
+        tokenizer.initialize("")
+        tokenizer.last_token_start_pos = None
+        tree_builder.tokenizer = tokenizer
+
+        tree_builder._append_comment("x", parent=body)
+        assert body.children
+        node = body.children[-1]
+        assert node.name == "#comment"
+        assert node.origin_offset is None
+        assert node.origin_location is None
+
+    def test_treebuilder_append_text_foster_parenting_start_pos_unknown(self) -> None:
+        tree_builder = TreeBuilder(collect_errors=False)
+
+        html = tree_builder._create_element("html", None, {})
+        body = tree_builder._create_element("body", None, {})
+        table = tree_builder._create_element("table", None, {})
+        tree_builder.document.append_child(html)
+        html.append_child(body)
+        body.append_child(table)
+        tree_builder.open_elements = [html, body, table]
+
+        tokenizer = Tokenizer(
+            tree_builder,
+            TokenizerOpts(),
+            collect_errors=False,
+            track_node_locations=True,
+        )
+        tokenizer.initialize("")
+        tokenizer.last_token_start_pos = None
+        tree_builder.tokenizer = tokenizer
+
+        tree_builder._append_text("hi")
+
+        def walk(n):
+            yield n
+            children = getattr(n, "children", None)
+            if children:
+                for c in children:
+                    yield from walk(c)
+
+        texts = [
+            n
+            for n in walk(tree_builder.document)
+            if getattr(n, "name", None) == "#text" and getattr(n, "data", None) == "hi"
+        ]
+        assert texts
+        assert texts[0].origin_offset is None
+        assert texts[0].origin_location is None
+
+    def test_treebuilder_append_text_fast_path_start_pos_unknown(self) -> None:
+        tree_builder = TreeBuilder(collect_errors=False)
+
+        html = tree_builder._create_element("html", None, {})
+        body = tree_builder._create_element("body", None, {})
+        div = tree_builder._create_element("div", None, {})
+        tree_builder.document.append_child(html)
+        html.append_child(body)
+        body.append_child(div)
+        tree_builder.open_elements = [html, body, div]
+
+        tokenizer = Tokenizer(
+            tree_builder,
+            TokenizerOpts(),
+            collect_errors=False,
+            track_node_locations=True,
+        )
+        tokenizer.initialize("")
+        tokenizer.last_token_start_pos = None
+        tree_builder.tokenizer = tokenizer
+
+        tree_builder._append_text("hi")
+        assert div.children
+        node = div.children[0]
+        assert node.name == "#text"
+        assert node.data == "hi"
+        assert node.origin_offset is None
+        assert node.origin_location is None

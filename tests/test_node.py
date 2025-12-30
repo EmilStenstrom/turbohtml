@@ -131,6 +131,109 @@ class TestNode(unittest.TestCase):
         doc = JustHTML("<p>ok</p><script>alert(1)</script>")
         assert doc.to_text(policy=policy) == "ok alert(1)"
 
+    def test_node_origin_offset_and_location_helpers(self):
+        doc = JustHTML("<p>hi</p>", track_node_locations=True)
+        p = doc.query("p")[0]
+        assert p.origin_offset == 0
+        assert p.origin_location == (1, 1)
+        assert p.origin_line == 1
+        assert p.origin_col == 1
+
+        text = p.children[0]
+        assert text.name == "#text"
+        assert text.origin_offset == 3
+        assert text.origin_location == (1, 4)
+        assert text.origin_line == 1
+        assert text.origin_col == 4
+
+    def test_node_origin_location_is_none_by_default(self):
+        doc = JustHTML("<p>hi</p>")
+        p = doc.query("p")[0]
+        assert p.origin_offset is None
+        assert p.origin_location is None
+
+        text = p.children[0]
+        assert text.name == "#text"
+        assert text.origin_location is None
+
+    def test_textnode_origin_location_is_none_if_unset(self):
+        node = TextNode("x")
+        assert node.origin_location is None
+
+    def test_node_origin_location_for_comment(self):
+        doc = JustHTML("<!--x--><p>y</p>", track_node_locations=True)
+        assert doc.root.children is not None
+        comment = doc.root.children[0]
+        assert comment.name == "#comment"
+        assert comment.origin_offset == 0
+        assert comment.origin_location == (1, 1)
+
+    def test_node_origin_location_for_comment_inside_element(self):
+        doc = JustHTML("<p><!--x--></p>", track_node_locations=True)
+        p = doc.query("p")[0]
+        comment = p.children[0]
+        assert comment.name == "#comment"
+        assert comment.origin_offset is not None
+        assert comment.origin_location == (1, comment.origin_offset + 1)
+
+    def test_pre_ignores_single_leading_lf(self):
+        # Start tag <pre> sets ignore_lf, and the very next leading LF is dropped.
+        doc = JustHTML("<pre>\n</pre>")
+        pre = doc.query("pre")[0]
+        assert pre.to_text(strip=False) == ""
+
+    def test_pre_ignores_only_first_lf(self):
+        doc = JustHTML("<pre>\nX</pre>")
+        pre = doc.query("pre")[0]
+        assert pre.to_text(strip=False) == "X"
+
+    def test_pre_does_not_ignore_non_lf(self):
+        # ignore_lf only drops an initial LF, not other characters.
+        doc = JustHTML("<pre>X</pre>")
+        pre = doc.query("pre")[0]
+        assert pre.to_text(strip=False) == "X"
+
+    def test_adoption_agency_preserves_origin_for_replacement_nodes(self):
+        # Mis-nested formatting triggers the adoption agency algorithm which replaces
+        # formatting elements. With tracking enabled, replacement nodes should keep
+        # origin_offset/origin_location.
+        html = "<b><i><p>1</b>2</i>"
+        doc = JustHTML(html, track_node_locations=True)
+        bolds = doc.query("b")
+        italics = doc.query("i")
+        assert bolds
+        assert italics
+
+        for node in bolds + italics:
+            assert node.origin_offset is not None
+            assert node.origin_location == (1, node.origin_offset + 1)
+
+    def test_text_in_table_tracks_origin_in_foster_parenting_path(self):
+        doc = JustHTML("<table>hi</table>", track_node_locations=True)
+
+        def walk(n):
+            yield n
+            children = getattr(n, "children", None)
+            if children:
+                for c in children:
+                    yield from walk(c)
+
+        texts = [n for n in walk(doc.root) if getattr(n, "name", None) == "#text" and getattr(n, "data", None) == "hi"]
+        assert texts
+        assert texts[0].origin_offset is not None
+        assert texts[0].origin_location == (1, texts[0].origin_offset + 1)
+
+    def test_reconstruct_active_formatting_preserves_origin(self):
+        # This triggers active formatting reconstruction where the new formatting node
+        # has no token start_pos and must copy its origin from the formatting entry.
+        html = "<p><b>1</p>2"
+        doc = JustHTML(html, track_node_locations=True)
+        bolds = doc.query("b")
+        assert len(bolds) >= 2
+        assert bolds[0].origin_offset is not None
+        assert bolds[1].origin_offset == bolds[0].origin_offset
+        assert bolds[1].origin_location == bolds[0].origin_location
+
     def test_to_markdown_headings_paragraphs_and_inline(self):
         doc = JustHTML("<h1>Title</h1><p>Hello <b>world</b> <em>ok</em> <a href='https://e.com'>link</a> a*b</p>")
 

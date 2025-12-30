@@ -185,10 +185,12 @@ class Tokenizer:
         "current_tag_kind",
         "current_tag_name",
         "current_tag_self_closing",
+        "current_token_start_pos",
         "errors",
         "last_start_tag_name",
         "last_token_column",
         "last_token_line",
+        "last_token_start_pos",
         "length",
         "opts",
         "original_tag_name",
@@ -200,6 +202,7 @@ class Tokenizer:
         "temp_buffer",
         "text_buffer",
         "text_start_pos",
+        "track_node_locations",
     )
 
     _comment_token: CommentToken
@@ -208,6 +211,7 @@ class Tokenizer:
     _tag_token: Tag
     buffer: str
     collect_errors: bool
+    track_node_locations: bool
     current_attr_name: list[str]
     current_attr_value: list[str]
     current_attr_value_has_amp: bool
@@ -221,10 +225,12 @@ class Tokenizer:
     current_tag_kind: int
     current_tag_name: list[str]
     current_tag_self_closing: bool
+    current_token_start_pos: int
     errors: list[ParseError]
     last_start_tag_name: str | None
     last_token_column: int
     last_token_line: int
+    last_token_start_pos: int | None
     length: int
     opts: TokenizerOpts
     original_tag_name: list[str]
@@ -239,10 +245,18 @@ class Tokenizer:
 
     # _STATE_HANDLERS is defined at the end of the file
 
-    def __init__(self, sink: Any, opts: TokenizerOpts | None = None, collect_errors: bool = False) -> None:
+    def __init__(
+        self,
+        sink: Any,
+        opts: TokenizerOpts | None = None,
+        *,
+        collect_errors: bool = False,
+        track_node_locations: bool = False,
+    ) -> None:
         self.sink = sink
         self.opts = opts or TokenizerOpts()
         self.collect_errors = collect_errors
+        self.track_node_locations = bool(track_node_locations)
         self.errors = []
 
         self.state = self.DATA
@@ -253,6 +267,8 @@ class Tokenizer:
         self.current_char = ""
         self.last_token_line = 1
         self.last_token_column = 0
+        self.current_token_start_pos = 0
+        self.last_token_start_pos = None
 
         # Reusable buffers to avoid per-token allocations.
         self.text_buffer = []
@@ -292,6 +308,8 @@ class Tokenizer:
         self.current_char = ""
         self.last_token_line = 1
         self.last_token_column = 0
+        self.current_token_start_pos = 0
+        self.last_token_start_pos = None
         self.errors = []
         self.text_buffer.clear()
         self.text_start_pos = 0
@@ -321,8 +339,9 @@ class Tokenizer:
         else:
             self.state = self.DATA
 
-        # Pre-compute newline positions for O(log n) line lookups
-        if self.collect_errors:
+        # Pre-compute newline positions for O(log n) line lookups.
+        # Only do this when errors are collected or when node locations are requested.
+        if self.collect_errors or self.track_node_locations:
             self._newline_positions = []
             pos = -1
             buffer = self.buffer
@@ -341,6 +360,34 @@ class Tokenizer:
         if newline_positions is None:  # pragma: no cover
             return 1
         return bisect_right(newline_positions, pos - 1) + 1
+
+    def location_at_pos(self, pos: int) -> tuple[int, int]:
+        """Return (line, column) for a 0-indexed offset in the current buffer.
+
+        Column is 1-indexed. Newline positions are computed lazily when needed.
+        """
+        newline_positions = self._newline_positions
+        if newline_positions is None:
+            newline_positions = []
+            scan = -1
+            buffer = self.buffer
+            while True:
+                scan = buffer.find("\n", scan + 1)
+                if scan == -1:
+                    break
+                newline_positions.append(scan)
+            self._newline_positions = newline_positions
+
+        line_index = bisect_right(newline_positions, pos - 1)
+        line = line_index + 1
+
+        # Compute column using newline index rather than rfind() to avoid O(n) scans.
+        if line_index == 0:
+            last_newline = -1
+        else:
+            last_newline = newline_positions[line_index - 1]
+        column = pos - last_newline
+        return line, column
 
     def step(self) -> bool:
         """Run one step of the tokenizer state machine. Returns True if EOF reached."""
@@ -418,6 +465,7 @@ class Tokenizer:
             self.pos = pos
             self.current_char = c
             # c is always '<' here due to find() optimization above
+            self.current_token_start_pos = pos - 1
             # Optimization: Peek ahead for common tag starts
             if pos < length:
                 nc = buffer[pos]
@@ -1693,6 +1741,8 @@ class Tokenizer:
         c = self.buffer[pos]
         self.pos = pos + 1
         self.current_char = c
+        if c == "<":
+            self.current_token_start_pos = pos
         if self.collect_errors and not c.isascii() and _is_noncharacter_codepoint(ord(c)):
             self._emit_error_at_pos("noncharacter-in-input-stream", pos)
         return c
@@ -1774,6 +1824,7 @@ class Tokenizer:
         # Record position at END of raw text (1-indexed column = raw_len)
         if self.collect_errors:
             self._record_text_end_position(raw_len)
+        self.last_token_start_pos = self.text_start_pos
         self.sink.process_characters(data)
         # Note: process_characters never returns Plaintext or RawData
         # State switches happen via _emit_current_tag instead
@@ -1827,6 +1878,8 @@ class Tokenizer:
         tag.name = name
         tag.attrs = attrs
         tag.self_closing = self.current_tag_self_closing
+        tag.start_pos = self.current_token_start_pos
+        self.last_token_start_pos = tag.start_pos
 
         switched_to_rawtext = False
         if self.current_tag_kind == Tag.START:
@@ -1873,6 +1926,8 @@ class Tokenizer:
         if self.opts.xml_coercion:
             data = _coerce_comment_for_xml(data)
         self._comment_token.data = data
+        self._comment_token.start_pos = self.current_token_start_pos
+        self.last_token_start_pos = self._comment_token.start_pos
         self._emit_token(self._comment_token)
 
     def _emit_doctype(self) -> None:
