@@ -16,6 +16,12 @@ repos:
         args: [--fix]
       - id: ruff-format
 
+  - repo: https://github.com/biomejs/pre-commit
+    rev: v2.3.10
+    hooks:
+      - id: biome-check
+        files: "\\.(cjs|mjs|js|jsx)$"
+
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.19.1
     hooks:

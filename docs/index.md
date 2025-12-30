@@ -15,6 +15,7 @@ A pure Python HTML5 parser that just works.
 - **[Encoding & Byte Input](encoding.md)** - How byte streams are decoded (including `windows-1252` fallback)
 - **[Error Codes](errors.md)** - Parse error codes and their meanings
 - **[Correctness Testing](correctness.md)** - How we verify 100% HTML5 compliance
+- **[Playground (Pyodide)](playground.md)** - Run JustHTML in your browser
 
 ## Why JustHTML?
 

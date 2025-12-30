@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>JustHTML Playground</title>
+
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+
+      html {
+        color-scheme: light;
+      }
+
+      body {
+        margin: 0;
+        padding: 1rem;
+        min-height: 100vh;
+        background: #f5f5f7;
+        color: #1d1d1f;
+        font-family: system-ui, -apple-system, sans-serif;
+        line-height: 1.4;
+      }
+
+      a {
+        color: #0066cc;
+      }
+
+      /* Header */
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 1rem;
+        flex-wrap: wrap;
+      }
+
+      .header h1 {
+        font-size: 1.25rem;
+        font-weight: 600;
+        margin: 0;
+      }
+
+      .header p {
+        margin: 0;
+        color: #86868b;
+        font-size: 0.875rem;
+      }
+
+      .status {
+        font-size: 0.8rem;
+        padding: 0.25rem 0.6rem;
+        border-radius: 999px;
+        background: #fff;
+        border: 1px solid #d2d2d7;
+        color: #86868b;
+      }
+
+      /* Main layout */
+      .main {
+        display: grid;
+        gap: 1rem;
+        height: calc(100vh - 6rem);
+        min-height: 400px;
+      }
+
+      @media (min-width: 900px) {
+        .main {
+          grid-template-columns: 1fr 1.5fr;
+        }
+      }
+
+      /* Panels */
+      .panel {
+        display: flex;
+        flex-direction: column;
+        background: #fff;
+        border-radius: 12px;
+        border: 1px solid #d2d2d7;
+        overflow: hidden;
+        min-width: 0;
+      }
+
+      .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 0.75rem;
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid #e8e8ed;
+        flex-wrap: wrap;
+        background: #fafafa;
+      }
+
+      .panel-title {
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        color: #86868b;
+        margin: 0;
+      }
+
+      .panel-body {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* Controls */
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+
+      .pill-group {
+        display: inline-flex;
+        background: #f5f5f7;
+        border-radius: 6px;
+        padding: 2px;
+      }
+
+      .pill-group input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .pill-group label {
+        padding: 0.25rem 0.6rem;
+        font-size: 0.8rem;
+        border-radius: 4px;
+        cursor: pointer;
+        color: #1d1d1f;
+        transition: background 0.15s;
+      }
+
+      .pill-group input:checked + label {
+        background: #fff;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+      }
+
+      .checkbox-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        font-size: 0.8rem;
+        cursor: pointer;
+        color: #1d1d1f;
+      }
+
+      .checkbox-label input {
+        margin: 0;
+      }
+
+      select.small {
+        font-size: 0.8rem;
+        padding: 0.25rem 0.4rem;
+        border-radius: 4px;
+        border: 1px solid #d2d2d7;
+        background: #fff;
+      }
+
+      input.small {
+        font-size: 0.8rem;
+        padding: 0.25rem 0.4rem;
+        border-radius: 4px;
+        border: 1px solid #d2d2d7;
+        width: 2.5rem;
+        text-align: center;
+      }
+
+      .divider {
+        width: 1px;
+        height: 1rem;
+        background: #d2d2d7;
+        margin: 0 0.25rem;
+      }
+
+      /* Input area */
+      .input-area {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .input-area textarea {
+        flex: 1;
+        width: 100%;
+        border: none;
+        padding: 1rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.875rem;
+        line-height: 1.5;
+        resize: none;
+        background: transparent;
+      }
+
+      .input-area textarea:focus {
+        outline: none;
+      }
+
+      /* Fragment controls (inline) */
+      .fragment-inline {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+      }
+
+      .fragment-inline input,
+      .fragment-inline select {
+        font-size: 0.8rem;
+        padding: 0.2rem 0.4rem;
+        border: 1px solid #d2d2d7;
+        border-radius: 4px;
+        background: #fff;
+      }
+
+      .fragment-inline input {
+        width: 4rem;
+      }
+
+      /* Output area */
+      .output-area {
+        flex: 1;
+        overflow: auto;
+        padding: 1rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.875rem;
+        line-height: 1.5;
+        white-space: pre;
+        tab-size: 2;
+      }
+
+      /* Filter input */
+      .filter-input {
+        font-size: 0.8rem;
+        padding: 0.3rem 0.5rem;
+        border: 1px solid #d2d2d7;
+        border-radius: 4px;
+        background: #fff;
+        min-width: 10rem;
+      }
+
+      .filter-input::placeholder {
+        color: #86868b;
+      }
+
+      /* Syntax highlighting */
+      .tok-punct { color: #86868b; }
+      .tok-tag { color: #0066cc; font-weight: 500; }
+      .tok-attr { color: #5856d6; }
+      .tok-string { color: #bf4040; }
+      .tok-comment { color: #86868b; font-style: italic; }
+      .tok-md-heading { color: #0066cc; font-weight: 600; }
+      .tok-md-code { background: #f5f5f7; padding: 0.1rem 0.3rem; border-radius: 3px; }
+      .tok-md-link { color: #0066cc; text-decoration: underline; }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <div>
+        <h1>JustHTML Playground</h1>
+      </div>
+      <div class="status" id="status" aria-live="polite"></div>
+    </div>
+
+    <div class="main">
+      <!-- Input Panel -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Input</h2>
+          <div class="controls">
+            <div class="pill-group" role="radiogroup" aria-label="Parse mode">
+              <input id="parseModeDocument" type="radio" name="parseMode" value="document" checked />
+              <label for="parseModeDocument">Document</label>
+              <input id="parseModeFragment" type="radio" name="parseMode" value="fragment" />
+              <label for="parseModeFragment">Fragment</label>
+            </div>
+
+            <span class="divider"></span>
+
+            <label class="checkbox-label">
+              <input id="safe" type="checkbox" checked />
+              Sanitize
+            </label>
+          </div>
+        </div>
+        <div class="panel-body input-area">
+          <textarea id="input" spellcheck="false" placeholder="Paste HTML here…"><p>Hello <b>world</b> <script>alert(1)</script> <a href="javascript:alert(1)">bad</a> <a href="https://example.com/?a=1&b=2">ok</a></p></textarea>
+        </div>
+      </div>
+
+      <!-- Output Panel -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Output</h2>
+          <div class="controls">
+            <div class="pill-group" role="radiogroup" aria-label="Output format">
+              <input id="outputFormatHtml" type="radio" name="outputFormat" value="html" checked />
+              <label for="outputFormatHtml">HTML</label>
+              <input id="outputFormatMarkdown" type="radio" name="outputFormat" value="markdown" />
+              <label for="outputFormatMarkdown">Markdown</label>
+              <input id="outputFormatText" type="radio" name="outputFormat" value="text" />
+              <label for="outputFormatText">Text</label>
+            </div>
+
+            <div id="htmlSettings" class="controls">
+              <label class="checkbox-label">
+                <input id="pretty" type="checkbox" checked />
+                Pretty
+              </label>
+              <label class="checkbox-label" for="indentSize">Indent size:
+                  <input id="indentSize" type="number" class="small" min="0" max="8" value="2"/>
+              </label>
+            </div>
+
+            <div id="textSettings" class="controls" hidden>
+              <label class="checkbox-label">
+                <input id="textStrip" type="checkbox" checked />
+                Strip
+              </label>
+              <select id="textSeparator" class="small" aria-label="Separator">
+                <option value=" ">Space</option>
+                <option value="&#10;">Newline</option>
+                <option value="">None</option>
+                <option value=", ">Comma</option>
+                <option value=" | ">Pipe</option>
+              </select>
+            </div>
+
+            <span class="divider"></span>
+
+            <input id="selector" type="text" class="filter-input" placeholder="CSS selector" aria-label="CSS selector filter" />
+          </div>
+        </div>
+        <div class="panel-body">
+          <div id="output" class="output-area"><code id="outputCode"></code></div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
