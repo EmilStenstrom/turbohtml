@@ -24,7 +24,19 @@ A pure Python HTML5 parser that just works. No C extensions to compile. No syste
 | `html.parser` | 🔴 4% | ✅ Yes | ⚡ Fast | ❌ None | Standard library. Chokes on malformed HTML. |
 | `lxml` | 🔴 1% | ❌ No | 🚀 Very Fast | 🟡 XPath | C-based (libxml2). Fast but not HTML5 compliant. |
 
-*Compliance scores from a strict run of the [html5lib-tests](https://github.com/html5lib/html5lib-tests) tree-construction fixtures (1,743 non-script tests). See `benchmarks/correctness.py` and `docs/correctness.md` for details*.
+
+*Compliance scores from a strict run of the [html5lib-tests](https://github.com/html5lib/html5lib-tests) tree-construction fixtures (1,743 non-script tests). See [benchmarks/correctness.py](benchmarks/correctness.py) and [docs/correctness.md](docs/correctness.md) for details*.
+
+Browser engine agreement (tree-construction, pass/(pass+fail), 2025-12-30):
+
+| Engine | Tests Passed | Agreement | Notes |
+|--------|-------------|-----------|-------|
+| Chromium | 1763/1770 | 99.6% | DOMParser / contextual fragment (via Playwright) |
+| WebKit | 1741/1770 | 98.4% | DOMParser / contextual fragment (via Playwright) |
+| Firefox | 1727/1770 | 97.6% | DOMParser / contextual fragment (via Playwright) |
+
+*Browser numbers from [`justhtml-html5lib-tests-bench`](https://github.com/EmilStenstrom/justhtml-html5lib-tests-bench) on the upstream `html5lib-tests/tree-construction` corpus (excluding 12 scripting-enabled cases).*
+
 
 ## Installation
 
