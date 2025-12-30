@@ -31,7 +31,7 @@ class TestReporter:
         return "".join(out)
 
     def is_full_run(self):
-        return not (
+        return (self.config.get("suite", "all") == "all") and not (
             self.config.get("test_specs")
             or self.config.get("exclude_files")
             or self.config.get("exclude_errors")

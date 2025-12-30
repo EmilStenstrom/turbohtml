@@ -32,6 +32,10 @@ If you want to run the full html5lib test suite locally, clone `html5lib-tests` 
 # Run all tests
 python run_tests.py
 
+# Run one suite (faster iteration)
+python run_tests.py --suite tree
+python run_tests.py --suite tokenizer
+
 # Run with coverage report
 coverage run run_tests.py && coverage report
 

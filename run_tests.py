@@ -89,6 +89,15 @@ def parse_args():
         help="Only run tests containing any of these strings in their errors (comma-separated)",
     )
     parser.add_argument(
+        "--suite",
+        choices=["all", "tree", "tokenizer", "serializer", "encoding", "unit"],
+        default="all",
+        help=(
+            "Run a single suite instead of the full test run. "
+            "Choices: all, tree, tokenizer, serializer, encoding, unit (default: all)."
+        ),
+    )
+    parser.add_argument(
         "--regressions",
         action="store_true",
         help="After a full (unfiltered) run, compare results to committed HEAD test-summary.txt and report new failures (exits 1 if regressions).",
@@ -104,6 +113,9 @@ def parse_args():
         ),
     )
     args = parser.parse_args()
+
+    if args.regressions and args.suite != "all":
+        parser.error("--regressions requires --suite all")
 
     # Preserve each provided spec exactly so patterns like 'tests1.dat:1,2,3' remain intact.
     # Keeping the raw spec strings allows _should_run_test to parse the comma-separated index
@@ -128,6 +140,7 @@ def parse_args():
         "verbosity": args.verbose,
         "regressions": args.regressions,
         "check_errors": args.check_errors,
+        "suite": args.suite,
     }
 
 
@@ -246,19 +259,26 @@ def main():
     config = parse_args()
     test_dir = Path("tests")
 
-    # Check that html5lib-tests symlinks exist
+    suite = config.get("suite", "all")
+    run_tree = suite in {"all", "tree"}
+    run_tokenizer = suite in {"all", "tokenizer"}
+    run_serializer = suite in {"all", "serializer"}
+    run_encoding = suite in {"all", "encoding"}
+    run_unit = suite in {"all", "unit"}
+
+    # Check that html5lib-tests symlinks exist (only for the selected suites)
     tree_tests = test_dir / "html5lib-tests-tree"
     tokenizer_tests = test_dir / "html5lib-tests-tokenizer"
     serializer_tests = test_dir / "html5lib-tests-serializer"
     encoding_tests = test_dir / "html5lib-tests-encoding"
     missing = []
-    if not tree_tests.exists():
+    if run_tree and not tree_tests.exists():
         missing.append(str(tree_tests))
-    if not tokenizer_tests.exists():
+    if run_tokenizer and not tokenizer_tests.exists():
         missing.append(str(tokenizer_tests))
-    if not serializer_tests.exists():
+    if run_serializer and not serializer_tests.exists():
         missing.append(str(serializer_tests))
-    if not encoding_tests.exists():
+    if run_encoding and not encoding_tests.exists():
         missing.append(str(encoding_tests))
     if len(missing) > 0:
         print("ERROR: html5lib-tests not found. Please create symlinks:", file=sys.stderr)
@@ -266,75 +286,96 @@ def main():
             print(f"  {path}", file=sys.stderr)
         print("\nTo set up, clone html5lib-tests and create symlinks:", file=sys.stderr)
         print("  git clone https://github.com/html5lib/html5lib-tests.git ../html5lib-tests", file=sys.stderr)
-        print("  ln -s ../../html5lib-tests/tree-construction tests/html5lib-tests-tree", file=sys.stderr)
-        print("  ln -s ../../html5lib-tests/tokenizer tests/html5lib-tests-tokenizer", file=sys.stderr)
-        print("  ln -s ../../html5lib-tests/serializer tests/html5lib-tests-serializer", file=sys.stderr)
-        print("  ln -s ../../html5lib-tests/encoding tests/html5lib-tests-encoding", file=sys.stderr)
+        if run_tree:
+            print("  ln -s ../../html5lib-tests/tree-construction tests/html5lib-tests-tree", file=sys.stderr)
+        if run_tokenizer:
+            print("  ln -s ../../html5lib-tests/tokenizer tests/html5lib-tests-tokenizer", file=sys.stderr)
+        if run_serializer:
+            print("  ln -s ../../html5lib-tests/serializer tests/html5lib-tests-serializer", file=sys.stderr)
+        if run_encoding:
+            print("  ln -s ../../html5lib-tests/encoding tests/html5lib-tests-encoding", file=sys.stderr)
         sys.exit(1)
-
-    runner = TestRunner(tree_tests, config)
     reporter = TestReporter(config)
 
-    tree_passed, tree_failed, skipped = runner.run()
+    total_passed = 0
+    total_failed = 0
+    total_skipped = 0
+    combined_results = {}
 
-    # With fail-fast enabled, stop after the first failing suite to avoid
-    # printing large summaries of unrelated passing tests.
-    if config.get("fail_fast") and tree_failed:
-        sys.exit(1)
+    runner = None
 
-    # Run JustHTML-specific tree-construction tests (custom .dat fixtures).
-    # These live outside the upstream html5lib-tests checkout.
-    justhtml_tree_tests = test_dir / "justhtml-tests"
-    justhtml_runner = TestRunner(justhtml_tree_tests, config)
-    justhtml_tree_passed, justhtml_tree_failed, justhtml_tree_skipped = justhtml_runner.run()
+    if run_tree:
+        runner = TestRunner(tree_tests, config)
+        tree_passed, tree_failed, skipped = runner.run()
+        total_passed += tree_passed
+        total_failed += tree_failed
+        total_skipped += skipped
 
-    if config.get("fail_fast") and justhtml_tree_failed:
-        sys.exit(1)
+        # With fail-fast enabled, stop after the first failing suite to avoid
+        # printing large summaries of unrelated passing tests.
+        if config.get("fail_fast") and tree_failed:
+            sys.exit(1)
 
-    # Merge justhtml-tests results into the main runner for reporting and regression checks.
-    for filename, result in justhtml_runner.file_results.items():
-        runner.file_results[filename] = result
+        # Run JustHTML-specific tree-construction tests (custom .dat fixtures).
+        # These live outside the upstream html5lib-tests checkout.
+        justhtml_tree_tests = test_dir / "justhtml-tests"
+        justhtml_runner = TestRunner(justhtml_tree_tests, config)
+        justhtml_tree_passed, justhtml_tree_failed, justhtml_tree_skipped = justhtml_runner.run()
+        total_passed += justhtml_tree_passed
+        total_failed += justhtml_tree_failed
+        total_skipped += justhtml_tree_skipped
 
-    tok_passed, tok_total, tok_file_results = harness_run_tokenizer_tests(config)
+        if config.get("fail_fast") and justhtml_tree_failed:
+            sys.exit(1)
 
-    if config.get("fail_fast") and (tok_total - tok_passed):
-        sys.exit(1)
+        # Merge justhtml-tests results into the main runner for reporting and regression checks.
+        for filename, result in justhtml_runner.file_results.items():
+            runner.file_results[filename] = result
 
-    ser_passed, ser_total, ser_skipped, ser_file_results = harness_run_serializer_tests(config)
+        combined_results.update(runner.file_results)
 
-    if config.get("fail_fast") and (ser_total - ser_passed - ser_skipped):
-        sys.exit(1)
+    if run_tokenizer:
+        tok_passed, tok_total, tok_file_results = harness_run_tokenizer_tests(config)
+        total_passed += tok_passed
+        total_failed += tok_total - tok_passed
+        combined_results.update(tok_file_results)
 
-    enc_passed, enc_total, enc_skipped, enc_file_results = harness_run_encoding_tests(config)
+        if config.get("fail_fast") and (tok_total - tok_passed):
+            sys.exit(1)
 
-    if config.get("fail_fast") and (enc_total - enc_passed - enc_skipped):
-        sys.exit(1)
+    if run_serializer:
+        ser_passed, ser_total, ser_skipped, ser_file_results = harness_run_serializer_tests(config)
+        total_passed += ser_passed
+        total_failed += ser_total - ser_passed - ser_skipped
+        total_skipped += ser_skipped
+        combined_results.update(ser_file_results)
 
-    unit_passed, unit_failed, unit_file_results = _run_unit_tests(config)
+        if config.get("fail_fast") and (ser_total - ser_passed - ser_skipped):
+            sys.exit(1)
 
-    if config.get("fail_fast") and unit_failed:
-        sys.exit(1)
+    if run_encoding:
+        enc_passed, enc_total, enc_skipped, enc_file_results = harness_run_encoding_tests(config)
+        total_passed += enc_passed
+        total_failed += enc_total - enc_passed - enc_skipped
+        total_skipped += enc_skipped
+        combined_results.update(enc_file_results)
 
-    total_passed = tree_passed + justhtml_tree_passed + tok_passed + ser_passed + enc_passed + unit_passed
-    total_failed = (
-        tree_failed
-        + justhtml_tree_failed
-        + (tok_total - tok_passed)
-        + (ser_total - ser_passed - ser_skipped)
-        + (enc_total - enc_passed - enc_skipped)
-        + unit_failed
-    )
+        if config.get("fail_fast") and (enc_total - enc_passed - enc_skipped):
+            sys.exit(1)
 
-    combined_results = dict(runner.file_results)
-    combined_results.update(tok_file_results)
-    combined_results.update(ser_file_results)
-    combined_results.update(enc_file_results)
-    combined_results.update(unit_file_results)
+    if run_unit:
+        unit_passed, unit_failed, unit_file_results = _run_unit_tests(config)
+        total_passed += unit_passed
+        total_failed += unit_failed
+        combined_results.update(unit_file_results)
+
+        if config.get("fail_fast") and unit_failed:
+            sys.exit(1)
 
     reporter.print_summary(
         total_passed,
         total_failed,
-        skipped + justhtml_tree_skipped + ser_skipped + enc_skipped,
+        total_skipped,
         combined_results,
     )
 
@@ -344,6 +385,8 @@ def main():
     if config.get("regressions"):
         # Only meaningful for full unfiltered run
         if not reporter.is_full_run():
+            return
+        if runner is None:
             return
         harness_run_regression_check(runner, reporter)
 

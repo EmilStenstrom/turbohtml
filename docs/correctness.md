@@ -79,6 +79,16 @@ We run the complete html5lib test suite on every commit:
 python run_tests.py
 ```
 
+To run only a single suite (useful for faster iteration), use `--suite`:
+
+```bash
+python run_tests.py --suite tree
+python run_tests.py --suite tokenizer
+python run_tests.py --suite serializer
+python run_tests.py --suite encoding
+python run_tests.py --suite unit
+```
+
 Output:
 ```
 PASSED: 9k+ tests (100%), a few skipped

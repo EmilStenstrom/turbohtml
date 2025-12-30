@@ -29,3 +29,13 @@ Once the symlinks are set up, you can run the tests using:
 ```bash
 python run_tests.py
 ```
+
+To run only one suite:
+
+```bash
+python run_tests.py --suite tree
+python run_tests.py --suite tokenizer
+python run_tests.py --suite serializer
+python run_tests.py --suite encoding
+python run_tests.py --suite unit
+```
