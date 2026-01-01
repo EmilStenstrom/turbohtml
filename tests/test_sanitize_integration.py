@@ -81,6 +81,23 @@ class TestSanitizeIntegration(unittest.TestCase):
 
         for case in cases:
             name = case["name"]
+            expected_error = case.get("expected_error")
+            if expected_error is not None:
+                with self.assertRaises(ValueError) as ctx:
+                    _build_policy(case["policy"])
+                msg = str(ctx.exception)
+                if str(expected_error) not in msg:
+                    self.fail(
+                        "\n".join(
+                            [
+                                f"Case: {name}",
+                                f"Expected error containing: {expected_error}",
+                                f"Actual error: {msg}",
+                            ]
+                        )
+                    )
+                continue
+
             policy = _build_policy(case["policy"])
             input_html = case["input_html"]
             expected_html = case["expected_html"]

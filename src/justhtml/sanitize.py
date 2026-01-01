@@ -143,6 +143,13 @@ class SanitizationPolicy:
         if not isinstance(self.force_link_rel, set):
             object.__setattr__(self, "force_link_rel", set(self.force_link_rel))
 
+        style_allowed = any("style" in attrs for attrs in self.allowed_attributes.values())
+        if style_allowed and not self.allowed_css_properties:
+            raise ValueError(
+                "SanitizationPolicy allows the 'style' attribute but allowed_css_properties is empty. "
+                "Either remove 'style' from allowed_attributes or set allowed_css_properties (for example CSS_PRESET_TEXT)."
+            )
+
 
 DEFAULT_POLICY: SanitizationPolicy = SanitizationPolicy(
     allowed_tags=[
@@ -213,6 +220,29 @@ DEFAULT_POLICY: SanitizationPolicy = SanitizationPolicy(
         ),
     },
     allowed_css_properties=set(),
+)
+
+
+# A conservative preset for allowing a small amount of inline styling.
+# This is intentionally focused on text-level styling and avoids layout/
+# positioning properties that are commonly abused for UI redress.
+CSS_PRESET_TEXT: frozenset[str] = frozenset(
+    {
+        "background-color",
+        "color",
+        "font-size",
+        "font-style",
+        "font-weight",
+        "letter-spacing",
+        "line-height",
+        "text-align",
+        "text-decoration",
+        "text-transform",
+        "white-space",
+        "word-break",
+        "word-spacing",
+        "word-wrap",
+    }
 )
 
 

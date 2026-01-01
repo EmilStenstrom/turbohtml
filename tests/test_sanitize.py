@@ -5,6 +5,7 @@ import unittest
 from justhtml import JustHTML
 from justhtml.node import SimpleDomNode, TemplateNode, TextNode
 from justhtml.sanitize import (
+    CSS_PRESET_TEXT,
     DEFAULT_POLICY,
     SanitizationPolicy,
     UrlRule,
@@ -60,6 +61,40 @@ class TestSanitizePlumbing(unittest.TestCase):
 
         value = "color; co_lor: red; margin: 0; color: ; COLOR: red"
         assert _sanitize_inline_style(policy=policy, value=value) == "color: red"
+
+    def test_sanitize_inline_style_returns_none_when_allowlist_empty(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["div"],
+            allowed_attributes={"*": [], "div": []},
+            url_rules={},
+            allowed_css_properties=set(),
+        )
+
+        assert _sanitize_inline_style(policy=policy, value="color: red") is None
+
+    def test_css_preset_text_is_conservative(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["div"],
+            allowed_attributes={"*": [], "div": ["style"]},
+            url_rules={},
+            allowed_css_properties=CSS_PRESET_TEXT,
+        )
+
+        html = '<div style="color: red; position: fixed; top: 0">x</div>'
+        out = JustHTML(html, fragment=True).to_html(policy=policy)
+        assert out == '<div style="color: red">x</div>'
+
+    def test_style_attribute_is_dropped_when_nothing_survives(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["div"],
+            allowed_attributes={"*": [], "div": ["style"]},
+            url_rules={},
+            allowed_css_properties=CSS_PRESET_TEXT,
+        )
+
+        html = '<div style="position: fixed">x</div>'
+        out = JustHTML(html, fragment=True).to_html(policy=policy)
+        assert out == "<div>x</div>"
 
     def test_css_value_may_load_external_resource(self) -> None:
         assert _css_value_may_load_external_resource("url(https://evil.example/x)") is True

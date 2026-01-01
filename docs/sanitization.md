@@ -216,14 +216,16 @@ Inline styles are disabled by default. To allow them you must:
 
 Even then, JustHTML is conservative: it rejects declarations that look like they can load external resources (such as values containing `url(` or `image-set(`), as well as legacy constructs like `expression(`.
 
+To avoid "footgun" policies, you can start from the built-in preset `CSS_PRESET_TEXT`.
+
 ```python
-from justhtml import JustHTML, SanitizationPolicy
+from justhtml import CSS_PRESET_TEXT, JustHTML, SanitizationPolicy
 
 policy = SanitizationPolicy(
 		allowed_tags=["p"],
 		allowed_attributes={"*": [], "p": ["style"]},
 		url_rules={},
-		allowed_css_properties={"color", "background-image", "width"},
+		allowed_css_properties=CSS_PRESET_TEXT | {"width"},
 )
 
 html = '<p style="color: red; background-image: url(https://evil.test/x); width: expression(alert(1));">Hi</p>'

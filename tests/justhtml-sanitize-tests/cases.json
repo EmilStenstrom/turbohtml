@@ -94,7 +94,7 @@
     "parse": "fragment",
     "fragment_context": "div",
     "input_html": "<div style='color: red'></div>",
-    "expected_html": "<div></div>"
+    "expected_error": "allows the 'style' attribute"
   },
   {
     "name": "inline_style_drops_resource_loading_url_function",
