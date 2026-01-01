@@ -9,8 +9,8 @@ A pure Python HTML5 parser that just works. No C extensions to compile. No syste
 - **Just... Correct ✅** — Spec-perfect HTML5 parsing with browser-grade error recovery — passes the official 9k+ [html5lib-tests](https://github.com/html5lib/html5lib-tests) suite, with 100% line+branch coverage. ([Correctness](docs/correctness.md))
 
   ```python
-  JustHTML("<p><b>Hello", fragment=True).root.to_html()
-  # => <p><b>Hello</b></p>
+  JustHTML("<p><b>Hi<i>there</b>!", fragment=True).root.to_html()
+  # => <p><b>Hi<i>there</i></b><i>!</i></p>
   ```
 
 - **Just... Python 🐍** — Pure Python, zero dependencies — no C extensions or system libraries, easy to debug, and works anywhere Python runs, including PyPy and Pyodide. ([Run in the browser](https://emilstenstrom.github.io/justhtml/playground/))
