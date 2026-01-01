@@ -256,6 +256,54 @@ def benchmark_justhtml(html_source, iterations=1):
     }
 
 
+def benchmark_justhtml_to_html(html_source, iterations=1):
+    """Benchmark JustHTML parse + serialize via to_html() (safe-by-default)."""
+    try:
+        from justhtml import JustHTML
+    except ImportError:
+        return {"error": "JustHTML not importable"}
+
+    all_times = []
+    errors = 0
+    error_files = []
+    total_bytes = 0
+    file_count = 0
+    warmup_done = False
+
+    for filename, html in html_source:
+        if not warmup_done:
+            try:
+                JustHTML(html).to_html(pretty=False)
+            except Exception:
+                pass
+            warmup_done = True
+
+        total_bytes += len(html)
+        file_count += 1
+        for _ in range(iterations):
+            try:
+                start = time.perf_counter()
+                out = JustHTML(html).to_html(pretty=False)
+                elapsed = time.perf_counter() - start
+                all_times.append(elapsed)
+                _ = len(out)
+            except Exception as e:
+                errors += 1
+                error_files.append((filename, str(e)))
+
+    return {
+        "total_time": sum(all_times),
+        "mean_time": sum(all_times) / len(all_times) if all_times else 0,
+        "min_time": min(all_times) if all_times else 0,
+        "max_time": max(all_times) if all_times else 0,
+        "errors": errors,
+        "success_count": len(all_times),
+        "error_files": error_files,
+        "file_count": file_count,
+        "total_bytes": total_bytes,
+    }
+
+
 def benchmark_html5lib(html_source, iterations=1):
     """Benchmark html5lib parser."""
     try:
@@ -573,7 +621,16 @@ def print_results(results, file_count, iterations=1):
     else:
         print(f"BENCHMARK RESULTS ({file_count} HTML files)")
     print("=" * 100)
-    parsers = ["justhtml", "html5lib", "lxml", "bs4", "html.parser", "selectolax", "gumbo"]
+    parsers = [
+        "justhtml",
+        "justhtml_to_html",
+        "html5lib",
+        "lxml",
+        "bs4",
+        "html.parser",
+        "selectolax",
+        "gumbo",
+    ]
 
     # Combined header
     header = f"\n{'Parser':<15} {'Total (s)':<10} {'Mean (ms)':<10} {'Peak (MB)':<10} {'Delta (MB)':<10}"
@@ -660,7 +717,16 @@ def main():
     parser.add_argument(
         "--parsers",
         nargs="+",
-        choices=["justhtml", "html5lib", "lxml", "bs4", "html.parser", "selectolax", "gumbo"],
+        choices=[
+            "justhtml",
+            "justhtml_to_html",
+            "html5lib",
+            "lxml",
+            "bs4",
+            "html.parser",
+            "selectolax",
+            "gumbo",
+        ],
         default=["justhtml", "html5lib", "lxml", "bs4", "html.parser", "selectolax", "gumbo"],
         help="Parsers to benchmark (default: all)",
     )
@@ -712,6 +778,7 @@ def main():
     results = {}
     benchmarks = {
         "justhtml": benchmark_justhtml,
+        "justhtml_to_html": benchmark_justhtml_to_html,
         "html5lib": benchmark_html5lib,
         "lxml": benchmark_lxml,
         "bs4": benchmark_bs4,

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Profile JustHTML on real-world HTML."""
 
+import argparse
 import cProfile
 import pathlib
 import pstats
@@ -46,27 +47,41 @@ def load_html_files(batch_path: pathlib.Path, dict_bytes: bytes, limit: int = 10
     return results
 
 
-# Load real HTML
-dict_bytes = load_dict(pathlib.Path("/home/emilstenstrom/Projects/web100k/html.dict"))
-html_files = load_html_files(
-    pathlib.Path("/home/emilstenstrom/Projects/web100k/batches/web100k-batch-001.tar.zst"),
-    dict_bytes,
-    limit=100,
-)
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--to-html",
+        action="store_true",
+        help="Profile parse + serialization via to_html() (pretty=True by default)",
+    )
+    return parser.parse_args()
 
-print(f"Loaded {len(html_files)} files")
 
-# Profile
-profiler = cProfile.Profile()
-profiler.enable()
+def main() -> None:
+    args = parse_args()
 
-for _filename, html in html_files:
-    parser = JustHTML(html)
-    _ = parser.root
+    dict_bytes = load_dict(pathlib.Path("/home/emilstenstrom/Projects/web100k/html.dict"))
+    html_files = load_html_files(
+        pathlib.Path("/home/emilstenstrom/Projects/web100k/batches/web100k-batch-001.tar.zst"),
+        dict_bytes,
+        limit=100,
+    )
 
-profiler.disable()
+    print(f"Loaded {len(html_files)} files")
 
-# Print stats
-stats = pstats.Stats(profiler)
-stats.sort_stats("tottime")
-stats.print_stats(80)
+    profiler = cProfile.Profile()
+    profiler.enable()
+
+    for _filename, html in html_files:
+        parser = JustHTML(html)
+        _ = parser.to_html() if args.to_html else parser.root
+
+    profiler.disable()
+
+    stats = pstats.Stats(profiler)
+    stats.sort_stats("tottime")
+    stats.print_stats(80)
+
+
+if __name__ == "__main__":
+    main()
