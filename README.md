@@ -9,9 +9,12 @@ A pure Python HTML5 parser that just works. No C extensions to compile. No syste
 - **Just... Correct ✅** — Spec-perfect HTML5 parsing with browser-grade error recovery — passes the official 9k+ [html5lib-tests](https://github.com/html5lib/html5lib-tests) suite, with 100% line+branch coverage. ([Correctness](docs/correctness.md))
 
   ```python
-  JustHTML("<p><b>Hi<i>there</b>!", fragment=True).root.to_html()
+  JustHTML("<p><b>Hi<i>there</b>!", fragment=True).to_html()
   # => <p><b>Hi<i>there</i></b><i>!</i></p>
+
+  # Note: fragment=True parses snippets (no <html>/<body> needed)
   ```
+
 
 - **Just... Python 🐍** — Pure Python, zero dependencies — no C extensions or system libraries, easy to debug, and works anywhere Python runs, including PyPy and Pyodide. ([Run in the browser](https://emilstenstrom.github.io/justhtml/playground/))
 
@@ -20,7 +23,7 @@ A pure Python HTML5 parser that just works. No C extensions to compile. No syste
   # Requires: [intentionally left blank]
   ```
 
-- **Just... Secure 🔒** — Safe-by-default output for untrusted HTML — built-in Bleach-style allowlist sanitization on `to_html()` / `to_markdown()` (override with `safe=False`), plus URL/CSS rules. ([Sanitization & Security](docs/sanitization.md))
+- **Just... Secure 🔒** — Safe-by-default output for untrusted HTML — built-in Bleach-style allowlist sanitization on `to_text()`, `to_html()`, `to_markdown()` (override with `safe=False`). Can sanitize inline CSS rules. ([Sanitization & Security](docs/sanitization.md))
 
   ```python
   JustHTML(
@@ -28,7 +31,7 @@ A pure Python HTML5 parser that just works. No C extensions to compile. No syste
       "<a href=\"javascript:alert(1)\">bad</a> "
       "<a href=\"https://example.com/?a=1&b=2\">ok</a></p>",
       fragment=True,
-  ).root.to_html()
+  ).to_html()
   # => <p>Hello <a>bad</a> <a href="https://example.com/?a=1&amp;b=2">ok</a></p>
   ```
 
@@ -75,6 +78,8 @@ A pure Python HTML5 parser that just works. No C extensions to compile. No syste
 ```bash
 pip install justhtml
 ```
+
+Next: [Quickstart Guide](docs/quickstart.md), [CSS Selectors](docs/selectors.md), [Sanitization & Security](docs/sanitization.md), or [try the Playground](https://emilstenstrom.github.io/justhtml/playground/).
 
 Requires Python 3.10 or later.
 
