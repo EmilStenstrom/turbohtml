@@ -255,19 +255,39 @@ def _css_value_may_load_external_resource(value: str) -> bool:
     if "\\" in value:
         return True
 
-    # Scan while ignoring ASCII whitespace/control chars.
+    # Scan while ignoring ASCII whitespace/control chars and CSS comments.
     # Keep a small rolling buffer to avoid extra allocations.
     buf: list[str] = []
     max_len = len("alphaimageloader")
 
-    for ch in value:
+    i = 0
+    n = len(value)
+    while i < n:
+        ch = value[i]
+
+        # Treat CSS comments as ignorable, so obfuscation like u/**/rl( is caught.
+        if ch == "/" and i + 1 < n and value[i + 1] == "*":
+            i += 2
+            while i + 1 < n:
+                if value[i] == "*" and value[i + 1] == "/":
+                    i += 2
+                    break
+                i += 1
+            else:
+                # Unterminated comments are invalid CSS; be conservative.
+                return True
+            continue
+
         o = ord(ch)
         if o <= 0x20 or o == 0x7F:
+            i += 1
             continue
+
         if "A" <= ch <= "Z":
             lower_ch = chr(o + 0x20)
         else:
             lower_ch = ch
+
         buf.append(lower_ch)
         if len(buf) > max_len:
             buf.pop(0)
@@ -346,6 +366,8 @@ def _css_value_may_load_external_resource(value: str) -> bool:
             "g",
         ]:
             return True
+
+        i += 1
 
     return False
 

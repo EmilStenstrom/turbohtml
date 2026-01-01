@@ -66,12 +66,17 @@ class TestSanitizePlumbing(unittest.TestCase):
         assert _css_value_may_load_external_resource("URL(https://evil.example/x)") is True
         assert _css_value_may_load_external_resource("u r l (https://evil.example/x)") is True
         assert _css_value_may_load_external_resource("u\\72l(https://evil.example/x)") is True
+        assert _css_value_may_load_external_resource("u/**/rl(https://evil.example/x)") is True
+        assert _css_value_may_load_external_resource("u/*x*/rl(https://evil.example/x)") is True
         assert _css_value_may_load_external_resource("IMAGE-SET(foo)") is True
+        assert _css_value_may_load_external_resource("image/**/-set(foo)") is True
         assert _css_value_may_load_external_resource("expression(alert(1))") is True
+        assert _css_value_may_load_external_resource("ex/**/pression(alert(1))") is True
         assert _css_value_may_load_external_resource("progid:DXImageTransform.Microsoft.AlphaImageLoader") is True
         assert _css_value_may_load_external_resource("AlphaImageLoader") is True
         assert _css_value_may_load_external_resource("behavior: url(x)") is True
         assert _css_value_may_load_external_resource("-moz-binding: url(x)") is True
+        assert _css_value_may_load_external_resource("color: red /*") is True
         assert _css_value_may_load_external_resource("a" * 64) is False
         assert _css_value_may_load_external_resource("red") is False
 
