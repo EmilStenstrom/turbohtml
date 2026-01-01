@@ -50,30 +50,24 @@ A pure Python HTML5 parser that just works. No C extensions to compile. No syste
   # 0.365 s
   ```
 
-## Comparison to other parsers
+## Comparison
 
-| Parser | HTML5 Compliance | Pure Python? | Speed | Query API | Notes |
-|--------|:----------------:|:------------:|-------|-----------|-------|
-| **JustHTML** | ✅ **100%** | ✅ Yes | ⚡ Fast | ✅ CSS selectors | It just works. Correct, easy to install, and fast enough. |
-| `html5lib` | 🟡 88% | ✅ Yes | 🐢 Slow | ❌ None | The reference implementation. Very correct but quite slow. |
-| `html5_parser` | 🟡 84% | ❌ No | 🚀 Very Fast | 🟡 XPath (lxml) | C-based (Gumbo). Fast and mostly correct. |
-| `selectolax` | 🟡 68% | ❌ No | 🚀 Very Fast | ✅ CSS selectors | C-based (Lexbor). Very fast but less compliant. |
-| `BeautifulSoup` | 🔴 4% | ✅ Yes | 🐢 Slow | 🟡 Custom API | Wrapper around `html.parser`. Not spec compliant. |
-| `html.parser` | 🔴 4% | ✅ Yes | ⚡ Fast | ❌ None | Standard library. Chokes on malformed HTML. |
-| `lxml` | 🔴 1% | ❌ No | 🚀 Very Fast | 🟡 XPath | C-based (libxml2). Fast but not HTML5 compliant. |
+| Tool | HTML5 parsing [1][2] | Speed | CSS query | Sanitizes output | Notes |
+|------|------------------------------------------|-------|----------|------------------|-------|
+| **JustHTML**<br>Pure Python | ✅&nbsp;**100%** | ⚡ Fast | ✅ CSS selectors | ✅ Built-in (`safe=True`) | Correct, easy to install, and fast enough. |
+| **Chromium**<br>browser engine | ✅ **99%** | 🚀&nbsp;Very&nbsp;Fast | — | — | — |
+| **WebKit**<br>browser engine | ✅ **98%** | 🚀 Very Fast | — | — | — |
+| **Firefox**<br>browser engine | ✅ **97%** | 🚀 Very Fast | — | — | — |
+| **`html5lib`**<br>Pure Python | 🟡 88% | 🐢 Slow | 🟡 XPath (lxml) | 🔴 [Deprecated](https://github.com/html5lib/html5lib-python/issues/443) | Unmaintained. Reference implementation;  Correct but quite slow. |
+| **`html5_parser`**<br>Python wrapper of C-based Gumbo | 🟡 84% | 🚀 Very Fast | 🟡 XPath (lxml) | ❌ Needs sanitization | Fast and mostly correct. |
+| **`selectolax`**<br>Python wrapper of C-based Lexbor | 🟡 68% | 🚀 Very Fast | ✅ CSS selectors | ❌ Needs sanitization | Very fast but less compliant. |
+| **`html.parser`**<br>Python stdlib | 🔴 4% | ⚡ Fast | ❌ None | ❌ Needs sanitization | Standard library. Chokes on malformed HTML. |
+| **`BeautifulSoup`**<br>Pure Python | 🔴 4% (default) | 🐢 Slow | 🟡 Custom API | ❌ Needs sanitization | Wraps `html.parser` (default). Can use lxml or html5lib. |
+| **`lxml`**<br>Python wrapper of C-based libxml2 | 🔴 1% | 🚀 Very Fast | 🟡 XPath | ❌ | Fast but not HTML5 compliant. |
 
+[1]: Parser compliance scores are from a strict run of the [html5lib-tests](https://github.com/html5lib/html5lib-tests) tree-construction fixtures (1,743 non-script tests). See [docs/correctness.md](docs/correctness.md) for details.
 
-*Compliance scores from a strict run of the [html5lib-tests](https://github.com/html5lib/html5lib-tests) tree-construction fixtures (1,743 non-script tests). See [benchmarks/correctness.py](benchmarks/correctness.py) and [docs/correctness.md](docs/correctness.md) for details*.
-
-Browser engine agreement (tree-construction, pass/(pass+fail), 2025-12-30):
-
-| Engine | Tests Passed | Agreement | Notes |
-|--------|-------------|-----------|-------|
-| Chromium | 1763/1770 | 99.6% | DOMParser / contextual fragment (via Playwright) |
-| WebKit | 1741/1770 | 98.4% | DOMParser / contextual fragment (via Playwright) |
-| Firefox | 1727/1770 | 97.6% | DOMParser / contextual fragment (via Playwright) |
-
-*Browser numbers from [`justhtml-html5lib-tests-bench`](https://github.com/EmilStenstrom/justhtml-html5lib-tests-bench) on the upstream `html5lib-tests/tree-construction` corpus (excluding 12 scripting-enabled cases).*
+[2]: Browser numbers are from [`justhtml-html5lib-tests-bench`](https://github.com/EmilStenstrom/justhtml-html5lib-tests-bench) on the upstream `html5lib-tests/tree-construction` corpus (excluding 12 scripting-enabled cases).
 
 
 ## Installation
