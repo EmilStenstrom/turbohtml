@@ -13,7 +13,7 @@ A pure Python HTML5 parser that just works. No C extensions to compile. No syste
   # => <p><b>Hello</b></p>
   ```
 
-- **Just... Python 🐍** — Pure Python, zero dependencies — no C extensions or system libraries, easy to debug, and works anywhere Python runs (including PyPy and Pyodide). ([Quickstart](docs/quickstart.md))
+- **Just... Python 🐍** — Pure Python, zero dependencies — no C extensions or system libraries, easy to debug, and works anywhere Python runs, including PyPy and Pyodide. ([Run in the browser](https://emilstenstrom.github.io/justhtml/playground/))
 
   ```bash
   python -m pip show justhtml | grep -E '^Requires:'
@@ -63,7 +63,7 @@ A pure Python HTML5 parser that just works. No C extensions to compile. No syste
 | **`selectolax`**<br>Python wrapper of C-based Lexbor | 🟡 68% | 🚀 Very Fast | ✅ CSS selectors | ❌ Needs sanitization | Very fast but less compliant. |
 | **`html.parser`**<br>Python stdlib | 🔴 4% | ⚡ Fast | ❌ None | ❌ Needs sanitization | Standard library. Chokes on malformed HTML. |
 | **`BeautifulSoup`**<br>Pure Python | 🔴 4% (default) | 🐢 Slow | 🟡 Custom API | ❌ Needs sanitization | Wraps `html.parser` (default). Can use lxml or html5lib. |
-| **`lxml`**<br>Python wrapper of C-based libxml2 | 🔴 1% | 🚀 Very Fast | 🟡 XPath | ❌ | Fast but not HTML5 compliant. |
+| **`lxml`**<br>Python wrapper of C-based libxml2 | 🔴 1% | 🚀 Very Fast | 🟡 XPath | 🔴 [Not considered safe](https://lxml-html-clean.readthedocs.io/en/latest/usage.html) | Fast but not HTML5 compliant. |
 
 [1]: Parser compliance scores are from a strict run of the [html5lib-tests](https://github.com/html5lib/html5lib-tests) tree-construction fixtures (1,743 non-script tests). See [docs/correctness.md](docs/correctness.md) for details.
 
@@ -72,11 +72,11 @@ A pure Python HTML5 parser that just works. No C extensions to compile. No syste
 
 ## Installation
 
-Requires Python 3.10 or later.
-
 ```bash
 pip install justhtml
 ```
+
+Requires Python 3.10 or later.
 
 ## Quick Example
 
