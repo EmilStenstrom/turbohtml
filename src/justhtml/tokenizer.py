@@ -396,8 +396,9 @@ class Tokenizer:
 
     def run(self, html: str | None) -> None:
         self.initialize(html)
+        handlers = self._STATE_HANDLERS  # type: ignore[attr-defined]
         while True:
-            if self.step():
+            if handlers[self.state](self):  # type: ignore[no-any-return]
                 break
 
     # ---------------------
@@ -733,35 +734,40 @@ class Tokenizer:
                     pos = match.end()
 
                     if pos < length:
-                        c = buffer[pos]
-                        if c == "=":
+                        next_char = buffer[pos]
+                        if next_char == "=":
                             pos += 1
                             self.pos = pos
                             self.state = self.BEFORE_ATTRIBUTE_VALUE
                             return self._state_before_attribute_value()
-                        if c in (" ", "\t", "\n", "\f"):
+                        if next_char in (" ", "\t", "\n", "\f"):
                             pos += 1
                             self.pos = pos
                             self._finish_attribute()
                             self.state = self.AFTER_ATTRIBUTE_NAME
                             return False  # Let main loop dispatch to avoid recursion
-                        if c == ">":
+                        if next_char == ">":
                             pos += 1
                             self.pos = pos
                             self._finish_attribute()
                             if not self._emit_current_tag():
                                 self.state = self.DATA
                             return False
-                        if c == "/":
+                        if next_char == "/":
                             pos += 1
                             self.pos = pos
                             self._finish_attribute()
                             self.state = self.SELF_CLOSING_START_TAG
                             return self._state_self_closing_start_tag()
 
+            # Inline _get_char (reconsume is never True in this state)
+            if pos >= length:
+                c: str | None = None
+            else:
+                c = buffer[pos]
+                pos += 1
+            self.current_char = c
             self.pos = pos
-            c = self._get_char()  # type: ignore[assignment]
-            pos = self.pos
             if c is None:
                 self._emit_error("eof-in-tag")
                 self._flush_text()
@@ -798,9 +804,8 @@ class Tokenizer:
             # Optimization: Skip whitespace
             if not self.reconsume:
                 if self.pos < length:
-                    match = _WHITESPACE_PATTERN.match(buffer, self.pos)
-                    if match:
-                        self.pos = match.end()
+                    if buffer[self.pos] in " \t\n\f":
+                        self.pos = _WHITESPACE_PATTERN.match(buffer, self.pos).end()  # type: ignore[union-attr]
 
             # Inline _get_char
             if self.pos >= length:
@@ -846,7 +851,14 @@ class Tokenizer:
 
     def _state_before_attribute_value(self) -> bool:
         while True:
-            c = self._get_char()
+            # Inline _get_char (reconsume is never True in this state)
+            pos = self.pos
+            if pos >= self.length:
+                c: str | None = None
+            else:
+                c = self.buffer[pos]
+                self.pos = pos + 1
+            self.current_char = c
             if c is None:
                 self._emit_error("eof-in-tag")
                 self._flush_text()

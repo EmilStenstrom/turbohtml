@@ -121,6 +121,20 @@ class SanitizationPolicy:
     # (The sanitizer will merge tokens; it will not remove existing ones.)
     force_link_rel: Collection[str] = field(default_factory=set)
 
+    # Internal caches to avoid per-node allocations in hot paths.
+    _allowed_attrs_global: frozenset[str] = field(
+        default_factory=frozenset,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _allowed_attrs_by_tag: dict[str, frozenset[str]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
     def __post_init__(self) -> None:
         # Normalize to sets so the sanitizer can do fast membership checks.
         if not isinstance(self.allowed_tags, set):
@@ -149,6 +163,20 @@ class SanitizationPolicy:
                 "SanitizationPolicy allows the 'style' attribute but allowed_css_properties is empty. "
                 "Either remove 'style' from allowed_attributes or set allowed_css_properties (for example CSS_PRESET_TEXT)."
             )
+
+        allowed_attributes = self.allowed_attributes
+        allowed_global = frozenset(allowed_attributes.get("*", ()))
+        by_tag: dict[str, frozenset[str]] = {}
+        for tag, attrs in allowed_attributes.items():
+            if tag == "*":
+                continue
+            by_tag[tag] = frozenset(allowed_global.union(attrs))
+        object.__setattr__(self, "_allowed_attrs_global", allowed_global)
+        object.__setattr__(self, "_allowed_attrs_by_tag", by_tag)
+
+
+_URL_NORMALIZE_STRIP_TABLE = {i: None for i in range(0x21)}
+_URL_NORMALIZE_STRIP_TABLE[0x7F] = None
 
 
 DEFAULT_POLICY: SanitizationPolicy = SanitizationPolicy(
@@ -444,13 +472,7 @@ def _normalize_url_for_checking(value: str) -> str:
     # Strip whitespace/control chars commonly used for scheme obfuscation.
     # Note: do not strip backslashes; they are not whitespace/control chars,
     # and removing them can turn invalid schemes into valid ones.
-    out: list[str] = []
-    for ch in value:
-        o = ord(ch)
-        if o <= 0x20 or o == 0x7F:
-            continue
-        out.append(ch)
-    return "".join(out)
+    return value.translate(_URL_NORMALIZE_STRIP_TABLE)
 
 
 def _is_valid_scheme(scheme: str) -> bool:
@@ -577,16 +599,16 @@ def _sanitize_attrs(
     if not attrs:
         attrs = {}
 
-    allowed_global = set(policy.allowed_attributes.get("*", ()))
-    allowed_tag = set(policy.allowed_attributes.get(tag, ()))
-    allowed = allowed_global | allowed_tag
+    allowed = policy._allowed_attrs_by_tag.get(tag) or policy._allowed_attrs_global
 
     out: dict[str, str | None] = {}
     for raw_name, raw_value in attrs.items():
         if not raw_name:
             continue
 
-        name = str(raw_name).strip().lower()
+        name = str(raw_name).strip()
+        if name and not name.islower():
+            name = name.lower()
         if not name:
             continue
 

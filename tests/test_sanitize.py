@@ -174,6 +174,14 @@ class TestSanitizePlumbing(unittest.TestCase):
         html = to_html(out, pretty=False, safe=False)
         assert html in {"<div disabled id></div>", "<div id disabled></div>"}
 
+    def test_sanitize_lowercases_attribute_names(self) -> None:
+        # The parser already lowercases attribute names; build a manual node to
+        # ensure sanitize() is robust to unexpected input.
+        n = SimpleDomNode("a", attrs={"HREF": "https://example.com"})
+        out = sanitize(n)
+        html = to_html(out, pretty=False, safe=False)
+        assert 'href="https://example.com"' in html
+
     def test_sanitize_text_root_is_cloned(self) -> None:
         out = sanitize(TextNode("x"))
         assert to_html(out, pretty=False, safe=False) == "x"

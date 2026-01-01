@@ -116,6 +116,17 @@ class TestCoverage(unittest.TestCase):
         self.assertFalse(done)
         self.assertEqual(tokenizer.state, Tokenizer.BEFORE_ATTRIBUTE_VALUE)
 
+    def test_tokenizer_after_attribute_name_no_whitespace_run(self) -> None:
+        sink = _CoverageSink()
+        tokenizer = Tokenizer(sink, TokenizerOpts(), collect_errors=True)
+        tokenizer.initialize("=")
+        tokenizer.state = Tokenizer.AFTER_ATTRIBUTE_NAME
+        tokenizer.reconsume = False
+
+        done = tokenizer._state_after_attribute_name()
+        self.assertFalse(done)
+        self.assertEqual(tokenizer.state, Tokenizer.BEFORE_ATTRIBUTE_VALUE)
+
     def test_tokenizer_after_attribute_name_whitespace_continue(self) -> None:
         sink = _CoverageSink()
         tokenizer = Tokenizer(sink, TokenizerOpts(), collect_errors=True)

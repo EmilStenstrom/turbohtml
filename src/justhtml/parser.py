@@ -116,21 +116,24 @@ class JustHTML:
         self.tokenizer.run(html_str)
         self.root = self.tree_builder.finish()
 
-        # Merge errors from both tokenizer and tree builder.
-        # Public API: users expect errors to be ordered by input position.
-        merged_errors = self.tokenizer.errors + self.tree_builder.errors
-        indexed_errors = enumerate(merged_errors)
-        self.errors = [
-            e
-            for _, e in sorted(
-                indexed_errors,
-                key=lambda t: (
-                    t[1].line if t[1].line is not None else 1_000_000_000,
-                    t[1].column if t[1].column is not None else 1_000_000_000,
-                    t[0],
-                ),
-            )
-        ]
+        if should_collect:
+            # Merge errors from both tokenizer and tree builder.
+            # Public API: users expect errors to be ordered by input position.
+            merged_errors = self.tokenizer.errors + self.tree_builder.errors
+            indexed_errors = enumerate(merged_errors)
+            self.errors = [
+                e
+                for _, e in sorted(
+                    indexed_errors,
+                    key=lambda t: (
+                        t[1].line if t[1].line is not None else 1_000_000_000,
+                        t[1].column if t[1].column is not None else 1_000_000_000,
+                        t[0],
+                    ),
+                )
+            ]
+        else:
+            self.errors = []
 
         # In strict mode, raise on first error
         if strict and self.errors:
