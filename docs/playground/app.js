@@ -265,11 +265,9 @@ async function initPyodide() {
 	setStatus(STATUS.INSTALL);
 	await pyodide.loadPackage("micropip");
 
-	// Keep this pinned to the repo version to avoid surprising mismatches.
-	const version = "0.23.0";
 	const installCode = [
 		`import micropip`,
-		`await micropip.install("justhtml==${version}")`,
+		`await micropip.install("justhtml")`,
 	].join("\n");
 	await pyodide.runPythonAsync(installCode);
 
