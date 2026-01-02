@@ -157,6 +157,12 @@ class SanitizationPolicy:
         if not isinstance(self.force_link_rel, set):
             object.__setattr__(self, "force_link_rel", set(self.force_link_rel))
 
+        # Normalize rel tokens once so _sanitize_attrs() can stay allocation-light.
+        # (Downstream code expects lowercase tokens and ignores empty/whitespace.)
+        if self.force_link_rel:
+            normalized_force_link_rel = {t.strip().lower() for t in self.force_link_rel if str(t).strip()}
+            object.__setattr__(self, "force_link_rel", normalized_force_link_rel)
+
         style_allowed = any("style" in attrs for attrs in self.allowed_attributes.values())
         if style_allowed and not self.allowed_css_properties:
             raise ValueError(
@@ -647,8 +653,7 @@ def _sanitize_attrs(
             out[name] = value
 
     # Link hardening (merge tokens; do not remove existing ones).
-    forced_tokens = [t.strip().lower() for t in policy.force_link_rel if str(t).strip()]
-    if tag == "a" and forced_tokens:
+    if tag == "a" and policy.force_link_rel:
         existing_raw = out.get("rel")
         existing: list[str] = []
         if isinstance(existing_raw, str) and existing_raw:
@@ -656,7 +661,7 @@ def _sanitize_attrs(
                 t = tok.strip().lower()
                 if t and t not in existing:
                     existing.append(t)
-        for tok in sorted(forced_tokens):
+        for tok in sorted(policy.force_link_rel):
             if tok not in existing:
                 existing.append(tok)
         out["rel"] = " ".join(existing)
