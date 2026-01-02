@@ -42,6 +42,16 @@ class TestSanitizePlumbing(unittest.TestCase):
         assert isinstance(policy.force_link_rel, set)
         assert isinstance(policy.allowed_css_properties, set)
 
+    def test_policy_rejects_invalid_unsafe_handling(self) -> None:
+        with self.assertRaises(ValueError):
+            SanitizationPolicy(
+                allowed_tags=["div"],
+                allowed_attributes={"*": [], "div": []},
+                url_rules={},
+                allowed_css_properties=["color"],
+                unsafe_handling="nope",  # type: ignore[arg-type]
+            )
+
     def test_is_valid_css_property_name(self) -> None:
         assert _is_valid_css_property_name("border-top") is True
         assert _is_valid_css_property_name("") is False
@@ -257,6 +267,211 @@ class TestSanitizePlumbing(unittest.TestCase):
             to_html(sanitize(tpl_no_content, policy=template_policy), pretty=False, safe=False)
             == "<template></template>"
         )
+
+
+class TestSanitizeUnsafe(unittest.TestCase):
+    def test_sanitize_unsafe_raises(self) -> None:
+        html = "<script>alert(1)</script>"
+        node = JustHTML(html, fragment=True).root
+
+        # Default behavior: script is removed
+        sanitized = sanitize(node)
+        assert to_html(sanitized) == ""
+
+        # New behavior: raise exception
+        policy = SanitizationPolicy(
+            allowed_tags={"p"},
+            allowed_attributes={},
+            url_rules={},
+            unsafe_handling="raise",
+        )
+
+        with self.assertRaisesRegex(ValueError, "Unsafe tag"):
+            sanitize(node, policy=policy)
+
+    def test_sanitize_unsafe_attribute_raises(self) -> None:
+        html = '<p onclick="alert(1)">Hello</p>'
+        node = JustHTML(html, fragment=True).root
+
+        policy = SanitizationPolicy(
+            allowed_tags={"p"},
+            allowed_attributes={"p": set()},
+            url_rules={},
+            unsafe_handling="raise",
+        )
+
+        with self.assertRaisesRegex(ValueError, "Unsafe attribute"):
+            sanitize(node, policy=policy)
+
+    def test_sanitize_unsafe_url_raises(self) -> None:
+        html = '<a href="javascript:alert(1)">Link</a>'
+        node = JustHTML(html, fragment=True).root
+
+        policy = SanitizationPolicy(
+            allowed_tags={"a"},
+            allowed_attributes={"a": {"href"}},
+            url_rules={("a", "href"): UrlRule(allowed_schemes={"https"})},
+            unsafe_handling="raise",
+        )
+
+        with self.assertRaisesRegex(ValueError, "Unsafe URL"):
+            sanitize(node, policy=policy)
+
+    def test_sanitize_unsafe_namespaced_attribute_raises(self) -> None:
+        html = '<p xlink:href="foo">Hello</p>'
+        node = JustHTML(html, fragment=True).root
+        policy = SanitizationPolicy(
+            allowed_tags={"p"},
+            allowed_attributes={"p": set()},
+            url_rules={},
+            unsafe_handling="raise",
+        )
+        with self.assertRaisesRegex(ValueError, "Unsafe attribute.*namespaced"):
+            sanitize(node, policy=policy)
+
+    def test_sanitize_unsafe_srcdoc_attribute_raises(self) -> None:
+        html = '<iframe srcdoc="<script>"></iframe>'
+        node = JustHTML(html, fragment=True).root
+        policy = SanitizationPolicy(
+            allowed_tags={"iframe"},
+            allowed_attributes={"iframe": {"srcdoc"}},  # Even if allowed, srcdoc is dangerous
+            url_rules={},
+            unsafe_handling="raise",
+        )
+        with self.assertRaisesRegex(ValueError, "Unsafe attribute.*srcdoc"):
+            sanitize(node, policy=policy)
+
+    def test_sanitize_unsafe_disallowed_attribute_raises(self) -> None:
+        html = '<p foo="bar">Hello</p>'
+        node = JustHTML(html, fragment=True).root
+        policy = SanitizationPolicy(
+            allowed_tags={"p"},
+            allowed_attributes={"p": set()},  # No attributes allowed
+            url_rules={},
+            unsafe_handling="raise",
+        )
+        with self.assertRaisesRegex(ValueError, "Unsafe attribute.*not allowed"):
+            sanitize(node, policy=policy)
+
+    def test_sanitize_unsafe_inline_style_raises(self) -> None:
+        html = '<p style="background: url(javascript:alert(1))">Hello</p>'
+        node = JustHTML(html, fragment=True).root
+        policy = SanitizationPolicy(
+            allowed_tags={"p"},
+            allowed_attributes={"p": {"style"}},
+            allowed_css_properties={"background"},
+            url_rules={},
+            unsafe_handling="raise",
+        )
+        with self.assertRaisesRegex(ValueError, "Unsafe inline style"):
+            sanitize(node, policy=policy)
+
+    def test_sanitize_unsafe_root_tag_raises(self) -> None:
+        # Test disallowed tag as root
+        html = "<div>Content</div>"
+        node = JustHTML(html, fragment=True).root
+        # node is a div (because fragment=True parses into a list of nodes, but JustHTML.root wraps them?
+        # Wait, JustHTML(fragment=True).root is a DocumentFragment containing the nodes.
+        # sanitize() on a DocumentFragment iterates children.
+        # To test root handling, we need to pass the element directly.
+
+        div = node.children[0]
+        policy = SanitizationPolicy(
+            allowed_tags={"p"},
+            allowed_attributes={},
+            url_rules={},
+            unsafe_handling="raise",
+        )
+        with self.assertRaisesRegex(ValueError, "Unsafe tag.*not allowed"):
+            sanitize(div, policy=policy)
+
+    def test_sanitize_unsafe_root_dropped_content_raises(self) -> None:
+        html = "<script>alert(1)</script>"
+        node = JustHTML(html, fragment=True).root
+        script = node.children[0]
+
+        policy = SanitizationPolicy(
+            allowed_tags={"p"},
+            allowed_attributes={},
+            url_rules={},
+            unsafe_handling="raise",
+        )
+        with self.assertRaisesRegex(ValueError, "Unsafe tag.*dropped content"):
+            sanitize(script, policy=policy)
+
+    def test_sanitize_unsafe_child_dropped_content_raises(self) -> None:
+        html = "<div><script>alert(1)</script></div>"
+        node = JustHTML(html, fragment=True).root
+        div = node.children[0]
+
+        policy = SanitizationPolicy(
+            allowed_tags={"div"},
+            allowed_attributes={"div": set()},
+            url_rules={},
+            unsafe_handling="raise",
+        )
+        with self.assertRaisesRegex(ValueError, "Unsafe tag.*dropped content"):
+            sanitize(div, policy=policy)
+
+    def test_sanitize_unsafe_child_disallowed_tag_raises(self) -> None:
+        html = "<div><foo></foo></div>"
+        node = JustHTML(html, fragment=True).root
+        div = node.children[0]
+
+        policy = SanitizationPolicy(
+            allowed_tags={"div"},
+            allowed_attributes={"div": set()},
+            url_rules={},
+            unsafe_handling="raise",
+        )
+        with self.assertRaisesRegex(ValueError, "Unsafe tag.*not allowed"):
+            sanitize(div, policy=policy)
+
+    def test_sanitize_unsafe_root_foreign_namespace_raises(self) -> None:
+        # <svg> puts elements in SVG namespace
+        html = "<svg><title>foo</title></svg>"
+        node = JustHTML(html, fragment=True).root
+        svg = node.children[0]
+
+        policy = SanitizationPolicy(
+            allowed_tags={"svg"},  # Even if allowed, foreign namespaces might be dropped
+            allowed_attributes={"svg": set()},
+            url_rules={},
+            drop_foreign_namespaces=True,
+            unsafe_handling="raise",
+        )
+        with self.assertRaisesRegex(ValueError, "Unsafe tag.*foreign namespace"):
+            sanitize(svg, policy=policy)
+
+    def test_sanitize_unsafe_child_foreign_namespace_raises(self) -> None:
+        html = "<div><svg></svg></div>"
+        node = JustHTML(html, fragment=True).root
+        div = node.children[0]
+
+        policy = SanitizationPolicy(
+            allowed_tags={"div"},
+            allowed_attributes={"div": set()},
+            url_rules={},
+            drop_foreign_namespaces=True,
+            unsafe_handling="raise",
+        )
+        with self.assertRaisesRegex(ValueError, "Unsafe tag.*foreign namespace"):
+            sanitize(div, policy=policy)
+
+    def test_sanitize_unsafe_root_disallowed_no_strip_raises(self) -> None:
+        html = "<x-foo></x-foo>"
+        node = JustHTML(html, fragment=True).root
+        xfoo = node.children[0]
+
+        policy = SanitizationPolicy(
+            allowed_tags={"p"},
+            allowed_attributes={},
+            url_rules={},
+            strip_disallowed_tags=False,  # Don't strip, just drop
+            unsafe_handling="raise",
+        )
+        with self.assertRaisesRegex(ValueError, "Unsafe tag.*not allowed"):
+            sanitize(xfoo, policy=policy)
 
 
 if __name__ == "__main__":

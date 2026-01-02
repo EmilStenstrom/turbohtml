@@ -2010,7 +2010,9 @@ class Tokenizer:
 
         message = generate_error_message(code)
         line = self._get_line_at_pos(self.pos)
-        self.errors.append(ParseError(code, line=line, column=column, message=message, source_html=self.buffer))
+        self.errors.append(
+            ParseError(code, line=line, column=column, category="tokenizer", message=message, source_html=self.buffer)
+        )
 
     def _emit_error_at_pos(self, code: str, pos: int) -> None:
         last_newline = self.buffer.rfind("\n", 0, pos + 1)
@@ -2021,7 +2023,9 @@ class Tokenizer:
 
         message = generate_error_message(code)
         line = self._get_line_at_pos(pos)
-        self.errors.append(ParseError(code, line=line, column=column, message=message, source_html=self.buffer))
+        self.errors.append(
+            ParseError(code, line=line, column=column, category="tokenizer", message=message, source_html=self.buffer)
+        )
 
     def _consume_if(self, literal: str) -> bool:
         end = self.pos + len(literal)

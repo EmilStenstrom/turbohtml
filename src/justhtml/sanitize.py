@@ -10,10 +10,17 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote, urlsplit
 
 UrlFilter = Callable[[str, str, str], str | None]
+
+
+class UnsafeHtmlError(ValueError):
+    """Raised when unsafe HTML is encountered and unsafe_handling='raise'."""
+
+
+UnsafeHandling = Literal["strip", "raise"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +128,15 @@ class SanitizationPolicy:
     # (The sanitizer will merge tokens; it will not remove existing ones.)
     force_link_rel: Collection[str] = field(default_factory=set)
 
+    # Determines how unsafe input is handled.
+    #
+    # - "strip": Default. Remove/drop unsafe constructs and keep going.
+    # - "raise": Raise UnsafeHtmlError on the first unsafe construct.
+    #
+    # This is intentionally a string mode (instead of a boolean) so we can add
+    # more behaviors over time without changing the API shape.
+    unsafe_handling: UnsafeHandling = "strip"
+
     # Internal caches to avoid per-node allocations in hot paths.
     _allowed_attrs_global: frozenset[str] = field(
         default_factory=frozenset,
@@ -157,6 +173,11 @@ class SanitizationPolicy:
         if not isinstance(self.force_link_rel, set):
             object.__setattr__(self, "force_link_rel", set(self.force_link_rel))
 
+        unsafe_handling = str(self.unsafe_handling)
+        if unsafe_handling not in {"strip", "raise"}:
+            raise ValueError("Invalid unsafe_handling. Expected one of: 'strip', 'raise'")
+        object.__setattr__(self, "unsafe_handling", unsafe_handling)
+
         # Normalize rel tokens once so _sanitize_attrs() can stay allocation-light.
         # (Downstream code expects lowercase tokens and ignores empty/whitespace.)
         if self.force_link_rel:
@@ -179,6 +200,14 @@ class SanitizationPolicy:
             by_tag[tag] = frozenset(allowed_global.union(attrs))
         object.__setattr__(self, "_allowed_attrs_global", allowed_global)
         object.__setattr__(self, "_allowed_attrs_by_tag", by_tag)
+
+    def handle_unsafe(self, msg: str) -> None:
+        mode = self.unsafe_handling
+        if mode == "strip":
+            return
+        if mode == "raise":
+            raise UnsafeHtmlError(msg)
+        raise AssertionError(f"Unhandled unsafe_handling: {mode!r}")
 
 
 _URL_NORMALIZE_STRIP_TABLE = {i: None for i in range(0x21)}
@@ -619,17 +648,21 @@ def _sanitize_attrs(
 
         # Disallow namespace-ish attributes by default.
         if ":" in name:
+            policy.handle_unsafe(f"Unsafe attribute '{name}' (namespaced)")
             continue
 
         # Always drop event handlers.
         if name.startswith("on"):
+            policy.handle_unsafe(f"Unsafe attribute '{name}' (event handler)")
             continue
 
         # Dangerous attribute contexts.
         if name == "srcdoc":
+            policy.handle_unsafe(f"Unsafe attribute '{name}'")
             continue
 
         if name not in allowed and not (tag == "a" and name == "rel" and policy.force_link_rel):
+            policy.handle_unsafe(f"Unsafe attribute '{name}' (not allowed)")
             continue
 
         if raw_value is None:
@@ -641,11 +674,13 @@ def _sanitize_attrs(
         if rule is not None:
             sanitized = _sanitize_url_value(policy=policy, rule=rule, tag=tag, attr=name, value=value)
             if sanitized is None:
+                policy.handle_unsafe(f"Unsafe URL in attribute '{name}'")
                 continue
             out[name] = sanitized
         elif name == "style":
             sanitized_style = _sanitize_inline_style(policy=policy, value=value)
             if sanitized_style is None:
+                policy.handle_unsafe(f"Unsafe inline style in attribute '{name}'")
                 continue
             out[name] = sanitized_style
         else:
@@ -704,12 +739,15 @@ def _append_sanitized_subtree(*, policy: SanitizationPolicy, original: Any, pare
         if policy.drop_foreign_namespaces:
             ns = current.namespace
             if ns not in (None, "html"):
+                policy.handle_unsafe(f"Unsafe tag '{tag}' (foreign namespace)")
                 continue
 
         if tag in policy.drop_content_tags:
+            policy.handle_unsafe(f"Unsafe tag '{tag}' (dropped content)")
             continue
 
         if tag not in policy.allowed_tags:
+            policy.handle_unsafe(f"Unsafe tag '{tag}' (not allowed)")
             if policy.strip_disallowed_tags:
                 children = current.children or []
                 stack.extend((child, out_parent) for child in reversed(children))
@@ -776,6 +814,7 @@ def sanitize(node: Any, *, policy: SanitizationPolicy | None = None) -> Any:
     # Element root: keep element if allowed, otherwise unwrap into a fragment.
     tag = str(root_name).lower()
     if policy.drop_foreign_namespaces and node.namespace not in (None, "html"):
+        policy.handle_unsafe(f"Unsafe tag '{tag}' (foreign namespace)")
         out_root = node.clone_node(deep=False)
         out_root.name = "#document-fragment"
         out_root.children.clear()
@@ -783,6 +822,10 @@ def sanitize(node: Any, *, policy: SanitizationPolicy | None = None) -> Any:
         return out_root
 
     if tag in policy.drop_content_tags or (tag not in policy.allowed_tags and not policy.strip_disallowed_tags):
+        if tag in policy.drop_content_tags:
+            policy.handle_unsafe(f"Unsafe tag '{tag}' (dropped content)")
+        else:
+            policy.handle_unsafe(f"Unsafe tag '{tag}' (not allowed)")
         out_root = node.clone_node(deep=False)
         out_root.name = "#document-fragment"
         out_root.children.clear()
@@ -790,6 +833,7 @@ def sanitize(node: Any, *, policy: SanitizationPolicy | None = None) -> Any:
         return out_root
 
     if tag not in policy.allowed_tags and policy.strip_disallowed_tags:
+        policy.handle_unsafe(f"Unsafe tag '{tag}' (not allowed)")
         out_root = node.clone_node(deep=False)
         out_root.name = "#document-fragment"
         out_root.children.clear()

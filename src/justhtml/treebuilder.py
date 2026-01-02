@@ -209,6 +209,7 @@ class TreeBuilder(TreeBuilderModesMixin):
                 code,
                 line=line,
                 column=column,
+                category="treebuilder",
                 message=message,
                 source_html=source_html,
                 end_column=end_column,

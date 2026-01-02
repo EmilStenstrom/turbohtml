@@ -94,8 +94,9 @@ class TokenSinkResult:
 class ParseError:
     """Represents a parse error with location information."""
 
-    __slots__ = ("_end_column", "_source_html", "code", "column", "line", "message")
+    __slots__ = ("_end_column", "_source_html", "category", "code", "column", "line", "message")
 
+    category: str
     code: str
     line: int | None
     column: int | None
@@ -110,10 +111,12 @@ class ParseError:
         code: str,
         line: int | None = None,
         column: int | None = None,
+        category: str = "parse",
         message: str | None = None,
         source_html: str | None = None,
         end_column: int | None = None,
     ) -> None:
+        self.category = category
         self.code = code
         self.line = line
         self.column = column
@@ -123,7 +126,11 @@ class ParseError:
 
     def __repr__(self) -> str:
         if self.line is not None and self.column is not None:
+            if self.category != "parse":
+                return f"ParseError({self.code!r}, line={self.line}, column={self.column}, category={self.category!r})"
             return f"ParseError({self.code!r}, line={self.line}, column={self.column})"
+        if self.category != "parse":
+            return f"ParseError({self.code!r}, category={self.category!r})"
         return f"ParseError({self.code!r})"
 
     def __str__(self) -> str:
@@ -138,7 +145,12 @@ class ParseError:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, ParseError):
             return NotImplemented
-        return self.code == other.code and self.line == other.line and self.column == other.column
+        return (
+            self.category == other.category
+            and self.code == other.code
+            and self.line == other.line
+            and self.column == other.column
+        )
 
     def as_exception(self, end_column: int | None = None) -> SyntaxError:
         """Convert to a SyntaxError-like exception with source highlighting.

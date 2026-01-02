@@ -1,5 +1,13 @@
 from .parser import JustHTML, StrictModeError
-from .sanitize import CSS_PRESET_TEXT, DEFAULT_DOCUMENT_POLICY, DEFAULT_POLICY, SanitizationPolicy, UrlRule, sanitize
+from .sanitize import (
+    CSS_PRESET_TEXT,
+    DEFAULT_DOCUMENT_POLICY,
+    DEFAULT_POLICY,
+    SanitizationPolicy,
+    UnsafeHtmlError,
+    UrlRule,
+    sanitize,
+)
 from .selector import SelectorError, matches, query
 from .serialize import to_html, to_test_format
 from .stream import stream
@@ -14,6 +22,7 @@ __all__ = [
     "SanitizationPolicy",
     "SelectorError",
     "StrictModeError",
+    "UnsafeHtmlError",
     "UrlRule",
     "matches",
     "query",
