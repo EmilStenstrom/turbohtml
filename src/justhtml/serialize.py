@@ -4,17 +4,23 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .constants import FOREIGN_ATTRIBUTE_ADJUSTMENTS, SPECIAL_ELEMENTS, VOID_ELEMENTS
 from .sanitize import DEFAULT_DOCUMENT_POLICY, DEFAULT_POLICY, SanitizationPolicy, sanitize
+
+# Matches characters that prevent an attribute value from being unquoted.
+# Note: This matches the logic of the previous loop-based implementation.
+# It checks for space characters, quotes, equals sign, and greater-than.
+_UNQUOTED_ATTR_VALUE_INVALID = re.compile(r'[ \t\n\f\r"\'=>]')
 
 
 def _escape_text(text: str | None) -> str:
     if not text:
         return ""
     # Minimal, but matches html5lib serializer expectations in core cases.
-    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def _choose_attr_quote(value: str | None, forced_quote_char: str | None = None) -> str:
@@ -44,15 +50,8 @@ def _escape_attr_value(value: str | None, quote_char: str, *, escape_lt_in_attrs
 def _can_unquote_attr_value(value: str | None) -> bool:
     if value is None:
         return False
-    value = str(value)
-    for ch in value:
-        if ch == ">":
-            return False
-        if ch in {'"', "'", "="}:
-            return False
-        if ch in {" ", "\t", "\n", "\f", "\r"}:
-            return False
-    return True
+    # Optimization: use regex instead of loop
+    return not _UNQUOTED_ATTR_VALUE_INVALID.search(value)
 
 
 def _serializer_minimize_attr_value(name: str, value: str | None, minimize_boolean_attributes: bool) -> bool:
@@ -88,7 +87,8 @@ def serialize_start_tag(
                 parts.extend([" ", key, '=""'])
                 continue
 
-            value_str = str(value)
+            # value is guaranteed to be a string here because attrs is dict[str, str | None]
+            value_str = value
             if value_str == "":
                 parts.extend([" ", key, '=""'])
                 continue
@@ -153,20 +153,26 @@ def _collapse_html_whitespace(text: str) -> str:
     if not text:
         return ""
 
-    parts: list[str] = []
-    in_whitespace = False
-    for ch in text:
-        if ch in {" ", "\t", "\n", "\f", "\r"}:
-            if not in_whitespace:
-                parts.append(" ")
-                in_whitespace = True
-            continue
-
-        parts.append(ch)
+    # Optimization: split() handles whitespace collapsing efficiently.
+    # Note: split() treats \v as whitespace, which is not HTML whitespace.
+    # But \v is extremely rare in HTML.
+    if "\v" in text:
+        parts: list[str] = []
         in_whitespace = False
+        for ch in text:
+            if ch in {" ", "\t", "\n", "\f", "\r"}:
+                if not in_whitespace:
+                    parts.append(" ")
+                    in_whitespace = True
+                continue
 
-    collapsed = "".join(parts)
-    return collapsed.strip(" ")
+            parts.append(ch)
+            in_whitespace = False
+
+        collapsed = "".join(parts)
+        return collapsed.strip(" ")
+
+    return " ".join(text.split())
 
 
 def _normalize_formatting_whitespace(text: str) -> str:

@@ -6,6 +6,7 @@ from justhtml.context import FragmentContext
 from justhtml.serialize import (
     _can_unquote_attr_value,
     _choose_attr_quote,
+    _collapse_html_whitespace,
     _escape_attr_value,
     _escape_text,
     _normalize_formatting_whitespace,
@@ -50,6 +51,28 @@ class TestSerialize(unittest.TestCase):
         )
         output = doc.to_html(pretty=False, safe=False)
         assert output == "<tr><td>cell</td></tr>"
+
+    def test_collapse_html_whitespace_vertical_tab(self):
+        # \v is not HTML whitespace, so it should be preserved as a non-whitespace character
+        # while surrounding whitespace is collapsed.
+        text = "  a  \v  b  "
+        # Expected: "a \v b" because \v is treated as a regular character,
+        # so "  a  " -> "a ", "\v", "  b  " -> " b"
+        # Wait, let's trace the logic:
+        # "  a  \v  b  "
+        # parts: [" ", "a", " ", "\v", " ", "b", " "] (roughly)
+        # joined: " a \v b " -> stripped: "a \v b"
+        self.assertEqual(_collapse_html_whitespace(text), "a \v b")
+
+    def test_can_unquote_attr_value_coverage(self):
+        self.assertFalse(_can_unquote_attr_value(None))
+        self.assertTrue(_can_unquote_attr_value("foo"))
+        self.assertFalse(_can_unquote_attr_value("foo bar"))
+        self.assertFalse(_can_unquote_attr_value("foo=bar"))
+        self.assertFalse(_can_unquote_attr_value("foo'bar"))
+        self.assertFalse(_can_unquote_attr_value('foo"bar'))
+        # < is allowed in unquoted attribute values in HTML5
+        self.assertTrue(_can_unquote_attr_value("foo<bar"))
 
     def test_attributes(self):
         html = '<div id="test" class="foo" data-val="x&y"></div>'
