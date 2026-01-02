@@ -22,7 +22,7 @@ def _choose_attr_quote(value: str | None, forced_quote_char: str | None = None) 
         return forced_quote_char
     if value is None:
         return '"'
-    value = str(value)
+    # value is assumed to be a string
     if '"' in value and "'" not in value:
         return "'"
     return '"'
@@ -31,7 +31,7 @@ def _choose_attr_quote(value: str | None, forced_quote_char: str | None = None) 
 def _escape_attr_value(value: str | None, quote_char: str, *, escape_lt_in_attrs: bool = False) -> str:
     if value is None:
         return ""
-    value = str(value)
+    # value is assumed to be a string
     value = value.replace("&", "&amp;")
     if escape_lt_in_attrs:
         value = value.replace("<", "&lt;")
@@ -60,7 +60,9 @@ def _serializer_minimize_attr_value(name: str, value: str | None, minimize_boole
         return False
     if value is None or value == "":
         return True
-    return str(value).lower() == str(name).lower()
+    if value == name:
+        return True
+    return value.lower() == name
 
 
 def serialize_start_tag(

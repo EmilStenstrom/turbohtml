@@ -405,19 +405,21 @@ class SimpleDomNode:
         """Return True if this node has children."""
         return bool(self.children)
 
-    def clone_node(self, deep: bool = False) -> SimpleDomNode:
+    def clone_node(self, deep: bool = False, override_attrs: dict[str, str | None] | None = None) -> SimpleDomNode:
         """
         Clone this node.
 
         Args:
             deep: If True, recursively clone children.
+            override_attrs: Optional dictionary to use as attributes for the clone.
 
         Returns:
             A new node that is a copy of this node.
         """
+        attrs = override_attrs if override_attrs is not None else (self.attrs.copy() if self.attrs else None)
         clone = SimpleDomNode(
             self.name,
-            self.attrs.copy() if self.attrs else None,
+            attrs,
             self.data,
             self.namespace,
         )
@@ -449,8 +451,9 @@ class ElementNode(SimpleDomNode):
         self._origin_line = None
         self._origin_col = None
 
-    def clone_node(self, deep: bool = False) -> ElementNode:
-        clone = ElementNode(self.name, self.attrs.copy() if self.attrs else {}, self.namespace)
+    def clone_node(self, deep: bool = False, override_attrs: dict[str, str | None] | None = None) -> ElementNode:
+        attrs = override_attrs if override_attrs is not None else (self.attrs.copy() if self.attrs else {})
+        clone = ElementNode(self.name, attrs, self.namespace)
         clone._origin_pos = self._origin_pos
         clone._origin_line = self._origin_line
         clone._origin_col = self._origin_col
@@ -476,10 +479,11 @@ class TemplateNode(ElementNode):
         else:
             self.template_content = None
 
-    def clone_node(self, deep: bool = False) -> TemplateNode:
+    def clone_node(self, deep: bool = False, override_attrs: dict[str, str | None] | None = None) -> TemplateNode:
+        attrs = override_attrs if override_attrs is not None else (self.attrs.copy() if self.attrs else {})
         clone = TemplateNode(
             self.name,
-            self.attrs.copy() if self.attrs else {},
+            attrs,
             None,
             self.namespace,
         )

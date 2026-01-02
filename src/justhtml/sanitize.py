@@ -612,11 +612,10 @@ def _sanitize_attrs(
         if not raw_name:
             continue
 
-        name = str(raw_name).strip()
-        if name and not name.islower():
+        name = raw_name
+        # Optimization: assume name is already a string and stripped (from tokenizer)
+        if not name.islower():
             name = name.lower()
-        if not name:
-            continue
 
         # Disallow namespace-ish attributes by default.
         if ":" in name:
@@ -637,7 +636,7 @@ def _sanitize_attrs(
             out[name] = None
             continue
 
-        value = str(raw_value)
+        value = raw_value
         rule = policy.url_rules.get((tag, name))
         if rule is not None:
             sanitized = _sanitize_url_value(policy=policy, rule=rule, tag=tag, attr=name, value=value)
@@ -720,11 +719,9 @@ def _append_sanitized_subtree(*, policy: SanitizationPolicy, original: Any, pare
                     stack.extend((child, out_parent) for child in reversed(tc_children))
             continue
 
-        clone = current.clone_node(deep=False)
-        # Ensure children list is empty before we append sanitized descendants.
-        clone.children.clear()
-        # Filter attributes.
-        clone.attrs = _sanitize_attrs(policy=policy, tag=tag, attrs=current.attrs)
+        # Filter attributes first to avoid copying them in clone_node.
+        sanitized_attrs = _sanitize_attrs(policy=policy, tag=tag, attrs=current.attrs)
+        clone = current.clone_node(deep=False, override_attrs=sanitized_attrs)
 
         out_parent.append_child(clone)
 
