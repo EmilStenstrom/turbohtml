@@ -10,6 +10,8 @@ from .tokenizer import Tokenizer, TokenizerOpts
 from .treebuilder import TreeBuilder
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from .node import SimpleDomNode
     from .sanitize import SanitizationPolicy
     from .tokens import ParseError
@@ -120,18 +122,7 @@ class JustHTML:
             # Merge errors from both tokenizer and tree builder.
             # Public API: users expect errors to be ordered by input position.
             merged_errors = self.tokenizer.errors + self.tree_builder.errors
-            indexed_errors = enumerate(merged_errors)
-            self.errors = [
-                e
-                for _, e in sorted(
-                    indexed_errors,
-                    key=lambda t: (
-                        t[1].line if t[1].line is not None else 1_000_000_000,
-                        t[1].column if t[1].column is not None else 1_000_000_000,
-                        t[0],
-                    ),
-                )
-            ]
+            self.errors = self._sorted_errors(merged_errors)
         else:
             self.errors = []
 
@@ -142,6 +133,43 @@ class JustHTML:
     def query(self, selector: str) -> list[Any]:
         """Query the document using a CSS selector. Delegates to root.query()."""
         return self.root.query(selector)
+
+    @staticmethod
+    def _sorted_errors(errors: list[ParseError]) -> list[ParseError]:
+        indexed_errors = enumerate(errors)
+        return [
+            e
+            for _, e in sorted(
+                indexed_errors,
+                key=lambda t: (
+                    t[1].line if t[1].line is not None else 1_000_000_000,
+                    t[1].column if t[1].column is not None else 1_000_000_000,
+                    t[0],
+                ),
+            )
+        ]
+
+    def _set_security_errors(self, errors: list[ParseError]) -> None:
+        if not self.errors and not errors:
+            return
+
+        base = [e for e in self.errors if e.category != "security"]
+        self.errors = self._sorted_errors(base + errors)
+
+    def _with_security_error_collection(
+        self,
+        policy: SanitizationPolicy | None,
+        serialize: Callable[[], str],
+    ) -> str:
+        if policy is not None and policy.unsafe_handling == "collect":
+            policy.reset_collected_security_errors()
+            out = serialize()
+            self._set_security_errors(policy.collected_security_errors())
+            return out
+
+        # Avoid stale security errors if a previous serialization used collect.
+        self._set_security_errors([])
+        return serialize()
 
     def to_html(
         self,
@@ -156,12 +184,24 @@ class JustHTML:
         - `safe=True` sanitizes untrusted content before serialization.
         - `policy` overrides the default sanitization policy.
         """
-        return self.root.to_html(
-            indent=0,
-            indent_size=indent_size,
-            pretty=pretty,
-            safe=safe,
-            policy=policy,
+        if not safe:
+            return self.root.to_html(
+                indent=0,
+                indent_size=indent_size,
+                pretty=pretty,
+                safe=False,
+                policy=policy,
+            )
+
+        return self._with_security_error_collection(
+            policy,
+            lambda: self.root.to_html(
+                indent=0,
+                indent_size=indent_size,
+                pretty=pretty,
+                safe=True,
+                policy=policy,
+            ),
         )
 
     def to_text(
@@ -179,7 +219,13 @@ class JustHTML:
 
         Delegates to `root.to_text(...)`.
         """
-        return self.root.to_text(separator=separator, strip=strip, safe=safe, policy=policy)
+        if not safe:
+            return self.root.to_text(separator=separator, strip=strip, safe=False, policy=policy)
+
+        return self._with_security_error_collection(
+            policy,
+            lambda: self.root.to_text(separator=separator, strip=strip, safe=True, policy=policy),
+        )
 
     def to_markdown(self, *, safe: bool = True, policy: SanitizationPolicy | None = None) -> str:
         """Return a GitHub Flavored Markdown representation.
@@ -187,4 +233,10 @@ class JustHTML:
         - `safe=True` sanitizes untrusted content before conversion.
         - `policy` overrides the default sanitization policy.
         """
-        return self.root.to_markdown(safe=safe, policy=policy)
+        if not safe:
+            return self.root.to_markdown(safe=False, policy=policy)
+
+        return self._with_security_error_collection(
+            policy,
+            lambda: self.root.to_markdown(safe=True, policy=policy),
+        )

@@ -1809,6 +1809,7 @@ class Tokenizer:
                         "unexpected-null-character",
                         line=line,
                         column=column,
+                        category="tokenizer",
                         message=message,
                         source_html=self.buffer,
                     )

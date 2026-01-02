@@ -1,7 +1,8 @@
-"""Centralized error message definitions and helpers for HTML parsing errors.
+"""Centralized error message definitions and helpers for JustHTML errors.
 
-This module provides human-readable error messages for all parse error codes
-emitted by both the tokenizer and tree builder during HTML parsing.
+This module provides human-readable error messages for parse error codes
+emitted by the tokenizer and tree builder during HTML parsing, plus selected
+security findings emitted by the sanitizer.
 """
 
 from __future__ import annotations
@@ -143,6 +144,10 @@ def generate_error_message(code: str, tag_name: str | None = None) -> str:
         "unexpected-start-tag-in-select": f"Unexpected <{tag_name}> start tag in <select>",
         "unexpected-end-tag-in-select": f"Unexpected </{tag_name}> end tag in <select>",
         "unexpected-select-in-select": "Unexpected nested <select> in <select>",
+        # ================================================================
+        # SECURITY ERRORS
+        # ================================================================
+        "unsafe-html": "Unsafe HTML detected by sanitization policy",
     }
 
     # Return message or fall back to the code itself if not found

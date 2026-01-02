@@ -236,6 +236,68 @@ Output:
 
 ```html
 <p style="color: red">Hi</p>
+
+```
+
+## Collecting security findings (optional)
+
+If you want to keep sanitizing (strip unsafe constructs) but also get a list of what was removed, set `unsafe_handling="collect"` on your policy.
+
+Collected findings are exposed as parse-style errors with `category == "security"` and are merged into `doc.errors` when you serialize via `doc.to_html(...)`, `doc.to_text(...)`, or `doc.to_markdown(...)`.
+
+```python
+from justhtml import JustHTML, SanitizationPolicy
+
+doc = JustHTML("<p>ok</p><script>alert(1)</script>", fragment=True, track_node_locations=True)
+
+policy = SanitizationPolicy(
+    allowed_tags=["p"],
+    allowed_attributes={"*": []},
+    url_rules={},
+    unsafe_handling="collect",
+)
+
+_ = doc.to_html(pretty=False, policy=policy)
+for e in doc.errors:
+    if e.category == "security":
+        print(e.message)
+```
+
+Output:
+
+```text
+Unsafe tag 'script' (dropped content)
+```
+
+## Rejecting unsafe input (optional)
+
+If you want to treat unsafe HTML as an error instead of stripping it, set `unsafe_handling="raise"`.
+
+In this mode, the sanitizer raises `UnsafeHtmlError` at the first unsafe construct it encounters.
+
+```python
+from justhtml import JustHTML
+from justhtml.sanitize import SanitizationPolicy, UnsafeHtmlError
+
+doc = JustHTML("<p>ok</p><script>alert(1)</script>", fragment=True)
+
+policy = SanitizationPolicy(
+    allowed_tags=["p"],
+    allowed_attributes={"*": []},
+    url_rules={},
+    unsafe_handling="raise",
+)
+
+try:
+    doc.to_html(policy=policy)
+except UnsafeHtmlError as e:
+    print(e)
+```
+
+Output:
+
+```text
+Unsafe tag 'script' (dropped content)
 ```
 
 ## Writing a safe custom policy

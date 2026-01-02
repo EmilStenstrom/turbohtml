@@ -13,10 +13,18 @@ from justhtml import JustHTML
 
 doc = JustHTML("<p>Hello", collect_errors=True)
 for error in doc.errors:
-    print(f"{error.line}:{error.column} - {error.code}")
+    print(f"{error.line}:{error.column} - {error.category}:{error.code}")
 ```
 
 `doc.errors` is ordered by source position (line, column), with unknown positions (if any) appearing last.
+
+## Error Categories
+
+Each error has a `category` field:
+
+- `tokenizer`: lexical/tokenization errors
+- `treebuilder`: tree construction (structure) errors
+- `security`: sanitizer findings (only when you opt in via `unsafe_handling="collect"`)
 
 ## Strict Mode
 
@@ -181,12 +189,14 @@ Errors detected during tokenization (lexical analysis).
 | `illegal-codepoint-for-numeric-entity` | Invalid codepoint in numeric character reference |
 | `missing-semicolon-after-character-reference` | Missing semicolon after character reference |
 | `named-entity-without-semicolon` | Named entity used without semicolon |
+| `noncharacter-character-reference` | Noncharacter in character reference |
 
 ### Other Tokenizer Errors
 
 | Code | Description |
 |------|-------------|
 | `unexpected-null-character` | Unexpected NULL character (U+0000) |
+| `noncharacter-in-input-stream` | Noncharacter in input stream |
 
 ---
 
@@ -312,3 +322,13 @@ Errors detected during tree construction.
 | `adoption-agency-1.3` | Misnested tags require adoption agency algorithm |
 | `non-void-html-element-start-tag-with-trailing-solidus` | Self-closing syntax on non-void element (e.g., `<div/>`) |
 | `image-start-tag` | Deprecated `<image>` tag (use `<img>` instead) |
+
+---
+
+## Security Errors
+
+Errors reported by the sanitizer when you opt in via `unsafe_handling="collect"`.
+
+| Code | Description |
+|------|-------------|
+| `unsafe-html` | Unsafe HTML detected by sanitization policy (see `error.message` for details) |

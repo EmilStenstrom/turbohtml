@@ -270,6 +270,117 @@ class TestSanitizePlumbing(unittest.TestCase):
 
 
 class TestSanitizeUnsafe(unittest.TestCase):
+    def test_policy_collect_helpers_cover_empty_paths(self) -> None:
+        # Non-collect policy: collection helpers are no-ops.
+        policy_strip = SanitizationPolicy(
+            allowed_tags={"p"},
+            allowed_attributes={},
+            url_rules={},
+            unsafe_handling="strip",
+        )
+        policy_strip.reset_collected_security_errors()
+        assert policy_strip.collected_security_errors() == []
+
+        # Collect policy: calling handle_unsafe directly records a security finding.
+        policy_collect = SanitizationPolicy(
+            allowed_tags={"p"},
+            allowed_attributes={},
+            url_rules={},
+            unsafe_handling="collect",
+        )
+        policy_collect.reset_collected_security_errors()
+        policy_collect.handle_unsafe("Unsafe tag 'x'", node=None)
+        errs = policy_collect.collected_security_errors()
+        assert len(errs) == 1
+        assert errs[0].category == "security"
+        assert errs[0].line is None
+        assert errs[0].column is None
+
+    def test_sanitize_unsafe_collects_security_errors(self) -> None:
+        html = "<script>alert(1)</script>"
+        node = JustHTML(html, fragment=True, track_node_locations=True).root
+
+        policy = SanitizationPolicy(
+            allowed_tags={"p"},
+            allowed_attributes={},
+            url_rules={},
+            unsafe_handling="collect",
+        )
+
+        out = sanitize(node, policy=policy)
+        assert to_html(out) == ""
+
+        errors = policy.collected_security_errors()
+        assert len(errors) == 1
+        assert errors[0].category == "security"
+        assert errors[0].code == "unsafe-html"
+        assert "Unsafe tag 'script'" in errors[0].message
+
+    def test_collect_mode_merges_into_doc_errors(self) -> None:
+        html = "<p>\x00</p><script>alert(1)</script>"
+        doc = JustHTML(html, fragment=True, collect_errors=True, track_node_locations=True)
+        assert any(e.category == "tokenizer" for e in doc.errors)
+
+        policy = SanitizationPolicy(
+            allowed_tags=set(DEFAULT_POLICY.allowed_tags),
+            allowed_attributes=DEFAULT_POLICY.allowed_attributes,
+            url_rules=DEFAULT_POLICY.url_rules,
+            allowed_css_properties=DEFAULT_POLICY.allowed_css_properties,
+            force_link_rel=DEFAULT_POLICY.force_link_rel,
+            unsafe_handling="collect",
+        )
+
+        _ = doc.to_html(pretty=False, policy=policy)
+        assert any(e.category == "security" for e in doc.errors)
+
+        # Repeated calls should not accumulate duplicates.
+        before = len([e for e in doc.errors if e.category == "security"])
+        _ = doc.to_html(pretty=False, policy=policy)
+        after = len([e for e in doc.errors if e.category == "security"])
+        assert before == after
+
+    def test_collect_mode_merges_into_doc_errors_text_and_markdown(self) -> None:
+        doc = JustHTML("<p>ok</p><script>alert(1)</script>", fragment=True, track_node_locations=True)
+
+        policy = SanitizationPolicy(
+            allowed_tags=set(DEFAULT_POLICY.allowed_tags),
+            allowed_attributes=DEFAULT_POLICY.allowed_attributes,
+            url_rules=DEFAULT_POLICY.url_rules,
+            allowed_css_properties=DEFAULT_POLICY.allowed_css_properties,
+            force_link_rel=DEFAULT_POLICY.force_link_rel,
+            unsafe_handling="collect",
+        )
+
+        _ = doc.to_text(policy=policy)
+        assert any(e.category == "security" for e in doc.errors)
+
+        _ = doc.to_markdown(policy=policy)
+        assert any(e.category == "security" for e in doc.errors)
+
+    def test_justhtml_serialization_clears_stale_security_errors_and_safe_false_paths(self) -> None:
+        doc = JustHTML("<p>ok</p><script>alert(1)</script>", fragment=True, track_node_locations=True)
+
+        policy = SanitizationPolicy(
+            allowed_tags=set(DEFAULT_POLICY.allowed_tags),
+            allowed_attributes=DEFAULT_POLICY.allowed_attributes,
+            url_rules=DEFAULT_POLICY.url_rules,
+            allowed_css_properties=DEFAULT_POLICY.allowed_css_properties,
+            force_link_rel=DEFAULT_POLICY.force_link_rel,
+            unsafe_handling="collect",
+        )
+
+        _ = doc.to_html(pretty=False, policy=policy)
+        assert any(e.category == "security" for e in doc.errors)
+
+        # Safe serialization with no collect should clear security errors.
+        _ = doc.to_html(pretty=False, policy=None)
+        assert not any(e.category == "security" for e in doc.errors)
+
+        # Cover safe=False branches (these should not crash).
+        _ = doc.to_html(pretty=False, safe=False)
+        _ = doc.to_text(safe=False)
+        _ = doc.to_markdown(safe=False)
+
     def test_sanitize_unsafe_raises(self) -> None:
         html = "<script>alert(1)</script>"
         node = JustHTML(html, fragment=True).root

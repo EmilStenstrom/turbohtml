@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 from urllib.parse import quote, urlsplit
 
+from .tokens import ParseError
+
 UrlFilter = Callable[[str, str, str], str | None]
 
 
@@ -20,7 +22,7 @@ class UnsafeHtmlError(ValueError):
     """Raised when unsafe HTML is encountered and unsafe_handling='raise'."""
 
 
-UnsafeHandling = Literal["strip", "raise"]
+UnsafeHandling = Literal["strip", "raise", "collect"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +139,13 @@ class SanitizationPolicy:
     # more behaviors over time without changing the API shape.
     unsafe_handling: UnsafeHandling = "strip"
 
+    _collected_security_errors: list[ParseError] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
     # Internal caches to avoid per-node allocations in hot paths.
     _allowed_attrs_global: frozenset[str] = field(
         default_factory=frozenset,
@@ -174,8 +183,8 @@ class SanitizationPolicy:
             object.__setattr__(self, "force_link_rel", set(self.force_link_rel))
 
         unsafe_handling = str(self.unsafe_handling)
-        if unsafe_handling not in {"strip", "raise"}:
-            raise ValueError("Invalid unsafe_handling. Expected one of: 'strip', 'raise'")
+        if unsafe_handling not in {"strip", "raise", "collect"}:
+            raise ValueError("Invalid unsafe_handling. Expected one of: 'strip', 'raise', 'collect'")
         object.__setattr__(self, "unsafe_handling", unsafe_handling)
 
         # Normalize rel tokens once so _sanitize_attrs() can stay allocation-light.
@@ -201,12 +210,47 @@ class SanitizationPolicy:
         object.__setattr__(self, "_allowed_attrs_global", allowed_global)
         object.__setattr__(self, "_allowed_attrs_by_tag", by_tag)
 
-    def handle_unsafe(self, msg: str) -> None:
+    def reset_collected_security_errors(self) -> None:
+        if self.unsafe_handling == "collect":
+            object.__setattr__(self, "_collected_security_errors", [])
+        else:
+            object.__setattr__(self, "_collected_security_errors", None)
+
+    def collected_security_errors(self) -> list[ParseError]:
+        if self._collected_security_errors is None:
+            return []
+        return list(self._collected_security_errors)
+
+    def handle_unsafe(self, msg: str, *, node: Any | None = None) -> None:
         mode = self.unsafe_handling
         if mode == "strip":
             return
         if mode == "raise":
             raise UnsafeHtmlError(msg)
+        if mode == "collect":
+            collected = self._collected_security_errors
+            if collected is None:
+                collected = []
+                object.__setattr__(self, "_collected_security_errors", collected)
+
+            line: int | None = None
+            column: int | None = None
+            if node is not None:
+                # Best-effort: use node origin metadata when enabled.
+                # This stays allocation-light and avoids any input re-parsing.
+                line = node.origin_line
+                column = node.origin_col
+
+            collected.append(
+                ParseError(
+                    "unsafe-html",
+                    line=line,
+                    column=column,
+                    category="security",
+                    message=msg,
+                )
+            )
+            return
         raise AssertionError(f"Unhandled unsafe_handling: {mode!r}")
 
 
@@ -630,6 +674,7 @@ def _sanitize_attrs(
     policy: SanitizationPolicy,
     tag: str,
     attrs: dict[str, str | None] | None,
+    node: Any | None = None,
 ) -> dict[str, str | None]:
     if not attrs:
         attrs = {}
@@ -648,21 +693,21 @@ def _sanitize_attrs(
 
         # Disallow namespace-ish attributes by default.
         if ":" in name:
-            policy.handle_unsafe(f"Unsafe attribute '{name}' (namespaced)")
+            policy.handle_unsafe(f"Unsafe attribute '{name}' (namespaced)", node=node)
             continue
 
         # Always drop event handlers.
         if name.startswith("on"):
-            policy.handle_unsafe(f"Unsafe attribute '{name}' (event handler)")
+            policy.handle_unsafe(f"Unsafe attribute '{name}' (event handler)", node=node)
             continue
 
         # Dangerous attribute contexts.
         if name == "srcdoc":
-            policy.handle_unsafe(f"Unsafe attribute '{name}'")
+            policy.handle_unsafe(f"Unsafe attribute '{name}'", node=node)
             continue
 
         if name not in allowed and not (tag == "a" and name == "rel" and policy.force_link_rel):
-            policy.handle_unsafe(f"Unsafe attribute '{name}' (not allowed)")
+            policy.handle_unsafe(f"Unsafe attribute '{name}' (not allowed)", node=node)
             continue
 
         if raw_value is None:
@@ -674,13 +719,13 @@ def _sanitize_attrs(
         if rule is not None:
             sanitized = _sanitize_url_value(policy=policy, rule=rule, tag=tag, attr=name, value=value)
             if sanitized is None:
-                policy.handle_unsafe(f"Unsafe URL in attribute '{name}'")
+                policy.handle_unsafe(f"Unsafe URL in attribute '{name}'", node=node)
                 continue
             out[name] = sanitized
         elif name == "style":
             sanitized_style = _sanitize_inline_style(policy=policy, value=value)
             if sanitized_style is None:
-                policy.handle_unsafe(f"Unsafe inline style in attribute '{name}'")
+                policy.handle_unsafe(f"Unsafe inline style in attribute '{name}'", node=node)
                 continue
             out[name] = sanitized_style
         else:
@@ -739,15 +784,15 @@ def _append_sanitized_subtree(*, policy: SanitizationPolicy, original: Any, pare
         if policy.drop_foreign_namespaces:
             ns = current.namespace
             if ns not in (None, "html"):
-                policy.handle_unsafe(f"Unsafe tag '{tag}' (foreign namespace)")
+                policy.handle_unsafe(f"Unsafe tag '{tag}' (foreign namespace)", node=current)
                 continue
 
         if tag in policy.drop_content_tags:
-            policy.handle_unsafe(f"Unsafe tag '{tag}' (dropped content)")
+            policy.handle_unsafe(f"Unsafe tag '{tag}' (dropped content)", node=current)
             continue
 
         if tag not in policy.allowed_tags:
-            policy.handle_unsafe(f"Unsafe tag '{tag}' (not allowed)")
+            policy.handle_unsafe(f"Unsafe tag '{tag}' (not allowed)", node=current)
             if policy.strip_disallowed_tags:
                 children = current.children or []
                 stack.extend((child, out_parent) for child in reversed(children))
@@ -758,7 +803,7 @@ def _append_sanitized_subtree(*, policy: SanitizationPolicy, original: Any, pare
             continue
 
         # Filter attributes first to avoid copying them in clone_node.
-        sanitized_attrs = _sanitize_attrs(policy=policy, tag=tag, attrs=current.attrs)
+        sanitized_attrs = _sanitize_attrs(policy=policy, tag=tag, attrs=current.attrs, node=current)
         clone = current.clone_node(deep=False, override_attrs=sanitized_attrs)
 
         out_parent.append_child(clone)
@@ -814,7 +859,7 @@ def sanitize(node: Any, *, policy: SanitizationPolicy | None = None) -> Any:
     # Element root: keep element if allowed, otherwise unwrap into a fragment.
     tag = str(root_name).lower()
     if policy.drop_foreign_namespaces and node.namespace not in (None, "html"):
-        policy.handle_unsafe(f"Unsafe tag '{tag}' (foreign namespace)")
+        policy.handle_unsafe(f"Unsafe tag '{tag}' (foreign namespace)", node=node)
         out_root = node.clone_node(deep=False)
         out_root.name = "#document-fragment"
         out_root.children.clear()
@@ -823,9 +868,9 @@ def sanitize(node: Any, *, policy: SanitizationPolicy | None = None) -> Any:
 
     if tag in policy.drop_content_tags or (tag not in policy.allowed_tags and not policy.strip_disallowed_tags):
         if tag in policy.drop_content_tags:
-            policy.handle_unsafe(f"Unsafe tag '{tag}' (dropped content)")
+            policy.handle_unsafe(f"Unsafe tag '{tag}' (dropped content)", node=node)
         else:
-            policy.handle_unsafe(f"Unsafe tag '{tag}' (not allowed)")
+            policy.handle_unsafe(f"Unsafe tag '{tag}' (not allowed)", node=node)
         out_root = node.clone_node(deep=False)
         out_root.name = "#document-fragment"
         out_root.children.clear()
@@ -833,7 +878,7 @@ def sanitize(node: Any, *, policy: SanitizationPolicy | None = None) -> Any:
         return out_root
 
     if tag not in policy.allowed_tags and policy.strip_disallowed_tags:
-        policy.handle_unsafe(f"Unsafe tag '{tag}' (not allowed)")
+        policy.handle_unsafe(f"Unsafe tag '{tag}' (not allowed)", node=node)
         out_root = node.clone_node(deep=False)
         out_root.name = "#document-fragment"
         out_root.children.clear()
@@ -848,7 +893,7 @@ def sanitize(node: Any, *, policy: SanitizationPolicy | None = None) -> Any:
 
     out_root = node.clone_node(deep=False)
     out_root.children.clear()
-    out_root.attrs = _sanitize_attrs(policy=policy, tag=tag, attrs=node.attrs)
+    out_root.attrs = _sanitize_attrs(policy=policy, tag=tag, attrs=node.attrs, node=node)
     for child in node.children or []:
         _append_sanitized_subtree(policy=policy, original=child, parent_out=out_root)
 
