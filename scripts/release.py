@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Interactive release helper for JustHTML.
 
 What it does (in order):
