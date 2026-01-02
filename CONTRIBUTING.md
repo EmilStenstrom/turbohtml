@@ -111,4 +111,4 @@ Golden rules:
 4. Ensure pre-commit passes
 5. Submit a pull request
 
-Questions? Open an issue on GitHub.
+Questions? Open an issue on GitHub. For security vulnerabilities, please see our [Security Policy](SECURITY.md).

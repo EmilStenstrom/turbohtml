@@ -144,6 +144,10 @@ A pure Python HTML5 parser that just works. No C extensions to compile. No syste
 - **Just... Secure 🔒** — Safe-by-default output for untrusted HTML — built-in Bleach-style allowlist sanitization on `to_html()` / `to_markdown()` (override with `safe=False`), plus URL/CSS rules. ([Sanitization & Security](/EmilStenstrom/justhtml/blob/main/docs/sanitization.md))
 ```
 
+## Security
+
+For security policy and vulnerability reporting, please see [SECURITY.md](SECURITY.md).
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
