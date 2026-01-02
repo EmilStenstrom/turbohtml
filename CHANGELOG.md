@@ -7,9 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-01-02
+### Added
+- Add security policy (`SECURITY.md`) and update documentation to reference it.
+### Changed
+- Optimize whitespace collapsing and enhance attribute unquoting logic in serialization.
+- Enhance `clone_node` method to support attribute overriding in `SimpleDomNode`.
+- Normalize `rel` tokens in `SanitizationPolicy` for performance improvement.
+
 ## [0.25.0] - 2026-01-02
 ### Added
-- Improve serilization speed by 5%.
+- Improve serialization speed by 5%.
 - Introduce `CSS_PRESET_TEXT` for conservative inline styling and enhance sanitization policy validation.
 ### Changed
 - Add benchmark for `justhtml parse` and `serialize --to-html` flag.

@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 PYPROJECT_PATH = Path(__file__).resolve().parents[1] / "pyproject.toml"
+CHANGELOG_PATH = PYPROJECT_PATH.parent / "CHANGELOG.md"
 
 
 @dataclass(frozen=True)
@@ -183,6 +184,21 @@ def _tag_exists(tag: str) -> bool:
     return _run_quiet_ok(["git", "rev-parse", "--verify", "--quiet", tag])
 
 
+def _check_changelog(version: str) -> None:
+    if not CHANGELOG_PATH.exists():
+        print(f"WARNING: Changelog file not found at {CHANGELOG_PATH}")
+        return
+
+    content = CHANGELOG_PATH.read_text(encoding="utf-8")
+    # Look for "## [version]" or "## version"
+    # Escape version just in case
+    escaped_version = re.escape(version)
+    pattern = re.compile(rf"^##\s+\[?{escaped_version}\]?", re.MULTILINE)
+
+    if not pattern.search(content):
+        _fail(f"Changelog entry for version {version} not found in {CHANGELOG_PATH}")
+
+
 _GITHUB_RE_RE = re.compile(
     r"""
     \A(?:
@@ -261,6 +277,9 @@ def main(argv: list[str] | None = None) -> int:
         current_version = _read_current_version(py_text)
 
         new_version = args.version or _prompt("New version", default=current_version)
+
+        _check_changelog(new_version)
+
         resume_only = False
         if new_version == current_version:
             resume_only = True
