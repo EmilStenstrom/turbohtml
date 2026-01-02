@@ -199,6 +199,33 @@ def _check_changelog(version: str) -> None:
         _fail(f"Changelog entry for version {version} not found in {CHANGELOG_PATH}")
 
 
+def _extract_changelog_notes(version: str) -> str | None:
+    if not CHANGELOG_PATH.exists():
+        return None
+
+    content = CHANGELOG_PATH.read_text(encoding="utf-8")
+    escaped_version = re.escape(version)
+    # Match start of section: ## [version] or ## version
+    start_pattern = re.compile(rf"^##\s+\[?{escaped_version}\]?(?:.*)$", re.MULTILINE)
+
+    m_start = start_pattern.search(content)
+    if not m_start:
+        return None
+
+    start_idx = m_start.end()
+
+    # Find next section start (## ...) or end of file
+    next_section_pattern = re.compile(r"^##\s+\[?.*\]?", re.MULTILINE)
+    m_end = next_section_pattern.search(content, start_idx)
+
+    if m_end:
+        section_text = content[start_idx : m_end.start()]
+    else:
+        section_text = content[start_idx:]
+
+    return section_text.strip()
+
+
 _GITHUB_RE_RE = re.compile(
     r"""
     \A(?:
@@ -322,8 +349,15 @@ def main(argv: list[str] | None = None) -> int:
         if not args.no_release:
             repo = args.repo or _default_repo_from_remote(args.remote)
             notes = args.notes
+
             if notes is None:
-                notes = _prompt("Release notes (one line)")
+                # Try to extract from changelog
+                changelog_notes = _extract_changelog_notes(new_version)
+                if changelog_notes:
+                    print(f"Extracted release notes from CHANGELOG.md for {new_version}")
+                    notes = changelog_notes
+                else:
+                    notes = _prompt("Release notes (one line)")
 
             target = args.target or branch
 
