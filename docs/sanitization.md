@@ -8,324 +8,48 @@ JustHTML’s sanitizer is validated against the [`justhtml-xss-bench`](https://g
 
 The sanitizer is **DOM-based** (it runs on the parsed JustHTML tree), and JustHTML is **safe-by-default** when you serialize to HTML or Markdown.
 
+## Guides
+
+- [HTML Cleaning](html-cleaning.md): tags/attributes allowlists and inline styles.
+- [URL Cleaning](url-cleaning.md): validation of URL-valued attributes (`href`, `src`, `srcset`, …), plus strip/proxy rules.
+- [Unsafe Handling](unsafe-handling.md): what happens when unsafe input is encountered (strip/collect/raise).
+
 ## Quickstart
 
 Most real-world untrusted HTML is a **snippet** (a fragment) rather than a full document. In that case, pass `fragment=True` to avoid implicit document wrappers.
 
 If you *are* sanitizing a full HTML document, safe serialization keeps the document structure (it preserves `<html>`, `<head>`, and `<body>` wrappers by default).
 
-### Safe-by-default serialization
-
 By default, serialization sanitizes:
 
 ```python
 from justhtml import JustHTML
 
-user_html = '<p>Hello <b>world</b> <script>alert(1)</script> <a href="javascript:alert(1)">bad</a> <a href="https://example.com/?a=1&b=2">ok</a></p>'
-doc = JustHTML(user_html, fragment=True)
-
+doc = JustHTML('<p>Hello <b>world</b> <script>alert(1)</script></p>', fragment=True)
 print(doc.to_html())
-print()
-print(doc.to_markdown())
 ```
 
 Output:
 
 ```html
-<p>Hello <b>world</b>  <a>bad</a> <a href="https://example.com/?a=1&amp;b=2">ok</a></p>
-
-Hello **world** [bad] [ok](https://example.com/?a=1&b=2)
+<p>Hello <b>world</b></p>
 ```
 
-### Disable sanitization (only for trusted input)
+For a deeper dive, continue in [HTML Cleaning](html-cleaning.md) and [URL Cleaning](url-cleaning.md).
 
-If you have trusted HTML and want raw output:
+## Threat model
 
-```python
-from justhtml import JustHTML
-
-user_html = '<p>Hello <b>world</b> <script>alert(1)</script> <a href="javascript:alert(1)">bad</a> <a href="https://example.com/?a=1&b=2">ok</a></p>'
-doc = JustHTML(user_html, fragment=True)
-
-print(doc.to_html(safe=False))
-print()
-print(doc.to_markdown(safe=False))
-```
-
-Output:
-
-```html
-<p>Hello <b>world</b> <script>alert(1)</script> <a href="javascript:alert(1)">bad</a> <a href="https://example.com/?a=1&amp;b=2">ok</a></p>
-
-Hello **world** alert(1) [bad](<javascript:alert(1)>) [ok](https://example.com/?a=1&b=2)
-```
-
-### Use a custom sanitization policy
-
-```python
-from justhtml import JustHTML, SanitizationPolicy, UrlRule
-
-user_html = '<p>Hello <b>world</b> <script>alert(1)</script> <a href="javascript:alert(1)">bad</a> <a href="https://example.com/?a=1&b=2">ok</a></p>'
-
-policy = SanitizationPolicy(
-		allowed_tags=["p", "b", "a"],
-		allowed_attributes={"*": [], "a": ["href"]},
-		url_rules={
-				("a", "href"): UrlRule(allowed_schemes=["https"]),
-		},
-)
-
-doc = JustHTML(user_html, fragment=True)
-print(doc.to_html(policy=policy))
-```
-
-Output:
-
-```html
-<p>Hello <b>world</b>  <a>bad</a> <a href="https://example.com/?a=1&amp;b=2">ok</a></p>
-```
-
-You can also sanitize a DOM directly:
-
-```python
-from justhtml import JustHTML, sanitize, to_html
-
-user_html = '<p>Hello <b>world</b> <script>alert(1)</script> <a href="javascript:alert(1)">bad</a> <a href="https://example.com/?a=1&b=2">ok</a></p>'
-root = JustHTML(user_html, fragment=True).root
-
-clean_root = sanitize(root)
-print(to_html(clean_root))
-```
-
-Output:
-
-```html
-<p>Hello <b>world</b>  <a>bad</a> <a href="https://example.com/?a=1&amp;b=2">ok</a></p>
-```
-
-## Threat model (what “safe” means)
+The goal of sanitization is to take **untrusted HTML** and clean it into output that is safe enough to be **embedded as markup into a normal (safe) HTML page**.
 
 In scope:
 
-- Preventing script execution when you sanitize untrusted HTML and then embed the result into an HTML document as markup.
+- Preventing script execution and markup-based XSS when rendering the sanitized output as HTML.
+- Safely handling URL-valued attributes (like `href`, `src`, and `srcset`) so they can’t be used to execute script or unexpectedly load remote resources.
 
 Out of scope (you must handle these separately):
 
-- Using sanitized output in JavaScript string contexts, CSS contexts, URL contexts, or other non-HTML contexts.
+- Using sanitized output in non-HTML contexts (JavaScript strings, CSS contexts, URL contexts, etc.).
 - Content security beyond markup execution (e.g. phishing / UI redress).
-- Security policies like CSP, sandboxing, and permissions (still recommended for defense-in-depth).
+- Security policies like CSP, sandboxing, and permissions (recommended for defense-in-depth).
 
-## Default sanitization policy
-
-The built-in default is `DEFAULT_POLICY` (a conservative allowlist).
-
-High-level behavior:
-
-- Disallowed tags are stripped (their children may be kept) but dangerous containers like `script`/`style` have their content dropped.
-- Comments and doctypes are dropped.
-- Foreign namespaces (SVG/MathML) are dropped.
-- Event handlers (`on*`), `srcdoc`, and namespace-style attributes (anything with `:`) are removed.
-- Inline styles are disabled by default.
-
-Default allowlists:
-
-- Allowed tags: `a`, `img`, common text/structure tags, headings, lists, and tables (`table`, `thead`, `tbody`, `tfoot`, `tr`, `th`, `td`).
-- Allowed attributes:
-	- Global: `class`, `id`, `title`, `lang`, `dir`
-	- `a`: `href`, `title`
-	- `img`: `src`, `alt`, `title`, `width`, `height`, `loading`, `decoding`
-	- `th`/`td`: `colspan`, `rowspan`
-
-Default URL rules:
-
-- `a[href]`: allows `http`, `https`, `mailto`, `tel`. Relative URLs are allowed. Protocol-relative URLs (`//example.com`) are resolved to `https` (`https://example.com`) before checking the scheme.
-- `img[src]`: allows `http`, `https`. Relative URLs are allowed. Protocol-relative URLs are resolved to `https`.
-- Empty/valueless URL attributes (e.g. `<img src>` / `src=""` / control-only) are dropped.
-
-Example (default image URL behavior):
-
-```python
-from justhtml import JustHTML
-
-print(JustHTML('<img src="https://example.com/x" alt="x">', fragment=True).to_html())
-print(JustHTML('<img src="/x" alt="x">', fragment=True).to_html())
-```
-
-Output:
-
-```html
-<img src="https://example.com/x" alt="x">
-<img src="/x" alt="x">
-```
-
-## Proxying URLs (optional)
-
-`UrlRule` can proxy allowed absolute/protocol-relative URLs (for example to centralize tracking protection or enforce allowlists server-side).
-
-```python
-from justhtml import JustHTML, SanitizationPolicy, UrlRule
-
-policy = SanitizationPolicy(
-    allowed_tags=["a"],
-    allowed_attributes={"*": [], "a": ["href"]},
-    url_rules={
-        ("a", "href"): UrlRule(
-            allowed_schemes=["https"],
-            proxy_url="/proxy",
-            proxy_param="url",
-        )
-    },
-)
-
-print(JustHTML('<a href="https://example.com/?a=1&b=2">link</a>').to_html(policy=policy))
-```
-
-Output:
-
-```html
-<a href="/proxy?url=https%3A%2F%2Fexample.com%2F%3Fa%3D1%26b%3D2">link</a>
-```
-
-With proxying enabled, scheme-obfuscation that might be treated as “relative” by the sanitizer but normalized to an absolute URL by a user agent is dropped.
-
-## Protocol-relative URLs
-
-By default, protocol-relative URLs (starting with `//`) are resolved to `https` before validation. This ensures they are checked against the allowed schemes (e.g. `https`) and prevents them from inheriting an insecure protocol (like `http` or `file`) from the embedding page.
-
-You can configure this behavior in `UrlRule`:
-
-```python
-from justhtml import UrlRule
-
-# Default behavior: resolve to https
-rule = UrlRule(allowed_schemes=["https"], resolve_protocol_relative="https")
-
-# Resolve to http
-rule = UrlRule(allowed_schemes=["http", "https"], resolve_protocol_relative="http")
-
-# Disallow protocol-relative URLs entirely
-rule = UrlRule(allowed_schemes=["https"], resolve_protocol_relative=None)
-```
-
-## Inline styles (optional)
-
-Inline styles are disabled by default. To allow them you must:
-
-1) Allow the `style` attribute for the relevant tag via `allowed_attributes`, and
-2) Provide a non-empty allowlist via `allowed_css_properties`.
-
-Even then, JustHTML is conservative: it rejects declarations that look like they can load external resources (such as values containing `url(` or `image-set(`), as well as legacy constructs like `expression(`.
-
-To avoid "footgun" policies, you can start from the built-in preset `CSS_PRESET_TEXT`.
-
-```python
-from justhtml import CSS_PRESET_TEXT, JustHTML, SanitizationPolicy
-
-policy = SanitizationPolicy(
-		allowed_tags=["p"],
-		allowed_attributes={"*": [], "p": ["style"]},
-		url_rules={},
-		allowed_css_properties=CSS_PRESET_TEXT | {"width"},
-)
-
-html = '<p style="color: red; background-image: url(https://evil.test/x); width: expression(alert(1));">Hi</p>'
-print(JustHTML(html).to_html(policy=policy))
-```
-
-Output:
-
-```html
-<p style="color: red">Hi</p>
-
-```
-
-## Collecting security findings (optional)
-
-If you want to keep sanitizing (strip unsafe constructs) but also get a list of what was removed, set `unsafe_handling="collect"` on your policy.
-
-Collected findings are exposed as parse-style errors with `category == "security"` and are merged into `doc.errors` when you serialize via `doc.to_html(...)`, `doc.to_text(...)`, or `doc.to_markdown(...)`.
-
-```python
-from justhtml import JustHTML, SanitizationPolicy
-
-doc = JustHTML("<p>ok</p><script>alert(1)</script>", fragment=True, track_node_locations=True)
-
-policy = SanitizationPolicy(
-    allowed_tags=["p"],
-    allowed_attributes={"*": []},
-    url_rules={},
-    unsafe_handling="collect",
-)
-
-_ = doc.to_html(pretty=False, policy=policy)
-for e in doc.errors:
-    if e.category == "security":
-        print(e.message)
-```
-
-Output:
-
-```text
-Unsafe tag 'script' (dropped content)
-```
-
-## Rejecting unsafe input (optional)
-
-If you want to treat unsafe HTML as an error instead of stripping it, set `unsafe_handling="raise"`.
-
-In this mode, the sanitizer raises `UnsafeHtmlError` at the first unsafe construct it encounters.
-
-```python
-from justhtml import JustHTML
-from justhtml.sanitize import SanitizationPolicy, UnsafeHtmlError
-
-doc = JustHTML("<p>ok</p><script>alert(1)</script>", fragment=True)
-
-policy = SanitizationPolicy(
-    allowed_tags=["p"],
-    allowed_attributes={"*": []},
-    url_rules={},
-    unsafe_handling="raise",
-)
-
-try:
-    doc.to_html(policy=policy)
-except UnsafeHtmlError as e:
-    print(e)
-```
-
-Output:
-
-```text
-Unsafe tag 'script' (dropped content)
-```
-
-## Writing a safe custom policy
-
-When expanding the default policy, prefer adding small, explicit allowlists.
-
-Treat these as a separate security review if you plan to allow them:
-
-- `iframe`, `object`, `embed`
-- `meta`, `link`, `base`
-- form elements and submission-related attributes
-- `srcset` (it contains multiple URLs)
-
-## Defense in depth
-
-Sanitization is one layer. For untrusted HTML, additional defenses are often appropriate:
-
-- Content Security Policy (CSP)
-- Sandboxed iframes
-- Serving untrusted content from a separate origin
-
-## Reporting issues
-
-If you find a sanitizer bypass, please report it responsibly (see the project’s contributing/security guidance).
-
-## Non-goals
-
-- Guarantee safety for all contexts (e.g., JavaScript strings, CSS contexts, URL contexts).
-- Provide a complete browser-grade “content security” solution.
-- Support sanitization of `<style>` blocks.
-- Support SVG/MathML sanitization by default.
+See [HTML Cleaning](html-cleaning.md) for tag/attribute rules and unsafe handling, and [URL Cleaning](url-cleaning.md) for remote URL handling (`url_handling`) and URL validation rules.

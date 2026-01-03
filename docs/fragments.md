@@ -203,7 +203,7 @@ ctx = FragmentContext("math", namespace="math")
 from justhtml import JustHTML
 from justhtml.context import FragmentContext
 
-from justhtml import SanitizationPolicy, UrlRule, sanitize, to_html
+from justhtml import SanitizationPolicy, UrlPolicy, UrlRule, sanitize, to_html
 
 def sanitize_fragment(html: str) -> str:
     """Sanitize user HTML as if it was inserted into a <div>."""
@@ -213,7 +213,10 @@ def sanitize_fragment(html: str) -> str:
     policy = SanitizationPolicy(
         allowed_tags={"p", "b", "i", "a", "ul", "ol", "li"},
         allowed_attributes={"*": [], "a": ["href"]},
-        url_rules={("a", "href"): UrlRule(allowed_schemes=["https"], allow_relative=True)},
+        url_policy=UrlPolicy(
+            allow_relative=True,
+            rules={("a", "href"): UrlRule(allowed_schemes=["https"])},
+        ),
     )
 
     clean_root = sanitize(doc.root, policy=policy)

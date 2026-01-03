@@ -8,11 +8,15 @@ from justhtml.sanitize import (
     CSS_PRESET_TEXT,
     DEFAULT_POLICY,
     SanitizationPolicy,
+    UrlPolicy,
+    UrlProxy,
     UrlRule,
     _css_value_may_load_external_resource,
     _is_valid_css_property_name,
     _sanitize_inline_style,
     _sanitize_url_value,
+    _srcset_contains_external_url,
+    _url_is_external,
     sanitize,
 )
 from justhtml.serialize import to_html
@@ -23,6 +27,10 @@ class TestSanitizePlumbing(unittest.TestCase):
         assert isinstance(DEFAULT_POLICY, SanitizationPolicy)
         assert callable(sanitize)
 
+    def test_urlproxy_rejects_empty_url(self) -> None:
+        with self.assertRaises(ValueError):
+            UrlProxy(url="")
+
     def test_urlrule_and_policy_normalize_inputs(self) -> None:
         rule = UrlRule(allowed_schemes=["https"], allowed_hosts=["example.com"])
         assert isinstance(rule.allowed_schemes, set)
@@ -31,7 +39,7 @@ class TestSanitizePlumbing(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags=["div"],
             allowed_attributes={"*": [], "div": []},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             drop_content_tags=["script", "style"],
             force_link_rel=["noopener"],
             allowed_css_properties=["color"],
@@ -42,14 +50,39 @@ class TestSanitizePlumbing(unittest.TestCase):
         assert isinstance(policy.force_link_rel, set)
         assert isinstance(policy.allowed_css_properties, set)
 
+    def test_urlrule_rejects_non_urlproxy_instance(self) -> None:
+        with self.assertRaises(TypeError):
+            UrlRule(proxy="/proxy")  # type: ignore[arg-type]
+
     def test_policy_rejects_invalid_unsafe_handling(self) -> None:
         with self.assertRaises(ValueError):
             SanitizationPolicy(
                 allowed_tags=["div"],
                 allowed_attributes={"*": [], "div": []},
-                url_rules={},
+                url_policy=UrlPolicy(rules={}),
                 allowed_css_properties=["color"],
                 unsafe_handling="nope",  # type: ignore[arg-type]
+            )
+
+    def test_url_policy_rejects_invalid_url_handling(self) -> None:
+        with self.assertRaises(ValueError):
+            UrlPolicy(url_handling="nope")  # type: ignore[arg-type]
+
+    def test_url_policy_coerces_rules_to_dict(self) -> None:
+        url_policy = UrlPolicy(
+            rules=[(("a", "href"), UrlRule(allowed_schemes={"https"}))],
+        )
+        assert isinstance(url_policy.rules, dict)
+
+    def test_url_policy_rejects_non_urlproxy_instance(self) -> None:
+        with self.assertRaises(TypeError):
+            UrlPolicy(proxy="/proxy")  # type: ignore[arg-type]
+
+    def test_url_policy_proxy_mode_requires_proxy_config(self) -> None:
+        with self.assertRaises(ValueError):
+            UrlPolicy(
+                url_handling="proxy",
+                rules={("a", "href"): UrlRule(allowed_schemes={"https"})},
             )
 
     def test_is_valid_css_property_name(self) -> None:
@@ -61,7 +94,7 @@ class TestSanitizePlumbing(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags=["div"],
             allowed_attributes={"*": [], "div": ["style"]},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             allowed_css_properties={"color"},
         )
 
@@ -76,7 +109,7 @@ class TestSanitizePlumbing(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags=["div"],
             allowed_attributes={"*": [], "div": []},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             allowed_css_properties=set(),
         )
 
@@ -86,7 +119,7 @@ class TestSanitizePlumbing(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags=["div"],
             allowed_attributes={"*": [], "div": ["style"]},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             allowed_css_properties=CSS_PRESET_TEXT,
         )
 
@@ -98,7 +131,7 @@ class TestSanitizePlumbing(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags=["div"],
             allowed_attributes={"*": [], "div": ["style"]},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             allowed_css_properties=CSS_PRESET_TEXT,
         )
 
@@ -127,15 +160,235 @@ class TestSanitizePlumbing(unittest.TestCase):
 
     def test_sanitize_url_value_keeps_non_empty_relative_url(self) -> None:
         policy = DEFAULT_POLICY
-        rule = UrlRule(allowed_schemes=[], allow_relative=True)
+        rule = UrlRule(allowed_schemes=[])
         assert _sanitize_url_value(policy=policy, rule=rule, tag="img", attr="src", value="/x.png") == "/x.png"
         assert _sanitize_url_value(policy=policy, rule=rule, tag="img", attr="src", value="\x00") is None
+
+    def test_url_like_attributes_require_explicit_rules(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["img"],
+            allowed_attributes={"*": [], "img": ["src"]},
+            url_policy=UrlPolicy(rules={}),
+        )
+        out = JustHTML('<img src="/x">', fragment=True).to_html(policy=policy)
+        assert out == "<img>"
+
+    def test_url_policy_remote_strip_blocks_remote_but_keeps_relative(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["img"],
+            allowed_attributes={"*": [], "img": ["src"]},
+            url_policy=UrlPolicy(
+                url_handling="strip",
+                allow_relative=True,
+                rules={("img", "src"): UrlRule(allowed_schemes={"https"})},
+            ),
+        )
+
+        out = JustHTML('<img src="https://example.com/x">', fragment=True).to_html(policy=policy)
+        assert out == "<img>"
+
+        out = JustHTML('<img src="/x">', fragment=True).to_html(policy=policy)
+        assert out == '<img src="/x">'
+
+    def test_url_policy_remote_strip_blocks_protocol_relative(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["img"],
+            allowed_attributes={"*": [], "img": ["src"]},
+            url_policy=UrlPolicy(
+                url_handling="strip",
+                allow_relative=True,
+                rules={
+                    ("img", "src"): UrlRule(
+                        allowed_schemes={"https"},
+                        resolve_protocol_relative="https",
+                    )
+                },
+            ),
+        )
+
+        out = JustHTML('<img src="//example.com/x">', fragment=True).to_html(policy=policy)
+        assert out == "<img>"
+
+    def test_url_policy_remote_proxy_rewrites_protocol_relative(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["img"],
+            allowed_attributes={"*": [], "img": ["src"]},
+            url_policy=UrlPolicy(
+                url_handling="proxy",
+                allow_relative=True,
+                proxy=UrlProxy(url="/proxy"),
+                rules={
+                    ("img", "src"): UrlRule(
+                        allowed_schemes={"https"},
+                        resolve_protocol_relative="https",
+                    )
+                },
+            ),
+        )
+
+        out = JustHTML('<img src="//example.com/x">', fragment=True).to_html(policy=policy)
+        assert out == '<img src="/proxy?url=https%3A%2F%2Fexample.com%2Fx">'
+
+    def test_url_policy_remote_proxy_global_and_img_override(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["a", "img"],
+            allowed_attributes={"*": [], "a": ["href"], "img": ["src"]},
+            url_policy=UrlPolicy(
+                url_handling="proxy",
+                allow_relative=True,
+                proxy=UrlProxy(url="/proxy", param="url"),
+                rules={
+                    ("a", "href"): UrlRule(allowed_schemes={"https"}),
+                    ("img", "src"): UrlRule(
+                        allowed_schemes={"https"},
+                        proxy=UrlProxy(url="/image-proxy", param="url"),
+                    ),
+                },
+            ),
+        )
+
+        out = JustHTML('<a href="https://example.com/x">x</a>', fragment=True).to_html(policy=policy)
+        assert out == '<a href="/proxy?url=https%3A%2F%2Fexample.com%2Fx">x</a>'
+
+        out = JustHTML('<img src="https://example.com/x">', fragment=True).to_html(policy=policy)
+        assert out == '<img src="/image-proxy?url=https%3A%2F%2Fexample.com%2Fx">'
+
+    def test_url_policy_proxy_does_not_bypass_scheme_checks(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["a"],
+            allowed_attributes={"*": [], "a": ["href"]},
+            url_policy=UrlPolicy(
+                url_handling="proxy",
+                allow_relative=True,
+                proxy=UrlProxy(url="/proxy"),
+                rules={
+                    ("a", "href"): UrlRule(
+                        allowed_schemes=set(),
+                    )
+                },
+            ),
+        )
+
+        out = JustHTML('<a href="https://example.com/x">x</a>', fragment=True).to_html(policy=policy)
+        assert out == "<a>x</a>"
+
+    def test_url_is_external_helper(self) -> None:
+        assert _url_is_external("") is False
+        assert _url_is_external("#x") is False
+        assert _url_is_external("/x") is False
+        assert _url_is_external("//example.com/x") is True
+        assert _url_is_external("https://example.com/x") is True
+
+    def test_srcset_external_scanner_helper(self) -> None:
+        assert _srcset_contains_external_url("/a 1x, /b 2x") is False
+        assert _srcset_contains_external_url("\t ,  \n") is False
+        assert _srcset_contains_external_url("https://example.com/a 1x, /b 2x") is True
+
+    def test_url_policy_proxy_rewrites_remote_srcset_candidates(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["img"],
+            allowed_attributes={"*": [], "img": ["srcset"]},
+            url_policy=UrlPolicy(
+                url_handling="proxy",
+                allow_relative=True,
+                proxy=UrlProxy(url="/proxy"),
+                rules={("img", "srcset"): UrlRule(allowed_schemes={"https"})},
+            ),
+        )
+
+        out = JustHTML('<img srcset="https://example.com/a 1x, /b 2x">', fragment=True).to_html(policy=policy)
+        assert out == '<img srcset="/proxy?url=https%3A%2F%2Fexample.com%2Fa 1x, /b 2x">'
+
+    def test_srcset_is_dropped_if_url_filter_drops_value(self) -> None:
+        def url_filter(tag: str, attr: str, value: str) -> str | None:
+            assert tag == "img"
+            assert attr == "srcset"
+            assert value
+            return None
+
+        policy = SanitizationPolicy(
+            allowed_tags=["img"],
+            allowed_attributes={"*": [], "img": ["srcset"]},
+            url_policy=UrlPolicy(
+                allow_relative=True,
+                rules={("img", "srcset"): UrlRule(allowed_schemes={"https"})},
+                url_filter=url_filter,
+            ),
+        )
+
+        out = JustHTML('<img srcset="https://example.com/a 1x">', fragment=True).to_html(policy=policy)
+        assert out == "<img>"
+
+    def test_srcset_is_dropped_if_empty(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["img"],
+            allowed_attributes={"*": [], "img": ["srcset"]},
+            url_policy=UrlPolicy(
+                allow_relative=True,
+                rules={("img", "srcset"): UrlRule(allowed_schemes={"https"})},
+            ),
+        )
+
+        out = JustHTML('<img srcset="  \t\n  ">', fragment=True).to_html(policy=policy)
+        assert out == "<img>"
+
+    def test_srcset_url_filter_can_rewrite_value(self) -> None:
+        def url_filter(tag: str, attr: str, value: str) -> str | None:
+            assert tag == "img"
+            assert attr == "srcset"
+            assert value == "ignored"
+            return "https://example.com/a 1x"
+
+        policy = SanitizationPolicy(
+            allowed_tags=["img"],
+            allowed_attributes={"*": [], "img": ["srcset"]},
+            url_policy=UrlPolicy(
+                allow_relative=True,
+                rules={("img", "srcset"): UrlRule(allowed_schemes={"https"})},
+                url_filter=url_filter,
+            ),
+        )
+
+        out = JustHTML('<img srcset="ignored">', fragment=True).to_html(policy=policy)
+        assert out == '<img srcset="https://example.com/a 1x">'
+
+    def test_srcset_skips_empty_candidates(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["img"],
+            allowed_attributes={"*": [], "img": ["srcset"]},
+            url_policy=UrlPolicy(
+                url_handling="proxy",
+                allow_relative=True,
+                proxy=UrlProxy(url="/proxy"),
+                rules={("img", "srcset"): UrlRule(allowed_schemes={"https"})},
+            ),
+        )
+
+        out = JustHTML('<img srcset=", https://example.com/a 1x">', fragment=True).to_html(policy=policy)
+        assert out == '<img srcset="/proxy?url=https%3A%2F%2Fexample.com%2Fa 1x">'
+
+    def test_srcset_is_dropped_if_any_candidate_is_invalid(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["img"],
+            allowed_attributes={"*": [], "img": ["srcset"]},
+            url_policy=UrlPolicy(
+                url_handling="proxy",
+                allow_relative=True,
+                proxy=UrlProxy(url="/proxy"),
+                rules={("img", "srcset"): UrlRule(allowed_schemes={"https"})},
+            ),
+        )
+
+        out = JustHTML('<img srcset="http://example.com/a 1x, https://example.com/b 2x">', fragment=True).to_html(
+            policy=policy
+        )
+        assert out == "<img>"
 
     def test_policy_accepts_pre_normalized_sets(self) -> None:
         policy = SanitizationPolicy(
             allowed_tags={"div"},
             allowed_attributes={"*": set(), "div": {"id"}},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             drop_content_tags={"script"},
             force_link_rel={"noopener"},
         )
@@ -152,7 +405,7 @@ class TestSanitizePlumbing(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags=[],
             allowed_attributes={"*": []},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
         )
         root = SimpleDomNode("#document-fragment")
         nested = SimpleDomNode("#document-fragment")
@@ -166,7 +419,7 @@ class TestSanitizePlumbing(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags=["template"],
             allowed_attributes={"*": [], "template": []},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
         )
         root = SimpleDomNode("#document-fragment")
         root.append_child(TemplateNode("template", namespace=None))
@@ -177,7 +430,7 @@ class TestSanitizePlumbing(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags=["div"],
             allowed_attributes={"*": ["id"], "div": ["disabled"]},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
         )
         n = SimpleDomNode("div", attrs={"": "x", "   ": "y", "id": None, "disabled": None})
         out = sanitize(n, policy=policy)
@@ -202,7 +455,7 @@ class TestSanitizePlumbing(unittest.TestCase):
         policy_keep = SanitizationPolicy(
             allowed_tags=[],
             allowed_attributes={"*": []},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             drop_comments=False,
             drop_doctype=False,
         )
@@ -226,7 +479,7 @@ class TestSanitizePlumbing(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags=["div"],
             allowed_attributes={"*": [], "div": []},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
         )
 
         foreign = SimpleDomNode("div", namespace="svg")
@@ -235,7 +488,7 @@ class TestSanitizePlumbing(unittest.TestCase):
         disallowed_subtree_drop = SanitizationPolicy(
             allowed_tags=["div"],
             allowed_attributes={"*": [], "div": []},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             strip_disallowed_tags=False,
         )
         span = SimpleDomNode("span")
@@ -245,7 +498,7 @@ class TestSanitizePlumbing(unittest.TestCase):
         drop_content = SanitizationPolicy(
             allowed_tags=["div"],
             allowed_attributes={"*": [], "div": []},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             drop_content_tags={"script"},
         )
         script = SimpleDomNode("script")
@@ -255,7 +508,7 @@ class TestSanitizePlumbing(unittest.TestCase):
         template_policy = SanitizationPolicy(
             allowed_tags=["template"],
             allowed_attributes={"*": [], "template": []},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
         )
         tpl = TemplateNode("template", namespace="html")
         assert tpl.template_content is not None
@@ -275,7 +528,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
         policy_strip = SanitizationPolicy(
             allowed_tags={"p"},
             allowed_attributes={},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             unsafe_handling="strip",
         )
         policy_strip.reset_collected_security_errors()
@@ -285,7 +538,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
         policy_collect = SanitizationPolicy(
             allowed_tags={"p"},
             allowed_attributes={},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             unsafe_handling="collect",
         )
         policy_collect.reset_collected_security_errors()
@@ -303,7 +556,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags={"p"},
             allowed_attributes={},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             unsafe_handling="collect",
         )
 
@@ -324,7 +577,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags=set(DEFAULT_POLICY.allowed_tags),
             allowed_attributes=DEFAULT_POLICY.allowed_attributes,
-            url_rules=DEFAULT_POLICY.url_rules,
+            url_policy=DEFAULT_POLICY.url_policy,
             allowed_css_properties=DEFAULT_POLICY.allowed_css_properties,
             force_link_rel=DEFAULT_POLICY.force_link_rel,
             unsafe_handling="collect",
@@ -345,7 +598,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags=set(DEFAULT_POLICY.allowed_tags),
             allowed_attributes=DEFAULT_POLICY.allowed_attributes,
-            url_rules=DEFAULT_POLICY.url_rules,
+            url_policy=DEFAULT_POLICY.url_policy,
             allowed_css_properties=DEFAULT_POLICY.allowed_css_properties,
             force_link_rel=DEFAULT_POLICY.force_link_rel,
             unsafe_handling="collect",
@@ -363,7 +616,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags=set(DEFAULT_POLICY.allowed_tags),
             allowed_attributes=DEFAULT_POLICY.allowed_attributes,
-            url_rules=DEFAULT_POLICY.url_rules,
+            url_policy=DEFAULT_POLICY.url_policy,
             allowed_css_properties=DEFAULT_POLICY.allowed_css_properties,
             force_link_rel=DEFAULT_POLICY.force_link_rel,
             unsafe_handling="collect",
@@ -393,7 +646,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags={"p"},
             allowed_attributes={},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             unsafe_handling="raise",
         )
 
@@ -407,7 +660,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags={"p"},
             allowed_attributes={"p": set()},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             unsafe_handling="raise",
         )
 
@@ -421,7 +674,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags={"a"},
             allowed_attributes={"a": {"href"}},
-            url_rules={("a", "href"): UrlRule(allowed_schemes={"https"})},
+            url_policy=UrlPolicy(rules={("a", "href"): UrlRule(allowed_schemes={"https"})}),
             unsafe_handling="raise",
         )
 
@@ -434,7 +687,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags={"p"},
             allowed_attributes={"p": set()},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             unsafe_handling="raise",
         )
         with self.assertRaisesRegex(ValueError, "Unsafe attribute.*namespaced"):
@@ -446,7 +699,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags={"iframe"},
             allowed_attributes={"iframe": {"srcdoc"}},  # Even if allowed, srcdoc is dangerous
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             unsafe_handling="raise",
         )
         with self.assertRaisesRegex(ValueError, "Unsafe attribute.*srcdoc"):
@@ -458,7 +711,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags={"p"},
             allowed_attributes={"p": set()},  # No attributes allowed
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             unsafe_handling="raise",
         )
         with self.assertRaisesRegex(ValueError, "Unsafe attribute.*not allowed"):
@@ -471,7 +724,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
             allowed_tags={"p"},
             allowed_attributes={"p": {"style"}},
             allowed_css_properties={"background"},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             unsafe_handling="raise",
         )
         with self.assertRaisesRegex(ValueError, "Unsafe inline style"):
@@ -490,7 +743,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags={"p"},
             allowed_attributes={},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             unsafe_handling="raise",
         )
         with self.assertRaisesRegex(ValueError, "Unsafe tag.*not allowed"):
@@ -504,7 +757,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags={"p"},
             allowed_attributes={},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             unsafe_handling="raise",
         )
         with self.assertRaisesRegex(ValueError, "Unsafe tag.*dropped content"):
@@ -518,7 +771,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags={"div"},
             allowed_attributes={"div": set()},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             unsafe_handling="raise",
         )
         with self.assertRaisesRegex(ValueError, "Unsafe tag.*dropped content"):
@@ -532,7 +785,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags={"div"},
             allowed_attributes={"div": set()},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             unsafe_handling="raise",
         )
         with self.assertRaisesRegex(ValueError, "Unsafe tag.*not allowed"):
@@ -547,7 +800,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags={"svg"},  # Even if allowed, foreign namespaces might be dropped
             allowed_attributes={"svg": set()},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             drop_foreign_namespaces=True,
             unsafe_handling="raise",
         )
@@ -562,7 +815,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags={"div"},
             allowed_attributes={"div": set()},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             drop_foreign_namespaces=True,
             unsafe_handling="raise",
         )
@@ -577,7 +830,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags={"p"},
             allowed_attributes={},
-            url_rules={},
+            url_policy=UrlPolicy(rules={}),
             strip_disallowed_tags=False,  # Don't strip, just drop
             unsafe_handling="raise",
         )

@@ -7,7 +7,7 @@ from typing import Any
 
 from justhtml import DEFAULT_POLICY, JustHTML
 from justhtml.context import FragmentContext
-from justhtml.sanitize import SanitizationPolicy, UrlRule
+from justhtml.sanitize import SanitizationPolicy, UrlPolicy, UrlProxy, UrlRule
 
 _CASES_DIR = Path(__file__).with_name("justhtml-sanitize-tests")
 
@@ -39,29 +39,46 @@ def _build_policy(spec: Any) -> SanitizationPolicy:
 
     url_rules_list = spec.get("url_rules", [])
     url_rules: dict[tuple[str, str], UrlRule] = {}
+    any_proxy = False
+    allow_relative_global = True
     for rule_spec in url_rules_list:
         if not isinstance(rule_spec, dict):
             raise TypeError("url_rules entries must be objects")
         tag = rule_spec["tag"]
         attr = rule_spec["attr"]
+        proxy_url = rule_spec.get("proxy_url")
+        if proxy_url is not None:
+            any_proxy = True
+
+        if rule_spec.get("allow_relative", True) is False:
+            allow_relative_global = False
         url_rules[(tag, attr)] = UrlRule(
-            allow_relative=rule_spec.get("allow_relative", True),
             allow_fragment=rule_spec.get("allow_fragment", True),
             resolve_protocol_relative=rule_spec.get("resolve_protocol_relative", "https"),
             allowed_schemes=rule_spec.get("allowed_schemes", []),
             allowed_hosts=rule_spec.get("allowed_hosts", None),
-            proxy_url=rule_spec.get("proxy_url"),
-            proxy_param=rule_spec.get("proxy_param", "url"),
+            proxy=(
+                UrlProxy(url=str(proxy_url), param=str(rule_spec.get("proxy_param", "url")))
+                if proxy_url is not None
+                else None
+            ),
         )
 
     url_filter_name = spec.get("url_filter")
     url_filter = _url_filter_by_name(url_filter_name) if isinstance(url_filter_name, str) else None
 
+    # Map the old test schema to the new API shape.
+    url_policy = UrlPolicy(
+        url_handling="proxy" if any_proxy else "allow",
+        allow_relative=allow_relative_global,
+        rules=url_rules,
+        url_filter=url_filter,
+    )
+
     return SanitizationPolicy(
         allowed_tags=allowed_tags,
         allowed_attributes=allowed_attributes,
-        url_rules=url_rules,
-        url_filter=url_filter,
+        url_policy=url_policy,
         drop_comments=spec.get("drop_comments", True),
         drop_doctype=spec.get("drop_doctype", True),
         drop_foreign_namespaces=spec.get("drop_foreign_namespaces", True),

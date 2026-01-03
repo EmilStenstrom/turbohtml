@@ -125,7 +125,7 @@ class TestNode(unittest.TestCase):
         policy = SanitizationPolicy(
             allowed_tags=DEFAULT_POLICY.allowed_tags,
             allowed_attributes=DEFAULT_POLICY.allowed_attributes,
-            url_rules=DEFAULT_POLICY.url_rules,
+            url_policy=DEFAULT_POLICY.url_policy,
             drop_content_tags=set(),
         )
         doc = JustHTML("<p>ok</p><script>alert(1)</script>")

@@ -5,6 +5,8 @@ from .sanitize import (
     DEFAULT_POLICY,
     SanitizationPolicy,
     UnsafeHtmlError,
+    UrlPolicy,
+    UrlProxy,
     UrlRule,
     sanitize,
 )
@@ -23,6 +25,8 @@ __all__ = [
     "SelectorError",
     "StrictModeError",
     "UnsafeHtmlError",
+    "UrlPolicy",
+    "UrlProxy",
     "UrlRule",
     "matches",
     "query",

@@ -25,6 +25,22 @@ class UnsafeHtmlError(ValueError):
 UnsafeHandling = Literal["strip", "raise", "collect"]
 
 
+UrlHandling = Literal["allow", "strip", "proxy"]
+
+
+@dataclass(frozen=True, slots=True)
+class UrlProxy:
+    url: str
+    param: str = "url"
+
+    def __post_init__(self) -> None:
+        proxy_url = str(self.url)
+        if not proxy_url:
+            raise ValueError("UrlProxy.url must be a non-empty string")
+        object.__setattr__(self, "url", proxy_url)
+        object.__setattr__(self, "param", str(self.param))
+
+
 @dataclass(frozen=True, slots=True)
 class UrlRule:
     """Rule for a single URL-valued attribute (e.g. a[href], img[src]).
@@ -35,9 +51,6 @@ class UrlRule:
         is rendered (notably for <img src>). Applications like email viewers often
         want to block remote loads by default.
     """
-
-    # Allow relative URLs (including /path, ./path, ../path, ?query).
-    allow_relative: bool = True
 
     # Allow same-document fragments (#foo). Typically safe.
     allow_fragment: bool = True
@@ -55,13 +68,9 @@ class UrlRule:
     # allowlist.
     allowed_hosts: Collection[str] | None = None
 
-    # Optional proxy rewrite for allowed absolute/protocol-relative URLs.
-    # Example: proxy_url="/proxy" -> https://google.com becomes
-    # /proxy?url=https%3A%2F%2Fgoogle.com
-    proxy_url: str | None = None
-
-    # Query parameter name used when proxy_url is set.
-    proxy_param: str = "url"
+    # Optional proxy override for absolute/protocol-relative URLs.
+    # Used when the active URL policy is url_handling="proxy".
+    proxy: UrlProxy | None = None
 
     def __post_init__(self) -> None:
         # Accept lists/tuples from user code, normalize for internal use.
@@ -70,15 +79,60 @@ class UrlRule:
         if self.allowed_hosts is not None and not isinstance(self.allowed_hosts, set):
             object.__setattr__(self, "allowed_hosts", set(self.allowed_hosts))
 
-        if self.proxy_url is not None:
-            proxy_url = str(self.proxy_url)
-            object.__setattr__(self, "proxy_url", proxy_url if proxy_url else None)
-        object.__setattr__(self, "proxy_param", str(self.proxy_param))
+        if self.proxy is not None and not isinstance(self.proxy, UrlProxy):
+            raise TypeError("UrlRule.proxy must be a UrlProxy or None")
 
 
-def _proxy_url_value(*, proxy_url: str, proxy_param: str, value: str) -> str:
-    sep = "&" if "?" in proxy_url else "?"
-    return f"{proxy_url}{sep}{proxy_param}={quote(value, safe='')}"
+@dataclass(frozen=True, slots=True)
+class UrlPolicy:
+    # Handling of absolute/protocol-relative URLs after they pass UrlRule checks.
+    # - "allow": keep the URL as-is
+    # - "strip": drop the attribute
+    # - "proxy": rewrite the URL through a proxy (UrlPolicy.proxy or UrlRule.proxy)
+    url_handling: UrlHandling = "allow"
+
+    # Allow relative URLs (including /path, ./path, ../path, ?query) for URL-like
+    # attributes that have a matching UrlRule.
+    allow_relative: bool = True
+
+    # Rule configuration for URL-valued attributes.
+    rules: Mapping[tuple[str, str], UrlRule] = field(default_factory=dict)
+
+    # Optional hook that can drop or rewrite URLs.
+    # url_filter(tag, attr, value) should return:
+    # - a replacement string to keep (possibly rewritten), or
+    # - None to drop the attribute.
+    url_filter: UrlFilter | None = None
+
+    # Default proxy config used when url_handling="proxy" and a rule
+    # does not specify its own UrlRule.proxy override.
+    proxy: UrlProxy | None = None
+
+    def __post_init__(self) -> None:
+        mode = str(self.url_handling)
+        if mode not in {"allow", "strip", "proxy"}:
+            raise ValueError("Invalid url_handling. Expected one of: 'allow', 'strip', 'proxy'")
+        object.__setattr__(self, "url_handling", mode)
+
+        object.__setattr__(self, "allow_relative", bool(self.allow_relative))
+
+        if not isinstance(self.rules, dict):
+            object.__setattr__(self, "rules", dict(self.rules))
+
+        if self.proxy is not None and not isinstance(self.proxy, UrlProxy):
+            raise TypeError("UrlPolicy.proxy must be a UrlProxy or None")
+
+        if mode == "proxy":
+            if self.proxy is None:
+                # If no global proxy is set, require every rule to provide its own.
+                for rule in self.rules.values():
+                    if rule.proxy is None:
+                        raise ValueError("url_handling='proxy' requires a UrlPolicy.proxy or a per-rule UrlRule.proxy")
+
+
+def _proxy_url_value(*, proxy: UrlProxy, value: str) -> str:
+    sep = "&" if "?" in proxy.url else "?"
+    return f"{proxy.url}{sep}{proxy.param}={quote(value, safe='')}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,15 +153,8 @@ class SanitizationPolicy:
     allowed_tags: Collection[str]
     allowed_attributes: Mapping[str, Collection[str]]
 
-    # URL handling:
-    # - `url_rules` is the data-driven allowlist for URL-valued attributes.
-    # - `url_filter` is an optional hook that can drop or rewrite URLs.
-    #
-    # `url_filter(tag, attr, value)` should return:
-    # - a replacement string to keep (possibly rewritten), or
-    # - None to drop the attribute.
-    url_rules: Mapping[tuple[str, str], UrlRule]
-    url_filter: UrlFilter | None = None
+    # URL handling.
+    url_policy: UrlPolicy = field(default_factory=UrlPolicy)
 
     drop_comments: bool = True
     drop_doctype: bool = True
@@ -322,19 +369,19 @@ DEFAULT_POLICY: SanitizationPolicy = SanitizationPolicy(
         "th": ["colspan", "rowspan"],
         "td": ["colspan", "rowspan"],
     },
-    # Default URL stance:
-    # - Links may point to http/https/mailto/tel and relative URLs.
-    # - Images may point to relative URLs only.
-    url_rules={
-        ("a", "href"): UrlRule(
-            allowed_schemes=["http", "https", "mailto", "tel"],
-            resolve_protocol_relative="https",
-        ),
-        ("img", "src"): UrlRule(
-            allowed_schemes=["http", "https"],
-            resolve_protocol_relative="https",
-        ),
-    },
+    url_policy=UrlPolicy(
+        url_handling="allow",
+        rules={
+            ("a", "href"): UrlRule(
+                allowed_schemes=["http", "https", "mailto", "tel"],
+                resolve_protocol_relative="https",
+            ),
+            ("img", "src"): UrlRule(
+                allowed_schemes=["http", "https"],
+                resolve_protocol_relative="https",
+            ),
+        },
+    ),
     allowed_css_properties=set(),
 )
 
@@ -365,8 +412,7 @@ CSS_PRESET_TEXT: frozenset[str] = frozenset(
 DEFAULT_DOCUMENT_POLICY: SanitizationPolicy = SanitizationPolicy(
     allowed_tags=sorted(set(DEFAULT_POLICY.allowed_tags) | {"html", "head", "body", "title"}),
     allowed_attributes=DEFAULT_POLICY.allowed_attributes,
-    url_rules=DEFAULT_POLICY.url_rules,
-    url_filter=DEFAULT_POLICY.url_filter,
+    url_policy=DEFAULT_POLICY.url_policy,
     drop_comments=DEFAULT_POLICY.drop_comments,
     drop_doctype=DEFAULT_POLICY.drop_doctype,
     drop_foreign_namespaces=DEFAULT_POLICY.drop_foreign_namespaces,
@@ -613,9 +659,27 @@ def _sanitize_url_value(
     attr: str,
     value: str,
 ) -> str | None:
+    return _sanitize_url_value_inner(policy=policy, rule=rule, tag=tag, attr=attr, value=value, apply_filter=True)
+
+
+def _effective_proxy(*, url_policy: UrlPolicy, rule: UrlRule) -> UrlProxy | None:
+    return rule.proxy if rule.proxy is not None else url_policy.proxy
+
+
+def _sanitize_url_value_inner(
+    *,
+    policy: SanitizationPolicy,
+    rule: UrlRule,
+    tag: str,
+    attr: str,
+    value: str,
+    apply_filter: bool,
+) -> str | None:
     v = value
-    if policy.url_filter is not None:
-        rewritten = policy.url_filter(tag, attr, v)
+    url_policy = policy.url_policy
+
+    if apply_filter and url_policy.url_filter is not None:
+        rewritten = url_policy.url_filter(tag, attr, v)
         if rewritten is None:
             return None
         v = rewritten
@@ -630,9 +694,9 @@ def _sanitize_url_value(
     if normalized.startswith("#"):
         return stripped if rule.allow_fragment else None
 
-    # If proxying is enabled, do not treat scheme-obfuscation as a relative URL.
-    # Some user agents normalize backslashes and other characters during navigation.
-    if rule.proxy_url and _has_invalid_scheme_like_prefix(normalized):
+    if url_policy.url_handling == "proxy" and _has_invalid_scheme_like_prefix(normalized):
+        # If proxying is enabled, do not treat scheme-obfuscation as a relative URL.
+        # Some user agents normalize backslashes and other characters during navigation.
         return None
 
     if normalized.startswith("//"):
@@ -653,12 +717,13 @@ def _sanitize_url_value(
             if not host or host not in rule.allowed_hosts:
                 return None
 
-        # Return the resolved URL.
-        return (
-            _proxy_url_value(proxy_url=rule.proxy_url, proxy_param=rule.proxy_param, value=resolved_url)
-            if rule.proxy_url
-            else resolved_url
-        )
+        mode = url_policy.url_handling
+        if mode == "strip":
+            return None
+        if mode == "proxy":
+            proxy = _effective_proxy(url_policy=url_policy, rule=rule)
+            return None if proxy is None else _proxy_url_value(proxy=proxy, value=resolved_url)
+        return resolved_url
 
     if _has_scheme(normalized):
         parsed = urlsplit(normalized)
@@ -669,13 +734,120 @@ def _sanitize_url_value(
             host = (parsed.hostname or "").lower()
             if not host or host not in rule.allowed_hosts:
                 return None
-        return (
-            _proxy_url_value(proxy_url=rule.proxy_url, proxy_param=rule.proxy_param, value=stripped)
-            if rule.proxy_url
-            else stripped
-        )
+        mode = url_policy.url_handling
+        if mode == "strip":
+            return None
+        if mode == "proxy":
+            proxy = _effective_proxy(url_policy=url_policy, rule=rule)
+            return None if proxy is None else _proxy_url_value(proxy=proxy, value=stripped)
+        return stripped
 
-    return stripped if rule.allow_relative else None
+    return stripped if url_policy.allow_relative else None
+
+
+def _sanitize_srcset_value(
+    *,
+    policy: SanitizationPolicy,
+    rule: UrlRule,
+    tag: str,
+    attr: str,
+    value: str,
+) -> str | None:
+    # Apply the URL filter once to the whole attribute value.
+    url_policy = policy.url_policy
+    v = value
+    if url_policy.url_filter is not None:
+        rewritten = url_policy.url_filter(tag, attr, v)
+        if rewritten is None:
+            return None
+        v = rewritten
+
+    stripped = str(v).strip()
+    if not stripped:
+        return None
+
+    out_candidates: list[str] = []
+    for raw_candidate in stripped.split(","):
+        c = raw_candidate.strip()
+        if not c:
+            continue
+
+        parts = c.split(None, 1)
+        url_token = parts[0]
+        desc = parts[1].strip() if len(parts) == 2 else ""
+
+        sanitized_url = _sanitize_url_value_inner(
+            policy=policy,
+            rule=rule,
+            tag=tag,
+            attr=attr,
+            value=url_token,
+            apply_filter=False,
+        )
+        if sanitized_url is None:
+            return None
+
+        out_candidates.append(f"{sanitized_url} {desc}".strip())
+
+    return None if not out_candidates else ", ".join(out_candidates)
+
+
+_URL_LIKE_ATTRS: frozenset[str] = frozenset(
+    {
+        # Common URL-valued attributes.
+        "href",
+        "src",
+        "srcset",
+        "poster",
+        "action",
+        "formaction",
+        "data",
+        "cite",
+        "background",
+        # Can trigger requests/pings.
+        "ping",
+    }
+)
+
+
+def _url_is_external(normalized_url: str) -> bool:
+    if not normalized_url:
+        return False
+    if normalized_url.startswith("#"):
+        return False
+    if normalized_url.startswith("//"):
+        return True
+    return _has_scheme(normalized_url)
+
+
+def _srcset_contains_external_url(value: str) -> bool:
+    # Minimal srcset scanner: parse comma-separated candidates, taking the URL
+    # up to the first whitespace of each candidate.
+    i = 0
+    n = len(value)
+    while i < n:
+        # Skip whitespace and commas.
+        while i < n and value[i] in "\t\n\r\f ,":
+            i += 1
+        if i >= n:
+            break
+
+        start = i
+        while i < n and value[i] not in "\t\n\r\f ,":
+            i += 1
+        candidate = value[start:i]
+
+        normalized = _normalize_url_for_checking(candidate.strip())
+        if _url_is_external(normalized):
+            return True
+
+        # Skip the rest of the candidate (descriptors) until the next comma.
+        while i < n and value[i] != ",":
+            i += 1
+        if i < n and value[i] == ",":
+            i += 1
+
+    return False
 
 
 def _sanitize_attrs(
@@ -724,12 +896,22 @@ def _sanitize_attrs(
             continue
 
         value = raw_value
-        rule = policy.url_rules.get((tag, name))
-        if rule is not None:
-            sanitized = _sanitize_url_value(policy=policy, rule=rule, tag=tag, attr=name, value=value)
+
+        if name in _URL_LIKE_ATTRS:
+            rule = policy.url_policy.rules.get((tag, name))
+            if rule is None:
+                policy.handle_unsafe(f"Unsafe URL in attribute '{name}' (no rule)", node=node)
+                continue
+
+            if name == "srcset":
+                sanitized = _sanitize_srcset_value(policy=policy, rule=rule, tag=tag, attr=name, value=value)
+            else:
+                sanitized = _sanitize_url_value(policy=policy, rule=rule, tag=tag, attr=name, value=value)
+
             if sanitized is None:
                 policy.handle_unsafe(f"Unsafe URL in attribute '{name}'", node=node)
                 continue
+
             out[name] = sanitized
         elif name == "style":
             sanitized_style = _sanitize_inline_style(policy=policy, value=value)
