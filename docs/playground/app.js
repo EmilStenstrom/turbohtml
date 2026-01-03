@@ -22,9 +22,19 @@ async function installJusthtmlFromPyPI(pyodideInstance) {
 	await pyodideInstance.runPythonAsync(
 		[
 			"import micropip",
-			// Always try to upgrade on GitHub Pages so a previously cached older
-			// wheel doesn't silently satisfy the requirement.
-			"await micropip.install('justhtml', upgrade=True)",
+			"from pyodide.http import pyfetch",
+			"import time",
+			"",
+			"async def _install_latest_justhtml():",
+			"    # Resolve the latest released version from PyPI and install that exact version.",
+			"    # This avoids older cached simple-index responses accidentally selecting an older wheel.",
+			"    url = f'https://pypi.org/pypi/justhtml/json?cachebust={int(time.time() * 1000)}'",
+			"    resp = await pyfetch(url, cache='no-store')",
+			"    data = await resp.json()",
+			"    version = data['info']['version']",
+			"    await micropip.install(f'justhtml=={version}')",
+			"",
+			"await _install_latest_justhtml()",
 		].join("\n"),
 	);
 }
