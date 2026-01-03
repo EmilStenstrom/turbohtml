@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.30.0] - 2026-01-03
+### Changed
+- BREAKING: Rename URL sanitization API (see [URL Cleaning](docs/url-cleaning.md)):
+  - `UrlPolicy.rules` -> `UrlPolicy.allow_rules`
+  - `UrlPolicy.url_handling` -> `UrlPolicy.default_handling`
+  - `UrlPolicy.allow_relative` -> `UrlPolicy.default_allow_relative`
+  - `UrlRule.url_handling` -> `UrlRule.handling`
+- BREAKING: URL allow rules now behave like an allowlist: if an attribute matches `UrlPolicy.allow_rules` and the URL validates, it is kept by default. To strip or proxy a specific attribute, set `UrlRule.handling="strip"` / `"proxy"` (see [URL Cleaning](docs/url-cleaning.md)).
+- BREAKING: Proxying is still supported, but is now configured per attribute rule (`UrlRule.handling="proxy"`) instead of via a policy-wide default. Proxy mode requires a proxy to be configured either globally (`UrlPolicy.proxy`) or per rule (`UrlRule.proxy`) (see [URL Cleaning](docs/url-cleaning.md)).
+- BREAKING: `UrlPolicy.default_handling` now defaults to `"strip"` (see [URL Cleaning](docs/url-cleaning.md)).
+
 ## [0.29.0] - 2026-01-03
 ### Changed
 - Default policy change: `DEFAULT_POLICY` now blocks remote image loads by default (`img[src]` only allows relative URLs). Use a custom policy to allow `http(s)` images if you want them (see [URL Cleaning](docs/url-cleaning.md)).
