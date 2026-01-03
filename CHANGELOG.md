@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-01-03
+### Added
+- Add `unsafe_handling` mode to `SanitizationPolicy`, including an option to raise on all security findings.
+
+### Changed
+- Enhance sanitization policy behavior and error collection to support reporting security findings.
+- Improve ordering of collected security errors by input position.
+- Improve Playground parse error UI, including sanitizer security findings.
+
+### Security
+- (Severity: Low) Set explicit GitHub Actions workflow token permissions (`contents: read`) to address a CodeQL code scanning alert.
+
 ## [0.26.0] - 2026-01-02
 ### Added
 - Add security policy (`SECURITY.md`) and update documentation to reference it.
