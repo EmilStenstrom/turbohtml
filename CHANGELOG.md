@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-01-03
+### Changed
+- BREAKING: URL sanitization is now explicitly controlled by `UrlPolicy`/`UrlRule`. URL-like attributes (for example `href`, `src`, `srcset`) are dropped by default unless you provide an explicit `(tag, attr)` rule in `UrlPolicy.rules` (see [URL Cleaning](docs/url-cleaning.md)).
+- BREAKING: Replace legacy “remote URL handling” configuration with `UrlPolicy(url_handling="allow"|"strip"|"proxy", allow_relative=...)` (see [URL Cleaning](docs/url-cleaning.md)).
+
+### Added
+- Add `UrlProxy` and URL rewriting via `UrlPolicy(url_handling="proxy")`.
+- Add `srcset` parsing + sanitization using the same URL policy rules.
+- Split sanitization docs into an overview plus deeper guides for HTML cleaning, URL cleaning, and unsafe handling (see [Sanitization](docs/sanitization.md)).
+
 ## [0.27.0] - 2026-01-03
 ### Added
 - Add `unsafe_handling` mode to `SanitizationPolicy`, including an option to raise on all security findings.
