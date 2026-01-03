@@ -219,7 +219,16 @@ class SanitizationPolicy:
     def collected_security_errors(self) -> list[ParseError]:
         if self._collected_security_errors is None:
             return []
-        return list(self._collected_security_errors)
+        out = list(self._collected_security_errors)
+        # Keep ordering consistent with JustHTML error ordering: by input position.
+        # Errors without a location sort last.
+        out.sort(
+            key=lambda e: (
+                e.line if e.line is not None else 1_000_000_000,
+                e.column if e.column is not None else 1_000_000_000,
+            )
+        )
+        return out
 
     def handle_unsafe(self, msg: str, *, node: Any | None = None) -> None:
         mode = self.unsafe_handling
