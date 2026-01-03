@@ -20,7 +20,12 @@ function isGitHubPages() {
 async function installJusthtmlFromPyPI(pyodideInstance) {
 	await pyodideInstance.loadPackage("micropip");
 	await pyodideInstance.runPythonAsync(
-		[`import micropip`, `await micropip.install("justhtml")`].join("\n"),
+		[
+			"import micropip",
+			// Always try to upgrade on GitHub Pages so a previously cached older
+			// wheel doesn't silently satisfy the requirement.
+			"await micropip.install('justhtml', upgrade=True)",
+		].join("\n"),
 	);
 }
 
