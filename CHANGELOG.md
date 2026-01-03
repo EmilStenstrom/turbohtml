@@ -5,7 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.29.0] - 2026-01-03
+### Changed
+- Default policy change: `DEFAULT_POLICY` now blocks remote image loads by default (`img[src]` only allows relative URLs). Use a custom policy to allow `http(s)` images if you want them (see [URL Cleaning](docs/url-cleaning.md)).
 
 ## [0.28.0] - 2026-01-03
 ### Changed
