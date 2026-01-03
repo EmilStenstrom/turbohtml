@@ -119,7 +119,7 @@ from justhtml import CSS_PRESET_TEXT, JustHTML, SanitizationPolicy, UrlPolicy
 policy = SanitizationPolicy(
     allowed_tags=["p"],
     allowed_attributes={"*": [], "p": ["style"]},
-    url_policy=UrlPolicy(rules={}),
+    url_policy=UrlPolicy(allow_rules={}),
     allowed_css_properties=CSS_PRESET_TEXT | {"width"},
 )
 
@@ -157,7 +157,8 @@ policy = SanitizationPolicy(
     allowed_tags=["p", "b", "a"],
     allowed_attributes={"*": [], "a": ["href"]},
     url_policy=UrlPolicy(
-        rules={
+        default_handling="allow",
+        allow_rules={
             ("a", "href"): UrlRule(allowed_schemes=["https"]),
         }
     ),

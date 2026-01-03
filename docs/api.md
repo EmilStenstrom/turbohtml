@@ -182,17 +182,17 @@ Defines allowlists for tags and attributes, URL validation rules, and optional i
 Notable options:
 
 - `unsafe_handling`: "strip" (default), "raise", or "collect"
-- `url_policy`: controls URL validation and remote URL handling ("allow", "strip", or "proxy")
+- `url_policy`: controls URL validation and URL handling ("allow", "strip", or "proxy")
 
 ### `UrlPolicy`
 
-Wraps URL rules and controls what happens to remote (absolute / protocol-relative) URLs.
+Wraps URL rules and controls what happens to URL-valued attributes.
 
 ```python
 UrlPolicy(
-    url_handling="allow",  # or "strip" / "proxy"
-    allow_relative=True,
-    rules={},
+    default_handling="strip",  # or "allow" / "proxy"
+    default_allow_relative=True,
+    allow_rules={},
     url_filter=None,
     proxy=None,
 )
@@ -200,7 +200,7 @@ UrlPolicy(
 
 ### `UrlProxy`
 
-Proxy rewrite configuration used when `url_handling="proxy"`.
+Proxy rewrite configuration used when `default_handling="proxy"`.
 
 ```python
 UrlProxy(
@@ -229,7 +229,7 @@ UrlRule(
 | `resolve_protocol_relative` | `str \| None` | `"https"` | Scheme to resolve protocol-relative URLs (`//...`) to before checking. If `None`, they are dropped. |
 | `allowed_schemes` | `set[str]` | `set()` | Allowed schemes for absolute URLs (e.g. `{"https", "mailto"}`) |
 | `allowed_hosts` | `set[str] \| None` | `None` | If set, only allow these hosts (e.g. `{"example.com"}`) |
-| `proxy` | `UrlProxy \| None` | `None` | Per-rule proxy override used when `UrlPolicy.url_handling="proxy"` |
+| `proxy` | `UrlProxy \| None` | `None` | Per-rule proxy override used when `UrlPolicy.default_handling="proxy"` |
 
 ---
 

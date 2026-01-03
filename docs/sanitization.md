@@ -52,4 +52,4 @@ Out of scope (you must handle these separately):
 - Content security beyond markup execution (e.g. phishing / UI redress).
 - Security policies like CSP, sandboxing, and permissions (recommended for defense-in-depth).
 
-See [HTML Cleaning](html-cleaning.md) for tag/attribute rules and unsafe handling, and [URL Cleaning](url-cleaning.md) for remote URL handling (`url_handling`) and URL validation rules.
+See [HTML Cleaning](html-cleaning.md) for tag/attribute rules and unsafe handling, and [URL Cleaning](url-cleaning.md) for URL handling (`default_handling`) and URL validation rules.

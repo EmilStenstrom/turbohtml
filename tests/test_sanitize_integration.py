@@ -39,24 +39,21 @@ def _build_policy(spec: Any) -> SanitizationPolicy:
 
     url_rules_list = spec.get("url_rules", [])
     url_rules: dict[tuple[str, str], UrlRule] = {}
-    any_proxy = False
-    allow_relative_global = True
     for rule_spec in url_rules_list:
         if not isinstance(rule_spec, dict):
             raise TypeError("url_rules entries must be objects")
         tag = rule_spec["tag"]
         attr = rule_spec["attr"]
         proxy_url = rule_spec.get("proxy_url")
-        if proxy_url is not None:
-            any_proxy = True
+        handling = "proxy" if proxy_url is not None else None
 
-        if rule_spec.get("allow_relative", True) is False:
-            allow_relative_global = False
         url_rules[(tag, attr)] = UrlRule(
             allow_fragment=rule_spec.get("allow_fragment", True),
             resolve_protocol_relative=rule_spec.get("resolve_protocol_relative", "https"),
             allowed_schemes=rule_spec.get("allowed_schemes", []),
             allowed_hosts=rule_spec.get("allowed_hosts", None),
+            handling=handling,
+            allow_relative=rule_spec.get("allow_relative", None),
             proxy=(
                 UrlProxy(url=str(proxy_url), param=str(rule_spec.get("proxy_param", "url")))
                 if proxy_url is not None
@@ -69,9 +66,8 @@ def _build_policy(spec: Any) -> SanitizationPolicy:
 
     # Map the old test schema to the new API shape.
     url_policy = UrlPolicy(
-        url_handling="proxy" if any_proxy else "allow",
-        allow_relative=allow_relative_global,
-        rules=url_rules,
+        default_handling="strip",
+        allow_rules=url_rules,
         url_filter=url_filter,
     )
 

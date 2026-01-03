@@ -5,7 +5,7 @@
 This page focuses on **what happens when unsafe input is encountered** during sanitization.
 
 For tag/attribute allowlists and inline styles, see [HTML Cleaning](html-cleaning.md).
-For URL validation and remote URL handling, see [URL Cleaning](url-cleaning.md).
+For URL validation and URL handling, see [URL Cleaning](url-cleaning.md).
 
 Unsafe behavior is controlled by `SanitizationPolicy(unsafe_handling=...)`.
 
@@ -31,7 +31,7 @@ doc = JustHTML("<p>ok</p><script>alert(1)</script>", fragment=True, track_node_l
 policy = SanitizationPolicy(
     allowed_tags=["p"],
     allowed_attributes={"*": []},
-    url_policy=UrlPolicy(rules={}),
+    url_policy=UrlPolicy(allow_rules={}),
     unsafe_handling="collect",
 )
 
@@ -61,7 +61,7 @@ doc = JustHTML("<p>ok</p><script>alert(1)</script>", fragment=True)
 policy = SanitizationPolicy(
     allowed_tags=["p"],
     allowed_attributes={"*": []},
-    url_policy=UrlPolicy(rules={}),
+    url_policy=UrlPolicy(allow_rules={}),
     unsafe_handling="raise",
 )
 

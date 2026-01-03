@@ -12,7 +12,7 @@ A pure Python HTML5 parser that just works.
 - **[Fragment Parsing](fragments.md)** - Parse HTML fragments in context
 - **[Sanitization & Security](sanitization.md)** - Overview of safe-by-default output and policy configuration
     - **[HTML Cleaning](html-cleaning.md)** - Tags/attributes allowlists and inline styles
-    - **[URL Cleaning](url-cleaning.md)** - URL validation, remote URL handling, and `srcset`
+    - **[URL Cleaning](url-cleaning.md)** - URL validation, URL handling, and `srcset`
     - **[Unsafe Handling](unsafe-handling.md)** - What happens when unsafe input is encountered (strip/collect/raise)
 - **[Streaming](streaming.md)** - Memory-efficient parsing for large files
 - **[Encoding & Byte Input](encoding.md)** - How byte streams are decoded (including `windows-1252` fallback)

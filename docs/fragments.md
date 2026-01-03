@@ -214,8 +214,8 @@ def sanitize_fragment(html: str) -> str:
         allowed_tags={"p", "b", "i", "a", "ul", "ol", "li"},
         allowed_attributes={"*": [], "a": ["href"]},
         url_policy=UrlPolicy(
-            allow_relative=True,
-            rules={("a", "href"): UrlRule(allowed_schemes=["https"])},
+            default_allow_relative=True,
+            allow_rules={("a", "href"): UrlRule(allowed_schemes=["https"])},
         ),
     )
 

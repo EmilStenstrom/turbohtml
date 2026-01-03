@@ -210,7 +210,7 @@
     "parse": "fragment",
     "fragment_context": "div",
     "input_html": "<img src='noscheme'>",
-    "expected_html": "<img src=\"noscheme\">"
+    "expected_html": "<img src=\"/proxy?url=noscheme\">"
   },
   {
     "name": "url_rules_proxy_allows_relative_colon_in_path",
@@ -230,7 +230,7 @@
     "parse": "fragment",
     "fragment_context": "div",
     "input_html": "<img src='/path:foo'>",
-    "expected_html": "<img src=\"/path:foo\">"
+    "expected_html": "<img src=\"/proxy?url=%2Fpath%3Afoo\">"
   },
   {
     "name": "url_rules_proxy_blocks_scheme_obfuscation_backslash",
