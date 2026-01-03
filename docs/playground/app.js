@@ -12,6 +12,73 @@ let renderFn;
 let scheduledRun = null;
 let uiEnabled = true;
 
+function isGitHubPages() {
+	const host = window.location.hostname;
+	return host === "github.io" || host.endsWith(".github.io");
+}
+
+async function installJusthtmlFromPyPI(pyodideInstance) {
+	await pyodideInstance.loadPackage("micropip");
+	await pyodideInstance.runPythonAsync(
+		[`import micropip`, `await micropip.install("justhtml")`].join("\n"),
+	);
+}
+
+async function installJusthtmlFromLocalRepo(pyodideInstance) {
+	// Load the local working tree version of justhtml by fetching the sources
+	// from the repo and writing them into Pyodide's virtual filesystem.
+	// This requires serving the repository root over HTTP.
+	const baseUrl = new URL("/src/justhtml/", window.location.href).toString();
+	const files = [
+		"__init__.py",
+		"__main__.py",
+		"constants.py",
+		"context.py",
+		"encoding.py",
+		"entities.py",
+		"errors.py",
+		"node.py",
+		"parser.py",
+		"sanitize.py",
+		"selector.py",
+		"serialize.py",
+		"stream.py",
+		"tokenizer.py",
+		"tokens.py",
+		"treebuilder.py",
+		"treebuilder_modes.py",
+		"treebuilder_utils.py",
+	];
+
+	const rootDir = "/justhtml_local/justhtml";
+	pyodideInstance.FS.mkdirTree(rootDir);
+
+	for (const file of files) {
+		const res = await fetch(`${baseUrl}${file}`, { cache: "no-store" });
+		if (!res.ok) {
+			throw new Error(
+				`Failed to fetch local justhtml source: ${file} (${res.status})`,
+			);
+		}
+		const content = await res.text();
+		pyodideInstance.FS.writeFile(`${rootDir}/${file}`, content);
+	}
+
+	await pyodideInstance.runPythonAsync(
+		["import sys", "sys.path.insert(0, '/justhtml_local')"].join("\n"),
+	);
+}
+
+async function installJusthtml(pyodideInstance) {
+	// Use released builds on GitHub Pages, otherwise prefer the local working tree.
+	if (isGitHubPages()) {
+		await installJusthtmlFromPyPI(pyodideInstance);
+		return;
+	}
+
+	await installJusthtmlFromLocalRepo(pyodideInstance);
+}
+
 function getRadioValue(name) {
 	const el = document.querySelector(`input[name="${name}"]:checked`);
 	return el ? el.value : "";
@@ -201,8 +268,75 @@ function setOutput(text, format, ok) {
 	outputEl.textContent = text;
 }
 
+function setErrors(errors) {
+	const el = document.getElementById("errors");
+	if (!el) return;
+
+	el.innerHTML = "";
+
+	if (!errors || errors.length === 0) {
+		const empty = document.createElement("div");
+		empty.className = "error-empty";
+		empty.textContent = "No errors detected.";
+		el.appendChild(empty);
+		return;
+	}
+
+	for (const err of errors) {
+		const row = document.createElement("div");
+		row.className = "error-row";
+
+		const loc = document.createElement("div");
+		loc.className = "error-loc";
+		const l = err.line !== null ? err.line : "?";
+		const c = err.column !== null ? err.column : "?";
+		loc.textContent = `${l}:${c}`;
+
+		const cat = document.createElement("div");
+		cat.className = `error-cat cat-${err.category}`;
+		cat.textContent = err.category;
+
+		const msg = document.createElement("div");
+		msg.className = "error-msg";
+		msg.textContent = err.message;
+
+		row.appendChild(loc);
+		row.appendChild(cat);
+		row.appendChild(msg);
+		el.appendChild(row);
+	}
+}
+
 function setStatus(text) {
 	document.getElementById("status").textContent = text;
+}
+
+function formatInitError(err) {
+	if (err && typeof err === "object") {
+		const name = err.name || (err.constructor ? err.constructor.name : "Error");
+		const message = err.message ? String(err.message) : "";
+		const stack = err.stack ? String(err.stack) : "";
+
+		let out = `${name}${message ? `: ${message}` : ""}`;
+		if (stack && !stack.includes(out)) out += `\n\n${stack}`;
+
+		if (name === "SecurityError") {
+			out +=
+				"\n\nHint: this usually happens when running from `file://` or when the browser blocks local file access. Serve the repo over HTTP (for example `python -m http.server` from the repo root) and open the playground via `http://localhost/...`.";
+		}
+
+		if (
+			name === "TypeError" &&
+			message.toLowerCase().includes("failed to fetch")
+		) {
+			out +=
+				"\n\nHint: local mode fetches `/src/justhtml/*.py` from the same origin. Make sure you are serving the repository root over HTTP and not only the `docs/` folder.";
+		}
+
+		return out;
+	}
+
+	return String(err);
 }
 
 function setEnabled(enabled) {
@@ -263,33 +397,86 @@ async function initPyodide() {
 	});
 
 	setStatus(STATUS.INSTALL);
-	await pyodide.loadPackage("micropip");
-
-	const installCode = [
-		`import micropip`,
-		`await micropip.install("justhtml")`,
-	].join("\n");
-	await pyodide.runPythonAsync(installCode);
+	await installJusthtml(pyodide);
 
 	const renderSource = [
 		"from justhtml import JustHTML, StrictModeError",
 		"from justhtml.context import FragmentContext",
+		"from dataclasses import replace",
+		"from justhtml.sanitize import DEFAULT_POLICY, DEFAULT_DOCUMENT_POLICY",
+		"",
+		"def _format_error(e):",
+		"    return {",
+		"        'category': getattr(e, 'category', 'parse'),",
+		"        'line': getattr(e, 'line', None),",
+		"        'column': getattr(e, 'column', None),",
+		"        'message': getattr(e, 'message', None) or getattr(e, 'code', None) or str(e)",
+		"    }",
+		"",
+		"def _policy_for(node):",
+		"    base = DEFAULT_DOCUMENT_POLICY if node.name == '#document' else DEFAULT_POLICY",
+		"    return replace(base, unsafe_handling='collect')",
+		"",
+		"def _sort_key(e):",
+		"    return (",
+		"        e.line if getattr(e, 'line', None) is not None else 1_000_000_000,",
+		"        e.column if getattr(e, 'column', None) is not None else 1_000_000_000,",
+		"    )",
+		"",
+		"def _merge_sorted_errors(a, b):",
+		"    out = []",
+		"    i = 0",
+		"    j = 0",
+		"    while i < len(a) and j < len(b):",
+		"        if _sort_key(a[i]) <= _sort_key(b[j]):",
+		"            out.append(a[i])",
+		"            i += 1",
+		"        else:",
+		"            out.append(b[j])",
+		"            j += 1",
+		"    if i < len(a):",
+		"        out.extend(a[i:])",
+		"    if j < len(b):",
+		"        out.extend(b[j:])",
+		"    return out",
 		"",
 		"def _serialize_nodes(nodes, output_format, safe, pretty, indent_size, text_separator, text_strip):",
-		'    if output_format == "html":',
-		'        return "\\n".join(',
-		"            node.to_html(pretty=pretty, indent_size=indent_size, safe=safe) for node in nodes",
-		"        )",
+		"    security_errors = []",
 		"",
-		'    if output_format == "markdown":',
-		'        return "\\n\\n".join(node.to_markdown(safe=safe) for node in nodes)',
+		"    if output_format == 'html':",
+		"        parts = []",
+		"        for node in nodes:",
+		"            if safe:",
+		"                policy = _policy_for(node)",
+		"                parts.append(node.to_html(pretty=pretty, indent_size=indent_size, safe=True, policy=policy))",
+		"                security_errors.extend(policy.collected_security_errors())",
+		"            else:",
+		"                parts.append(node.to_html(pretty=pretty, indent_size=indent_size, safe=False))",
+		"        return ('\\n'.join(parts), security_errors)",
 		"",
-		'    if output_format == "text":',
-		'        return "\\n".join(',
-		"            node.to_text(separator=text_separator, strip=text_strip, safe=safe) for node in nodes",
-		"        )",
+		"    if output_format == 'markdown':",
+		"        parts = []",
+		"        for node in nodes:",
+		"            if safe:",
+		"                policy = _policy_for(node)",
+		"                parts.append(node.to_markdown(safe=True, policy=policy))",
+		"                security_errors.extend(policy.collected_security_errors())",
+		"            else:",
+		"                parts.append(node.to_markdown(safe=False))",
+		"        return ('\\n\\n'.join(parts), security_errors)",
 		"",
-		'    raise ValueError(f"Unknown output_format: {output_format}")',
+		"    if output_format == 'text':",
+		"        parts = []",
+		"        for node in nodes:",
+		"            if safe:",
+		"                policy = _policy_for(node)",
+		"                parts.append(node.to_text(separator=text_separator, strip=text_strip, safe=True, policy=policy))",
+		"                security_errors.extend(policy.collected_security_errors())",
+		"            else:",
+		"                parts.append(node.to_text(separator=text_separator, strip=text_strip, safe=False))",
+		"        return ('\\n'.join(parts), security_errors)",
+		"",
+		"    raise ValueError(f'Unknown output_format: {output_format}')",
 		"",
 		"def render(",
 		"    html,",
@@ -305,6 +492,7 @@ async function initPyodide() {
 		"    try:",
 		"        kwargs = {",
 		"            'collect_errors': True,",
+		"            'track_node_locations': True,",
 		"            'strict': False,",
 		"        }",
 		"",
@@ -314,7 +502,7 @@ async function initPyodide() {
 		"        doc = JustHTML(html, **kwargs)",
 		"",
 		"        nodes = doc.query(selector) if selector else [doc.root]",
-		"        out = _serialize_nodes(",
+		"        out, security_errors = _serialize_nodes(",
 		"            nodes,",
 		"            output_format=output_format,",
 		"            safe=bool(safe),",
@@ -324,8 +512,8 @@ async function initPyodide() {
 		"            text_strip=bool(text_strip),",
 		"        )",
 		"",
-		"        errors = []",
-		"        errors = [str(e) for e in doc.errors]",
+		"        combined = _merge_sorted_errors(list(doc.errors), list(security_errors))",
+		"        errors = [_format_error(e) for e in combined]",
 		"",
 		"        return {",
 		"            'ok': True,",
@@ -337,7 +525,7 @@ async function initPyodide() {
 		"        return {",
 		"            'ok': False,",
 		"            'output': '',",
-		"            'errors': [str(e.error)],",
+		"            'errors': [_format_error(e.error)],",
 		"        }",
 		"    except Exception as e:",
 		"        return {",
@@ -391,6 +579,7 @@ async function run() {
 
 	if (result.ok) {
 		setOutput(result.output || "", outputFormat, true);
+		setErrors(result.errors || []);
 		setStatus(STATUS.READY);
 	} else {
 		const message =
@@ -398,6 +587,7 @@ async function run() {
 				? result.errors.join("\n")
 				: "Error";
 		setOutput(message, "text", false);
+		setErrors(result.errors || []);
 		setStatus("Error");
 	}
 
@@ -435,5 +625,5 @@ document
 initPyodide().catch((e) => {
 	setEnabled(true);
 	setStatus("Init failed");
-	setOutput(`Init failed: ${e}`, "text", false);
+	setOutput(`Init failed:\n\n${formatInitError(e)}`, "text", false);
 });

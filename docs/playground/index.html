@@ -242,6 +242,86 @@
         tab-size: 2;
       }
 
+      .errors-area {
+        border-top: 1px solid #e8e8ed;
+        background: #fafafa;
+        padding: 0.75rem 1rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.8rem;
+        line-height: 1.5;
+        overflow: auto;
+        max-height: 12rem;
+        color: #1d1d1f;
+      }
+
+      .errors-title {
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        color: #86868b;
+        margin: 0 0 0.5rem 0;
+        position: sticky;
+        top: 0;
+        background: #fafafa;
+        z-index: 1;
+      }
+
+      .error-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+      }
+
+      .error-empty {
+        color: #86868b;
+        font-style: italic;
+      }
+
+      .error-row {
+        display: grid;
+        grid-template-columns: 3.5rem auto 1fr;
+        gap: 0.75rem;
+        align-items: baseline;
+      }
+
+      .error-loc {
+        color: #86868b;
+        text-align: right;
+      }
+
+      .error-cat {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        padding: 0.1rem 0.3rem;
+        border-radius: 3px;
+        font-weight: 600;
+        background: #e5e5ea;
+        color: #1d1d1f;
+        white-space: nowrap;
+      }
+
+      .error-cat.cat-security {
+        background: #ffefef;
+        color: #d1242f;
+      }
+
+      .error-cat.cat-tokenizer {
+        background: #eaf4ff;
+        color: #0066cc;
+      }
+
+      .error-cat.cat-treebuilder {
+        background: #f5f0ff;
+        color: #5b21b6;
+      }
+
+      .error-msg {
+        color: #1d1d1f;
+        word-break: break-word;
+      }
+
       /* Filter input */
       .filter-input {
         font-size: 0.8rem;
@@ -298,6 +378,10 @@
         </div>
         <div class="panel-body input-area">
           <textarea id="input" spellcheck="false" placeholder="Paste HTML here…"><p>Hello <b>world</b> <script>alert(1)</script> <a href="javascript:alert(1)">bad</a> <a href="https://example.com/?a=1&b=2">ok</a></p></textarea>
+          <div class="errors-area" aria-label="Parse errors">
+            <div class="errors-title">Errors</div>
+            <div id="errors" class="error-list"></div>
+          </div>
         </div>
       </div>
 
