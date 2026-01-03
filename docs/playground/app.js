@@ -17,6 +17,22 @@ function isGitHubPages() {
 	return host === "github.io" || host.endsWith(".github.io");
 }
 
+function shouldUsePyPI() {
+	// Dev override: append ?pypi=1 (or ?pypi=true) to force PyPI install even when
+	// running locally. This is useful for testing the GitHub Pages code path.
+	const params = new URLSearchParams(window.location.search);
+	if (params.has("pypi")) {
+		const v = params.get("pypi");
+		return (
+			v === null ||
+			v === "" ||
+			v.toLowerCase() === "1" ||
+			v.toLowerCase() === "true"
+		);
+	}
+	return isGitHubPages();
+}
+
 async function installJusthtmlFromPyPI(pyodideInstance) {
 	await pyodideInstance.loadPackage("micropip");
 	await pyodideInstance.runPythonAsync(
@@ -26,13 +42,21 @@ async function installJusthtmlFromPyPI(pyodideInstance) {
 			"import time",
 			"",
 			"async def _install_latest_justhtml():",
-			"    # Resolve the latest released version from PyPI and install that exact version.",
-			"    # This avoids older cached simple-index responses accidentally selecting an older wheel.",
+			"    # Resolve the latest released version from PyPI and install the wheel by direct URL.",
+			"    # This avoids cached/simple-index responses causing micropip to miss the wheel.",
 			"    url = f'https://pypi.org/pypi/justhtml/json?cachebust={int(time.time() * 1000)}'",
 			"    resp = await pyfetch(url, cache='no-store')",
 			"    data = await resp.json()",
 			"    version = data['info']['version']",
-			"    await micropip.install(f'justhtml=={version}')",
+			"    files = data.get('releases', {}).get(version, [])",
+			"    wheel_url = None",
+			"    for f in files:",
+			"        if f.get('packagetype') == 'bdist_wheel' and f.get('filename', '').endswith('.whl'):",
+			"            wheel_url = f.get('url')",
+			"            break",
+			"    if not wheel_url:",
+			"        raise RuntimeError(f'No wheel found on PyPI for justhtml {version}')",
+			"    await micropip.install(wheel_url)",
 			"",
 			"await _install_latest_justhtml()",
 		].join("\n"),
@@ -86,7 +110,7 @@ async function installJusthtmlFromLocalRepo(pyodideInstance) {
 
 async function installJusthtml(pyodideInstance) {
 	// Use released builds on GitHub Pages, otherwise prefer the local working tree.
-	if (isGitHubPages()) {
+	if (shouldUsePyPI()) {
 		await installJusthtmlFromPyPI(pyodideInstance);
 		return;
 	}
