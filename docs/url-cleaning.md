@@ -81,9 +81,19 @@ UrlRule(allowed_schemes={"https"})
 UrlRule(allowed_schemes={"https"}, allowed_hosts={"example.com"})
 ```
 
+- Allow only relative URLs (block remote loads):
+
+```python
+UrlRule(allowed_schemes=set(), resolve_protocol_relative=None)
+```
+
+Note: this is how `DEFAULT_POLICY` configures `("img", "src")` by default.
+
 ## Blocking remote loads (strip mode)
 
 Some renderers (notably email clients) want to avoid loading remote resources by default.
+
+The built-in `DEFAULT_POLICY` already blocks remote image loads by default (`img[src]` only allows relative URLs). If you want a *global* switch to strip all absolute/protocol-relative URLs after validation, use `url_handling="strip"`.
 
 Use `UrlPolicy(url_handling="strip")`:
 

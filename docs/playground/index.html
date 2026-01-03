@@ -377,7 +377,12 @@
           </div>
         </div>
         <div class="panel-body input-area">
-          <textarea id="input" spellcheck="false" placeholder="Paste HTML here…"><p>Hello <b>world</b> <script>alert(1)</script> <a href="javascript:alert(1)">bad</a> <a href="https://example.com/?a=1&b=2">ok</a><!</textarea>
+          <textarea id="input" spellcheck="false" placeholder="Paste HTML here…"><p>
+    Hello <b>world</b>
+    <a href="javascript:alert(1)">bad</a>
+    <a href="https://example.com/?a=1&b=2">ok</a>
+    <p><img src="http://google.com/tracker">
+<!</textarea>
           <div class="errors-area" aria-label="Parse errors">
             <div class="errors-title">Errors</div>
             <div id="errors" class="error-list"></div>

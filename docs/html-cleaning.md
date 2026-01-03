@@ -83,6 +83,8 @@ Output:
 
 The built-in default is `DEFAULT_POLICY` (a conservative allowlist).
 
+The default URL policy is conservative about remote loads: by default `a[href]` allows common link schemes, while `img[src]` only allows relative URLs (so images won't load from remote hosts unless you opt in via a custom policy). For details, see [URL Cleaning](url-cleaning.md).
+
 High-level behavior:
 
 - Disallowed tags are stripped (their children may be kept) but dangerous containers like `script`/`style` have their content dropped.

@@ -377,8 +377,8 @@ DEFAULT_POLICY: SanitizationPolicy = SanitizationPolicy(
                 resolve_protocol_relative="https",
             ),
             ("img", "src"): UrlRule(
-                allowed_schemes=["http", "https"],
-                resolve_protocol_relative="https",
+                allowed_schemes=[],
+                resolve_protocol_relative=None,
             ),
         },
     ),
