@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 from .entities import decode_entities_in_text
 from .errors import generate_error_message
-from .tokens import CommentToken, Doctype, DoctypeToken, EOFToken, ParseError, Tag
+from .tokens import AnyToken, CommentToken, Doctype, DoctypeToken, EOFToken, ParseError, Tag
 
 _ATTR_VALUE_UNQUOTED_TERMINATORS = "\t\n\f >&\"'<=`\0"
 _ASCII_LOWER_TABLE = str.maketrans({chr(code): chr(code + 32) for code in range(65, 91)})
@@ -1960,7 +1960,7 @@ class Tokenizer:
         self.current_doctype_force_quirks = False
         self._emit_token(DoctypeToken(doctype))
 
-    def _emit_token(self, token: Any) -> None:
+    def _emit_token(self, token: AnyToken) -> None:
         if self.collect_errors:
             self._record_token_position()
         self.sink.process_token(token)

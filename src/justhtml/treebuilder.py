@@ -26,7 +26,7 @@ from .constants import (
 )
 from .errors import generate_error_message
 from .node import ElementNode, SimpleDomNode, TemplateNode, TextNode
-from .tokens import CharacterTokens, CommentToken, DoctypeToken, EOFToken, ParseError, Tag, TokenSinkResult
+from .tokens import AnyToken, CharacterTokens, CommentToken, DoctypeToken, EOFToken, ParseError, Tag, TokenSinkResult
 from .treebuilder_modes import TreeBuilderModesMixin
 from .treebuilder_utils import (
     InsertionMode,
@@ -172,7 +172,7 @@ class TreeBuilder(TreeBuilderModesMixin):
     def _set_quirks_mode(self, mode: str) -> None:
         self.quirks_mode = mode
 
-    def _parse_error(self, code: str, tag_name: str | None = None, token: Any = None) -> None:
+    def _parse_error(self, code: str, tag_name: str | None = None, token: AnyToken | None = None) -> None:
         if not self.collect_errors:
             return
         # Use the position of the last emitted token (set by tokenizer before emit)
@@ -314,7 +314,7 @@ class TreeBuilder(TreeBuilderModesMixin):
                                 self._insert_element(current_token, push=True)
                                 result = None
                             elif name == "p":
-                                result = self._handle_body_start_paragraph(current_token)
+                                result = self._handle_body_start_paragraph(current_token)  # type: ignore[func-returns-value]
                             elif name == "span":
                                 if self.active_formatting:
                                     self._reconstruct_active_formatting_elements()
@@ -322,7 +322,7 @@ class TreeBuilder(TreeBuilderModesMixin):
                                 self.frameset_ok = False
                                 result = None
                             elif name == "a":
-                                result = self._handle_body_start_a(current_token)
+                                result = self._handle_body_start_a(current_token)  # type: ignore[func-returns-value]
                             elif name == "br" or name == "img":
                                 if self.active_formatting:
                                     self._reconstruct_active_formatting_elements()
@@ -369,7 +369,7 @@ class TreeBuilder(TreeBuilderModesMixin):
                             if name == "br":
                                 self._parse_error("unexpected-end-tag", tag_name=name)
                                 br_tag = Tag(0, "br", {}, False)
-                                result = self._handle_body_start_br(br_tag)
+                                result = self._handle_body_start_br(br_tag)  # type: ignore[func-returns-value]
                             elif name in FORMATTING_ELEMENTS:
                                 self._adoption_agency(name)
                                 result = None
@@ -388,7 +388,7 @@ class TreeBuilder(TreeBuilderModesMixin):
                         self._append_text(current_token.data)
                         result = None
                     elif token_type is CommentToken:
-                        result = self._handle_comment_in_body(current_token)
+                        result = self._handle_comment_in_body(current_token)  # type: ignore[func-returns-value]
                     else:  # EOFToken
                         result = self._handle_eof_in_body(current_token)
                 else:
@@ -1024,7 +1024,7 @@ class TreeBuilder(TreeBuilderModesMixin):
     def _adjusted_current_node(self) -> Any:
         return self.open_elements[-1]
 
-    def _should_use_foreign_content(self, token: Any) -> bool:
+    def _should_use_foreign_content(self, token: AnyToken) -> bool:
         current = self._adjusted_current_node()
         # HTML namespace elements don't use foreign content rules
         # (unreachable in practice as foreign content mode only entered for foreign elements)
@@ -1073,7 +1073,7 @@ class TreeBuilder(TreeBuilderModesMixin):
                 return
             self.open_elements.pop()
 
-    def _process_foreign_content(self, token: Any) -> Any | None:
+    def _process_foreign_content(self, token: AnyToken) -> Any | None:
         current = self._adjusted_current_node()
 
         if isinstance(token, CharacterTokens):
