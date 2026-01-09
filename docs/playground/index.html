@@ -67,13 +67,20 @@
       .main {
         display: grid;
         gap: 1rem;
-        height: calc(100vh - 6rem);
         min-height: 400px;
       }
 
       @media (min-width: 900px) {
         .main {
           grid-template-columns: 1fr 1.5fr;
+          height: calc(100vh - 6rem);
+          align-content: stretch;
+        }
+      }
+
+      @media (max-width: 899px) {
+        .main {
+          align-content: start;
         }
       }
 
@@ -206,6 +213,16 @@
         background: transparent;
       }
 
+      @media (max-width: 899px) {
+        .input-area textarea {
+          min-height: 12rem;
+        }
+
+        .errors-area {
+          max-height: min(8rem, 22vh);
+        }
+      }
+
       .input-area textarea:focus {
         outline: none;
       }
@@ -250,7 +267,7 @@
         font-size: 0.8rem;
         line-height: 1.5;
         overflow: auto;
-        max-height: 12rem;
+        max-height: min(12rem, 30vh);
         color: #1d1d1f;
       }
 
