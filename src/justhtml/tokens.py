@@ -84,6 +84,9 @@ class EOFToken:
     __slots__ = ()
 
 
+AnyToken = Tag | CharacterTokens | CommentToken | DoctypeToken | EOFToken
+
+
 class TokenSinkResult:
     __slots__ = ()
 

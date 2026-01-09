@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from .constants import (
     FORMAT_MARKER,
@@ -11,16 +11,22 @@ from .constants import (
     HEADING_ELEMENTS,
 )
 from .node import SimpleDomNode, TemplateNode
-from .tokens import CharacterTokens, CommentToken, EOFToken, Tag, TokenSinkResult
+from .tokens import AnyToken, CharacterTokens, CommentToken, DoctypeToken, EOFToken, Tag, TokenSinkResult
 from .treebuilder_utils import (
     InsertionMode,
     doctype_error_and_quirks,
     is_all_whitespace,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    ModeResultTuple = tuple[str, InsertionMode, AnyToken] | tuple[str, InsertionMode, AnyToken, bool]
+    "Result is (instruction, mode, token) or (instruction, mode, token, force_html)"
+
 
 class TreeBuilderModesMixin:
-    def _handle_doctype(self, token: Any) -> Any:
+    def _handle_doctype(self, token: DoctypeToken) -> Literal[0]:
         if self.mode != InsertionMode.INITIAL:
             self._parse_error("unexpected-doctype")
             return TokenSinkResult.Continue
@@ -38,7 +44,7 @@ class TreeBuilderModesMixin:
         self.mode = InsertionMode.BEFORE_HTML
         return TokenSinkResult.Continue
 
-    def _mode_initial(self, token: Any) -> Any:
+    def _mode_initial(self, token: Any) -> ModeResultTuple | None:
         if isinstance(token, CharacterTokens):
             if is_all_whitespace(token.data):
                 return None
@@ -61,7 +67,7 @@ class TreeBuilderModesMixin:
         self._set_quirks_mode("quirks")
         return ("reprocess", InsertionMode.BEFORE_HTML, token)
 
-    def _mode_before_html(self, token: Any) -> Any:
+    def _mode_before_html(self, token: AnyToken) -> ModeResultTuple | None:
         if isinstance(token, CharacterTokens) and is_all_whitespace(token.data):
             return None
         if isinstance(token, CommentToken):
@@ -94,7 +100,7 @@ class TreeBuilderModesMixin:
         self.mode = InsertionMode.BEFORE_HEAD
         return ("reprocess", InsertionMode.BEFORE_HEAD, token)
 
-    def _mode_before_head(self, token: Any) -> Any:
+    def _mode_before_head(self, token: AnyToken) -> ModeResultTuple | None:
         if isinstance(token, CharacterTokens):
             data = token.data or ""
             if "\x00" in data:
@@ -137,7 +143,7 @@ class TreeBuilderModesMixin:
         self.mode = InsertionMode.IN_HEAD
         return ("reprocess", InsertionMode.IN_HEAD, token)
 
-    def _mode_in_head(self, token: Any) -> Any:
+    def _mode_in_head(self, token: AnyToken) -> ModeResultTuple | None:
         if isinstance(token, CharacterTokens):
             if is_all_whitespace(token.data):
                 self._append_text(token.data)
@@ -213,7 +219,7 @@ class TreeBuilderModesMixin:
         self.mode = InsertionMode.AFTER_HEAD
         return ("reprocess", InsertionMode.AFTER_HEAD, token)
 
-    def _mode_in_head_noscript(self, token: Any) -> Any:
+    def _mode_in_head_noscript(self, token: AnyToken) -> ModeResultTuple | None:
         """Handle tokens in 'in head noscript' insertion mode (scripting disabled)."""
         if isinstance(token, CharacterTokens):
             data = token.data or ""
@@ -262,7 +268,7 @@ class TreeBuilderModesMixin:
         # All token types are handled above - CharacterTokens, CommentToken, Tag, EOFToken
         return None  # pragma: no cover
 
-    def _mode_after_head(self, token: Any) -> Any:
+    def _mode_after_head(self, token: AnyToken) -> ModeResultTuple | None:
         if isinstance(token, CharacterTokens):
             data = token.data or ""
             if "\x00" in data:
@@ -351,7 +357,7 @@ class TreeBuilderModesMixin:
         self._insert_body_if_missing()
         return ("reprocess", InsertionMode.IN_BODY, token)
 
-    def _mode_text(self, token: Any) -> Any:
+    def _mode_text(self, token: AnyToken) -> ModeResultTuple | None:
         if isinstance(token, CharacterTokens):
             self._append_text(token.data)
             return None
@@ -367,11 +373,11 @@ class TreeBuilderModesMixin:
         self.mode = self.original_mode or InsertionMode.IN_BODY
         return None
 
-    def _mode_in_body(self, token: Any) -> Any:
+    def _mode_in_body(self, token: Any) -> ModeResultTuple | None:
         handler = self._BODY_TOKEN_HANDLERS.get(type(token))
         return handler(self, token) if handler else None
 
-    def _handle_characters_in_body(self, token: Any) -> Any:
+    def _handle_characters_in_body(self, token: CharacterTokens) -> None:
         data = token.data or ""
         if "\x00" in data:
             self._parse_error("invalid-codepoint")
@@ -385,11 +391,11 @@ class TreeBuilderModesMixin:
         self._append_text(data)
         return
 
-    def _handle_comment_in_body(self, token: Any) -> Any:
+    def _handle_comment_in_body(self, token: CommentToken) -> None:
         self._append_comment(token.data)
         return
 
-    def _handle_tag_in_body(self, token: Any) -> Any:
+    def _handle_tag_in_body(self, token: Tag) -> ModeResultTuple | None:
         if token.kind == Tag.START:
             handler = self._BODY_START_HANDLERS.get(token.name)
             if handler:
@@ -413,7 +419,7 @@ class TreeBuilderModesMixin:
         self._any_other_end_tag(token.name)
         return None
 
-    def _handle_eof_in_body(self, token: Any) -> Any:
+    def _handle_eof_in_body(self, token: EOFToken) -> ModeResultTuple | None:
         # If we're in a template, handle EOF in template mode first
         if self.template_modes:
             return self._mode_in_template(token)
@@ -448,7 +454,7 @@ class TreeBuilderModesMixin:
     # Body mode start tag handlers
     # ---------------------
 
-    def _handle_body_start_html(self, token: Any) -> Any:
+    def _handle_body_start_html(self, token: Tag) -> None:
         if self.template_modes:
             self._parse_error("unexpected-start-tag", tag_name=token.name)
             return
@@ -460,7 +466,7 @@ class TreeBuilderModesMixin:
             self._add_missing_attributes(html, token.attrs)
         return
 
-    def _handle_body_start_body(self, token: Any) -> Any:
+    def _handle_body_start_body(self, token: Tag) -> None:
         if self.template_modes:
             self._parse_error("unexpected-start-tag", tag_name=token.name)
             return
@@ -474,19 +480,19 @@ class TreeBuilderModesMixin:
         self.frameset_ok = False
         return
 
-    def _handle_body_start_head(self, token: Any) -> Any:
+    def _handle_body_start_head(self, token: Tag) -> None:
         self._parse_error("unexpected-start-tag", tag_name=token.name)
         return
 
-    def _handle_body_start_in_head(self, token: Any) -> Any:
+    def _handle_body_start_in_head(self, token: Tag) -> ModeResultTuple | None:
         return self._mode_in_head(token)
 
-    def _handle_body_start_block_with_p(self, token: Any) -> Any:
+    def _handle_body_start_block_with_p(self, token: Tag) -> None:
         self._close_p_element()
         self._insert_element(token, push=True)
         return
 
-    def _handle_body_start_heading(self, token: Any) -> Any:
+    def _handle_body_start_heading(self, token: Tag) -> None:
         self._close_p_element()
         if self.open_elements and self.open_elements[-1].name in HEADING_ELEMENTS:
             self._parse_error("unexpected-start-tag", tag_name=token.name)
@@ -495,14 +501,14 @@ class TreeBuilderModesMixin:
         self.frameset_ok = False
         return
 
-    def _handle_body_start_pre_listing(self, token: Any) -> Any:
+    def _handle_body_start_pre_listing(self, token: Tag) -> None:
         self._close_p_element()
         self._insert_element(token, push=True)
         self.ignore_lf = True
         self.frameset_ok = False
         return
 
-    def _handle_body_start_form(self, token: Any) -> Any:
+    def _handle_body_start_form(self, token: Tag) -> None:
         if self.form_element is not None:
             self._parse_error("unexpected-start-tag", tag_name=token.name)
             return
@@ -512,7 +518,7 @@ class TreeBuilderModesMixin:
         self.frameset_ok = False
         return
 
-    def _handle_body_start_button(self, token: Any) -> Any:
+    def _handle_body_start_button(self, token: Tag) -> None:
         if self._has_in_scope("button"):
             self._parse_error("unexpected-start-tag-implies-end-tag", tag_name=token.name)
             self._close_element_by_name("button")
@@ -520,19 +526,19 @@ class TreeBuilderModesMixin:
         self.frameset_ok = False
         return
 
-    def _handle_body_start_paragraph(self, token: Any) -> Any:
+    def _handle_body_start_paragraph(self, token: Tag) -> None:
         self._close_p_element()
         self._insert_element(token, push=True)
         return
 
-    def _handle_body_start_math(self, token: Any) -> Any:
+    def _handle_body_start_math(self, token: Tag) -> None:
         self._reconstruct_active_formatting_elements()
         attrs = self._prepare_foreign_attributes("math", token.attrs)
         new_tag = Tag(Tag.START, token.name, attrs, token.self_closing)
         self._insert_element(new_tag, push=not token.self_closing, namespace="math")
         return
 
-    def _handle_body_start_svg(self, token: Any) -> Any:
+    def _handle_body_start_svg(self, token: Tag) -> None:
         self._reconstruct_active_formatting_elements()
         adjusted_name = self._adjust_svg_tag_name(token.name)
         attrs = self._prepare_foreign_attributes("svg", token.attrs)
@@ -540,7 +546,7 @@ class TreeBuilderModesMixin:
         self._insert_element(new_tag, push=not token.self_closing, namespace="svg")
         return
 
-    def _handle_body_start_li(self, token: Any) -> Any:
+    def _handle_body_start_li(self, token: Tag) -> None:
         self.frameset_ok = False
         self._close_p_element()
         if self._has_in_list_item_scope("li"):
@@ -548,7 +554,7 @@ class TreeBuilderModesMixin:
         self._insert_element(token, push=True)
         return
 
-    def _handle_body_start_dd_dt(self, token: Any) -> Any:
+    def _handle_body_start_dd_dt(self, token: Tag) -> None:
         self.frameset_ok = False
         self._close_p_element()
         name = token.name
@@ -721,7 +727,7 @@ class TreeBuilderModesMixin:
             furthest_block_index = self.open_elements.index(furthest_block)
             self.open_elements.insert(furthest_block_index + 1, new_formatting_element)
 
-    def _handle_body_start_a(self, token: Any) -> Any:
+    def _handle_body_start_a(self, token: Tag) -> None:
         if self._has_active_formatting_entry("a"):
             self._parse_error("unexpected-start-tag-implies-end-tag", tag_name=token.name)
             self._adoption_agency("a")
@@ -732,7 +738,7 @@ class TreeBuilderModesMixin:
         self._append_active_formatting_entry("a", token.attrs, node)
         return
 
-    def _handle_body_start_formatting(self, token: Any) -> Any:
+    def _handle_body_start_formatting(self, token: Tag) -> None:
         name = token.name
         if name == "nobr" and self._in_scope("nobr"):
             self._adoption_agency("nobr")
@@ -746,21 +752,21 @@ class TreeBuilderModesMixin:
         self._append_active_formatting_entry(name, token.attrs, node)
         return
 
-    def _handle_body_start_applet_like(self, token: Any) -> Any:
+    def _handle_body_start_applet_like(self, token: Tag) -> None:
         self._reconstruct_active_formatting_elements()
         self._insert_element(token, push=True)
         self._push_formatting_marker()
         self.frameset_ok = False
         return
 
-    def _handle_body_start_br(self, token: Any) -> Any:
+    def _handle_body_start_br(self, token: Tag) -> None:
         self._close_p_element()
         self._reconstruct_active_formatting_elements()
         self._insert_element(token, push=False)
         self.frameset_ok = False
         return
 
-    def _handle_body_start_frameset(self, token: Any) -> Any:
+    def _handle_body_start_frameset(self, token: Tag) -> None:
         if not self.frameset_ok:
             self._parse_error("unexpected-start-tag-ignored", tag_name=token.name)
             return
@@ -785,17 +791,17 @@ class TreeBuilderModesMixin:
     # Body mode end tag handlers
     # ---------------------
 
-    def _handle_body_end_body(self, token: Any) -> Any:
+    def _handle_body_end_body(self, token: Tag) -> None:
         if self._in_scope("body"):
             self.mode = InsertionMode.AFTER_BODY
         return
 
-    def _handle_body_end_html(self, token: Any) -> Any:
+    def _handle_body_end_html(self, token: Tag) -> ModeResultTuple | None:
         if self._in_scope("body"):
             return ("reprocess", InsertionMode.AFTER_BODY, token)
         return None
 
-    def _handle_body_end_p(self, token: Any) -> Any:
+    def _handle_body_end_p(self, token: Tag) -> None:
         if not self._close_p_element():
             self._parse_error("unexpected-end-tag", tag_name=token.name)
             phantom = Tag(Tag.START, "p", {}, False)
@@ -803,21 +809,21 @@ class TreeBuilderModesMixin:
             self._close_p_element()
         return
 
-    def _handle_body_end_li(self, token: Any) -> Any:
+    def _handle_body_end_li(self, token: Tag) -> None:
         if not self._has_in_list_item_scope("li"):
             self._parse_error("unexpected-end-tag", tag_name=token.name)
             return
         self._pop_until_any_inclusive({"li"})
         return
 
-    def _handle_body_end_dd_dt(self, token: Any) -> Any:
+    def _handle_body_end_dd_dt(self, token: Tag) -> None:
         name = token.name
         if not self._has_in_definition_scope(name):
             self._parse_error("unexpected-end-tag", tag_name=name)
             return
         self._pop_until_any_inclusive({"dd", "dt"})
 
-    def _handle_body_end_form(self, token: Any) -> Any:
+    def _handle_body_end_form(self, token: Tag) -> None:
         if self.form_element is None:
             self._parse_error("unexpected-end-tag", tag_name=token.name)
             return
@@ -827,7 +833,7 @@ class TreeBuilderModesMixin:
             self._parse_error("unexpected-end-tag", tag_name=token.name)
         return
 
-    def _handle_body_end_applet_like(self, token: Any) -> Any:
+    def _handle_body_end_applet_like(self, token: Tag) -> None:
         name = token.name
         if not self._in_scope(name):
             self._parse_error("unexpected-end-tag", tag_name=name)
@@ -840,7 +846,7 @@ class TreeBuilderModesMixin:
         self._clear_active_formatting_up_to_marker()
         return
 
-    def _handle_body_end_heading(self, token: Any) -> Any:
+    def _handle_body_end_heading(self, token: Tag) -> None:
         name = token.name
         if not self._has_any_in_scope(HEADING_ELEMENTS):
             self._parse_error("unexpected-end-tag", tag_name=name)
@@ -855,7 +861,7 @@ class TreeBuilderModesMixin:
                 break
         return
 
-    def _handle_body_end_block(self, token: Any) -> Any:
+    def _handle_body_end_block(self, token: Tag) -> None:
         name = token.name
         if not self._in_scope(name):
             self._parse_error("unexpected-end-tag", tag_name=name)
@@ -866,7 +872,7 @@ class TreeBuilderModesMixin:
         self._pop_until_any_inclusive({name})
         return
 
-    def _handle_body_end_template(self, token: Any) -> Any:
+    def _handle_body_end_template(self, token: Tag) -> None:
         has_template = any(node.name == "template" for node in self.open_elements)
         if not has_template:
             self._parse_error("unexpected-end-tag", tag_name=token.name)
@@ -880,18 +886,18 @@ class TreeBuilderModesMixin:
         self._reset_insertion_mode()
         return
 
-    def _handle_body_start_structure_ignored(self, token: Any) -> Any:
+    def _handle_body_start_structure_ignored(self, token: Tag) -> None:
         self._parse_error("unexpected-start-tag-ignored", tag_name=token.name)
         return
 
-    def _handle_body_start_col_or_frame(self, token: Any) -> Any:
+    def _handle_body_start_col_or_frame(self, token: Tag) -> None:
         if self.fragment_context is None:
             self._parse_error("unexpected-start-tag-ignored", tag_name=token.name)
             return
         self._insert_element(token, push=False)
         return
 
-    def _handle_body_start_image(self, token: Any) -> Any:
+    def _handle_body_start_image(self, token: Tag) -> None:
         self._parse_error("image-start-tag", tag_name=token.name)
         img_token = Tag(Tag.START, "img", token.attrs, token.self_closing)
         self._reconstruct_active_formatting_elements()
@@ -899,17 +905,17 @@ class TreeBuilderModesMixin:
         self.frameset_ok = False
         return
 
-    def _handle_body_start_void_with_formatting(self, token: Any) -> Any:
+    def _handle_body_start_void_with_formatting(self, token: Tag) -> None:
         self._reconstruct_active_formatting_elements()
         self._insert_element(token, push=False)
         self.frameset_ok = False
         return
 
-    def _handle_body_start_simple_void(self, token: Any) -> Any:
+    def _handle_body_start_simple_void(self, token: Tag) -> None:
         self._insert_element(token, push=False)
         return
 
-    def _handle_body_start_input(self, token: Any) -> Any:
+    def _handle_body_start_input(self, token: Tag) -> None:
         input_type = None
         for name, value in token.attrs.items():
             if name == "type":
@@ -920,7 +926,7 @@ class TreeBuilderModesMixin:
             self.frameset_ok = False
         return
 
-    def _handle_body_start_table(self, token: Any) -> Any:
+    def _handle_body_start_table(self, token: Tag) -> None:
         if self.quirks_mode != "quirks":
             self._close_p_element()
         self._insert_element(token, push=True)
@@ -928,7 +934,7 @@ class TreeBuilderModesMixin:
         self.mode = InsertionMode.IN_TABLE
         return
 
-    def _handle_body_start_plaintext_xmp(self, token: Any) -> Any:
+    def _handle_body_start_plaintext_xmp(self, token: Tag) -> None:
         self._close_p_element()
         self._insert_element(token, push=True)
         self.frameset_ok = False
@@ -940,58 +946,58 @@ class TreeBuilderModesMixin:
             self.mode = InsertionMode.TEXT
         return
 
-    def _handle_body_start_textarea(self, token: Any) -> Any:
+    def _handle_body_start_textarea(self, token: Tag) -> None:
         self._insert_element(token, push=True)
         self.ignore_lf = True
         self.frameset_ok = False
         return
 
-    def _handle_body_start_select(self, token: Any) -> Any:
+    def _handle_body_start_select(self, token: Tag) -> None:
         self._reconstruct_active_formatting_elements()
         self._insert_element(token, push=True)
         self.frameset_ok = False
         self._reset_insertion_mode()
         return
 
-    def _handle_body_start_option(self, token: Any) -> Any:
+    def _handle_body_start_option(self, token: Tag) -> None:
         if self.open_elements and self.open_elements[-1].name == "option":
             self.open_elements.pop()
         self._reconstruct_active_formatting_elements()
         self._insert_element(token, push=True)
         return
 
-    def _handle_body_start_optgroup(self, token: Any) -> Any:
+    def _handle_body_start_optgroup(self, token: Tag) -> None:
         if self.open_elements and self.open_elements[-1].name == "option":
             self.open_elements.pop()
         self._reconstruct_active_formatting_elements()
         self._insert_element(token, push=True)
         return
 
-    def _handle_body_start_rp_rt(self, token: Any) -> Any:
+    def _handle_body_start_rp_rt(self, token: Tag) -> None:
         self._generate_implied_end_tags(exclude="rtc")
         self._insert_element(token, push=True)
         return
 
-    def _handle_body_start_rb_rtc(self, token: Any) -> Any:
+    def _handle_body_start_rb_rtc(self, token: Tag) -> None:
         if self.open_elements and self.open_elements[-1].name in {"rb", "rp", "rt", "rtc"}:
             self._generate_implied_end_tags()
         self._insert_element(token, push=True)
         return
 
-    def _handle_body_start_table_parse_error(self, token: Any) -> Any:
+    def _handle_body_start_table_parse_error(self, token: Tag) -> None:
         self._parse_error("unexpected-start-tag", tag_name=token.name)
         return
 
-    def _handle_body_start_default(self, token: Any) -> Any:
+    def _handle_body_start_default(self, token: Tag) -> ModeResultTuple | None:
         self._reconstruct_active_formatting_elements()
         self._insert_element(token, push=True)
         if token.self_closing:
             self._parse_error("non-void-html-element-start-tag-with-trailing-solidus", tag_name=token.name)
         # Elements reaching here have no handler - never in FRAMESET_NEUTRAL/FORMATTING_ELEMENTS
         self.frameset_ok = False
-        return
+        return None
 
-    def _mode_in_table(self, token: Any) -> Any:
+    def _mode_in_table(self, token: AnyToken) -> ModeResultTuple | None:
         if isinstance(token, CharacterTokens):
             data = token.data or ""
             if "\x00" in data:
@@ -1124,7 +1130,7 @@ class TreeBuilderModesMixin:
             self._parse_error("eof-in-table")
         return None
 
-    def _mode_in_table_text(self, token: Any) -> Any:
+    def _mode_in_table_text(self, token: AnyToken) -> ModeResultTuple | None:
         if isinstance(token, CharacterTokens):
             # IN_TABLE mode guarantees non-empty data
             data = token.data
@@ -1154,7 +1160,7 @@ class TreeBuilderModesMixin:
         self.mode = original
         return ("reprocess", original, token)
 
-    def _mode_in_caption(self, token: Any) -> Any:
+    def _mode_in_caption(self, token: AnyToken) -> ModeResultTuple | None:
         if isinstance(token, CharacterTokens):
             return self._mode_in_body(token)
         if isinstance(token, CommentToken):
@@ -1207,7 +1213,7 @@ class TreeBuilderModesMixin:
         self.mode = InsertionMode.IN_TABLE
         return True
 
-    def _mode_in_column_group(self, token: Any) -> Any:
+    def _mode_in_column_group(self, token: AnyToken) -> ModeResultTuple | None:
         current = self.open_elements[-1] if self.open_elements else None
         if isinstance(token, CharacterTokens):
             data = token.data or ""
@@ -1302,7 +1308,7 @@ class TreeBuilderModesMixin:
         return None
         # Per spec: EOF when current is html - implicit None return
 
-    def _mode_in_table_body(self, token: Any) -> Any:
+    def _mode_in_table_body(self, token: AnyToken) -> ModeResultTuple | None:
         if isinstance(token, CharacterTokens) or isinstance(token, CommentToken):
             return self._mode_in_table(token)
         if isinstance(token, Tag):
@@ -1378,7 +1384,7 @@ class TreeBuilderModesMixin:
         assert isinstance(token, EOFToken), f"Unexpected token type: {type(token)}"
         return self._mode_in_table(token)
 
-    def _mode_in_row(self, token: Any) -> Any:
+    def _mode_in_row(self, token: AnyToken) -> ModeResultTuple | None:
         if isinstance(token, CharacterTokens) or isinstance(token, CommentToken):
             return self._mode_in_table(token)
         if isinstance(token, Tag):
@@ -1438,7 +1444,7 @@ class TreeBuilderModesMixin:
         else:
             self.mode = InsertionMode.IN_TABLE_BODY
 
-    def _mode_in_cell(self, token: Any) -> Any:
+    def _mode_in_cell(self, token: AnyToken) -> ModeResultTuple | None:
         if isinstance(token, CharacterTokens):
             previous = self.insert_from_table
             self.insert_from_table = False
@@ -1492,7 +1498,7 @@ class TreeBuilderModesMixin:
             return ("reprocess", self.mode, token)
         return self._mode_in_table(token)
 
-    def _mode_in_select(self, token: Any) -> Any:
+    def _mode_in_select(self, token: AnyToken) -> ModeResultTuple | None:
         if isinstance(token, CharacterTokens):
             data = token.data or ""
             if "\x00" in data:
@@ -1659,7 +1665,7 @@ class TreeBuilderModesMixin:
         assert isinstance(token, EOFToken), f"Unexpected token type: {type(token)}"
         return self._mode_in_body(token)
 
-    def _mode_in_template(self, token: Any) -> Any:
+    def _mode_in_template(self, token: AnyToken) -> ModeResultTuple | None:
         # § The "in template" insertion mode
         # https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intemplate
         if isinstance(token, CharacterTokens):
@@ -1738,7 +1744,7 @@ class TreeBuilderModesMixin:
             return ("reprocess", self.mode, token)
         return None
 
-    def _mode_after_body(self, token: Any) -> Any:
+    def _mode_after_body(self, token: AnyToken) -> ModeResultTuple | None:
         if isinstance(token, CharacterTokens):
             if is_all_whitespace(token.data):
                 # Whitespace is processed using InBody rules (appended to body)
@@ -1759,7 +1765,7 @@ class TreeBuilderModesMixin:
         assert isinstance(token, EOFToken), f"Unexpected token type: {type(token)}"
         return None
 
-    def _mode_after_after_body(self, token: Any) -> Any:
+    def _mode_after_after_body(self, token: AnyToken) -> ModeResultTuple | None:
         if isinstance(token, CharacterTokens):
             if is_all_whitespace(token.data):
                 # Per spec: whitespace characters are inserted using the rules for the "in body" mode
@@ -1786,7 +1792,7 @@ class TreeBuilderModesMixin:
         assert isinstance(token, EOFToken), f"Unexpected token type: {type(token)}"
         return None
 
-    def _mode_in_frameset(self, token: Any) -> Any:
+    def _mode_in_frameset(self, token: AnyToken) -> ModeResultTuple | None:
         # Per HTML5 spec §13.2.6.4.16: In frameset insertion mode
         if isinstance(token, CharacterTokens):
             # Only whitespace characters allowed; ignore all others
@@ -1828,7 +1834,7 @@ class TreeBuilderModesMixin:
         self._parse_error("unexpected-token-in-frameset")
         return None
 
-    def _mode_after_frameset(self, token: Any) -> Any:
+    def _mode_after_frameset(self, token: AnyToken) -> ModeResultTuple | None:
         # Per HTML5 spec §13.2.6.4.17: After frameset insertion mode
         if isinstance(token, CharacterTokens):
             # Only whitespace characters allowed; non-whitespace is a parse error.
@@ -1863,7 +1869,7 @@ class TreeBuilderModesMixin:
         self.mode = InsertionMode.IN_FRAMESET
         return ("reprocess", InsertionMode.IN_FRAMESET, token)
 
-    def _mode_after_after_frameset(self, token: Any) -> Any:
+    def _mode_after_after_frameset(self, token: AnyToken) -> ModeResultTuple | None:
         # Per HTML5 spec §13.2.6.4.18: After after frameset insertion mode
         if isinstance(token, CharacterTokens):
             # Whitespace is processed using InBody rules
@@ -1894,7 +1900,7 @@ class TreeBuilderModesMixin:
 
     # Helpers ----------------------------------------------------------------
 
-    _MODE_HANDLERS = [
+    _MODE_HANDLERS: list[Callable[[TreeBuilderModesMixin, AnyToken], ModeResultTuple | None]] = [
         _mode_initial,
         _mode_before_html,
         _mode_before_head,
@@ -1919,14 +1925,14 @@ class TreeBuilderModesMixin:
         _mode_in_template,
     ]
 
-    _BODY_TOKEN_HANDLERS = {
+    _BODY_TOKEN_HANDLERS: dict[type[AnyToken], Callable[[TreeBuilderModesMixin, Any], ModeResultTuple | None]] = {
         CharacterTokens: _handle_characters_in_body,
         CommentToken: _handle_comment_in_body,
         Tag: _handle_tag_in_body,
         EOFToken: _handle_eof_in_body,
     }
 
-    _BODY_START_HANDLERS = {
+    _BODY_START_HANDLERS: dict[str, Callable[[TreeBuilderModesMixin, Tag], ModeResultTuple | None]] = {
         "a": _handle_body_start_a,
         "address": _handle_body_start_block_with_p,
         "applet": _handle_body_start_applet_like,
@@ -2031,7 +2037,7 @@ class TreeBuilderModesMixin:
         "wbr": _handle_body_start_void_with_formatting,
         "xmp": _handle_body_start_plaintext_xmp,
     }
-    _BODY_END_HANDLERS = {
+    _BODY_END_HANDLERS: dict[str, Callable[[TreeBuilderModesMixin, Tag], ModeResultTuple | None]] = {
         "address": _handle_body_end_block,
         "applet": _handle_body_end_applet_like,
         "article": _handle_body_end_block,
