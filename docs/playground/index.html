@@ -286,9 +286,10 @@
       }
 
       .error-list {
-        display: flex;
-        flex-direction: column;
-        gap: 0.4rem;
+        display: grid;
+        grid-template-columns: max-content max-content 1fr;
+        gap: 0.4rem 0.75rem;
+        align-items: baseline;
       }
 
       .error-empty {
@@ -297,15 +298,13 @@
       }
 
       .error-row {
-        display: grid;
-        grid-template-columns: 3.5rem auto 1fr;
-        gap: 0.75rem;
-        align-items: baseline;
+        display: contents;
       }
 
       .error-loc {
         color: #86868b;
-        text-align: right;
+        text-align: left;
+        white-space: nowrap;
       }
 
       .error-cat {
@@ -317,6 +316,7 @@
         background: #e5e5ea;
         color: #1d1d1f;
         white-space: nowrap;
+        justify-self: start;
       }
 
       .error-cat.cat-security {
@@ -337,6 +337,7 @@
       .error-msg {
         color: #1d1d1f;
         word-break: break-word;
+        min-width: 0;
       }
 
       /* Filter input */
