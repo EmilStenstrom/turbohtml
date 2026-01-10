@@ -146,7 +146,7 @@ def render(
         if cleanup:
             transforms.append(Unwrap("a:not([href])"))
             transforms.append(Drop("img:not([src])"))
-            transforms.append(PruneEmpty("p"))
+            transforms.append(PruneEmpty("*"))
 
         kwargs = {
             "collect_errors": True,
