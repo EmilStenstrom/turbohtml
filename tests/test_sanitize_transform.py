@@ -7,8 +7,10 @@ from justhtml.node import ElementNode, SimpleDomNode, TemplateNode, TextNode
 from justhtml.transforms import (
     CollapseWhitespace,
     Drop,
+    Linkify,
     PruneEmpty,
     Sanitize,
+    SetAttrs,
     apply_compiled_transforms,
     compile_transforms,
 )
@@ -33,20 +35,35 @@ class TestSanitizeTransform(unittest.TestCase):
         assert doc.to_html(pretty=False, safe=False) == "<p><a>x</a></p>"
         assert doc.to_html(pretty=False, safe=True) == "<p><a>x</a></p>"
 
-    def test_sanitize_must_be_last_except_trailing_pruneempty_and_collapsewhitespace(self) -> None:
-        compile_transforms((Sanitize(),))
-        compile_transforms((Sanitize(), PruneEmpty("p")))
-        compile_transforms((Sanitize(), CollapseWhitespace()))
-        compile_transforms((Sanitize(), CollapseWhitespace(), PruneEmpty("p")))
+    def test_compile_transforms_allows_transforms_after_sanitize(self) -> None:
+        compile_transforms((Sanitize(), Linkify()))
+        compile_transforms((Sanitize(), SetAttrs("p", **{"class": "x"})))
 
-        with self.assertRaises(TypeError):
-            compile_transforms((Sanitize(), Drop("p")))
+    def test_transforms_can_run_after_sanitize(self) -> None:
+        doc = JustHTML(
+            '<p><a href="javascript:alert(1)" onclick="x()">x</a> https://example.com</p>',
+            fragment=True,
+            transforms=[Sanitize(), Linkify()],
+        )
+
+        # Existing unsafe content is removed by Sanitize, then Linkify runs.
+        assert doc.to_html(pretty=False, safe=False) == (
+            '<p><a>x</a> <a href="https://example.com">https://example.com</a></p>'
+        )
 
     def test_pruneempty_can_run_after_sanitize(self) -> None:
         doc = JustHTML(
             "<p><script>alert(1)</script></p>",
             fragment=True,
             transforms=[Sanitize(), PruneEmpty("p")],
+        )
+        assert doc.to_html(pretty=False, safe=False) == ""
+
+    def test_drop_then_pruneempty_can_run_after_sanitize_in_order(self) -> None:
+        doc = JustHTML(
+            "<p><a>x</a></p>",
+            fragment=True,
+            transforms=[Sanitize(), Drop("a"), PruneEmpty("p")],
         )
         assert doc.to_html(pretty=False, safe=False) == ""
 

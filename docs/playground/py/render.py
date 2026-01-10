@@ -1,8 +1,9 @@
 from dataclasses import replace
 
-from justhtml import JustHTML, StrictModeError
+from justhtml import JustHTML
 from justhtml.context import FragmentContext
 from justhtml.sanitize import DEFAULT_DOCUMENT_POLICY, DEFAULT_POLICY
+from justhtml.transforms import Drop, PruneEmpty, Sanitize, Unwrap
 
 
 def _format_error(e):
@@ -41,6 +42,23 @@ def _merge_sorted_errors(a, b):
         out.extend(a[i:])
     if j < len(b):
         out.extend(b[j:])
+    return out
+
+
+def _dedupe_sorted_errors(errors):
+    out = []
+    last_key = None
+    for e in errors:
+        key = (
+            getattr(e, "category", "parse"),
+            getattr(e, "line", None),
+            getattr(e, "column", None),
+            getattr(e, "message", None) or getattr(e, "code", None) or str(e),
+        )
+        if key == last_key:
+            continue
+        out.append(e)
+        last_key = key
     return out
 
 
@@ -111,16 +129,30 @@ def render(
     selector,
     output_format,
     safe,
+    cleanup,
     pretty,
     indent_size,
     text_separator,
     text_strip,
 ):
     try:
+        transforms = []
+        sanitize_policy = None
+        if safe:
+            base = DEFAULT_DOCUMENT_POLICY if parse_mode == "document" else DEFAULT_POLICY
+            sanitize_policy = replace(base, unsafe_handling="collect")
+            transforms.append(Sanitize(policy=sanitize_policy))
+
+        if cleanup:
+            transforms.append(Unwrap("a:not([href])"))
+            transforms.append(Drop("img:not([src])"))
+            transforms.append(PruneEmpty("p"))
+
         kwargs = {
             "collect_errors": True,
             "track_node_locations": True,
             "strict": False,
+            "transforms": transforms,
         }
 
         if parse_mode == "fragment":
@@ -139,14 +171,16 @@ def render(
             text_strip=bool(text_strip),
         )
 
-        combined = _merge_sorted_errors(list(doc.errors), list(security_errors))
+        tree_security_errors = []
+        if sanitize_policy is not None:
+            tree_security_errors = sanitize_policy.collected_security_errors()
+
+        combined = _merge_sorted_errors(
+            sorted(list(doc.errors), key=_sort_key),
+            sorted(list(tree_security_errors) + list(security_errors), key=_sort_key),
+        )
+        combined = _dedupe_sorted_errors(combined)
         errors = [_format_error(e) for e in combined]
-    except StrictModeError as e:
-        return {
-            "ok": False,
-            "output": "",
-            "errors": [_format_error(e.error)],
-        }
     except Exception as e:  # noqa: BLE001
         return {
             "ok": False,

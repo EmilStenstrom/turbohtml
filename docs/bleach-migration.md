@@ -58,7 +58,7 @@ clean = doc.to_html(policy=policy)
 Notes:
 
 - Prefer `fragment=True` for user-generated snippets. That avoids adding `<html>`, `<head>`, and `<body>` tags.
-- JustHTML sanitizes *on serialization* by default. If you need a sanitized DOM tree, apply `Sanitize(...)` as the last transform (see [HTML Cleaning](html-cleaning.md)).
+- JustHTML sanitizes *on serialization* by default. If you need a sanitized DOM tree, put `Sanitize(...)` at the end of your transform pipeline (see [HTML Cleaning](html-cleaning.md)).
 
 ## Bleach filters → JustHTML transforms
 

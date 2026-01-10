@@ -218,7 +218,7 @@ def sanitize_fragment(html: str) -> str:
     )
 
     # Sanitize the in-memory DOM by applying a Sanitize transform.
-    # Sanitize must be last.
+    # Put Sanitize at the end if you want a sanitized DOM.
     doc = JustHTML(html, fragment_context=ctx, transforms=[Sanitize(policy)])
     return doc.root.to_html(pretty=False, safe=False)
 

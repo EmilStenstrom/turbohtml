@@ -161,7 +161,8 @@ class Sanitize:
 
     Notes:
     - This runs once at parse/transform time.
-    - This transform must be last.
+        - If you apply transforms after `Sanitize`, they may reintroduce unsafe
+            content. Use safe serialization (`safe=True`) if you need output safety.
     """
 
     policy: SanitizationPolicy | None
@@ -253,12 +254,6 @@ def compile_transforms(transforms: list[Transform] | tuple[Transform, ...]) -> l
         if sanitize_count:
             if sanitize_count > 1:
                 raise ValueError("Only one Sanitize transform is supported")
-            sanitize_index = next(i for i, t in enumerate(transforms) if isinstance(t, Sanitize))
-            for t in transforms[sanitize_index + 1 :]:
-                if not isinstance(t, (PruneEmpty, CollapseWhitespace)):
-                    raise TypeError(
-                        "Sanitize transform must be last (except for trailing PruneEmpty and CollapseWhitespace transforms)"
-                    )
 
     compiled: list[CompiledTransform] = []
     for t in transforms:
@@ -361,25 +356,54 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
     if not compiled:
         return
 
-    sanitize_transform: _CompiledSanitizeTransform | None = None
-    post_sanitize_transforms: list[_CompiledPruneEmptyTransform | _CompiledCollapseWhitespaceTransform] = []
-    for i, t in enumerate(compiled):
-        if isinstance(t, _CompiledSanitizeTransform):
-            sanitize_transform = t
-            post = compiled[i + 1 :]
-            if post and not all(
-                isinstance(x, (_CompiledPruneEmptyTransform, _CompiledCollapseWhitespaceTransform)) for x in post
-            ):
-                raise TypeError(
-                    "Sanitize must be the last transform (except for trailing PruneEmpty and CollapseWhitespace transforms)"
-                )
-            post_sanitize_transforms = [
-                cast("_CompiledPruneEmptyTransform | _CompiledCollapseWhitespaceTransform", x) for x in post
-            ]
-            compiled = compiled[:i]
-            break
-
     matcher = SelectorMatcher()
+
+    def apply_sanitize_transform(root_node: SimpleDomNode, t: _CompiledSanitizeTransform) -> None:
+        sanitized = _sanitize(root_node, policy=t.policy)
+
+        def _detach_children(n: SimpleDomNode) -> None:
+            if n.children:
+                for child in n.children:
+                    child.parent = None
+
+        def _reparent_children(n: SimpleDomNode) -> None:
+            if n.children:
+                for child in n.children:
+                    child.parent = n
+
+        # Overwrite the root node in-place so callers keep their reference.
+        # This supports the common case (document/document-fragment root) as well
+        # as advanced usage where callers pass an element root.
+        if type(root_node) is TextNode:
+            root_node.data = sanitized.data
+            return
+
+        _detach_children(root_node)
+
+        if type(root_node) is TemplateNode:
+            root_node.name = sanitized.name
+            root_node.namespace = sanitized.namespace
+            root_node.attrs = sanitized.attrs
+            root_node.children = sanitized.children
+            root_node.template_content = sanitized.template_content
+            _reparent_children(root_node)
+            return
+
+        if type(root_node) is ElementNode:
+            root_node.name = sanitized.name
+            root_node.namespace = sanitized.namespace
+            root_node.attrs = sanitized.attrs
+            root_node.children = sanitized.children
+            root_node.template_content = sanitized.template_content
+            _reparent_children(root_node)
+            return
+
+        root_node.name = sanitized.name
+        root_node.namespace = sanitized.namespace
+        root_node.data = sanitized.data
+        root_node.attrs = sanitized.attrs
+        root_node.children = sanitized.children
+        _reparent_children(root_node)
 
     def apply_selector_and_linkify_transforms(
         root_node: SimpleDomNode,
@@ -596,6 +620,11 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
         pending_linkify = []
         pending_whitespace = []
 
+        if isinstance(t, _CompiledSanitizeTransform):
+            apply_sanitize_transform(root, t)
+            i += 1
+            continue
+
         if isinstance(t, _CompiledPruneEmptyTransform):
             prune_batch: list[_CompiledPruneEmptyTransform] = [t]
             i += 1
@@ -608,83 +637,3 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
         raise TypeError(f"Unsupported compiled transform: {type(t).__name__}")
 
     apply_selector_and_linkify_transforms(root, pending_selector, pending_linkify, pending_whitespace)
-
-    if sanitize_transform is not None:
-        sanitized = _sanitize(root, policy=sanitize_transform.policy)
-
-        def _apply_post_sanitize_transforms() -> None:
-            if not post_sanitize_transforms:
-                return
-
-            pending_post_ws: list[_CompiledCollapseWhitespaceTransform] = []
-            i = 0
-            while i < len(post_sanitize_transforms):
-                t = post_sanitize_transforms[i]
-                if isinstance(t, _CompiledCollapseWhitespaceTransform):
-                    pending_post_ws.append(t)
-                    i += 1
-                    continue
-
-                if pending_post_ws:
-                    apply_selector_and_linkify_transforms(root, [], [], pending_post_ws)
-                    pending_post_ws = []
-
-                prune_batch: list[_CompiledPruneEmptyTransform] = [t]
-                i += 1
-                while i < len(post_sanitize_transforms) and isinstance(
-                    post_sanitize_transforms[i], _CompiledPruneEmptyTransform
-                ):
-                    prune_batch.append(cast("_CompiledPruneEmptyTransform", post_sanitize_transforms[i]))
-                    i += 1
-                apply_prune_transforms(root, prune_batch)
-
-            if pending_post_ws:
-                apply_selector_and_linkify_transforms(root, [], [], pending_post_ws)
-
-        def _detach_children(n: SimpleDomNode) -> None:
-            if n.children:
-                for child in n.children:
-                    child.parent = None
-
-        def _reparent_children(n: SimpleDomNode) -> None:
-            if n.children:
-                for child in n.children:
-                    child.parent = n
-
-        # Overwrite the root node in-place so callers keep their reference.
-        # This supports the common case (document/document-fragment root) as well
-        # as advanced usage where callers pass an element root.
-        if type(root) is TextNode:
-            root.data = sanitized.data
-            _apply_post_sanitize_transforms()
-            return
-
-        _detach_children(root)
-
-        if type(root) is TemplateNode:
-            root.name = sanitized.name
-            root.namespace = sanitized.namespace
-            root.attrs = sanitized.attrs
-            root.children = sanitized.children
-            root.template_content = sanitized.template_content
-            _reparent_children(root)
-            _apply_post_sanitize_transforms()
-            return
-
-        if type(root) is ElementNode:
-            root.name = sanitized.name
-            root.namespace = sanitized.namespace
-            root.attrs = sanitized.attrs
-            root.children = sanitized.children
-            root.template_content = sanitized.template_content
-            _reparent_children(root)
-            _apply_post_sanitize_transforms()
-            return
-
-        root.name = sanitized.name
-        root.namespace = sanitized.namespace
-        root.data = sanitized.data
-        root.attrs = sanitized.attrs
-        root.children = sanitized.children
-        _reparent_children(root)
-        _apply_post_sanitize_transforms()

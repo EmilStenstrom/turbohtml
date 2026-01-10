@@ -63,12 +63,14 @@ async function installJusthtmlFromLocalRepo(pyodideInstance) {
 		"encoding.py",
 		"entities.py",
 		"errors.py",
+		"linkify.py",
 		"node.py",
 		"parser.py",
 		"sanitize.py",
 		"selector.py",
 		"serialize.py",
 		"stream.py",
+		"transforms.py",
 		"tokenizer.py",
 		"tokens.py",
 		"treebuilder.py",
@@ -369,6 +371,7 @@ function setEnabled(enabled) {
 		"input",
 		"selector",
 		"safe",
+		"cleanup",
 		"pretty",
 		"indentSize",
 		"textSeparator",
@@ -451,6 +454,7 @@ async function run() {
 	const outputFormat = getRadioValue("outputFormat");
 
 	const safe = document.getElementById("safe").checked;
+	const cleanup = document.getElementById("cleanup").checked;
 	const pretty = document.getElementById("pretty").checked;
 	const indentSize = document.getElementById("indentSize").value;
 
@@ -463,6 +467,7 @@ async function run() {
 		selector,
 		outputFormat,
 		safe,
+		cleanup,
 		pretty,
 		indentSize,
 		textSeparator,
@@ -503,6 +508,7 @@ for (const el of document.querySelectorAll('input[name="parseMode"]')) {
 }
 
 document.getElementById("safe").addEventListener("change", scheduleRerender);
+document.getElementById("cleanup").addEventListener("change", scheduleRerender);
 document.getElementById("pretty").addEventListener("change", scheduleRerender);
 document
 	.getElementById("indentSize")

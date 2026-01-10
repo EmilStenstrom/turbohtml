@@ -90,12 +90,13 @@ class TestTransforms(unittest.TestCase):
         with self.assertRaises(TypeError):
             apply_compiled_transforms(root, [object()])  # type: ignore[list-item]
 
-    def test_apply_compiled_transforms_rejects_non_prune_after_sanitize(self) -> None:
-        root = SimpleDomNode("div")
-        compiled = compile_transforms([SetAttrs("div", id="x"), Sanitize()])
-        compiled.append(compile_transforms([SetAttrs("div", class_="y")])[0])
-        with self.assertRaises(TypeError):
-            apply_compiled_transforms(root, compiled)
+    def test_transforms_can_run_after_sanitize(self) -> None:
+        doc = JustHTML(
+            "<p>x</p>",
+            fragment=True,
+            transforms=[Sanitize(), SetAttrs("p", **{"class": "y"})],
+        )
+        assert doc.to_html(pretty=False, safe=False) == '<p class="y">x</p>'
 
     def test_collapsewhitespace_collapses_text_nodes(self) -> None:
         doc = JustHTML(

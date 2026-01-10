@@ -112,7 +112,7 @@ It never touches attributes, existing tags, comments, or doctypes.
 
 - [`Linkify(...)`](linkify.md) — Scan text nodes and convert URLs/emails into `<a>` elements.
 - `CollapseWhitespace(skip_tags=(...))` — Collapse whitespace runs in text nodes (html5lib-like).
-- `Sanitize(policy=None)` — Sanitize the in-memory tree (must run last, except for trailing `PruneEmpty` and `CollapseWhitespace`).
+- `Sanitize(policy=None)` — Sanitize the in-memory tree.
 - `PruneEmpty(selector, strip_whitespace=True)` — Recursively drop empty elements.
 - `SetAttrs(selector, **attrs)` — Set/overwrite attributes on matching elements.
 - `Drop(selector)` — Remove matching elements and their contents.
@@ -155,7 +155,7 @@ Output:
 Sanitizes the in-memory DOM tree using the same sanitizer as `safe=True` output.
 
 - This is useful if you want to traverse/modify a clean DOM.
-- `Sanitize(...)` must be last, except for optional trailing `PruneEmpty(...)` and `CollapseWhitespace(...)` transforms.
+- `Sanitize(...)` runs at its position in the pipeline. If you add transforms after it, be careful not to reintroduce unsafe content.
 
 `PruneEmpty(...)` after `Sanitize(...)` is useful if sanitization removes unsafe children (for example `<script>`) and leaves a now-empty wrapper element.
 

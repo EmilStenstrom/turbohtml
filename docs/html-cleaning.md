@@ -48,7 +48,7 @@ Hello **world** [bad] [ok](https://example.com/?a=1&b=2)
 
 ## Sanitizing the in-memory DOM
 
-If you will be working with the DOM and want a clean slate to work from, apply `Sanitize(...)` as the last transform.
+If you will be working with the DOM and want a clean slate to work from, put `Sanitize(...)` at the end of your transform pipeline.
 
 ```python
 from justhtml import JustHTML, Sanitize
