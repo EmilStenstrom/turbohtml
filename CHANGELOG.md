@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.0] - 2026-01-10
+### Added
+- Add `CollapseWhitespace(...)` transform (html5lib-style whitespace collapsing) (see [Transforms](docs/transforms.md)).
+
+### Changed
+- Unify the default “whitespace-preserving elements” across pretty-printing and text transforms; whitespace is now consistently preserved inside `pre`, `code`, `textarea`, `script`, and `style`.
+- `Linkify(...)` now skips `textarea` by default (in addition to `a`, `pre`, `code`, `script`, and `style`).
+- `Sanitize(...)` must still be last, except it may be followed by cleanup transforms like `PruneEmpty(...)` and `CollapseWhitespace(...)`.
+
+### Docs
+- Expand `Drop(...)` examples (see [Transforms](docs/transforms.md)).
+- Document Bleach/html5lib whitespace filter migration to `CollapseWhitespace(...)` (see [Migrating from Bleach](docs/bleach-migration.md)).
+
 ## [0.32.0] - 2026-01-10
 ### Added
 - Add constructor-time DOM transforms via `JustHTML(..., transforms=[...])` (see [Transforms](docs/transforms.md)).
