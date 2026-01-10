@@ -228,6 +228,149 @@ def _is_whitespace_text_node(node: Any) -> bool:
     return node.name == "#text" and (node.data or "").strip() == ""
 
 
+def _is_blocky_element(node: Any) -> bool:
+    # Treat elements as block-ish if they are block-level *or* contain any block-level
+    # descendants. This keeps pretty-printing readable for constructs like <a><div>...</div></a>.
+    try:
+        name = node.name
+    except AttributeError:
+        return False
+    if name in {"#text", "#comment", "!doctype"}:
+        return False
+    if name in SPECIAL_ELEMENTS:
+        return True
+
+    try:
+        children = node.children or []
+    except AttributeError:
+        return False
+    if not children:
+        return False
+
+    stack: list[Any] = list(children)
+    while stack:
+        child = stack.pop()
+        if child is None:
+            continue
+        child_name = child.name
+        if child_name in SPECIAL_ELEMENTS:
+            return True
+        if child_name in {"#text", "#comment", "!doctype"}:
+            continue
+        grand_children = child.children
+        if grand_children:
+            stack.extend(grand_children)
+
+    return False
+
+
+_LAYOUT_BLOCK_ELEMENTS = {
+    "address",
+    "article",
+    "aside",
+    "blockquote",
+    "body",
+    "caption",
+    "center",
+    "dd",
+    "details",
+    "dialog",
+    "dir",
+    "div",
+    "dl",
+    "dt",
+    "fieldset",
+    "figcaption",
+    "figure",
+    "footer",
+    "form",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "header",
+    "hgroup",
+    "hr",
+    "html",
+    "iframe",
+    "li",
+    "listing",
+    "main",
+    "marquee",
+    "menu",
+    "nav",
+    "noframes",
+    "noscript",
+    "ol",
+    "p",
+    "plaintext",
+    "pre",
+    "search",
+    "section",
+    "summary",
+    "table",
+    "tbody",
+    "td",
+    "tfoot",
+    "th",
+    "thead",
+    "tr",
+    "ul",
+}
+
+
+_FORMAT_SEP = object()
+
+
+def _is_layout_blocky_element(node: Any) -> bool:
+    # Similar to _is_blocky_element(), but limited to actual layout blocks.
+    # This avoids turning inline-ish "special" elements like <script> into
+    # multiline pretty-print breaks in contexts like <p>.
+    try:
+        name = node.name
+    except AttributeError:
+        return False
+    if name in {"#text", "#comment", "!doctype"}:
+        return False
+    if name in _LAYOUT_BLOCK_ELEMENTS:
+        return True
+
+    try:
+        children = node.children or []
+    except AttributeError:
+        return False
+    if not children:
+        return False
+
+    stack: list[Any] = list(children)
+    while stack:
+        child = stack.pop()
+        if child is None:
+            continue
+        child_name = child.name
+        if child_name in _LAYOUT_BLOCK_ELEMENTS:
+            return True
+        if child_name in {"#text", "#comment", "!doctype"}:
+            continue
+        grand_children = child.children
+        if grand_children:
+            stack.extend(grand_children)
+
+    return False
+
+
+def _is_formatting_whitespace_text(data: str) -> bool:
+    # Formatting whitespace is something users typically don't intend to preserve
+    # exactly (e.g. newlines/indentation, or large runs of spaces).
+    if not data:
+        return False
+    if "\n" in data or "\r" in data or "\t" in data or "\f" in data:
+        return True
+    return len(data) > 2
+
+
 def _should_pretty_indent_children(children: list[Any]) -> bool:
     for child in children:
         if child is None:
@@ -245,26 +388,18 @@ def _should_pretty_indent_children(children: list[Any]) -> bool:
         return True
     if len(element_children) == 1:
         only_child = element_children[0]
-        if only_child.name in SPECIAL_ELEMENTS:
+        if _is_blocky_element(only_child):
             return True
-        if only_child.name == "a":
-            # If an anchor wraps block-ish content (valid HTML5), treat it as block-ish
-            # for pretty-printing so the parent can indent it on its own line.
-            for grandchild in only_child.children or []:
-                if grandchild is None:
-                    continue
-                if grandchild.name in SPECIAL_ELEMENTS:
-                    return True
         return False
 
     # Safe indentation rule: only insert inter-element whitespace when we won't
     # be placing it between two adjacent inline/phrasing elements.
-    prev_is_special = element_children[0].name in SPECIAL_ELEMENTS
+    prev_is_blocky = _is_blocky_element(element_children[0])
     for child in element_children[1:]:
-        current_is_special = child.name in SPECIAL_ELEMENTS
-        if not prev_is_special and not current_is_special:
+        current_is_blocky = _is_blocky_element(child)
+        if not prev_is_blocky and not current_is_blocky:
             return False
-        prev_is_special = current_is_special
+        prev_is_blocky = current_is_blocky
     return True
 
 
@@ -322,7 +457,13 @@ def _node_to_html(node: Any, indent: int = 0, indent_size: int = 2, pretty: bool
         return f"{prefix}{open_tag}{serialize_end_tag(name)}"
 
     # Check if all children are text-only (inline rendering)
-    all_text = all(c.name == "#text" for c in children)
+    all_text = True
+    for child in children:
+        if child is None:
+            continue
+        if child.name != "#text":
+            all_text = False
+            break
 
     if all_text and pretty and not content_pre:
         # Serializer controls sanitization at the to_html() entry point; avoid
@@ -339,11 +480,204 @@ def _node_to_html(node: Any, indent: int = 0, indent_size: int = 2, pretty: bool
         )
         return f"{prefix}{open_tag}{inner}{serialize_end_tag(name)}"
 
+    if pretty and not content_pre and name in SPECIAL_ELEMENTS:
+        # For block-ish containers that only have element children (and/or
+        # whitespace-only text nodes), prefer a multiline layout for readability
+        # even when children are inline elements.
+        can_indent = True
+        for child in children:
+            if child is None:
+                continue
+            if child.name == "#comment":
+                can_indent = False
+                break
+            if child.name == "#text" and (child.data or "").strip():
+                can_indent = False
+                break
+
+        if can_indent:
+            inner_lines: list[str] = []
+            for child in children:
+                if child is None:
+                    continue
+                if _is_whitespace_text_node(child):
+                    continue
+                child_html = _node_to_html(child, indent + 1, indent_size, pretty, in_pre=content_pre)
+                if child_html:
+                    inner_lines.append(child_html)
+
+            if inner_lines:
+                parts = [f"{prefix}{open_tag}"]
+                parts.extend(inner_lines)
+                parts.append(f"{prefix}{serialize_end_tag(name)}")
+                return "\n".join(parts)
+
+        # Smart pretty-printing: if the author already inserted formatting whitespace
+        # between siblings, we can split into "inline runs" and put each run on its
+        # own line without introducing new inter-token whitespace.
+        has_comment = any(child is not None and child.name == "#comment" for child in children)
+        if not has_comment:
+            non_none_children: list[Any] = [child for child in children if child is not None]
+
+            # Only enable this mode if there is at least one formatting whitespace text node
+            # between non-whitespace siblings.
+            has_separator = False
+            for child in non_none_children[1:-1]:
+                if child.name != "#text":
+                    continue
+                data = child.data or ""
+                if data.strip() != "":
+                    continue
+                if _is_formatting_whitespace_text(data):
+                    has_separator = True
+                    break
+
+            if has_separator:
+                # Build runs by splitting on formatting whitespace text nodes.
+                # Keep small spacing nodes (" " or "  ") inside runs.
+                items: list[Any] = []
+                last_was_sep = False
+                for child in non_none_children:
+                    if child.name == "#text":
+                        data = child.data or ""
+                        if data.strip() == "" and _is_formatting_whitespace_text(data):
+                            if not last_was_sep:
+                                items.append(_FORMAT_SEP)
+                                last_was_sep = True
+                            continue
+                    items.append(child)
+                    last_was_sep = False
+
+                while items and items[0] is _FORMAT_SEP:
+                    items.pop(0)
+                while items and items[-1] is _FORMAT_SEP:
+                    items.pop()
+
+                runs: list[list[Any]] = []
+                current_run: list[Any] = []
+                for item in items:
+                    if item is _FORMAT_SEP:
+                        runs.append(current_run)
+                        current_run = []
+                        continue
+                    current_run.append(item)
+                runs.append(current_run)
+                runs = [run for run in runs if run]
+
+                # Only apply if we can render each run either as a single blocky element
+                # (possibly multiline) or as a single-line inline run.
+                smart_lines: list[str] = []
+                can_apply = True
+                for run in runs:
+                    blocky_elements = [c for c in run if c.name not in {"#text", "#comment"} and _is_blocky_element(c)]
+                    if blocky_elements and len(run) != 1:
+                        can_apply = False
+                        break
+
+                    if len(run) == 1 and run[0].name != "#text":
+                        child_html = _node_to_html(run[0], indent + 1, indent_size, pretty=True, in_pre=content_pre)
+                        smart_lines.append(child_html)
+                        continue
+
+                    # Inline run: render on one line.
+                    run_parts: list[str] = []
+                    for c in run:
+                        if c.name == "#text":
+                            data = c.data or ""
+                            if not data.strip():
+                                # Formatting whitespace never appears inside runs (it is used as a separator).
+                                # Preserve intentional tiny spacing.
+                                run_parts.append(data)
+                                continue
+
+                            run_parts.append(_escape_text(_normalize_formatting_whitespace(data)))
+                            continue
+
+                        # Render inline elements without their own leading indentation.
+                        child_html = _node_to_html(c, 0, indent_size, pretty=True, in_pre=content_pre)
+                        run_parts.append(child_html)
+
+                    smart_lines.append(f"{' ' * ((indent + 1) * indent_size)}{''.join(run_parts)}")
+
+                if can_apply and smart_lines:
+                    return f"{prefix}{open_tag}\n" + "\n".join(smart_lines) + f"\n{prefix}{serialize_end_tag(name)}"
+
     if pretty and not content_pre and not _should_pretty_indent_children(children):
         # For block-ish elements that contain only element children and whitespace-only
         # text nodes, we can still format each child on its own line (only when there
         # is already whitespace separating element siblings).
         if name in SPECIAL_ELEMENTS:
+            # Mixed content in block-ish containers: if we encounter a blocky child
+            # (e.g. <ul>) adjacent to inline text, printing everything on one line
+            # both hurts readability and can lose indentation inside the block subtree.
+            # In that case, put inline runs and blocky children on their own lines.
+            has_comment = any(child is not None and child.name == "#comment" for child in children)
+            if not has_comment:
+                has_blocky_child = any(
+                    child is not None and child.name not in {"#text", "#comment"} and _is_layout_blocky_element(child)
+                    for child in children
+                )
+                has_non_whitespace_text = any(
+                    child is not None and child.name == "#text" and (child.data or "").strip() for child in children
+                )
+
+                if has_blocky_child and has_non_whitespace_text:
+                    mixed_multiline_lines: list[str] = []
+                    inline_parts: list[str] = []
+
+                    mixed_first_non_none_index: int | None = None
+                    mixed_last_non_none_index: int | None = None
+                    for i, child in enumerate(children):
+                        if child is None:
+                            continue
+                        if mixed_first_non_none_index is None:
+                            mixed_first_non_none_index = i
+                        mixed_last_non_none_index = i
+
+                    def flush_inline() -> None:
+                        if not inline_parts:
+                            return
+                        line = "".join(inline_parts).strip(" ")
+                        inline_parts.clear()
+                        if line:
+                            mixed_multiline_lines.append(f"{' ' * ((indent + 1) * indent_size)}{line}")
+
+                    for i, child in enumerate(children):
+                        if child is None:
+                            continue
+
+                        if child.name == "#text":
+                            data = child.data or ""
+                            if not data.strip():
+                                # Drop leading/trailing formatting whitespace.
+                                if i == mixed_first_non_none_index or i == mixed_last_non_none_index:
+                                    continue
+                                # Preserve intentional small spacing, but treat formatting whitespace
+                                # as a separator between inline runs (new line).
+                                if "\n" in data or "\r" in data or "\t" in data or len(data) > 2:
+                                    flush_inline()
+                                else:
+                                    inline_parts.append(data)
+                                continue
+
+                            data = _normalize_formatting_whitespace(data)
+                            inline_parts.append(_escape_text(data))
+                            continue
+
+                        if _is_layout_blocky_element(child):
+                            flush_inline()
+                            mixed_multiline_lines.append(
+                                _node_to_html(child, indent + 1, indent_size, pretty=True, in_pre=content_pre)
+                            )
+                            continue
+
+                        # Inline element: keep it in the current line without leading indentation.
+                        inline_parts.append(_node_to_html(child, 0, indent_size, pretty=True, in_pre=content_pre))
+
+                    flush_inline()
+                    inner = "\n".join(line for line in mixed_multiline_lines if line)
+                    return f"{prefix}{open_tag}\n{inner}\n{prefix}{serialize_end_tag(name)}"
+
             has_comment = False
             has_element = False
             has_whitespace_between_elements = False
@@ -389,32 +723,32 @@ def _node_to_html(node: Any, indent: int = 0, indent_size: int = 2, pretty: bool
                         break
 
             if has_element and has_whitespace_between_elements and not has_comment and can_indent_non_whitespace_text:
-                inner_lines: list[str] = []
+                element_multiline_lines: list[str] = []
                 for child in children:
                     if child is None:
                         continue
                     if child.name == "#text":
                         text = _collapse_html_whitespace(child.data or "")
                         if text:
-                            inner_lines.append(f"{' ' * ((indent + 1) * indent_size)}{_escape_text(text)}")
+                            element_multiline_lines.append(f"{' ' * ((indent + 1) * indent_size)}{_escape_text(text)}")
                         continue
                     child_html = _node_to_html(child, indent + 1, indent_size, pretty=True, in_pre=content_pre)
                     if child_html:
-                        inner_lines.append(child_html)
-                if inner_lines:
-                    inner = "\n".join(inner_lines)
+                        element_multiline_lines.append(child_html)
+                if element_multiline_lines:
+                    inner = "\n".join(element_multiline_lines)
                     return f"{prefix}{open_tag}\n{inner}\n{prefix}{serialize_end_tag(name)}"
 
         inner_parts: list[str] = []
 
-        first_non_none_index: int | None = None
-        last_non_none_index: int | None = None
+        compact_first_non_none_index: int | None = None
+        compact_last_non_none_index: int | None = None
         for i, child in enumerate(children):
             if child is None:
                 continue
-            if first_non_none_index is None:
-                first_non_none_index = i
-            last_non_none_index = i
+            if compact_first_non_none_index is None:
+                compact_first_non_none_index = i
+            compact_last_non_none_index = i
 
         for i, child in enumerate(children):
             if child is None:
@@ -424,7 +758,7 @@ def _node_to_html(node: Any, indent: int = 0, indent_size: int = 2, pretty: bool
                 data = child.data or ""
                 if not data.strip():
                     # Drop leading/trailing formatting whitespace in compact mode.
-                    if i == first_non_none_index or i == last_non_none_index:
+                    if i == compact_first_non_none_index or i == compact_last_non_none_index:
                         continue
                     # Preserve intentional small spacing, but collapse large formatting gaps.
                     if "\n" in data or "\r" in data or "\t" in data or len(data) > 2:

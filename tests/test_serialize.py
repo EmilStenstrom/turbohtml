@@ -9,6 +9,9 @@ from justhtml.serialize import (
     _collapse_html_whitespace,
     _escape_attr_value,
     _escape_text,
+    _is_blocky_element,
+    _is_formatting_whitespace_text,
+    _is_layout_blocky_element,
     _normalize_formatting_whitespace,
     _should_pretty_indent_children,
     serialize_end_tag,
@@ -139,6 +142,232 @@ class TestSerialize(unittest.TestCase):
             "We ask you, sincerely: don't skip this, join the 2% of readers who give."
             "</div>"
         )
+
+    def test_pretty_block_container_splits_on_formatting_whitespace_runs(self):
+        # Wikipedia-like: large spacing/newlines between inline-ish siblings should become line breaks,
+        # even when there is some non-whitespace text in the flow (which disables the simpler
+        # "all-children-are-elements" multiline rule).
+        div = Node("div")
+        div.append_child(Node("span"))
+        div.append_child(Node("#text", data="      "))
+        div.append_child(Node("a"))
+        div.append_child(Node("#text", data="\n  \t"))
+        div.append_child(Node("#text", data="Search"))
+        div.append_child(Node("#text", data="     "))
+        div.append_child(Node("ul"))
+
+        output = div.to_html(pretty=True, safe=False)
+        expected = textwrap.dedent(
+            """\
+            <div>
+              <span></span>
+              <a></a>
+              Search
+              <ul></ul>
+            </div>
+            """
+        ).strip("\n")
+        assert output == expected
+
+    def test_pretty_block_container_falls_back_when_run_contains_blocky_and_inline(self):
+        # If a "run" contains a blocky element + other nodes, we skip the smart
+        # run-splitting layout and fall back to the existing compact-pretty logic.
+        div = Node("div")
+        div.append_child(Node("span"))
+        div.append_child(Node("#text", data="     "))
+        div.append_child(Node("ul"))
+        div.append_child(Node("span"))  # Adjacent to <ul> (no whitespace) => same run
+        div.append_child(Node("#text", data="\n  \t"))
+        div.append_child(Node("a"))
+        div.append_child(Node("#text", data="     "))
+        div.append_child(Node("#text", data="Tail"))
+
+        output = div.to_html(pretty=True, safe=False)
+        expected = textwrap.dedent(
+            """\
+            <div>
+              <span></span>
+              <ul></ul>
+              <span></span>
+              <a></a>
+              Tail
+            </div>
+            """
+        ).strip("\n")
+        assert output == expected
+
+    def test_pretty_block_container_keeps_inline_run_on_one_line(self):
+        div = Node("div")
+        div.append_child(Node("#text", data="Hello"))
+        div.append_child(Node("#text", data=" "))
+        div.append_child(Node("em"))
+        div.append_child(Node("#text", data=" world"))
+        assert div.to_html(pretty=True, safe=False) == "<div>Hello <em></em> world</div>"
+
+    def test_pretty_block_container_breaks_before_block_child_even_with_small_spaces(self):
+        # Wikipedia-like: block element begins after only small spacing, so the
+        # "formatting whitespace separator" heuristic doesn't trigger.
+        # We still want the block subtree (and its indentation) to be preserved.
+        div = Node("div")
+        div.append_child(Node("#text", data="Main menu  Navigation  "))
+
+        ul = Node("ul")
+        li = Node("li")
+        li.append_child(Node("#text", data="Item"))
+        ul.append_child(li)
+        div.append_child(ul)
+
+        assert div.to_html(pretty=True, safe=False) == textwrap.dedent(
+            """\
+            <div>
+              Main menu  Navigation
+              <ul>
+                <li>Item</li>
+              </ul>
+            </div>
+            """
+        ).strip("\n")
+
+    def test_is_formatting_whitespace_text(self):
+        assert _is_formatting_whitespace_text("") is False
+        assert _is_formatting_whitespace_text("  ") is False
+        assert _is_formatting_whitespace_text("   ") is True
+        assert _is_formatting_whitespace_text("\n") is True
+
+    def test_is_blocky_element_returns_false_for_text_comment_and_doctype_nodes(self):
+        assert _is_blocky_element(Node("#text", data="x")) is False
+        assert _is_blocky_element(Node("#comment", data="c")) is False
+        assert _is_blocky_element(Node("!doctype")) is False
+
+    def test_is_blocky_element_returns_false_for_objects_without_children(self):
+        class _NameOnly:
+            name = "span"
+
+        assert _is_blocky_element(_NameOnly()) is False
+
+    def test_is_layout_blocky_element_returns_false_for_objects_without_name(self):
+        assert _is_layout_blocky_element(object()) is False
+
+    def test_is_layout_blocky_element_returns_false_for_comment_node(self):
+        assert _is_layout_blocky_element(Node("#comment", data="c")) is False
+
+    def test_is_layout_blocky_element_true_for_layout_blocks_and_descendants(self):
+        assert _is_layout_blocky_element(Node("div")) is True
+
+        # Descendant scan: wrapper is inline, but contains a layout block (<ul>).
+        wrapper = Node("span")
+        inner = Node("span")
+        inner.append_child(Node("ul"))
+        # Put None last so it gets popped first (covers the None-skip branch).
+        wrapper.children = [inner, None]
+        assert _is_layout_blocky_element(wrapper) is True
+
+        # Grandchild scan path that does not find a layout block.
+        outer = Node("span")
+        mid = Node("span")
+        mid.append_child(Node("em"))
+        outer.append_child(mid)
+        assert _is_layout_blocky_element(outer) is False
+
+    def test_is_layout_blocky_element_returns_false_for_objects_without_children(self):
+        class _NameOnly:
+            name = "span"
+
+        assert _is_layout_blocky_element(_NameOnly()) is False
+
+    def test_pretty_block_container_smart_mode_keeps_small_spacing_inside_run(self):
+        # Ensure smart run-splitting covers whitespace-only nodes inside runs
+        # (" ") and renders inline elements via _node_to_html(..., indent=0).
+        div = Node("div")
+        div.append_child(Node("span"))
+        div.append_child(Node("#text", data="\n  "))
+        div.append_child(Node("#text", data="Hello"))
+        div.append_child(Node("#text", data=" "))
+        div.append_child(Node("em"))
+        div.append_child(Node("#text", data=" world"))
+        div.append_child(Node("#text", data="\n"))
+        div.append_child(Node("a"))
+
+        assert div.to_html(pretty=True, safe=False) == textwrap.dedent(
+            """\
+            <div>
+              <span></span>
+              Hello <em></em> world
+              <a></a>
+            </div>
+            """
+        ).strip("\n")
+
+    def test_pretty_block_container_smart_mode_ignores_leading_and_trailing_formatting_whitespace(self):
+        # Covers trimming of leading/trailing formatting whitespace in smart-mode.
+        div = Node("div")
+        div.append_child(Node("#text", data="\n"))
+        div.append_child(Node("span"))
+        div.append_child(Node("#text", data="\n"))
+        div.append_child(Node("a"))
+        div.append_child(Node("#text", data=" "))
+        div.append_child(Node("#text", data="Tail"))
+        div.append_child(Node("#text", data="\n"))
+
+        assert div.to_html(pretty=True, safe=False) == textwrap.dedent(
+            """\
+            <div>
+              <span></span>
+              <a></a> Tail
+            </div>
+            """
+        ).strip("\n")
+
+    def test_pretty_block_container_smart_mode_collapses_consecutive_separators(self):
+        # Two adjacent formatting-whitespace text nodes should act like a single separator.
+        div = Node("div")
+
+        # Note: append_child() may merge adjacent text nodes, so set children directly
+        # to guarantee two distinct formatting-whitespace nodes.
+        div.children = [
+            Node("span"),
+            Node("#text", data="\n"),
+            Node("#text", data="\n  \t"),
+            Node("a"),
+            # Make the container mixed-content so we actually take the smart
+            # run-splitting path (the simpler multiline indentation path is disabled
+            # when there is non-whitespace text).
+            Node("#text", data=" Tail"),
+        ]
+
+        assert div.to_html(pretty=True, safe=False) == textwrap.dedent(
+            """\
+            <div>
+              <span></span>
+              <a></a> Tail
+            </div>
+            """
+        ).strip("\n")
+
+    def test_pretty_block_container_multiline_mode_skips_none_and_edge_whitespace(self):
+        # Exercise None-child skipping and leading/trailing whitespace-only handling.
+        div = Node("div")
+        ul = Node("ul")
+        ul.append_child(Node("li"))
+        div.children = [
+            None,
+            Node("#text", data="   "),
+            Node("#text", data="Text"),
+            ul,
+            Node("#text", data="   "),
+            None,
+        ]
+
+        assert div.to_html(pretty=True, safe=False) == textwrap.dedent(
+            """\
+            <div>
+              Text
+              <ul>
+                <li></li>
+              </ul>
+            </div>
+            """
+        ).strip("\n")
 
     def test_pretty_text_only_element_empty_text_is_dropped(self):
         h3 = Node("h3")
@@ -309,18 +538,18 @@ class TestSerialize(unittest.TestCase):
         ).strip("\n")
         assert output == expected
 
-    def test_pretty_indent_children_does_not_indent_inline_elements(self):
+    def test_pretty_indent_children_indents_inline_elements_in_block_containers(self):
         div = Node("div")
         div.append_child(Node("span"))
         output = div.to_html(pretty=True, safe=False)
-        assert output == "<div><span></span></div>"
+        assert output == "<div>\n  <span></span>\n</div>"
 
-    def test_pretty_indent_children_does_not_indent_adjacent_inline_elements(self):
+    def test_pretty_indent_children_indents_adjacent_inline_elements_in_block_containers(self):
         div = Node("div")
         div.append_child(Node("span"))
         div.append_child(Node("em"))
         output = div.to_html(pretty=True, safe=False)
-        assert output == "<div><span></span><em></em></div>"
+        assert output == "<div>\n  <span></span>\n  <em></em>\n</div>"
 
     def test_compact_pretty_collapses_large_whitespace_gaps(self):
         # Two adjacent inline children are rendered in compact mode.
@@ -362,6 +591,53 @@ class TestSerialize(unittest.TestCase):
         children = [Node("#text", data="  "), Node("#text", data="\n")]
         assert _should_pretty_indent_children(children) is True
 
+    def test_should_pretty_indent_children_skips_none_children(self):
+        # Defensive: children lists can contain None.
+        children = [None, Node("#text", data=" "), None]
+        assert _should_pretty_indent_children(children) is True
+
+    def test_should_pretty_indent_children_single_special_element_child(self):
+        # Single block-ish child should allow indentation.
+        children = [Node("div")]
+        assert _should_pretty_indent_children(children) is True
+
+    def test_should_pretty_indent_children_single_inline_element_child(self):
+        # Single inline/phrasing child should *not* allow indentation.
+        children = [Node("span")]
+        assert _should_pretty_indent_children(children) is False
+
+    def test_should_pretty_indent_children_single_inline_child_with_block_descendant(self):
+        # Inline wrapper that contains block-ish content should be treated as block-ish.
+        wrapper = Node("span")
+        wrapper.append_child(Node("div"))
+        assert _should_pretty_indent_children([wrapper]) is True
+
+    def test_should_pretty_indent_children_allows_adjacent_blocky_inline_children(self):
+        # Two inline elements that both contain block-ish descendants should allow indentation.
+        a1 = Node("a")
+        a1.append_child(Node("div"))
+        a2 = Node("a")
+        a2.append_child(Node("div"))
+        assert _should_pretty_indent_children([a1, a2]) is True
+
+    def test_is_blocky_element_returns_false_for_objects_without_name(self):
+        assert _is_blocky_element(object()) is False
+
+    def test_is_blocky_element_scans_grandchildren(self):
+        # Ensure the descendant scanning path is exercised even when no block-ish
+        # elements are found.
+        outer = Node("span")
+        mid = Node("span")
+        mid.append_child(Node("em"))
+        outer.append_child(mid)
+        assert _is_blocky_element(outer) is False
+
+    def test_should_pretty_indent_children_single_anchor_with_special_grandchild(self):
+        # Anchor wrapping block-ish content should be treated as block-ish.
+        link = Node("a")
+        link.children = [None, Node("div")]
+        assert _should_pretty_indent_children([link]) is True
+
     def test_compact_pretty_preserves_small_spacing_exactly(self):
         # When there is already whitespace separating element siblings in a block-ish
         # container, prefer multiline formatting over preserving exact whitespace.
@@ -385,7 +661,7 @@ class TestSerialize(unittest.TestCase):
         # Manually inject a None child to exercise defensive branch.
         div.children = [Node("span"), None, Node("em")]
         output = div.to_html(pretty=True, safe=False)
-        assert output == "<div><span></span><em></em></div>"
+        assert output == "<div>\n  <span></span>\n  <em></em>\n</div>"
 
     def test_compact_pretty_drops_empty_text_children(self):
         div = Node("div")
@@ -409,7 +685,7 @@ class TestSerialize(unittest.TestCase):
         div.append_child(Node("a"))
         div.append_child(Node("#text", data=" \t\n"))
         output = div.to_html(pretty=True, safe=False)
-        assert output == "<div><a></a></div>"
+        assert output == "<div>\n  <a></a>\n</div>"
 
     def test_blockish_compact_multiline_not_used_with_comment_children(self):
         div = Node("div")
@@ -478,6 +754,29 @@ class TestSerialize(unittest.TestCase):
         ).strip("\n")
         assert output == expected
 
+    def test_blockish_compact_multiline_skips_none_children_with_trailing_text(self):
+        # Exercise the multiline-eligibility path that allows trailing non-whitespace text,
+        # while also skipping None children in both scanning and rendering loops.
+        div = Node("div")
+        div.children = [
+            Node("span"),
+            Node("#text", data=" "),
+            None,
+            Node("span"),
+            Node("#text", data=" trailing\n"),
+        ]
+        output = div.to_html(pretty=True, safe=False)
+        expected = textwrap.dedent(
+            """\
+            <div>
+              <span></span>
+              <span></span>
+              trailing
+            </div>
+            """
+        ).strip("\n")
+        assert output == expected
+
     def test_compact_mode_collapses_newline_whitespace_for_inline_container(self):
         # For non-block containers, we stay in compact mode and collapse
         # formatting whitespace to a single space.
@@ -487,6 +786,26 @@ class TestSerialize(unittest.TestCase):
         outer.append_child(Node("span"))
         output = outer.to_html(pretty=True, safe=False)
         assert output == "<span><span></span> <span></span></span>"
+
+    def test_compact_mode_drops_edge_whitespace_with_none_children(self):
+        # Ensure the compact-mode whitespace edge trimming is robust with None children.
+        div = Node("div")
+        div.children = [
+            Node("#text", data=" \n"),
+            Node("a"),
+            Node("#comment", data="x"),
+            Node("#text", data=" \t\n"),
+            None,
+        ]
+        output = div.to_html(pretty=True, safe=False)
+        assert output == "<div><a></a><!--x--></div>"
+
+    def test_pretty_indentation_skips_whitespace_text_nodes(self):
+        # Hit the indentation-mode branch that skips whitespace-only text nodes.
+        outer = Node("span")
+        outer.children = [Node("div"), Node("#text", data=" \n\t"), Node("div")]
+        output = outer.to_html(pretty=True, safe=False)
+        assert output == "<span>\n  <div></div>\n  <div></div>\n</span>"
 
     def test_indents_single_anchor_child_when_anchor_wraps_block_elements(self):
         container = Node("div")
@@ -511,6 +830,11 @@ class TestSerialize(unittest.TestCase):
     def test_single_anchor_child_not_blockish_without_special_grandchildren(self):
         link = Node("a")
         link.children = [None, Node("span")]
+        assert _should_pretty_indent_children([link]) is False
+
+    def test_single_anchor_child_not_blockish_without_grandchildren(self):
+        link = Node("a")
+        link.children = []
         assert _should_pretty_indent_children([link]) is False
 
     def test_pretty_indent_children_does_not_indent_comments(self):
