@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from .context import FragmentContext
 from .encoding import decode_html
 from .tokenizer import Tokenizer, TokenizerOpts
+from .transforms import apply_compiled_transforms, compile_transforms
 from .treebuilder import TreeBuilder
 
 if TYPE_CHECKING:
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
     from .node import SimpleDomNode
     from .sanitize import SanitizationPolicy
     from .tokens import ParseError
+    from .transforms import Transform
 
 
 class StrictModeError(SyntaxError):
@@ -65,12 +67,18 @@ class JustHTML:
         strict: bool = False,
         tokenizer_opts: TokenizerOpts | None = None,
         tree_builder: TreeBuilder | None = None,
+        transforms: list[Transform] | None = None,
     ) -> None:
         if fragment_context is not None:
             fragment = True
 
         if fragment and fragment_context is None:
             fragment_context = FragmentContext("div")
+
+        # Compile transforms early so invalid selectors fail fast.
+        compiled_transforms = None
+        if transforms:
+            compiled_transforms = compile_transforms(tuple(transforms))
 
         self.debug = bool(debug)
         self.fragment_context = fragment_context
@@ -117,6 +125,9 @@ class JustHTML:
 
         self.tokenizer.run(html_str)
         self.root = self.tree_builder.finish()
+
+        if compiled_transforms is not None:
+            apply_compiled_transforms(self.root, compiled_transforms)
 
         if should_collect:
             # Merge errors from both tokenizer and tree builder.

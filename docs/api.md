@@ -15,7 +15,7 @@ from justhtml import JustHTML
 ### Constructor
 
 ```python
-JustHTML(html, strict=False, collect_errors=False, encoding=None, fragment=False, fragment_context=None)
+JustHTML(html, strict=False, collect_errors=False, encoding=None, fragment=False, fragment_context=None, transforms=None)
 ```
 
 | Parameter | Type | Default | Description |
@@ -26,6 +26,7 @@ JustHTML(html, strict=False, collect_errors=False, encoding=None, fragment=False
 | `encoding` | `str \| None` | `None` | Transport-supplied encoding label used as an override for byte input. See [Encoding & Byte Input](encoding.md). |
 | `fragment` | `bool` | `False` | Parse as a fragment in a default `<div>` context (convenience). |
 | `fragment_context` | `FragmentContext` | `None` | Parse as fragment inside this context element |
+| `transforms` | `list[Transform] \| None` | `None` | Optional DOM transforms applied after parsing. See [Transforms](transforms.md). |
 
 ### Properties
 

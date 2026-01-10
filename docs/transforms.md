@@ -1,0 +1,234 @@
+[← Back to docs](index.md)
+
+# Transforms
+
+JustHTML supports optional **transforms** to modify the parsed DOM tree right after parsing.
+
+This is intended as a migration path for Bleach/html5lib filter pipelines, but implemented as DOM transforms (tree-aware and HTML5-treebuilder-correct).
+
+Transforms are applied during construction via the `transforms` keyword argument:
+
+```python
+from justhtml import JustHTML
+
+doc = JustHTML("<p>Hello</p>", transforms=[...])
+```
+
+## Quick example
+
+```python
+from justhtml import JustHTML, SetAttrs, Drop
+
+doc = JustHTML(
+    "<p>Hello</p><script>alert(1)</script>",
+    transforms=[
+        SetAttrs("p", id="greeting"),
+        Drop("script"),
+    ],
+)
+
+# The tree is transformed in memory
+print(doc.root.to_html(safe=False))
+
+# Output is still safe by default
+print(doc.to_html(pretty=False))
+```
+
+## Safety model
+
+- Transforms run **once**, right after parsing, and mutate `doc.root`.
+- Safe-by-default output is still enforced by:
+  - `JustHTML.to_html(safe=True)`
+  - `JustHTML.to_text(safe=True)`
+  - `JustHTML.to_markdown(safe=True)`
+
+This means output stays safe even if you mutate the DOM after parsing.
+
+Transforms do not sanitize the in-memory tree. `safe=True` serialization sanitizes a cloned view of the tree right before output.
+
+Raw output for trusted input is available via `safe=False`:
+
+```python
+doc.to_html(pretty=False, safe=False)
+doc.root.to_html(pretty=False, safe=False)
+```
+
+Sanitization can remove or rewrite transform results (for example, unsafe tags, event handler attributes, or unsafe URLs in `href`).
+
+## Ordering
+
+Transforms run in the order they are provided.
+
+Later transforms see earlier changes. If a transform removes a node (for example `Drop` or `Unwrap`), later transforms will not see that node.
+
+```python
+from justhtml import JustHTML, Drop, SetAttrs
+
+doc = JustHTML(
+    "<p>Hello</p>",
+    transforms=[
+        SetAttrs("p", id="x"),
+        Drop("p"),
+    ],
+)
+```
+
+## Tree shape
+
+Transforms operate on the HTML5 treebuilder result, not the original token stream.
+
+This means elements may already be inserted, moved, or normalized according to HTML parsing rules (for example, `<template>` elements end up in `<head>` in a full document).
+
+## Performance
+
+JustHTML **compiles transforms before applying them**:
+
+- CSS selectors are parsed once up front.
+- The tree is then walked with the compiled transforms.
+
+Transforms are applied with a single in-place traversal that supports structural edits.
+
+Transforms are optional; omitting `transforms` keeps constructor behavior unchanged.
+
+## Validation
+
+Transform selectors are validated during construction.
+Invalid selectors raise `SelectorError` early, before the document is exposed.
+
+Only the built-in transform objects are supported.
+Unsupported transform objects raise `TypeError`.
+
+## Scope
+
+Selector-based transforms (`SetAttrs`, `Drop`, `Unwrap`, `Empty`, `Edit`) apply only to element nodes.
+They never match document containers, text nodes, comments, or doctypes.
+
+## Built-in transforms
+
+### `SetAttrs(selector, **attrs)`
+
+Sets/overwrites attributes on matching elements.
+
+Attribute values are converted to strings.
+Passing `None` creates a boolean attribute (serialized in minimized form by default).
+
+```python
+SetAttrs("a", rel="nofollow", target="_blank")
+SetAttrs("input", disabled=None)
+```
+
+### `Drop(selector)`
+
+Removes matching elements and their contents.
+
+```python
+Drop("script, style")
+Drop(".ad, .tracking")
+```
+
+### `Unwrap(selector)`
+
+Removes the element but keeps its children (hoists contents).
+
+```python
+Unwrap("span")
+Unwrap("div.wrapper")
+```
+
+### `Empty(selector)`
+
+Keeps the element but removes its children.
+
+This also clears `<template>` contents.
+
+```python
+Empty("pre")
+Empty("template")
+```
+
+### `Edit(selector, callback)`
+
+Escape hatch for custom logic. Runs `callback(node)` for each matching element.
+
+`Edit` is useful for transformations that don’t fit the built-ins, such as removing attributes, rewriting URLs, or conditionally dropping nodes.
+
+```python
+from justhtml import JustHTML, Edit
+
+
+def strip_tracking_params(a):
+    href = a.attrs.get("href")
+    if href:
+        a.attrs["href"] = href.split("?", 1)[0]
+
+
+doc = JustHTML(
+    "<a href=\"https://e.com/?utm_source=x\">x</a>",
+    transforms=[Edit("a", strip_tracking_params)],
+)
+```
+
+Removing attributes is typically done via `Edit`:
+
+```python
+from justhtml import JustHTML, Edit
+
+
+def drop_inline_handlers(node):
+    node.attrs.pop("onclick", None)
+    node.attrs.pop("onload", None)
+
+
+doc = JustHTML("<a onclick=\"x()\">x</a>", transforms=[Edit("a", drop_inline_handlers)])
+```
+
+## Recipes
+
+### Add `rel` to all links
+
+```python
+from justhtml import JustHTML, SetAttrs
+
+doc = JustHTML(
+    "<p><a href=\"https://example.com\">Example</a></p>",
+    transforms=[
+        SetAttrs("a", rel="nofollow noreferrer"),
+    ],
+)
+```
+
+### Strip elements but keep their text
+
+```python
+from justhtml import JustHTML, Unwrap
+
+doc = JustHTML(
+    "<p>Hello <span class=\"x\">world</span></p>",
+    transforms=[Unwrap("span.x")],
+)
+```
+
+### Drop unsafe elements early, while still keeping safe-by-default output
+
+```python
+from justhtml import JustHTML, Drop
+
+doc = JustHTML(
+    "<p>ok</p><script>alert(1)</script>",
+    transforms=[Drop("script")],
+)
+print(doc.to_html(pretty=False))
+```
+
+## Reapplying transforms
+
+Transforms passed to `JustHTML(..., transforms=[...])` run only once, during construction.
+
+Transform compilation and application utilities are available for advanced usage:
+
+```python
+from justhtml.transforms import apply_compiled_transforms, compile_transforms
+
+compiled = compile_transforms([...])
+apply_compiled_transforms(doc.root, compiled)
+```
