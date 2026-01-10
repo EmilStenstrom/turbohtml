@@ -201,6 +201,16 @@ class TestTransforms(unittest.TestCase):
         )
         assert doc.to_html(pretty=False, safe=False) == "<p>   </p>"
 
+    def test_pruneempty_does_not_prune_void_elements(self) -> None:
+        doc = JustHTML(
+            '<img src="/static/images/icons/wikipedia.png" alt height="50" width="50">',
+            fragment=True,
+            transforms=[PruneEmpty("*")],
+        )
+        assert doc.to_html(pretty=False, safe=False) == (
+            '<img src="/static/images/icons/wikipedia.png" alt height="50" width="50">'
+        )
+
     def test_pruneempty_strip_whitespace_false_still_drops_empty_text_nodes(self) -> None:
         root = SimpleDomNode("div")
         p = SimpleDomNode("p")

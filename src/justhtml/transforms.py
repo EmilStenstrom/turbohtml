@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast
 
-from .constants import WHITESPACE_PRESERVING_ELEMENTS
+from .constants import VOID_ELEMENTS, WHITESPACE_PRESERVING_ELEMENTS
 from .linkify import LinkifyConfig, find_links_with_config
 from .node import ElementNode, SimpleDomNode, TemplateNode, TextNode
 from .sanitize import SanitizationPolicy, _sanitize
@@ -543,6 +543,9 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
 
     def apply_prune_transforms(root_node: SimpleDomNode, prune_transforms: list[_CompiledPruneEmptyTransform]) -> None:
         def _is_effectively_empty_element(n: SimpleDomNode, *, strip_whitespace: bool) -> bool:
+            if n.namespace == "html" and n.name.lower() in VOID_ELEMENTS:
+                return False
+
             def _has_content(children: list[SimpleDomNode] | None) -> bool:
                 if not children:
                     return False
