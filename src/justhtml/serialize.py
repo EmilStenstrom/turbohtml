@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .constants import FOREIGN_ATTRIBUTE_ADJUSTMENTS, SPECIAL_ELEMENTS, VOID_ELEMENTS
+from .constants import FOREIGN_ATTRIBUTE_ADJUSTMENTS, SPECIAL_ELEMENTS, VOID_ELEMENTS, WHITESPACE_PRESERVING_ELEMENTS
 from .sanitize import DEFAULT_DOCUMENT_POLICY, DEFAULT_POLICY, SanitizationPolicy, _sanitize
 
 # Matches characters that prevent an attribute value from being unquoted.
@@ -136,12 +136,6 @@ def to_html(
             parts.append(_node_to_html(child, indent, indent_size, pretty, in_pre=False))
         return "\n".join(parts) if pretty else "".join(parts)
     return _node_to_html(node, indent, indent_size, pretty, in_pre=False)
-
-
-_PREFORMATTED_ELEMENTS: set[str] = {"pre", "textarea", "code"}
-
-# Elements whose text content must not be normalized (e.g. scripts/styles).
-_RAWTEXT_ELEMENTS: set[str] = {"script", "style"}
 
 
 def _collapse_html_whitespace(text: str) -> str:
@@ -278,7 +272,7 @@ def _node_to_html(node: Any, indent: int = 0, indent_size: int = 2, pretty: bool
     """Helper to convert a node to HTML."""
     prefix = " " * (indent * indent_size) if pretty and not in_pre else ""
     name: str = node.name
-    content_pre = in_pre or name in _PREFORMATTED_ELEMENTS
+    content_pre = in_pre or name in WHITESPACE_PRESERVING_ELEMENTS
     newline = "\n" if pretty and not content_pre else ""
 
     # Text node
@@ -334,8 +328,7 @@ def _node_to_html(node: Any, indent: int = 0, indent_size: int = 2, pretty: bool
         # Serializer controls sanitization at the to_html() entry point; avoid
         # implicit re-sanitization during rendering.
         text_content = node.to_text(separator="", strip=False, safe=False)
-        if name not in _RAWTEXT_ELEMENTS:
-            text_content = _collapse_html_whitespace(text_content)
+        text_content = _collapse_html_whitespace(text_content)
         return f"{prefix}{open_tag}{_escape_text(text_content)}{serialize_end_tag(name)}"
 
     if pretty and content_pre:
@@ -438,8 +431,7 @@ def _node_to_html(node: Any, indent: int = 0, indent_size: int = 2, pretty: bool
                         inner_parts.append(" ")
                         continue
 
-                if not content_pre and name not in _RAWTEXT_ELEMENTS:
-                    data = _normalize_formatting_whitespace(data)
+                data = _normalize_formatting_whitespace(data)
                 child_html = _escape_text(data) if data else ""
             else:
                 # Even when we can't safely insert whitespace *between* siblings, we can

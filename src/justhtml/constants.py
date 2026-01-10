@@ -184,6 +184,18 @@ HTML4_PUBLIC_PREFIXES = (
 
 HEADING_ELEMENTS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 
+# Elements where pretty-printing and whitespace-collapsing transforms should
+# preserve text node whitespace.
+WHITESPACE_PRESERVING_ELEMENTS: Final[frozenset[str]] = frozenset(
+    {
+        "code",
+        "pre",
+        "script",
+        "style",
+        "textarea",
+    }
+)
+
 FORMATTING_ELEMENTS = {
     "a",
     "b",
