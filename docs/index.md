@@ -16,6 +16,7 @@ A pure Python HTML5 parser that just works.
     - **[HTML Cleaning](html-cleaning.md)** - Tags/attributes allowlists and inline styles
     - **[URL Cleaning](url-cleaning.md)** - URL validation, URL handling, and `srcset`
     - **[Unsafe Handling](unsafe-handling.md)** - What happens when unsafe input is encountered (strip/collect/raise)
+    - **[Migrating from Bleach](bleach-migration.md)** - Guide for replacing Bleach cleaner/filter pipelines
 - **[Streaming](streaming.md)** - Memory-efficient parsing for large files
 - **[Encoding & Byte Input](encoding.md)** - How byte streams are decoded (including `windows-1252` fallback)
 - **[Error Codes](errors.md)** - Parse error codes and their meanings

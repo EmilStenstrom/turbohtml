@@ -13,6 +13,7 @@ The sanitizer is **DOM-based** (it runs on the parsed JustHTML tree), and JustHT
 - [HTML Cleaning](html-cleaning.md): tags/attributes allowlists and inline styles.
 - [URL Cleaning](url-cleaning.md): validation of URL-valued attributes (`href`, `src`, `srcset`, …), plus strip/proxy rules.
 - [Unsafe Handling](unsafe-handling.md): what happens when unsafe input is encountered (strip/collect/raise).
+- [Migrating from Bleach](bleach-migration.md): mapping Bleach cleaner/filter pipelines to JustHTML.
 
 ## Quickstart
 
