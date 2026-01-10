@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.32.0] - 2026-01-10
+### Added
+- Add constructor-time DOM transforms via `JustHTML(..., transforms=[...])` (see [Transforms](docs/transforms.md)).
+- Add `Linkify(...)` transform for wrapping detected URLs/emails in `<a>` tags (see [Linkify](docs/linkify.md)).
+- Add `Sanitize(...)` transform to sanitize the **in-memory DOM tree** (must be last) (see [HTML Cleaning](docs/html-cleaning.md) and [Transforms](docs/transforms.md)). Note that this does **not** replace the sanitization happening on serilization; that's still there.
+
+### Changed
+- BREAKING: Remove the public `sanitize(...)` function. If you need a sanitized DOM tree, use `Sanitize(...)` as the last transform; safe-by-default output sanitization remains available via `safe=True` serialization (see [HTML Cleaning](docs/html-cleaning.md)).
+- Improve playground layout responsiveness and parse error display (see [Playground](https://emilstenstrom.github.io/justhtml/playground/)).
+
+### Docs
+- Add a migration guide for users coming from Bleach (see [Migrating from Bleach](docs/bleach-migration.md)).
+
 ## [0.31.0] - 2026-01-09
 ### Changed
 - Add more type hints across tokenizer and tree builder internals (thanks @collinanderson).
@@ -71,13 +84,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Update Pyodide installation code to use latest `justhtml` package version.
 - Update Playground link to use correct file extension in documentation.
 - Remove redundant label from Playground link in documentation.
+- Add a migration guide for users coming from Bleach (see [Migrating from Bleach](docs/bleach-migration.md)).
 ### Changed
 - Enhance README with code examples, documentation links, and improved clarity in usage and comparison sections.
 
 ## [0.23.0] - 2025-12-30
 ### Added
-- Add origin tracking for nodes and improve tokenizer location handling.
-- Add support for `justhtml` test suite in `run_tests.py` and documentation.
 - Add support for running specific test suites with `--suite` option.
 ### Changed
 - Update compliance scores and add browser engine agreement section in README.md.
