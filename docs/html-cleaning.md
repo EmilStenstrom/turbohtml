@@ -21,7 +21,7 @@ On this page:
 
 The parsed DOM is **not sanitized** by default, instead we sanitize on serialization (when you convert it back to a string): `doc.to_html()` / `doc.to_markdown()` / `doc.to_text()`.
 
-If you want a **clean DOM tree** (for example so you can traverse/transform it safely or serialize it multiple ways), call `sanitize(...)` to produce a sanitized clone.
+If you want a **clean DOM tree** (for example so you can traverse/transform it safely or serialize it multiple ways), apply the `Sanitize(...)` transform to sanitize the in-memory tree.
 
 ## Safe-by-default serialization
 
@@ -46,18 +46,18 @@ Output:
 Hello **world** [bad] [ok](https://example.com/?a=1&b=2)
 ```
 
-## Sanitizing a DOM directly
+## Sanitizing the in-memory DOM
 
-If you will be working with the DOM transforming it, and want a clean slate to work from.
+If you will be working with the DOM and want a clean slate to work from, apply `Sanitize(...)` as the last transform.
 
 ```python
-from justhtml import JustHTML, sanitize, to_html
+from justhtml import JustHTML, Sanitize
 
 user_html = '<p>Hello <b>world</b> <script>alert(1)</script> <a href="javascript:alert(1)">bad</a> <a href="https://example.com/?a=1&b=2">ok</a></p>'
-root = JustHTML(user_html, fragment=True).root
+doc = JustHTML(user_html, fragment=True, transforms=[Sanitize()])
 
-clean_root = sanitize(root)
-print(to_html(clean_root))
+# The DOM is now sanitized in-memory.
+print(doc.root.to_html(pretty=False, safe=False))
 ```
 
 ## Disable sanitization

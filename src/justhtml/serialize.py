@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 from .constants import FOREIGN_ATTRIBUTE_ADJUSTMENTS, SPECIAL_ELEMENTS, VOID_ELEMENTS
-from .sanitize import DEFAULT_DOCUMENT_POLICY, DEFAULT_POLICY, SanitizationPolicy, sanitize
+from .sanitize import DEFAULT_DOCUMENT_POLICY, DEFAULT_POLICY, SanitizationPolicy, _sanitize
 
 # Matches characters that prevent an attribute value from being unquoted.
 # Note: This matches the logic of the previous loop-based implementation.
@@ -126,9 +126,9 @@ def to_html(
     """Convert node to HTML string."""
     if safe:
         if policy is None and node.name == "#document":
-            node = sanitize(node, policy=DEFAULT_DOCUMENT_POLICY)
+            node = _sanitize(node, policy=DEFAULT_DOCUMENT_POLICY)
         else:
-            node = sanitize(node, policy=policy or DEFAULT_POLICY)
+            node = _sanitize(node, policy=policy or DEFAULT_POLICY)
     if node.name == "#document":
         # Document root - just render children
         parts: list[str] = []

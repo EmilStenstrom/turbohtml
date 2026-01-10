@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
-from .sanitize import sanitize
+from .sanitize import _sanitize
 from .selector import query
 from .serialize import to_html
 
@@ -325,7 +325,7 @@ class SimpleDomNode:
 
         Template element contents are included via `template_content`.
         """
-        node: Any = sanitize(self, policy=policy) if safe else self
+        node: Any = _sanitize(self, policy=policy) if safe else self
         parts: list[str] = []
         _to_text_collect(node, parts, strip=strip)
         if not parts:
@@ -340,7 +340,7 @@ class SimpleDomNode:
         - Unknown elements fall back to rendering their children.
         """
         if safe:
-            node = sanitize(self, policy=policy)
+            node = _sanitize(self, policy=policy)
             builder = _MarkdownBuilder()
             _to_markdown_walk(node, builder, preserve_whitespace=False, list_depth=0)
             return builder.finish()

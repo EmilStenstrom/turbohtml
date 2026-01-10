@@ -1052,8 +1052,10 @@ def _append_sanitized_subtree(*, policy: SanitizationPolicy, original: Any, pare
         stack.extend((child, clone) for child in reversed(children))
 
 
-def sanitize(node: Any, *, policy: SanitizationPolicy | None = None) -> Any:
+def _sanitize(node: Any, *, policy: SanitizationPolicy | None = None) -> Any:
     """Return a sanitized clone of `node`.
+
+    Private implementation detail.
 
     If `policy` is not provided, JustHTML uses a conservative default policy.
     For full documents (`#document` roots) it preserves `<html>`, `<head>`, and

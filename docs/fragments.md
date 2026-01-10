@@ -203,13 +203,11 @@ ctx = FragmentContext("math", namespace="math")
 from justhtml import JustHTML
 from justhtml.context import FragmentContext
 
-from justhtml import SanitizationPolicy, UrlPolicy, UrlRule, sanitize, to_html
+from justhtml import Sanitize, SanitizationPolicy, UrlPolicy, UrlRule
 
 def sanitize_fragment(html: str) -> str:
     """Sanitize user HTML as if it was inserted into a <div>."""
     ctx = FragmentContext("div")
-    doc = JustHTML(html, fragment_context=ctx)
-
     policy = SanitizationPolicy(
         allowed_tags={"p", "b", "i", "a", "ul", "ol", "li"},
         allowed_attributes={"*": [], "a": ["href"]},
@@ -219,8 +217,10 @@ def sanitize_fragment(html: str) -> str:
         ),
     )
 
-    clean_root = sanitize(doc.root, policy=policy)
-    return to_html(clean_root, pretty=False, safe=False)
+    # Sanitize the in-memory DOM by applying a Sanitize transform.
+    # Sanitize must be last.
+    doc = JustHTML(html, fragment_context=ctx, transforms=[Sanitize(policy)])
+    return doc.root.to_html(pretty=False, safe=False)
 
 # Usage
 dirty = '<p>Hello</p><script>alert("xss")</script><b>world</b>'

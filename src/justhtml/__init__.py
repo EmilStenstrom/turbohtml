@@ -8,13 +8,12 @@ from .sanitize import (
     UrlPolicy,
     UrlProxy,
     UrlRule,
-    sanitize,
 )
 from .selector import SelectorError, matches, query
 from .serialize import to_html, to_test_format
 from .stream import stream
 from .tokens import ParseError
-from .transforms import Drop, Edit, Empty, Linkify, SetAttrs, Unwrap
+from .transforms import Drop, Edit, Empty, Linkify, Sanitize, SetAttrs, Unwrap
 
 __all__ = [
     "CSS_PRESET_TEXT",
@@ -27,6 +26,7 @@ __all__ = [
     "Linkify",
     "ParseError",
     "SanitizationPolicy",
+    "Sanitize",
     "SelectorError",
     "SetAttrs",
     "StrictModeError",
@@ -37,7 +37,6 @@ __all__ = [
     "UrlRule",
     "matches",
     "query",
-    "sanitize",
     "stream",
     "to_html",
     "to_test_format",

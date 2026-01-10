@@ -111,6 +111,7 @@ It never touches attributes, existing tags, comments, or doctypes.
 ## Built-in transforms
 
 - [`Linkify(...)`](linkify.md) — Scan text nodes and convert URLs/emails into `<a>` elements.
+- `Sanitize(policy=None)` — Sanitize the in-memory tree (must be last).
 - `SetAttrs(selector, **attrs)` — Set/overwrite attributes on matching elements.
 - `Drop(selector)` — Remove matching elements and their contents.
 - `Unwrap(selector)` — Remove the element but keep its children.
@@ -120,6 +121,13 @@ It never touches attributes, existing tags, comments, or doctypes.
 ### `Linkify(...)`
 
 See [`Linkify(...)`](linkify.md) for full documentation and examples.
+
+### `Sanitize(policy=None)`
+
+Sanitizes the in-memory DOM tree using the same sanitizer as `safe=True` output.
+
+- This is useful if you want to traverse/modify a clean DOM.
+- `Sanitize(...)` must be last. If you need both transforms and a clean DOM, apply your transforms first, then `Sanitize(...)`.
 
 ### `SetAttrs(selector, **attrs)`
 

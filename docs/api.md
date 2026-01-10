@@ -149,23 +149,19 @@ Guides:
 - [Unsafe Handling](unsafe-handling.md)
 
 ```python
-from justhtml import DEFAULT_POLICY, SanitizationPolicy, UrlPolicy, UrlProxy, UrlRule, sanitize
+from justhtml import DEFAULT_POLICY, SanitizationPolicy, UrlPolicy, UrlProxy, UrlRule
 ```
 
-### `sanitize(node, policy=None)`
+### Sanitizing output vs sanitizing the DOM
 
-Sanitize a node (usually a document or fragment root) and return a **sanitized clone**.
-
-If `policy` is omitted:
-
-- Full documents (`#document`) use `DEFAULT_DOCUMENT_POLICY`.
-- Fragments and element roots use `DEFAULT_POLICY`.
+- Output sanitization is the default: `doc.to_html()` / `doc.to_markdown()` sanitize by default (`safe=True`).
+- If you want the *in-memory* DOM to be sanitized (so later DOM edits/traversal operate on cleaned HTML), apply the `Sanitize(...)` transform as the last transform.
 
 ```python
-from justhtml import JustHTML, sanitize
+from justhtml import JustHTML, Sanitize
 
-root = JustHTML(user_html).root
-clean_root = sanitize(root)
+doc = JustHTML(user_html, fragment=True, transforms=[Sanitize()])
+clean_root = doc.root
 ```
 
 ### `DEFAULT_POLICY`

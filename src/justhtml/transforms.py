@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from .linkify import LinkifyConfig, find_links_with_config
 from .node import ElementNode, SimpleDomNode, TemplateNode, TextNode
+from .sanitize import SanitizationPolicy, _sanitize
 from .selector import SelectorMatcher, parse_selector
 
 if TYPE_CHECKING:
@@ -104,12 +105,30 @@ class Linkify:
         object.__setattr__(self, "extra_tlds", frozenset(str(t).lower() for t in extra_tlds))
 
 
+@dataclass(frozen=True, slots=True)
+class Sanitize:
+    """Sanitize the in-memory tree.
+
+    This transform replaces the current tree with a sanitized clone using the
+    same sanitizer that powers `safe=True` serialization.
+
+    Notes:
+    - This runs once at parse/transform time.
+    - This transform must be last.
+    """
+
+    policy: SanitizationPolicy | None
+
+    def __init__(self, policy: SanitizationPolicy | None = None) -> None:
+        object.__setattr__(self, "policy", policy)
+
+
 # -----------------
 # Compilation
 # -----------------
 
 
-Transform = SetAttrs | Drop | Unwrap | Empty | Edit | Linkify
+Transform = SetAttrs | Drop | Unwrap | Empty | Edit | Linkify | Sanitize
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,10 +146,24 @@ class _CompiledLinkifyTransform:
     config: LinkifyConfig
 
 
-CompiledTransform = _CompiledSelectorTransform | _CompiledLinkifyTransform
+@dataclass(frozen=True, slots=True)
+class _CompiledSanitizeTransform:
+    kind: Literal["sanitize"]
+    policy: SanitizationPolicy | None
+
+
+CompiledTransform = _CompiledSelectorTransform | _CompiledLinkifyTransform | _CompiledSanitizeTransform
 
 
 def compile_transforms(transforms: list[Transform] | tuple[Transform, ...]) -> list[CompiledTransform]:
+    if transforms:
+        sanitize_count = sum(1 for t in transforms if isinstance(t, Sanitize))
+        if sanitize_count:
+            if sanitize_count > 1:
+                raise ValueError("Only one Sanitize transform is supported")
+            if not isinstance(transforms[-1], Sanitize):
+                raise ValueError("Sanitize transform must be last")
+
     compiled: list[CompiledTransform] = []
     for t in transforms:
         if isinstance(t, SetAttrs):
@@ -194,6 +227,10 @@ def compile_transforms(transforms: list[Transform] | tuple[Transform, ...]) -> l
             )
             continue
 
+        if isinstance(t, Sanitize):
+            compiled.append(_CompiledSanitizeTransform(kind="sanitize", policy=t.policy))
+            continue
+
         raise TypeError(f"Unsupported transform: {type(t).__name__}")
 
     return compiled
@@ -207,6 +244,11 @@ def compile_transforms(transforms: list[Transform] | tuple[Transform, ...]) -> l
 def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransform]) -> None:
     if not compiled:
         return
+
+    sanitize_transform: _CompiledSanitizeTransform | None = None
+    if isinstance(compiled[-1], _CompiledSanitizeTransform):
+        sanitize_transform = compiled[-1]
+        compiled = compiled[:-1]
 
     matcher = SelectorMatcher()
 
@@ -332,4 +374,54 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
             i += 1
 
     # Root containers are never elements; treat as not-skipped.
-    apply_to_children(root, skip_linkify=False)
+    # Note: callers normally pass a document/document-fragment root, but we
+    # support sanitizing a TextNode root as well.
+    if type(root) is not TextNode:
+        apply_to_children(root, skip_linkify=False)
+
+    if sanitize_transform is not None:
+        sanitized = _sanitize(root, policy=sanitize_transform.policy)
+
+        def _detach_children(n: SimpleDomNode) -> None:
+            if n.children:
+                for child in n.children:
+                    child.parent = None
+
+        def _reparent_children(n: SimpleDomNode) -> None:
+            if n.children:
+                for child in n.children:
+                    child.parent = n
+
+        # Overwrite the root node in-place so callers keep their reference.
+        # This supports the common case (document/document-fragment root) as well
+        # as advanced usage where callers pass an element root.
+        if type(root) is TextNode:
+            root.data = sanitized.data
+            return
+
+        _detach_children(root)
+
+        if type(root) is TemplateNode:
+            root.name = sanitized.name
+            root.namespace = sanitized.namespace
+            root.attrs = sanitized.attrs
+            root.children = sanitized.children
+            root.template_content = sanitized.template_content
+            _reparent_children(root)
+            return
+
+        if type(root) is ElementNode:
+            root.name = sanitized.name
+            root.namespace = sanitized.namespace
+            root.attrs = sanitized.attrs
+            root.children = sanitized.children
+            root.template_content = sanitized.template_content
+            _reparent_children(root)
+            return
+
+        root.name = sanitized.name
+        root.namespace = sanitized.namespace
+        root.data = sanitized.data
+        root.attrs = sanitized.attrs
+        root.children = sanitized.children
+        _reparent_children(root)

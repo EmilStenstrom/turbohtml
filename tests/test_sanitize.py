@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+import justhtml
 from justhtml import JustHTML
 from justhtml.node import SimpleDomNode, TemplateNode, TextNode
 from justhtml.sanitize import (
@@ -17,7 +18,9 @@ from justhtml.sanitize import (
     _sanitize_url_value,
     _srcset_contains_external_url,
     _url_is_external,
-    sanitize,
+)
+from justhtml.sanitize import (
+    _sanitize as sanitize,
 )
 from justhtml.serialize import to_html
 
@@ -25,6 +28,8 @@ from justhtml.serialize import to_html
 class TestSanitizePlumbing(unittest.TestCase):
     def test_public_api_exports_exist(self) -> None:
         assert isinstance(DEFAULT_POLICY, SanitizationPolicy)
+        assert "sanitize" not in justhtml.__all__
+        assert "Sanitize" in justhtml.__all__
         assert callable(sanitize)
 
     def test_urlproxy_rejects_empty_url(self) -> None:
