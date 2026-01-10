@@ -10,6 +10,7 @@ A pure Python HTML5 parser that just works.
 - **[Extracting Text](text.md)** - `to_text()` and `to_markdown()`
 - **[CSS Selectors](selectors.md)** - Query elements with familiar CSS syntax
 - **[Transforms](transforms.md)** - Apply declarative DOM transforms after parsing
+    - **[Linkify](linkify.md)** - Convert URLs/emails in text nodes into links
 - **[Fragment Parsing](fragments.md)** - Parse HTML fragments in context
 - **[Sanitization & Security](sanitization.md)** - Overview of safe-by-default output and policy configuration
     - **[HTML Cleaning](html-cleaning.md)** - Tags/attributes allowlists and inline styles

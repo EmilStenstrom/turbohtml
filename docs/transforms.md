@@ -103,7 +103,21 @@ Unsupported transform objects raise `TypeError`.
 Selector-based transforms (`SetAttrs`, `Drop`, `Unwrap`, `Empty`, `Edit`) apply only to element nodes.
 They never match document containers, text nodes, comments, or doctypes.
 
+`Linkify` is different: it scans **text nodes** and wraps detected URLs/emails in `<a>` elements.
+It never touches attributes, existing tags, comments, or doctypes.
+
 ## Built-in transforms
+
+- [`Linkify(...)`](linkify.md) — Scan text nodes and convert URLs/emails into `<a>` elements.
+- `SetAttrs(selector, **attrs)` — Set/overwrite attributes on matching elements.
+- `Drop(selector)` — Remove matching elements and their contents.
+- `Unwrap(selector)` — Remove the element but keep its children.
+- `Empty(selector)` — Remove all children of matching elements.
+- `Edit(selector, callback)` — Run custom logic for matching elements.
+
+### `Linkify(...)`
+
+See [`Linkify(...)`](linkify.md) for full documentation and examples.
 
 ### `SetAttrs(selector, **attrs)`
 
@@ -228,6 +242,13 @@ Transform compilation and application utilities are available for advanced usage
 
 ```python
 from justhtml.transforms import apply_compiled_transforms, compile_transforms
+
+## Acknowledgements
+
+JustHTML's Linkify behavior is validated against the upstream `linkify-it` fixture suite (MIT licensed).
+
+- Fixtures: `tests/linkify-it/fixtures/`
+- License: `tests/linkify-it/LICENSE.txt`
 
 compiled = compile_transforms([...])
 apply_compiled_transforms(doc.root, compiled)

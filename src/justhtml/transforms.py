@@ -15,7 +15,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast
 
-from .node import SimpleDomNode, TemplateNode
+from .linkify import LinkifyConfig, find_links_with_config
+from .node import ElementNode, SimpleDomNode, TemplateNode, TextNode
 from .selector import SelectorMatcher, parse_selector
 
 if TYPE_CHECKING:
@@ -73,12 +74,42 @@ class Edit:
         object.__setattr__(self, "callback", callback)
 
 
+@dataclass(frozen=True, slots=True)
+class Linkify:
+    """Linkify URLs/emails in text nodes.
+
+    This transform scans DOM text nodes (not raw HTML strings) and wraps detected
+    links in `<a href="...">...</a>`.
+    """
+
+    skip_tags: frozenset[str]
+    fuzzy_ip: bool
+    extra_tlds: frozenset[str]
+
+    def __init__(
+        self,
+        *,
+        skip_tags: list[str] | tuple[str, ...] | set[str] | frozenset[str] = (
+            "a",
+            "code",
+            "pre",
+            "script",
+            "style",
+        ),
+        fuzzy_ip: bool = False,
+        extra_tlds: list[str] | tuple[str, ...] | set[str] | frozenset[str] = (),
+    ) -> None:
+        object.__setattr__(self, "skip_tags", frozenset(str(t).lower() for t in skip_tags))
+        object.__setattr__(self, "fuzzy_ip", bool(fuzzy_ip))
+        object.__setattr__(self, "extra_tlds", frozenset(str(t).lower() for t in extra_tlds))
+
+
 # -----------------
 # Compilation
 # -----------------
 
 
-Transform = SetAttrs | Drop | Unwrap | Empty | Edit
+Transform = SetAttrs | Drop | Unwrap | Empty | Edit | Linkify
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +120,14 @@ class _CompiledSelectorTransform:
     payload: dict[str, str | None] | Callable[[SimpleDomNode], None] | None
 
 
-CompiledTransform = _CompiledSelectorTransform
+@dataclass(frozen=True, slots=True)
+class _CompiledLinkifyTransform:
+    kind: Literal["linkify"]
+    skip_tags: frozenset[str]
+    config: LinkifyConfig
+
+
+CompiledTransform = _CompiledSelectorTransform | _CompiledLinkifyTransform
 
 
 def compile_transforms(transforms: list[Transform] | tuple[Transform, ...]) -> list[CompiledTransform]:
@@ -146,6 +184,16 @@ def compile_transforms(transforms: list[Transform] | tuple[Transform, ...]) -> l
             )
             continue
 
+        if isinstance(t, Linkify):
+            compiled.append(
+                _CompiledLinkifyTransform(
+                    kind="linkify",
+                    skip_tags=t.skip_tags,
+                    config=LinkifyConfig(fuzzy_ip=t.fuzzy_ip, extra_tlds=t.extra_tlds),
+                )
+            )
+            continue
+
         raise TypeError(f"Unsupported transform: {type(t).__name__}")
 
     return compiled
@@ -162,7 +210,16 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
 
     matcher = SelectorMatcher()
 
-    def apply_to_children(parent: SimpleDomNode) -> None:
+    # Extract Linkify transforms once for fast checks during traversal.
+    selector_transforms: list[_CompiledSelectorTransform] = [
+        t for t in compiled if isinstance(t, _CompiledSelectorTransform)
+    ]
+    linkify_transforms: list[_CompiledLinkifyTransform] = [
+        t for t in compiled if isinstance(t, _CompiledLinkifyTransform)
+    ]
+    linkify_skip_tags: frozenset[str] = frozenset().union(*(t.skip_tags for t in linkify_transforms))
+
+    def apply_to_children(parent: SimpleDomNode, *, skip_linkify: bool) -> None:
         children = parent.children
         if not children:
             return
@@ -173,9 +230,43 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
             name = node.name
             is_element = not name.startswith("#")
 
+            # Linkify applies to text nodes, context-aware.
+            if name == "#text" and not skip_linkify and linkify_transforms:
+                data = node.data or ""
+                if data:
+                    # Apply all linkify transforms in order. Each may rewrite the text node.
+                    rewritten = False
+                    for lt in linkify_transforms:
+                        matches = find_links_with_config(data, lt.config)
+                        if not matches:
+                            continue
+
+                        # Replace this single text node with a sequence of TextNode and <a> nodes.
+                        cursor = 0
+                        for m in matches:
+                            if m.start > cursor:
+                                parent.insert_before(TextNode(data[cursor : m.start]), node)
+
+                            ns = parent.namespace or "html"
+                            a = ElementNode("a", {"href": m.href}, ns)
+                            a.append_child(TextNode(m.text))
+                            parent.insert_before(a, node)
+                            cursor = m.end
+
+                        if cursor < len(data):
+                            parent.insert_before(TextNode(data[cursor:]), node)
+
+                        parent.remove_child(node)
+                        rewritten = True
+                        break
+
+                    if rewritten:
+                        # Re-process at same index.
+                        continue
+
             # Apply transforms to this node in order. Some transforms may remove/replace.
             changed = False
-            for t in compiled:
+            for t in selector_transforms:
                 if not is_element:
                     break
 
@@ -227,9 +318,18 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
                 continue
 
             # Descend into element children.
-            if is_element and node.children:
-                apply_to_children(node)
+            if is_element:
+                tag = node.name.lower()
+                child_skip = skip_linkify or (tag in linkify_skip_tags)
+
+                if node.children:
+                    apply_to_children(node, skip_linkify=child_skip)
+
+                # Also descend into template content if present.
+                if type(node) is TemplateNode and node.template_content is not None:
+                    apply_to_children(node.template_content, skip_linkify=child_skip)
 
             i += 1
 
-    apply_to_children(root)
+    # Root containers are never elements; treat as not-skipped.
+    apply_to_children(root, skip_linkify=False)
