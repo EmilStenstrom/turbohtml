@@ -5,6 +5,7 @@ import unittest
 from justhtml import JustHTML, SelectorError
 from justhtml.node import SimpleDomNode, TextNode
 from justhtml.transforms import (
+    CollapseWhitespace,
     Drop,
     Edit,
     Empty,
@@ -95,6 +96,44 @@ class TestTransforms(unittest.TestCase):
         compiled.append(compile_transforms([SetAttrs("div", class_="y")])[0])
         with self.assertRaises(TypeError):
             apply_compiled_transforms(root, compiled)
+
+    def test_collapsewhitespace_collapses_text_nodes(self) -> None:
+        doc = JustHTML(
+            "<p>Hello \n\t world</p><p>a  b</p>",
+            fragment=True,
+            transforms=[CollapseWhitespace()],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "<p>Hello world</p><p>a b</p>"
+
+    def test_collapsewhitespace_skips_pre_by_default(self) -> None:
+        doc = JustHTML(
+            "<pre>a  b</pre><p>a  b</p>",
+            fragment=True,
+            transforms=[CollapseWhitespace()],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "<pre>a  b</pre><p>a b</p>"
+
+    def test_collapsewhitespace_noops_when_no_collapse_needed(self) -> None:
+        doc = JustHTML(
+            "<p>Hello world</p>",
+            fragment=True,
+            transforms=[CollapseWhitespace()],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "<p>Hello world</p>"
+
+    def test_collapsewhitespace_can_skip_custom_tags(self) -> None:
+        doc = JustHTML(
+            "<p>a  b</p>",
+            fragment=True,
+            transforms=[CollapseWhitespace(skip_tags=("p",))],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "<p>a  b</p>"
+
+    def test_collapsewhitespace_ignores_empty_text_nodes(self) -> None:
+        root = SimpleDomNode("div")
+        root.append_child(TextNode(""))
+        apply_compiled_transforms(root, compile_transforms([CollapseWhitespace()]))
+        assert root.to_html(pretty=False, safe=False) == "<div></div>"
 
     def test_to_html_still_sanitizes_by_default_after_transforms_and_mutation(self) -> None:
         doc = JustHTML("<p>ok</p>")

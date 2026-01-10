@@ -111,7 +111,8 @@ It never touches attributes, existing tags, comments, or doctypes.
 ## Built-in transforms
 
 - [`Linkify(...)`](linkify.md) — Scan text nodes and convert URLs/emails into `<a>` elements.
-- `Sanitize(policy=None)` — Sanitize the in-memory tree (must run last, except for trailing `PruneEmpty`).
+- `CollapseWhitespace(skip_tags=(...))` — Collapse whitespace runs in text nodes (html5lib-like).
+- `Sanitize(policy=None)` — Sanitize the in-memory tree (must run last, except for trailing `PruneEmpty` and `CollapseWhitespace`).
 - `PruneEmpty(selector, strip_whitespace=True)` — Recursively drop empty elements.
 - `SetAttrs(selector, **attrs)` — Set/overwrite attributes on matching elements.
 - `Drop(selector)` — Remove matching elements and their contents.
@@ -123,14 +124,42 @@ It never touches attributes, existing tags, comments, or doctypes.
 
 See [`Linkify(...)`](linkify.md) for full documentation and examples.
 
+### `CollapseWhitespace(skip_tags=(...))`
+
+Collapses runs of HTML whitespace characters in text nodes to a single space.
+
+This is similar to `html5lib.filters.whitespace.Filter`.
+
+By default it skips `<pre>`, `<textarea>`, `<code>`, `<title>`, `<script>`, and `<style>`.
+
+```python
+from justhtml import CollapseWhitespace, JustHTML
+
+doc = JustHTML(
+    "<p>Hello \n\t world</p><pre>a  b</pre>",
+    fragment=True,
+    transforms=[CollapseWhitespace()],
+)
+
+print(doc.to_html(pretty=False, safe=False))
+```
+
+Output:
+
+```html
+<p>Hello world</p><pre>a  b</pre>
+```
+
 ### `Sanitize(policy=None)`
 
 Sanitizes the in-memory DOM tree using the same sanitizer as `safe=True` output.
 
 - This is useful if you want to traverse/modify a clean DOM.
-- `Sanitize(...)` must be last, except for optional trailing `PruneEmpty(...)` transforms.
+- `Sanitize(...)` must be last, except for optional trailing `PruneEmpty(...)` and `CollapseWhitespace(...)` transforms.
 
 `PruneEmpty(...)` after `Sanitize(...)` is useful if sanitization removes unsafe children (for example `<script>`) and leaves a now-empty wrapper element.
+
+`CollapseWhitespace(...)` after `Sanitize(...)` is useful if you want an already-sanitized in-memory tree, but still normalize whitespace (similar to `html5lib.filters.whitespace.Filter`).
 
 ### `PruneEmpty(selector, strip_whitespace=True)`
 

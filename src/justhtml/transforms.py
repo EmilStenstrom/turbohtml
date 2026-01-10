@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast
 
+from .constants import WHITESPACE_PRESERVING_ELEMENTS
 from .linkify import LinkifyConfig, find_links_with_config
 from .node import ElementNode, SimpleDomNode, TemplateNode, TextNode
 from .sanitize import SanitizationPolicy, _sanitize
@@ -92,10 +93,7 @@ class Linkify:
         *,
         skip_tags: list[str] | tuple[str, ...] | set[str] | frozenset[str] = (
             "a",
-            "code",
-            "pre",
-            "script",
-            "style",
+            *WHITESPACE_PRESERVING_ELEMENTS,
         ),
         fuzzy_ip: bool = False,
         extra_tlds: list[str] | tuple[str, ...] | set[str] | frozenset[str] = (),
@@ -103,6 +101,55 @@ class Linkify:
         object.__setattr__(self, "skip_tags", frozenset(str(t).lower() for t in skip_tags))
         object.__setattr__(self, "fuzzy_ip", bool(fuzzy_ip))
         object.__setattr__(self, "extra_tlds", frozenset(str(t).lower() for t in extra_tlds))
+
+
+def _collapse_html_space_characters(text: str) -> str:
+    """Collapse runs of HTML whitespace characters to a single space.
+
+    This mirrors html5lib's whitespace filter behavior: it does not trim.
+    """
+
+    # Fast path: no formatting whitespace and no double spaces.
+    if "\t" not in text and "\n" not in text and "\r" not in text and "\f" not in text and "  " not in text:
+        return text
+
+    out: list[str] = []
+    in_ws = False
+
+    for ch in text:
+        if ch == " " or ch == "\t" or ch == "\n" or ch == "\r" or ch == "\f":
+            if in_ws:
+                continue
+            out.append(" ")
+            in_ws = True
+            continue
+
+        out.append(ch)
+        in_ws = False
+    return "".join(out)
+
+
+@dataclass(frozen=True, slots=True)
+class CollapseWhitespace:
+    """Collapse whitespace in text nodes.
+
+    Collapses runs of HTML whitespace characters (space, tab, LF, CR, FF) into a
+    single space.
+
+    This is similar to `html5lib.filters.whitespace.Filter`.
+    """
+
+    skip_tags: frozenset[str]
+
+    def __init__(
+        self,
+        *,
+        skip_tags: list[str] | tuple[str, ...] | set[str] | frozenset[str] = (
+            *WHITESPACE_PRESERVING_ELEMENTS,
+            "title",
+        ),
+    ) -> None:
+        object.__setattr__(self, "skip_tags", frozenset(str(t).lower() for t in skip_tags))
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,7 +200,13 @@ class PruneEmpty:
 # -----------------
 
 
-Transform = SetAttrs | Drop | Unwrap | Empty | Edit | Linkify | PruneEmpty | Sanitize
+Transform = SetAttrs | Drop | Unwrap | Empty | Edit | Linkify | CollapseWhitespace | PruneEmpty | Sanitize
+
+
+@dataclass(frozen=True, slots=True)
+class _CompiledCollapseWhitespaceTransform:
+    kind: Literal["collapse_whitespace"]
+    skip_tags: frozenset[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,7 +239,11 @@ class _CompiledPruneEmptyTransform:
 
 
 CompiledTransform = (
-    _CompiledSelectorTransform | _CompiledLinkifyTransform | _CompiledPruneEmptyTransform | _CompiledSanitizeTransform
+    _CompiledSelectorTransform
+    | _CompiledLinkifyTransform
+    | _CompiledCollapseWhitespaceTransform
+    | _CompiledPruneEmptyTransform
+    | _CompiledSanitizeTransform
 )
 
 
@@ -198,8 +255,10 @@ def compile_transforms(transforms: list[Transform] | tuple[Transform, ...]) -> l
                 raise ValueError("Only one Sanitize transform is supported")
             sanitize_index = next(i for i, t in enumerate(transforms) if isinstance(t, Sanitize))
             for t in transforms[sanitize_index + 1 :]:
-                if not isinstance(t, PruneEmpty):
-                    raise TypeError("Sanitize transform must be last (except for trailing PruneEmpty transforms)")
+                if not isinstance(t, (PruneEmpty, CollapseWhitespace)):
+                    raise TypeError(
+                        "Sanitize transform must be last (except for trailing PruneEmpty and CollapseWhitespace transforms)"
+                    )
 
     compiled: list[CompiledTransform] = []
     for t in transforms:
@@ -264,6 +323,15 @@ def compile_transforms(transforms: list[Transform] | tuple[Transform, ...]) -> l
             )
             continue
 
+        if isinstance(t, CollapseWhitespace):
+            compiled.append(
+                _CompiledCollapseWhitespaceTransform(
+                    kind="collapse_whitespace",
+                    skip_tags=t.skip_tags,
+                )
+            )
+            continue
+
         if isinstance(t, PruneEmpty):
             compiled.append(
                 _CompiledPruneEmptyTransform(
@@ -294,14 +362,20 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
         return
 
     sanitize_transform: _CompiledSanitizeTransform | None = None
-    post_sanitize_prune_transforms: list[_CompiledPruneEmptyTransform] = []
+    post_sanitize_transforms: list[_CompiledPruneEmptyTransform | _CompiledCollapseWhitespaceTransform] = []
     for i, t in enumerate(compiled):
         if isinstance(t, _CompiledSanitizeTransform):
             sanitize_transform = t
             post = compiled[i + 1 :]
-            if post and not all(isinstance(x, _CompiledPruneEmptyTransform) for x in post):
-                raise TypeError("Sanitize must be the last transform (except for trailing PruneEmpty transforms)")
-            post_sanitize_prune_transforms = [cast("_CompiledPruneEmptyTransform", x) for x in post]
+            if post and not all(
+                isinstance(x, (_CompiledPruneEmptyTransform, _CompiledCollapseWhitespaceTransform)) for x in post
+            ):
+                raise TypeError(
+                    "Sanitize must be the last transform (except for trailing PruneEmpty and CollapseWhitespace transforms)"
+                )
+            post_sanitize_transforms = [
+                cast("_CompiledPruneEmptyTransform | _CompiledCollapseWhitespaceTransform", x) for x in post
+            ]
             compiled = compiled[:i]
             break
 
@@ -311,15 +385,20 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
         root_node: SimpleDomNode,
         selector_transforms: list[_CompiledSelectorTransform],
         linkify_transforms: list[_CompiledLinkifyTransform],
+        whitespace_transforms: list[_CompiledCollapseWhitespaceTransform],
     ) -> None:
-        if not selector_transforms and not linkify_transforms:
+        if not selector_transforms and not linkify_transforms and not whitespace_transforms:
             return
 
         linkify_skip_tags: frozenset[str] = (
             frozenset().union(*(t.skip_tags for t in linkify_transforms)) if linkify_transforms else frozenset()
         )
 
-        def apply_to_children(parent: SimpleDomNode, *, skip_linkify: bool) -> None:
+        whitespace_skip_tags: frozenset[str] = (
+            frozenset().union(*(t.skip_tags for t in whitespace_transforms)) if whitespace_transforms else frozenset()
+        )
+
+        def apply_to_children(parent: SimpleDomNode, *, skip_linkify: bool, skip_whitespace: bool) -> None:
             children = parent.children
             if not children:
                 return
@@ -329,6 +408,15 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
                 node = children[i]
                 name = node.name
                 is_element = not name.startswith("#")
+
+                if name == "#text" and not skip_whitespace and whitespace_transforms:
+                    data = node.data or ""
+                    if data:
+                        collapsed = data
+                        for _wt in whitespace_transforms:
+                            collapsed = _collapse_html_space_characters(collapsed)
+                        if collapsed != data:
+                            node.data = collapsed
 
                 # Linkify applies to text nodes, context-aware.
                 if name == "#text" and not skip_linkify and linkify_transforms:
@@ -414,17 +502,20 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
                 if is_element:
                     tag = node.name.lower()
                     child_skip = skip_linkify or (tag in linkify_skip_tags)
+                    child_skip_ws = skip_whitespace or (tag in whitespace_skip_tags)
 
                     if node.children:
-                        apply_to_children(node, skip_linkify=child_skip)
+                        apply_to_children(node, skip_linkify=child_skip, skip_whitespace=child_skip_ws)
 
                     if type(node) is TemplateNode and node.template_content is not None:
-                        apply_to_children(node.template_content, skip_linkify=child_skip)
+                        apply_to_children(
+                            node.template_content, skip_linkify=child_skip, skip_whitespace=child_skip_ws
+                        )
 
                 i += 1
 
         if type(root_node) is not TextNode:
-            apply_to_children(root_node, skip_linkify=False)
+            apply_to_children(root_node, skip_linkify=False, skip_whitespace=False)
 
     def apply_prune_transforms(root_node: SimpleDomNode, prune_transforms: list[_CompiledPruneEmptyTransform]) -> None:
         def _is_effectively_empty_element(n: SimpleDomNode, *, strip_whitespace: bool) -> bool:
@@ -482,6 +573,7 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
 
     pending_selector: list[_CompiledSelectorTransform] = []
     pending_linkify: list[_CompiledLinkifyTransform] = []
+    pending_whitespace: list[_CompiledCollapseWhitespaceTransform] = []
 
     i = 0
     while i < len(compiled):
@@ -494,10 +586,15 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
             pending_linkify.append(t)
             i += 1
             continue
+        if isinstance(t, _CompiledCollapseWhitespaceTransform):
+            pending_whitespace.append(t)
+            i += 1
+            continue
 
-        apply_selector_and_linkify_transforms(root, pending_selector, pending_linkify)
+        apply_selector_and_linkify_transforms(root, pending_selector, pending_linkify, pending_whitespace)
         pending_selector = []
         pending_linkify = []
+        pending_whitespace = []
 
         if isinstance(t, _CompiledPruneEmptyTransform):
             prune_batch: list[_CompiledPruneEmptyTransform] = [t]
@@ -510,14 +607,39 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
 
         raise TypeError(f"Unsupported compiled transform: {type(t).__name__}")
 
-    apply_selector_and_linkify_transforms(root, pending_selector, pending_linkify)
+    apply_selector_and_linkify_transforms(root, pending_selector, pending_linkify, pending_whitespace)
 
     if sanitize_transform is not None:
         sanitized = _sanitize(root, policy=sanitize_transform.policy)
 
-        def _apply_post_sanitize_prune() -> None:
-            if post_sanitize_prune_transforms:
-                apply_prune_transforms(root, post_sanitize_prune_transforms)
+        def _apply_post_sanitize_transforms() -> None:
+            if not post_sanitize_transforms:
+                return
+
+            pending_post_ws: list[_CompiledCollapseWhitespaceTransform] = []
+            i = 0
+            while i < len(post_sanitize_transforms):
+                t = post_sanitize_transforms[i]
+                if isinstance(t, _CompiledCollapseWhitespaceTransform):
+                    pending_post_ws.append(t)
+                    i += 1
+                    continue
+
+                if pending_post_ws:
+                    apply_selector_and_linkify_transforms(root, [], [], pending_post_ws)
+                    pending_post_ws = []
+
+                prune_batch: list[_CompiledPruneEmptyTransform] = [t]
+                i += 1
+                while i < len(post_sanitize_transforms) and isinstance(
+                    post_sanitize_transforms[i], _CompiledPruneEmptyTransform
+                ):
+                    prune_batch.append(cast("_CompiledPruneEmptyTransform", post_sanitize_transforms[i]))
+                    i += 1
+                apply_prune_transforms(root, prune_batch)
+
+            if pending_post_ws:
+                apply_selector_and_linkify_transforms(root, [], [], pending_post_ws)
 
         def _detach_children(n: SimpleDomNode) -> None:
             if n.children:
@@ -534,7 +656,7 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
         # as advanced usage where callers pass an element root.
         if type(root) is TextNode:
             root.data = sanitized.data
-            _apply_post_sanitize_prune()
+            _apply_post_sanitize_transforms()
             return
 
         _detach_children(root)
@@ -546,7 +668,7 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
             root.children = sanitized.children
             root.template_content = sanitized.template_content
             _reparent_children(root)
-            _apply_post_sanitize_prune()
+            _apply_post_sanitize_transforms()
             return
 
         if type(root) is ElementNode:
@@ -556,7 +678,7 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
             root.children = sanitized.children
             root.template_content = sanitized.template_content
             _reparent_children(root)
-            _apply_post_sanitize_prune()
+            _apply_post_sanitize_transforms()
             return
 
         root.name = sanitized.name
@@ -565,4 +687,4 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
         root.attrs = sanitized.attrs
         root.children = sanitized.children
         _reparent_children(root)
-        _apply_post_sanitize_prune()
+        _apply_post_sanitize_transforms()

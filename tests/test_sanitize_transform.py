@@ -4,7 +4,14 @@ import unittest
 
 from justhtml import JustHTML
 from justhtml.node import ElementNode, SimpleDomNode, TemplateNode, TextNode
-from justhtml.transforms import Drop, PruneEmpty, Sanitize, apply_compiled_transforms, compile_transforms
+from justhtml.transforms import (
+    CollapseWhitespace,
+    Drop,
+    PruneEmpty,
+    Sanitize,
+    apply_compiled_transforms,
+    compile_transforms,
+)
 
 
 class TestSanitizeTransform(unittest.TestCase):
@@ -26,9 +33,11 @@ class TestSanitizeTransform(unittest.TestCase):
         assert doc.to_html(pretty=False, safe=False) == "<p><a>x</a></p>"
         assert doc.to_html(pretty=False, safe=True) == "<p><a>x</a></p>"
 
-    def test_sanitize_must_be_last_except_trailing_pruneempty(self) -> None:
+    def test_sanitize_must_be_last_except_trailing_pruneempty_and_collapsewhitespace(self) -> None:
         compile_transforms((Sanitize(),))
         compile_transforms((Sanitize(), PruneEmpty("p")))
+        compile_transforms((Sanitize(), CollapseWhitespace()))
+        compile_transforms((Sanitize(), CollapseWhitespace(), PruneEmpty("p")))
 
         with self.assertRaises(TypeError):
             compile_transforms((Sanitize(), Drop("p")))
@@ -38,6 +47,38 @@ class TestSanitizeTransform(unittest.TestCase):
             "<p><script>alert(1)</script></p>",
             fragment=True,
             transforms=[Sanitize(), PruneEmpty("p")],
+        )
+        assert doc.to_html(pretty=False, safe=False) == ""
+
+    def test_collapsewhitespace_can_run_after_sanitize(self) -> None:
+        doc = JustHTML(
+            "<p>a  b</p>",
+            fragment=True,
+            transforms=[Sanitize(), CollapseWhitespace()],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "<p>a b</p>"
+
+    def test_post_sanitize_collapsewhitespace_then_pruneempty_runs_in_order(self) -> None:
+        doc = JustHTML(
+            "<p>   </p><p>x</p>",
+            fragment=True,
+            transforms=[Sanitize(), CollapseWhitespace(), PruneEmpty("p")],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "<p>x</p>"
+
+    def test_post_sanitize_pruneempty_then_collapsewhitespace_runs_in_order(self) -> None:
+        doc = JustHTML(
+            "<p>a  b</p><span> </span>",
+            fragment=True,
+            transforms=[Sanitize(), PruneEmpty("span"), CollapseWhitespace()],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "<p>a b</p>"
+
+    def test_post_sanitize_consecutive_pruneempty_transforms_are_batched(self) -> None:
+        doc = JustHTML(
+            "<div><p></p></div>",
+            fragment=True,
+            transforms=[Sanitize(), PruneEmpty("p"), PruneEmpty("div")],
         )
         assert doc.to_html(pretty=False, safe=False) == ""
 

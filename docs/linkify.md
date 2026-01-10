@@ -19,7 +19,7 @@ print(doc.to_html(pretty=False, safe=False))
 
 - Operates on DOM **text nodes** only.
 - Inserts `<a href="...">…</a>` nodes around matches.
-- By default, skips linkification inside: `a`, `pre`, `code`, `script`, `style`.
+- By default, skips linkification inside: `a`, `pre`, `textarea`, `code`, `script`, `style`.
 - Works inside `<template>` contents.
 
 ## Unicode and punycode (IDNA)
@@ -56,7 +56,7 @@ doc = JustHTML(
         Linkify(
             fuzzy_ip=True,
             extra_tlds={"dev"},
-            skip_tags={"a", "pre", "code", "script", "style"},
+            skip_tags={"a", "pre", "textarea", "code", "script", "style"},
         )
     ],
 )

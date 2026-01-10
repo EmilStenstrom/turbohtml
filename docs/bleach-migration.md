@@ -67,6 +67,7 @@ Bleach supports html5lib filters and helper utilities (like linkifying text).
 In JustHTML, you compose transforms (applied once, right after parsing):
 
 - `bleach.linkify(...)` → `Linkify(...)` (see [Linkify](linkify.md))
+- `html5lib.filters.whitespace.Filter` → `CollapseWhitespace(...)`
 - "Strip tag but keep contents" → `Unwrap(selector)`
 - "Drop tag and contents" → `Drop(selector)`
 - "Remove children" → `Empty(selector)`
