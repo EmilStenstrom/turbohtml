@@ -3,8 +3,8 @@ from __future__ import annotations
 import unittest
 
 from justhtml import JustHTML
-from justhtml.node import ElementNode, TemplateNode, TextNode
-from justhtml.transforms import Drop, Sanitize, apply_compiled_transforms, compile_transforms
+from justhtml.node import ElementNode, SimpleDomNode, TemplateNode, TextNode
+from justhtml.transforms import Drop, PruneEmpty, Sanitize, apply_compiled_transforms, compile_transforms
 
 
 class TestSanitizeTransform(unittest.TestCase):
@@ -26,11 +26,20 @@ class TestSanitizeTransform(unittest.TestCase):
         assert doc.to_html(pretty=False, safe=False) == "<p><a>x</a></p>"
         assert doc.to_html(pretty=False, safe=True) == "<p><a>x</a></p>"
 
-    def test_sanitize_must_be_last(self) -> None:
+    def test_sanitize_must_be_last_except_trailing_pruneempty(self) -> None:
         compile_transforms((Sanitize(),))
+        compile_transforms((Sanitize(), PruneEmpty("p")))
 
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TypeError):
             compile_transforms((Sanitize(), Drop("p")))
+
+    def test_pruneempty_can_run_after_sanitize(self) -> None:
+        doc = JustHTML(
+            "<p><script>alert(1)</script></p>",
+            fragment=True,
+            transforms=[Sanitize(), PruneEmpty("p")],
+        )
+        assert doc.to_html(pretty=False, safe=False) == ""
 
     def test_sanitize_transform_supports_element_root(self) -> None:
         root = ElementNode("a", {"href": "javascript:alert(1)", "onclick": "x()"}, "html")
@@ -62,3 +71,9 @@ class TestSanitizeTransform(unittest.TestCase):
         compiled = compile_transforms((Sanitize(),))
         apply_compiled_transforms(root, compiled)  # type: ignore[arg-type]
         assert root.data == "hello"
+
+    def test_sanitize_transform_supports_simpledomnode_element_root(self) -> None:
+        root = SimpleDomNode("a", {"href": "javascript:alert(1)", "onclick": "x()"}, namespace="html")
+        compiled = compile_transforms((Sanitize(),))
+        apply_compiled_transforms(root, compiled)
+        assert root.attrs == {}

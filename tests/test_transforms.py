@@ -3,11 +3,14 @@ from __future__ import annotations
 import unittest
 
 from justhtml import JustHTML, SelectorError
-from justhtml.node import SimpleDomNode
+from justhtml.node import SimpleDomNode, TextNode
 from justhtml.transforms import (
     Drop,
     Edit,
     Empty,
+    Linkify,
+    PruneEmpty,
+    Sanitize,
     SetAttrs,
     Unwrap,
     apply_compiled_transforms,
@@ -76,9 +79,101 @@ class TestTransforms(unittest.TestCase):
         apply_compiled_transforms(root, [])
         assert root.to_html(pretty=False, safe=False) == "<div></div>"
 
+    def test_apply_compiled_transforms_supports_text_root(self) -> None:
+        root = TextNode("example.com")
+        apply_compiled_transforms(root, compile_transforms([Linkify()]))  # type: ignore[arg-type]
+        assert root.data == "example.com"
+
+    def test_apply_compiled_transforms_rejects_unknown_compiled_transform(self) -> None:
+        root = SimpleDomNode("div")
+        with self.assertRaises(TypeError):
+            apply_compiled_transforms(root, [object()])  # type: ignore[list-item]
+
+    def test_apply_compiled_transforms_rejects_non_prune_after_sanitize(self) -> None:
+        root = SimpleDomNode("div")
+        compiled = compile_transforms([SetAttrs("div", id="x"), Sanitize()])
+        compiled.append(compile_transforms([SetAttrs("div", class_="y")])[0])
+        with self.assertRaises(TypeError):
+            apply_compiled_transforms(root, compiled)
+
     def test_to_html_still_sanitizes_by_default_after_transforms_and_mutation(self) -> None:
         doc = JustHTML("<p>ok</p>")
         # Mutate the tree after parse.
         doc.root.append_child(SimpleDomNode("script"))
         # Safe-by-default output should strip it.
         assert doc.to_html(pretty=False) == "<html><head></head><body><p>ok</p></body></html>"
+
+    def test_pruneempty_drops_empty_elements(self) -> None:
+        doc = JustHTML(
+            "<p></p><p><img></p><p>   </p>",
+            fragment=True,
+            transforms=[PruneEmpty("p")],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "<p><img></p>"
+
+    def test_pruneempty_is_recursive_post_order(self) -> None:
+        doc = JustHTML(
+            "<div><p></p></div>",
+            fragment=True,
+            transforms=[PruneEmpty("p, div")],
+        )
+        assert doc.to_html(pretty=False, safe=False) == ""
+
+    def test_pruneempty_drops_nested_empty_elements(self) -> None:
+        doc = JustHTML(
+            "<span><span></span></span>",
+            fragment=True,
+            transforms=[PruneEmpty("span")],
+        )
+        assert doc.to_html(pretty=False, safe=False) == ""
+
+    def test_pruneempty_supports_consecutive_prune_transforms(self) -> None:
+        doc = JustHTML(
+            "<div><p></p></div>",
+            fragment=True,
+            transforms=[PruneEmpty("p"), PruneEmpty("div")],
+        )
+        assert doc.to_html(pretty=False, safe=False) == ""
+
+    def test_pruneempty_can_run_before_other_transforms(self) -> None:
+        # If pruning runs before later transforms, it only prunes emptiness at
+        # that point in the pipeline.
+        doc = JustHTML(
+            "<p></p><p><img></p>",
+            fragment=True,
+            transforms=[PruneEmpty("p"), Drop("img")],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "<p></p>"
+
+    def test_pruneempty_ignores_comments_when_determining_emptiness(self) -> None:
+        doc = JustHTML(
+            "<p><!--x--></p>",
+            fragment=True,
+            transforms=[PruneEmpty("p")],
+        )
+        assert doc.to_html(pretty=False, safe=False) == ""
+
+    def test_pruneempty_can_preserve_whitespace_only_text(self) -> None:
+        doc = JustHTML(
+            "<p>   </p>",
+            fragment=True,
+            transforms=[PruneEmpty("p", strip_whitespace=False)],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "<p>   </p>"
+
+    def test_pruneempty_strip_whitespace_false_still_drops_empty_text_nodes(self) -> None:
+        root = SimpleDomNode("div")
+        p = SimpleDomNode("p")
+        p.append_child(TextNode(""))
+        root.append_child(p)
+
+        apply_compiled_transforms(root, compile_transforms([PruneEmpty("p", strip_whitespace=False)]))
+        assert root.to_html(pretty=False, safe=False) == "<div></div>"
+
+    def test_pruneempty_considers_template_content(self) -> None:
+        doc = JustHTML(
+            "<template>ok</template><template><p></p></template>",
+            fragment=True,
+            transforms=[PruneEmpty("p, template")],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "<template>ok</template>"
