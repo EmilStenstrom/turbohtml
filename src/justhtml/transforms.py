@@ -12,6 +12,7 @@ Performance: selectors are compiled (parsed) once before application.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -20,6 +21,7 @@ from .linkify import LinkifyConfig, find_links_with_config
 from .node import ElementNode, SimpleDomNode, TemplateNode, TextNode
 from .sanitize import SanitizationPolicy, _sanitize
 from .selector import SelectorMatcher, parse_selector
+from .tokens import ParseError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -30,6 +32,43 @@ if TYPE_CHECKING:
 # -----------------
 # Public transforms
 # -----------------
+
+
+_ERROR_SINK: ContextVar[list[ParseError] | None] = ContextVar("justhtml_transform_error_sink", default=None)
+
+
+def emit_error(
+    code: str,
+    *,
+    node: SimpleDomNode | None = None,
+    line: int | None = None,
+    column: int | None = None,
+    category: str = "transform",
+    message: str | None = None,
+) -> None:
+    """Emit a ParseError from within a transform callback.
+
+    Errors are appended to the active sink when transforms are applied (e.g.
+    during JustHTML construction). If no sink is active, this is a no-op.
+    """
+
+    sink = _ERROR_SINK.get()
+    if sink is None:
+        return
+
+    if node is not None:
+        line = node.origin_line
+        column = node.origin_col
+
+    sink.append(
+        ParseError(
+            str(code),
+            line=line,
+            column=column,
+            category=str(category),
+            message=str(message) if message is not None else str(code),
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -431,300 +470,315 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
 # -----------------
 
 
-def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransform]) -> None:
+def apply_compiled_transforms(
+    root: SimpleDomNode,
+    compiled: list[CompiledTransform],
+    *,
+    errors: list[ParseError] | None = None,
+) -> None:
     if not compiled:
         return
 
-    matcher = SelectorMatcher()
+    token = _ERROR_SINK.set(errors)
+    try:
+        matcher = SelectorMatcher()
 
-    def apply_sanitize_transform(root_node: SimpleDomNode, t: _CompiledSanitizeTransform) -> None:
-        sanitized = _sanitize(root_node, policy=t.policy)
+        def apply_sanitize_transform(root_node: SimpleDomNode, t: _CompiledSanitizeTransform) -> None:
+            sanitized = _sanitize(root_node, policy=t.policy)
 
-        def _detach_children(n: SimpleDomNode) -> None:
-            if n.children:
-                for child in n.children:
-                    child.parent = None
+            def _detach_children(n: SimpleDomNode) -> None:
+                if n.children:
+                    for child in n.children:
+                        child.parent = None
 
-        def _reparent_children(n: SimpleDomNode) -> None:
-            if n.children:
-                for child in n.children:
-                    child.parent = n
+            def _reparent_children(n: SimpleDomNode) -> None:
+                if n.children:
+                    for child in n.children:
+                        child.parent = n
 
-        # Overwrite the root node in-place so callers keep their reference.
-        # This supports the common case (document/document-fragment root) as well
-        # as advanced usage where callers pass an element root.
-        if type(root_node) is TextNode:
-            root_node.data = sanitized.data
-            return
-
-        _detach_children(root_node)
-
-        if type(root_node) is TemplateNode:
-            root_node.name = sanitized.name
-            root_node.namespace = sanitized.namespace
-            root_node.attrs = sanitized.attrs
-            root_node.children = sanitized.children
-            root_node.template_content = sanitized.template_content
-            _reparent_children(root_node)
-            return
-
-        if type(root_node) is ElementNode:
-            root_node.name = sanitized.name
-            root_node.namespace = sanitized.namespace
-            root_node.attrs = sanitized.attrs
-            root_node.children = sanitized.children
-            root_node.template_content = sanitized.template_content
-            _reparent_children(root_node)
-            return
-
-        root_node.name = sanitized.name
-        root_node.namespace = sanitized.namespace
-        root_node.data = sanitized.data
-        root_node.attrs = sanitized.attrs
-        root_node.children = sanitized.children
-        _reparent_children(root_node)
-
-    def apply_walk_transforms(root_node: SimpleDomNode, walk_transforms: list[CompiledTransform]) -> None:
-        if not walk_transforms:
-            return
-
-        linkify_skip_tags: frozenset[str] = frozenset().union(
-            *(t.skip_tags for t in walk_transforms if isinstance(t, _CompiledLinkifyTransform))
-        )
-        whitespace_skip_tags: frozenset[str] = frozenset().union(
-            *(t.skip_tags for t in walk_transforms if isinstance(t, _CompiledCollapseWhitespaceTransform))
-        )
-
-        # To preserve strict left-to-right semantics while still batching
-        # compatible transforms into a single walk, we track the earliest
-        # transform index that may run on a node.
-        #
-        # Example:
-        #   transforms=[Drop("a"), Linkify()]
-        # Linkify introduces <a> elements. Those <a> nodes must not be
-        # processed by earlier transforms (like Drop("a")), because Drop has
-        # already run conceptually.
-        created_start_index: dict[int, int] = {}
-
-        def _mark_start(n: object, start_index: int) -> None:
-            key = id(n)
-            created_start_index[key] = max(created_start_index.get(key, 0), start_index)
-
-        def apply_to_children(parent: SimpleDomNode, *, skip_linkify: bool, skip_whitespace: bool) -> None:
-            children = parent.children
-            if not children:
+            # Overwrite the root node in-place so callers keep their reference.
+            # This supports the common case (document/document-fragment root) as well
+            # as advanced usage where callers pass an element root.
+            if type(root_node) is TextNode:
+                root_node.data = sanitized.data
                 return
 
-            i = 0
-            while i < len(children):
-                node = children[i]
-                name = node.name
+            _detach_children(root_node)
 
-                changed = False
-                start_at = created_start_index.get(id(node), 0)
-                for idx in range(start_at, len(walk_transforms)):
-                    t = walk_transforms[idx]
-                    # CollapseWhitespace
-                    if isinstance(t, _CompiledCollapseWhitespaceTransform):
-                        if name == "#text" and not skip_whitespace:
-                            data = node.data or ""
-                            if data:
-                                collapsed = _collapse_html_space_characters(data)
-                                if collapsed != data:
-                                    node.data = collapsed
-                        continue
+            if type(root_node) is TemplateNode:
+                root_node.name = sanitized.name
+                root_node.namespace = sanitized.namespace
+                root_node.attrs = sanitized.attrs
+                root_node.children = sanitized.children
+                root_node.template_content = sanitized.template_content
+                _reparent_children(root_node)
+                return
 
-                    # Linkify
-                    if isinstance(t, _CompiledLinkifyTransform):
-                        if name == "#text" and not skip_linkify:
-                            data = node.data or ""
-                            if data:
-                                matches = find_links_with_config(data, t.config)
-                                if matches:
-                                    cursor = 0
-                                    for m in matches:
-                                        if m.start > cursor:
-                                            txt = TextNode(data[cursor : m.start])
-                                            _mark_start(txt, idx + 1)
-                                            parent.insert_before(txt, node)
+            if type(root_node) is ElementNode:
+                root_node.name = sanitized.name
+                root_node.namespace = sanitized.namespace
+                root_node.attrs = sanitized.attrs
+                root_node.children = sanitized.children
+                root_node.template_content = sanitized.template_content
+                _reparent_children(root_node)
+                return
 
-                                        ns = parent.namespace or "html"
-                                        a = ElementNode("a", {"href": m.href}, ns)
-                                        a.append_child(TextNode(m.text))
-                                        _mark_start(a, idx + 1)
-                                        parent.insert_before(a, node)
-                                        cursor = m.end
+            root_node.name = sanitized.name
+            root_node.namespace = sanitized.namespace
+            root_node.data = sanitized.data
+            root_node.attrs = sanitized.attrs
+            root_node.children = sanitized.children
+            _reparent_children(root_node)
 
-                                    if cursor < len(data):
-                                        tail = TextNode(data[cursor:])
-                                        _mark_start(tail, idx + 1)
-                                        parent.insert_before(tail, node)
+        def apply_walk_transforms(root_node: SimpleDomNode, walk_transforms: list[CompiledTransform]) -> None:
+            if not walk_transforms:
+                return
 
-                                    parent.remove_child(node)
-                                    changed = True
-                                    break
-                        continue
+            linkify_skip_tags: frozenset[str] = frozenset().union(
+                *(t.skip_tags for t in walk_transforms if isinstance(t, _CompiledLinkifyTransform))
+            )
+            whitespace_skip_tags: frozenset[str] = frozenset().union(
+                *(t.skip_tags for t in walk_transforms if isinstance(t, _CompiledCollapseWhitespaceTransform))
+            )
 
-                    # Selector transforms
-                    t = cast("_CompiledSelectorTransform", t)
+            # To preserve strict left-to-right semantics while still batching
+            # compatible transforms into a single walk, we track the earliest
+            # transform index that may run on a node.
+            #
+            # Example:
+            #   transforms=[Drop("a"), Linkify()]
+            # Linkify introduces <a> elements. Those <a> nodes must not be
+            # processed by earlier transforms (like Drop("a")), because Drop has
+            # already run conceptually.
+            created_start_index: dict[int, int] = {}
 
-                    if name.startswith("#"):
-                        continue
+            def _mark_start(n: object, start_index: int) -> None:
+                key = id(n)
+                created_start_index[key] = max(created_start_index.get(key, 0), start_index)
 
-                    if not matcher.matches(node, t.selector):
-                        continue
+            def apply_to_children(parent: SimpleDomNode, *, skip_linkify: bool, skip_whitespace: bool) -> None:
+                children = parent.children
+                if not children:
+                    return
 
-                    if t.kind == "setattrs":
-                        patch = cast("dict[str, str | None]", t.payload)
-                        attrs = node.attrs
-                        for k, v in patch.items():
-                            attrs[str(k)] = None if v is None else str(v)
-                        continue
+                i = 0
+                while i < len(children):
+                    node = children[i]
+                    name = node.name
 
-                    if t.kind == "edit":
-                        cb = cast("Callable[[SimpleDomNode], None]", t.payload)
-                        cb(node)
-                        continue
+                    changed = False
+                    start_at = created_start_index.get(id(node), 0)
+                    for idx in range(start_at, len(walk_transforms)):
+                        t = walk_transforms[idx]
+                        # CollapseWhitespace
+                        if isinstance(t, _CompiledCollapseWhitespaceTransform):
+                            if name == "#text" and not skip_whitespace:
+                                data = node.data or ""
+                                if data:
+                                    collapsed = _collapse_html_space_characters(data)
+                                    if collapsed != data:
+                                        node.data = collapsed
+                            continue
 
-                    if t.kind == "empty":
+                        # Linkify
+                        if isinstance(t, _CompiledLinkifyTransform):
+                            if name == "#text" and not skip_linkify:
+                                data = node.data or ""
+                                if data:
+                                    matches = find_links_with_config(data, t.config)
+                                    if matches:
+                                        cursor = 0
+                                        for m in matches:
+                                            if m.start > cursor:
+                                                txt = TextNode(data[cursor : m.start])
+                                                _mark_start(txt, idx + 1)
+                                                parent.insert_before(txt, node)
+
+                                            ns = parent.namespace or "html"
+                                            a = ElementNode("a", {"href": m.href}, ns)
+                                            a.append_child(TextNode(m.text))
+                                            _mark_start(a, idx + 1)
+                                            parent.insert_before(a, node)
+                                            cursor = m.end
+
+                                        if cursor < len(data):
+                                            tail = TextNode(data[cursor:])
+                                            _mark_start(tail, idx + 1)
+                                            parent.insert_before(tail, node)
+
+                                        parent.remove_child(node)
+                                        changed = True
+                                        break
+                            continue
+
+                        # Selector transforms
+                        t = cast("_CompiledSelectorTransform", t)
+                        if name.startswith("#"):
+                            continue
+
+                        if not matcher.matches(node, t.selector):
+                            continue
+
+                        if t.kind == "setattrs":
+                            patch = cast("dict[str, str | None]", t.payload)
+                            attrs = node.attrs
+                            for k, v in patch.items():
+                                attrs[str(k)] = None if v is None else str(v)
+                            continue
+
+                        if t.kind == "edit":
+                            cb = cast("Callable[[SimpleDomNode], None]", t.payload)
+                            cb(node)
+                            continue
+
+                        if t.kind == "empty":
+                            if node.children:
+                                for child in node.children:
+                                    child.parent = None
+                                node.children = []
+                            if type(node) is TemplateNode and node.template_content is not None:
+                                tc = node.template_content
+                                for child in tc.children or []:
+                                    child.parent = None
+                                tc.children = []
+                            continue
+
+                        if t.kind == "drop":
+                            parent.remove_child(node)
+                            changed = True
+                            break
+
+                        # t.kind == "unwrap".
                         if node.children:
-                            for child in node.children:
-                                child.parent = None
+                            moved = list(node.children)
                             node.children = []
-                        if type(node) is TemplateNode and node.template_content is not None:
-                            tc = node.template_content
-                            for child in tc.children or []:
-                                child.parent = None
-                            tc.children = []
-                        continue
-
-                    if t.kind == "drop":
+                            for child in moved:
+                                _mark_start(child, idx + 1)
+                                parent.insert_before(child, node)
                         parent.remove_child(node)
                         changed = True
                         break
 
-                    # t.kind == "unwrap".
-                    if node.children:
-                        moved = list(node.children)
-                        node.children = []
-                        for child in moved:
-                            _mark_start(child, idx + 1)
-                            parent.insert_before(child, node)
-                    parent.remove_child(node)
-                    changed = True
-                    break
+                    if changed:
+                        continue
 
-                if changed:
-                    continue
+                    if not name.startswith("#"):
+                        tag = node.name.lower()
+                        child_skip = skip_linkify or (tag in linkify_skip_tags)
+                        child_skip_ws = skip_whitespace or (tag in whitespace_skip_tags)
 
-                if not name.startswith("#"):
-                    tag = node.name.lower()
-                    child_skip = skip_linkify or (tag in linkify_skip_tags)
-                    child_skip_ws = skip_whitespace or (tag in whitespace_skip_tags)
+                        if node.children:
+                            apply_to_children(node, skip_linkify=child_skip, skip_whitespace=child_skip_ws)
 
-                    if node.children:
-                        apply_to_children(node, skip_linkify=child_skip, skip_whitespace=child_skip_ws)
+                        if type(node) is TemplateNode and node.template_content is not None:
+                            apply_to_children(
+                                node.template_content, skip_linkify=child_skip, skip_whitespace=child_skip_ws
+                            )
+
+                    i += 1
+
+            if type(root_node) is not TextNode:
+                apply_to_children(root_node, skip_linkify=False, skip_whitespace=False)
+
+        def apply_prune_transforms(
+            root_node: SimpleDomNode, prune_transforms: list[_CompiledPruneEmptyTransform]
+        ) -> None:
+            def _is_effectively_empty_element(n: SimpleDomNode, *, strip_whitespace: bool) -> bool:
+                if n.namespace == "html" and n.name.lower() in VOID_ELEMENTS:
+                    return False
+
+                def _has_content(children: list[SimpleDomNode] | None) -> bool:
+                    if not children:
+                        return False
+                    for ch in children:
+                        nm = ch.name
+                        if nm == "#text":
+                            data = getattr(ch, "data", "") or ""
+                            if strip_whitespace:
+                                if str(data).strip():
+                                    return True
+                            else:
+                                if str(data) != "":
+                                    return True
+                            continue
+                        if nm.startswith("#"):
+                            continue
+                        return True
+                    return False
+
+                if _has_content(n.children):
+                    return False
+
+                if type(n) is TemplateNode and n.template_content is not None:
+                    if _has_content(n.template_content.children):
+                        return False
+
+                return True
+
+            stack: list[tuple[SimpleDomNode, bool]] = [(root_node, False)]
+            while stack:
+                node, visited = stack.pop()
+                if not visited:
+                    stack.append((node, True))
+
+                    children = node.children or []
+                    stack.extend((child, False) for child in reversed(children) if isinstance(child, SimpleDomNode))
 
                     if type(node) is TemplateNode and node.template_content is not None:
-                        apply_to_children(
-                            node.template_content, skip_linkify=child_skip, skip_whitespace=child_skip_ws
-                        )
+                        stack.append((node.template_content, False))
+                    continue
 
+                if node.parent is None:
+                    continue
+                if node.name.startswith("#"):
+                    continue
+
+                for pt in prune_transforms:
+                    if matcher.matches(node, pt.selector):
+                        if _is_effectively_empty_element(node, strip_whitespace=pt.strip_whitespace):
+                            node.parent.remove_child(node)
+                            break
+
+        pending_walk: list[CompiledTransform] = []
+
+        i = 0
+        while i < len(compiled):
+            t = compiled[i]
+            if isinstance(
+                t,
+                (
+                    _CompiledSelectorTransform,
+                    _CompiledLinkifyTransform,
+                    _CompiledCollapseWhitespaceTransform,
+                ),
+            ):
+                pending_walk.append(t)
                 i += 1
-
-        if type(root_node) is not TextNode:
-            apply_to_children(root_node, skip_linkify=False, skip_whitespace=False)
-
-    def apply_prune_transforms(root_node: SimpleDomNode, prune_transforms: list[_CompiledPruneEmptyTransform]) -> None:
-        def _is_effectively_empty_element(n: SimpleDomNode, *, strip_whitespace: bool) -> bool:
-            if n.namespace == "html" and n.name.lower() in VOID_ELEMENTS:
-                return False
-
-            def _has_content(children: list[SimpleDomNode] | None) -> bool:
-                if not children:
-                    return False
-                for ch in children:
-                    nm = ch.name
-                    if nm == "#text":
-                        data = getattr(ch, "data", "") or ""
-                        if strip_whitespace:
-                            if str(data).strip():
-                                return True
-                        else:
-                            if str(data) != "":
-                                return True
-                        continue
-                    if nm.startswith("#"):
-                        continue
-                    return True
-                return False
-
-            if _has_content(n.children):
-                return False
-
-            if type(n) is TemplateNode and n.template_content is not None:
-                if _has_content(n.template_content.children):
-                    return False
-
-            return True
-
-        stack: list[tuple[SimpleDomNode, bool]] = [(root_node, False)]
-        while stack:
-            node, visited = stack.pop()
-            if not visited:
-                stack.append((node, True))
-
-                children = node.children or []
-                stack.extend((child, False) for child in reversed(children) if isinstance(child, SimpleDomNode))
-
-                if type(node) is TemplateNode and node.template_content is not None:
-                    stack.append((node.template_content, False))
                 continue
 
-            if node.parent is None:
+            apply_walk_transforms(root, pending_walk)
+            pending_walk = []
+
+            if isinstance(t, _CompiledStageBoundary):
+                i += 1
                 continue
-            if node.name.startswith("#"):
+
+            if isinstance(t, _CompiledSanitizeTransform):
+                apply_sanitize_transform(root, t)
+                i += 1
                 continue
 
-            for pt in prune_transforms:
-                if matcher.matches(node, pt.selector):
-                    if _is_effectively_empty_element(node, strip_whitespace=pt.strip_whitespace):
-                        node.parent.remove_child(node)
-                        break
+            if isinstance(t, _CompiledPruneEmptyTransform):
+                prune_batch: list[_CompiledPruneEmptyTransform] = [t]
+                i += 1
+                while i < len(compiled) and isinstance(compiled[i], _CompiledPruneEmptyTransform):
+                    prune_batch.append(cast("_CompiledPruneEmptyTransform", compiled[i]))
+                    i += 1
+                apply_prune_transforms(root, prune_batch)
+                continue
 
-    pending_walk: list[CompiledTransform] = []
-
-    i = 0
-    while i < len(compiled):
-        t = compiled[i]
-        if isinstance(
-            t, (_CompiledSelectorTransform, _CompiledLinkifyTransform, _CompiledCollapseWhitespaceTransform)
-        ):
-            pending_walk.append(t)
-            i += 1
-            continue
+            raise TypeError(f"Unsupported compiled transform: {type(t).__name__}")
 
         apply_walk_transforms(root, pending_walk)
-        pending_walk = []
-
-        if isinstance(t, _CompiledStageBoundary):
-            i += 1
-            continue
-
-        if isinstance(t, _CompiledSanitizeTransform):
-            apply_sanitize_transform(root, t)
-            i += 1
-            continue
-
-        if isinstance(t, _CompiledPruneEmptyTransform):
-            prune_batch: list[_CompiledPruneEmptyTransform] = [t]
-            i += 1
-            while i < len(compiled) and isinstance(compiled[i], _CompiledPruneEmptyTransform):
-                prune_batch.append(cast("_CompiledPruneEmptyTransform", compiled[i]))
-                i += 1
-            apply_prune_transforms(root, prune_batch)
-            continue
-
-        raise TypeError(f"Unsupported compiled transform: {type(t).__name__}")
-
-    apply_walk_transforms(root, pending_walk)
+    finally:
+        _ERROR_SINK.reset(token)

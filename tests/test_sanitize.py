@@ -9,6 +9,7 @@ from justhtml.sanitize import (
     CSS_PRESET_TEXT,
     DEFAULT_POLICY,
     SanitizationPolicy,
+    UnsafeHandler,
     UrlPolicy,
     UrlProxy,
     UrlRule,
@@ -23,6 +24,7 @@ from justhtml.sanitize import (
     _sanitize as sanitize,
 )
 from justhtml.serialize import to_html
+from justhtml.tokens import ParseError
 
 
 class TestSanitizePlumbing(unittest.TestCase):
@@ -652,6 +654,41 @@ class TestSanitizePlumbing(unittest.TestCase):
 
 
 class TestSanitizeUnsafe(unittest.TestCase):
+    def test_unsafe_handler_collect_initializes_on_first_use(self) -> None:
+        # Cover the centralized handler's fast path when used standalone
+        # (without an explicit reset call).
+        h = UnsafeHandler("collect")
+        h.handle("Unsafe tag 'x'", node=None)
+        errs = h.collected()
+        assert len(errs) == 1
+        assert errs[0].category == "security"
+
+    def test_unsafe_handler_collected_filters_shared_sink(self) -> None:
+        h = UnsafeHandler("collect")
+        sink = [
+            ParseError("unexpected-null-character", category="tokenizer"),
+            ParseError("unsafe-html", category="security"),
+        ]
+        h.sink = sink
+        errs = h.collected()
+        assert len(errs) == 1
+        assert errs[0].category == "security"
+
+    def test_collect_mode_can_run_with_no_security_findings(self) -> None:
+        doc = JustHTML("<p>ok</p>", fragment=True)
+
+        policy = SanitizationPolicy(
+            allowed_tags=set(DEFAULT_POLICY.allowed_tags),
+            allowed_attributes=DEFAULT_POLICY.allowed_attributes,
+            url_policy=DEFAULT_POLICY.url_policy,
+            allowed_css_properties=DEFAULT_POLICY.allowed_css_properties,
+            force_link_rel=DEFAULT_POLICY.force_link_rel,
+            unsafe_handling="collect",
+        )
+
+        _ = doc.to_html(pretty=False, policy=policy)
+        assert doc.errors == []
+
     def test_policy_collect_helpers_cover_empty_paths(self) -> None:
         # Non-collect policy: collection helpers are no-ops.
         policy_strip = SanitizationPolicy(

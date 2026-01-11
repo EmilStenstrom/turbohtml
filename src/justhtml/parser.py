@@ -126,16 +126,18 @@ class JustHTML:
         self.tokenizer.run(html_str)
         self.root = self.tree_builder.finish()
 
+        transform_errors: list[ParseError] = []
+
         if compiled_transforms is not None:
-            apply_compiled_transforms(self.root, compiled_transforms)
+            apply_compiled_transforms(self.root, compiled_transforms, errors=transform_errors)
 
         if should_collect:
             # Merge errors from both tokenizer and tree builder.
             # Public API: users expect errors to be ordered by input position.
-            merged_errors = self.tokenizer.errors + self.tree_builder.errors
+            merged_errors = self.tokenizer.errors + self.tree_builder.errors + transform_errors
             self.errors = self._sorted_errors(merged_errors)
         else:
-            self.errors = []
+            self.errors = transform_errors
 
         # In strict mode, raise on first error
         if strict and self.errors:
@@ -160,26 +162,39 @@ class JustHTML:
             )
         ]
 
-    def _set_security_errors(self, errors: list[ParseError]) -> None:
-        if not self.errors and not errors:
-            return
-
-        base = [e for e in self.errors if e.category != "security"]
-        self.errors = self._sorted_errors(base + errors)
-
     def _with_security_error_collection(
         self,
         policy: SanitizationPolicy | None,
         serialize: Callable[[], str],
     ) -> str:
         if policy is not None and policy.unsafe_handling == "collect":
-            policy.reset_collected_security_errors()
-            out = serialize()
-            self._set_security_errors(policy.collected_security_errors())
+            handler = policy._unsafe_handler
+            prev_sink = handler.sink
+            handler.sink = self.errors
+            try:
+                policy.reset_collected_security_errors()
+                out = serialize()
+            finally:
+                handler.sink = prev_sink
+
+            if self.errors:
+                self.errors.sort(
+                    key=lambda e: (
+                        e.line if e.line is not None else 1_000_000_000,
+                        e.column if e.column is not None else 1_000_000_000,
+                    )
+                )
             return out
 
         # Avoid stale security errors if a previous serialization used collect.
-        self._set_security_errors([])
+        if self.errors:
+            write_i = 0
+            for e in self.errors:
+                if e.category == "security":
+                    continue
+                self.errors[write_i] = e
+                write_i += 1
+            del self.errors[write_i:]
         return serialize()
 
     def to_html(

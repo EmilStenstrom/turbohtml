@@ -17,6 +17,7 @@ from justhtml.transforms import (
     Unwrap,
     apply_compiled_transforms,
     compile_transforms,
+    emit_error,
 )
 
 
@@ -59,6 +60,48 @@ class TestTransforms(unittest.TestCase):
 
         doc = JustHTML('<a href="https://e.com">x</a>', transforms=[Edit("a", cb)])
         assert 'data-x="1"' in doc.to_html(pretty=False, safe=False)
+
+    def test_transform_callbacks_can_emit_errors_without_parse_error_collection(self) -> None:
+        def cb(node: SimpleDomNode) -> None:
+            emit_error("transform-warning", node=node, message="bad <p>")
+
+        doc = JustHTML(
+            "<!--x--><p>Hello</p>",
+            track_node_locations=True,
+            transforms=[Edit("p", cb), SetAttrs("p", id="x")],
+        )
+        assert len(doc.errors) == 1
+        err = doc.errors[0]
+        assert err.category == "transform"
+        assert err.code == "transform-warning"
+        assert err.message == "bad <p>"
+        assert err.line is not None
+        assert err.column is not None
+        assert 'id="x"' in doc.to_html(pretty=False, safe=False)
+
+    def test_transform_callback_errors_merge_with_parse_errors_when_collect_errors_true(self) -> None:
+        doc = JustHTML(
+            "<p>\x00</p>",
+            collect_errors=True,
+            track_node_locations=True,
+            transforms=[Edit("p", lambda n: emit_error("transform-warning", node=n, message="bad <p>"))],
+        )
+        codes = {e.code for e in doc.errors}
+        assert "transform-warning" in codes
+        assert "unexpected-null-character" in codes
+
+    def test_emit_error_noops_without_active_sink(self) -> None:
+        root = JustHTML("<p>x</p>", fragment=True, track_node_locations=True).root
+        compiled = compile_transforms([Edit("p", lambda n: emit_error("x", node=n, message="msg"))])
+        apply_compiled_transforms(root, compiled)
+
+        errs = []
+        compiled2 = compile_transforms([Edit("p", lambda n: emit_error("x", line=1, column=2, message="msg"))])
+        apply_compiled_transforms(root, compiled2, errors=errs)
+        assert len(errs) == 1
+        assert errs[0].code == "x"
+        assert errs[0].line == 1
+        assert errs[0].column == 2
 
     def test_transforms_run_in_order_and_drop_short_circuits(self) -> None:
         doc = JustHTML(

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from urllib.parse import quote, urlsplit
 
 from .tokens import ParseError
@@ -152,6 +152,95 @@ def _proxy_url_value(*, proxy: UrlProxy, value: str) -> str:
     return f"{proxy.url}{sep}{proxy.param}={quote(value, safe='')}"
 
 
+@dataclass(slots=True)
+class UnsafeHandler:
+    """Centralized handler for security findings.
+
+    This is intentionally a small stateful object so multiple sanitization-
+    related passes/transforms can share the same unsafe-handling behavior and
+    (in collect mode) append into the same error list.
+    """
+
+    unsafe_handling: UnsafeHandling
+
+    # Optional external sink (e.g. a JustHTML document's .errors list).
+    # When set and unsafe_handling == "collect", security findings are written
+    # into that list so multiple components can share a single sink.
+    sink: list[ParseError] | None = None
+
+    _errors: list[ParseError] | None = None
+
+    def reset(self) -> None:
+        if self.unsafe_handling != "collect":
+            self._errors = None
+            return
+
+        if self.sink is None:
+            self._errors = []
+            return
+
+        # Remove previously collected security findings from the shared sink to
+        # avoid accumulating duplicates across multiple runs.
+        errors = self.sink
+        write_i = 0
+        for e in errors:
+            if e.category == "security":
+                continue
+            errors[write_i] = e
+            write_i += 1
+        del errors[write_i:]
+
+    def collected(self) -> list[ParseError]:
+        src = self.sink if self.sink is not None else self._errors
+        if not src:
+            return []
+
+        if self.sink is not None:
+            out = [e for e in src if e.category == "security"]
+        else:
+            out = list(src)
+        out.sort(
+            key=lambda e: (
+                e.line if e.line is not None else 1_000_000_000,
+                e.column if e.column is not None else 1_000_000_000,
+            )
+        )
+        return out
+
+    def handle(self, msg: str, *, node: Any | None = None) -> None:
+        mode = self.unsafe_handling
+        if mode == "strip":
+            return
+        if mode == "raise":
+            raise UnsafeHtmlError(msg)
+        if mode == "collect":
+            dest = self.sink
+            if dest is None:
+                if self._errors is None:
+                    self._errors = []
+                dest = self._errors
+
+            line: int | None = None
+            column: int | None = None
+            if node is not None:
+                # Best-effort: use node origin metadata when enabled.
+                # This stays allocation-light and avoids any input re-parsing.
+                line = node.origin_line
+                column = node.origin_col
+
+            dest.append(
+                ParseError(
+                    "unsafe-html",
+                    line=line,
+                    column=column,
+                    category="security",
+                    message=msg,
+                )
+            )
+            return
+        raise AssertionError(f"Unhandled unsafe_handling: {mode!r}")
+
+
 @dataclass(frozen=True, slots=True)
 class SanitizationPolicy:
     """An allow-list driven policy for sanitizing a parsed DOM.
@@ -203,8 +292,8 @@ class SanitizationPolicy:
     # more behaviors over time without changing the API shape.
     unsafe_handling: UnsafeHandling = "strip"
 
-    _collected_security_errors: list[ParseError] | None = field(
-        default=None,
+    _unsafe_handler: UnsafeHandler = field(
+        default_factory=lambda: UnsafeHandler("strip"),
         init=False,
         repr=False,
         compare=False,
@@ -251,6 +340,11 @@ class SanitizationPolicy:
             raise ValueError("Invalid unsafe_handling. Expected one of: 'strip', 'raise', 'collect'")
         object.__setattr__(self, "unsafe_handling", unsafe_handling)
 
+        # Centralize unsafe-handling logic so multiple passes can share it.
+        handler = UnsafeHandler(cast("UnsafeHandling", unsafe_handling))
+        handler.reset()
+        object.__setattr__(self, "_unsafe_handler", handler)
+
         # Normalize rel tokens once so _sanitize_attrs() can stay allocation-light.
         # (Downstream code expects lowercase tokens and ignores empty/whitespace.)
         if self.force_link_rel:
@@ -275,56 +369,13 @@ class SanitizationPolicy:
         object.__setattr__(self, "_allowed_attrs_by_tag", by_tag)
 
     def reset_collected_security_errors(self) -> None:
-        if self.unsafe_handling == "collect":
-            object.__setattr__(self, "_collected_security_errors", [])
-        else:
-            object.__setattr__(self, "_collected_security_errors", None)
+        self._unsafe_handler.reset()
 
     def collected_security_errors(self) -> list[ParseError]:
-        if self._collected_security_errors is None:
-            return []
-        out = list(self._collected_security_errors)
-        # Keep ordering consistent with JustHTML error ordering: by input position.
-        # Errors without a location sort last.
-        out.sort(
-            key=lambda e: (
-                e.line if e.line is not None else 1_000_000_000,
-                e.column if e.column is not None else 1_000_000_000,
-            )
-        )
-        return out
+        return self._unsafe_handler.collected()
 
     def handle_unsafe(self, msg: str, *, node: Any | None = None) -> None:
-        mode = self.unsafe_handling
-        if mode == "strip":
-            return
-        if mode == "raise":
-            raise UnsafeHtmlError(msg)
-        if mode == "collect":
-            collected = self._collected_security_errors
-            if collected is None:
-                collected = []
-                object.__setattr__(self, "_collected_security_errors", collected)
-
-            line: int | None = None
-            column: int | None = None
-            if node is not None:
-                # Best-effort: use node origin metadata when enabled.
-                # This stays allocation-light and avoids any input re-parsing.
-                line = node.origin_line
-                column = node.origin_col
-
-            collected.append(
-                ParseError(
-                    "unsafe-html",
-                    line=line,
-                    column=column,
-                    category="security",
-                    message=msg,
-                )
-            )
-            return
-        raise AssertionError(f"Unhandled unsafe_handling: {mode!r}")
+        self._unsafe_handler.handle(msg, node=node)
 
 
 _URL_NORMALIZE_STRIP_TABLE = {i: None for i in range(0x21)}
