@@ -196,12 +196,32 @@ class PruneEmpty:
         object.__setattr__(self, "strip_whitespace", bool(strip_whitespace))
 
 
+@dataclass(frozen=True, slots=True)
+class Stage:
+    """Group transforms into an explicit stage.
+
+    Stages are intended to make transform passes explicit and readable.
+
+    - Stages can be nested; nested stages are flattened.
+    - If at least one Stage is present at the top level of a transform list,
+        any top-level transforms around it are automatically grouped into
+        implicit stages.
+    """
+
+    transforms: tuple[TransformSpec, ...]
+
+    def __init__(self, transforms: list[TransformSpec] | tuple[TransformSpec, ...]) -> None:
+        object.__setattr__(self, "transforms", tuple(transforms))
+
+
 # -----------------
 # Compilation
 # -----------------
 
 
 Transform = SetAttrs | Drop | Unwrap | Empty | Edit | Linkify | CollapseWhitespace | PruneEmpty | Sanitize
+
+TransformSpec = Transform | Stage
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,24 +259,83 @@ class _CompiledPruneEmptyTransform:
     strip_whitespace: bool
 
 
+@dataclass(frozen=True, slots=True)
+class _CompiledStageBoundary:
+    kind: Literal["stage_boundary"]
+
+
 CompiledTransform = (
     _CompiledSelectorTransform
     | _CompiledLinkifyTransform
     | _CompiledCollapseWhitespaceTransform
     | _CompiledPruneEmptyTransform
     | _CompiledSanitizeTransform
+    | _CompiledStageBoundary
 )
 
 
-def compile_transforms(transforms: list[Transform] | tuple[Transform, ...]) -> list[CompiledTransform]:
-    if transforms:
-        sanitize_count = sum(1 for t in transforms if isinstance(t, Sanitize))
-        if sanitize_count:
-            if sanitize_count > 1:
-                raise ValueError("Only one Sanitize transform is supported")
+def _iter_flattened_transforms(specs: list[TransformSpec] | tuple[TransformSpec, ...]) -> list[Transform]:
+    out: list[Transform] = []
 
-    compiled: list[CompiledTransform] = []
-    for t in transforms:
+    def _walk(items: list[TransformSpec] | tuple[TransformSpec, ...]) -> None:
+        for item in items:
+            if isinstance(item, Stage):
+                _walk(item.transforms)
+                continue
+            out.append(item)
+
+    _walk(specs)
+    return out
+
+
+def _split_into_top_level_stages(specs: list[TransformSpec] | tuple[TransformSpec, ...]) -> list[Stage]:
+    # Only enable auto-staging when a Stage is present at the top level.
+    has_top_level_stage = any(isinstance(t, Stage) for t in specs)
+    if not has_top_level_stage:
+        return []
+
+    stages: list[Stage] = []
+    pending: list[TransformSpec] = []
+
+    for item in specs:
+        if isinstance(item, Stage):
+            if pending:
+                stages.append(Stage(pending))
+                pending = []
+            stages.append(item)
+            continue
+
+        pending.append(item)
+
+    if pending:
+        stages.append(Stage(pending))
+
+    return stages
+
+
+def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ...]) -> list[CompiledTransform]:
+    if not transforms:
+        return []
+
+    flattened = _iter_flattened_transforms(transforms)
+    sanitize_count = sum(1 for t in flattened if isinstance(t, Sanitize))
+    if sanitize_count > 1:
+        raise ValueError("Only one Sanitize transform is supported")
+
+    top_level_stages = _split_into_top_level_stages(transforms)
+    if top_level_stages:
+        # Stage is a pass boundary. Compile each stage separately and insert a
+        # boundary marker so apply_compiled_transforms can flush batches.
+        compiled: list[CompiledTransform] = []
+        for stage_i, stage in enumerate(top_level_stages):
+            if stage_i:
+                compiled.append(_CompiledStageBoundary(kind="stage_boundary"))
+            for inner in _iter_flattened_transforms(stage.transforms):
+                compiled.extend(compile_transforms((inner,)))
+        return compiled
+
+    compiled = []
+    for t in flattened:
         if isinstance(t, SetAttrs):
             compiled.append(
                 _CompiledSelectorTransform(
@@ -405,22 +484,31 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
         root_node.children = sanitized.children
         _reparent_children(root_node)
 
-    def apply_selector_and_linkify_transforms(
-        root_node: SimpleDomNode,
-        selector_transforms: list[_CompiledSelectorTransform],
-        linkify_transforms: list[_CompiledLinkifyTransform],
-        whitespace_transforms: list[_CompiledCollapseWhitespaceTransform],
-    ) -> None:
-        if not selector_transforms and not linkify_transforms and not whitespace_transforms:
+    def apply_walk_transforms(root_node: SimpleDomNode, walk_transforms: list[CompiledTransform]) -> None:
+        if not walk_transforms:
             return
 
-        linkify_skip_tags: frozenset[str] = (
-            frozenset().union(*(t.skip_tags for t in linkify_transforms)) if linkify_transforms else frozenset()
+        linkify_skip_tags: frozenset[str] = frozenset().union(
+            *(t.skip_tags for t in walk_transforms if isinstance(t, _CompiledLinkifyTransform))
+        )
+        whitespace_skip_tags: frozenset[str] = frozenset().union(
+            *(t.skip_tags for t in walk_transforms if isinstance(t, _CompiledCollapseWhitespaceTransform))
         )
 
-        whitespace_skip_tags: frozenset[str] = (
-            frozenset().union(*(t.skip_tags for t in whitespace_transforms)) if whitespace_transforms else frozenset()
-        )
+        # To preserve strict left-to-right semantics while still batching
+        # compatible transforms into a single walk, we track the earliest
+        # transform index that may run on a node.
+        #
+        # Example:
+        #   transforms=[Drop("a"), Linkify()]
+        # Linkify introduces <a> elements. Those <a> nodes must not be
+        # processed by earlier transforms (like Drop("a")), because Drop has
+        # already run conceptually.
+        created_start_index: dict[int, int] = {}
+
+        def _mark_start(n: object, start_index: int) -> None:
+            key = id(n)
+            created_start_index[key] = max(created_start_index.get(key, 0), start_index)
 
         def apply_to_children(parent: SimpleDomNode, *, skip_linkify: bool, skip_whitespace: bool) -> None:
             children = parent.children
@@ -431,52 +519,57 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
             while i < len(children):
                 node = children[i]
                 name = node.name
-                is_element = not name.startswith("#")
-
-                if name == "#text" and not skip_whitespace and whitespace_transforms:
-                    data = node.data or ""
-                    if data:
-                        collapsed = data
-                        for _wt in whitespace_transforms:
-                            collapsed = _collapse_html_space_characters(collapsed)
-                        if collapsed != data:
-                            node.data = collapsed
-
-                # Linkify applies to text nodes, context-aware.
-                if name == "#text" and not skip_linkify and linkify_transforms:
-                    data = node.data or ""
-                    if data:
-                        rewritten = False
-                        for lt in linkify_transforms:
-                            matches = find_links_with_config(data, lt.config)
-                            if not matches:
-                                continue
-
-                            cursor = 0
-                            for m in matches:
-                                if m.start > cursor:
-                                    parent.insert_before(TextNode(data[cursor : m.start]), node)
-
-                                ns = parent.namespace or "html"
-                                a = ElementNode("a", {"href": m.href}, ns)
-                                a.append_child(TextNode(m.text))
-                                parent.insert_before(a, node)
-                                cursor = m.end
-
-                            if cursor < len(data):
-                                parent.insert_before(TextNode(data[cursor:]), node)
-
-                            parent.remove_child(node)
-                            rewritten = True
-                            break
-
-                        if rewritten:
-                            continue
 
                 changed = False
-                for t in selector_transforms:
-                    if not is_element:
-                        break
+                start_at = created_start_index.get(id(node), 0)
+                for idx in range(start_at, len(walk_transforms)):
+                    t = walk_transforms[idx]
+                    # CollapseWhitespace
+                    if isinstance(t, _CompiledCollapseWhitespaceTransform):
+                        if name == "#text" and not skip_whitespace:
+                            data = node.data or ""
+                            if data:
+                                collapsed = _collapse_html_space_characters(data)
+                                if collapsed != data:
+                                    node.data = collapsed
+                        continue
+
+                    # Linkify
+                    if isinstance(t, _CompiledLinkifyTransform):
+                        if name == "#text" and not skip_linkify:
+                            data = node.data or ""
+                            if data:
+                                matches = find_links_with_config(data, t.config)
+                                if matches:
+                                    cursor = 0
+                                    for m in matches:
+                                        if m.start > cursor:
+                                            txt = TextNode(data[cursor : m.start])
+                                            _mark_start(txt, idx + 1)
+                                            parent.insert_before(txt, node)
+
+                                        ns = parent.namespace or "html"
+                                        a = ElementNode("a", {"href": m.href}, ns)
+                                        a.append_child(TextNode(m.text))
+                                        _mark_start(a, idx + 1)
+                                        parent.insert_before(a, node)
+                                        cursor = m.end
+
+                                    if cursor < len(data):
+                                        tail = TextNode(data[cursor:])
+                                        _mark_start(tail, idx + 1)
+                                        parent.insert_before(tail, node)
+
+                                    parent.remove_child(node)
+                                    changed = True
+                                    break
+                        continue
+
+                    # Selector transforms
+                    t = cast("_CompiledSelectorTransform", t)
+
+                    if name.startswith("#"):
+                        continue
 
                     if not matcher.matches(node, t.selector):
                         continue
@@ -515,6 +608,7 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
                         moved = list(node.children)
                         node.children = []
                         for child in moved:
+                            _mark_start(child, idx + 1)
                             parent.insert_before(child, node)
                     parent.remove_child(node)
                     changed = True
@@ -523,7 +617,7 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
                 if changed:
                     continue
 
-                if is_element:
+                if not name.startswith("#"):
                     tag = node.name.lower()
                     child_skip = skip_linkify or (tag in linkify_skip_tags)
                     child_skip_ws = skip_whitespace or (tag in whitespace_skip_tags)
@@ -598,30 +692,24 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
                         node.parent.remove_child(node)
                         break
 
-    pending_selector: list[_CompiledSelectorTransform] = []
-    pending_linkify: list[_CompiledLinkifyTransform] = []
-    pending_whitespace: list[_CompiledCollapseWhitespaceTransform] = []
+    pending_walk: list[CompiledTransform] = []
 
     i = 0
     while i < len(compiled):
         t = compiled[i]
-        if isinstance(t, _CompiledSelectorTransform):
-            pending_selector.append(t)
-            i += 1
-            continue
-        if isinstance(t, _CompiledLinkifyTransform):
-            pending_linkify.append(t)
-            i += 1
-            continue
-        if isinstance(t, _CompiledCollapseWhitespaceTransform):
-            pending_whitespace.append(t)
+        if isinstance(
+            t, (_CompiledSelectorTransform, _CompiledLinkifyTransform, _CompiledCollapseWhitespaceTransform)
+        ):
+            pending_walk.append(t)
             i += 1
             continue
 
-        apply_selector_and_linkify_transforms(root, pending_selector, pending_linkify, pending_whitespace)
-        pending_selector = []
-        pending_linkify = []
-        pending_whitespace = []
+        apply_walk_transforms(root, pending_walk)
+        pending_walk = []
+
+        if isinstance(t, _CompiledStageBoundary):
+            i += 1
+            continue
 
         if isinstance(t, _CompiledSanitizeTransform):
             apply_sanitize_transform(root, t)
@@ -639,4 +727,4 @@ def apply_compiled_transforms(root: SimpleDomNode, compiled: list[CompiledTransf
 
         raise TypeError(f"Unsupported compiled transform: {type(t).__name__}")
 
-    apply_selector_and_linkify_transforms(root, pending_selector, pending_linkify, pending_whitespace)
+    apply_walk_transforms(root, pending_walk)

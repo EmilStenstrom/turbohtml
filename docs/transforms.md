@@ -19,7 +19,7 @@ doc = JustHTML("<p>Hello</p>", transforms=[...])
 ## Quick example
 
 ```python
-from justhtml import JustHTML, SetAttrs, Drop
+from justhtml import JustHTML, Drop, SetAttrs
 
 doc = JustHTML(
     "<p>Hello</p><script>alert(1)</script>",
@@ -59,9 +59,12 @@ Sanitization can remove or rewrite transform results (for example, unsafe tags, 
 
 ## Ordering
 
-Transforms run in the order they are provided.
+Transforms run left-to-right, but JustHTML may **batch compatible transforms** into a single tree walk for performance.
 
-Later transforms see earlier changes. If a transform removes a node (for example `Drop` or `Unwrap`), later transforms will not see that node.
+Batching preserves left-to-right ordering, but it is still a single walk with a moving cursor.
+If a transform inserts or moves nodes **before** the current cursor, later transforms in the same walk may not visit those nodes.
+
+If you need explicit pass boundaries (to make multi-pass pipelines easier to read, or to avoid cross-transform batching effects), use `Stage([...])` (see “Advanced: Stages” below).
 
 ```python
 from justhtml import JustHTML, Drop, SetAttrs
@@ -73,7 +76,68 @@ doc = JustHTML(
         Drop("p"),
     ],
 )
+
 ```
+
+## Advanced: Stages
+
+`Stage([...])` lets you explicitly split transforms into **separate passes**.
+
+Use it when you want to make a multi-pass pipeline clearer, or when you want to avoid cross-transform batching effects.
+
+Stages also matter for semantics when earlier transforms insert/move nodes “behind” the current walk position.
+Splitting into stages forces a new walk, so later transforms see the updated tree.
+
+- Stages can be nested; nested stages are flattened.
+- If at least one `Stage` is present at the top level, any top-level transforms around it are automatically grouped into implicit stages.
+
+Example: Let's a Edit() transform create new nodes and then set attributes
+
+```python
+from justhtml import Edit, JustHTML, SetAttrs, Stage
+from justhtml.node import SimpleDomNode, TextNode
+
+
+def insert_marker(p):
+    # Insert a new sibling *before* the current node.
+    # Without an explicit stage boundary, later transforms in the same walk
+    # may not visit nodes inserted before the current cursor.
+    marker = SimpleDomNode("span")
+    marker.append_child(TextNode("NEW "))
+    # If this was insert_after, SetAttrs would have seen the node.
+    p.parent.insert_before(marker, p)
+
+doc = JustHTML(
+    "<p>one</p><p>two</p>",
+    fragment=True,
+    transforms=[
+        # Without Stage, SetAttrs will miss the inserted <span>.
+        Edit("p:first-child", insert_marker),
+        SetAttrs("span", id="marker"),
+    ],
+)
+
+# With Stage, the second pass sees the inserted <span>:
+doc2 = JustHTML(
+    "<p>one</p><p>two</p>",
+    fragment=True,
+    transforms=[
+        Stage([Edit("p:first-child", insert_marker)]),
+        Stage([SetAttrs("span", id="marker")]),
+    ],
+)
+
+print(doc.to_html(pretty=False, safe=False))
+print(doc2.to_html(pretty=False, safe=False))
+```
+
+Output:
+
+```html
+<span>NEW </span><p>one</p><p>two</p>
+<span id="marker">NEW </span><p>one</p><p>two</p>
+```
+
 
 ## Tree shape
 
@@ -114,6 +178,7 @@ It never touches attributes, existing tags, comments, or doctypes.
 - `CollapseWhitespace(skip_tags=(...))` — Collapse whitespace runs in text nodes (html5lib-like).
 - `Sanitize(policy=None)` — Sanitize the in-memory tree.
 - `PruneEmpty(selector, strip_whitespace=True)` — Recursively drop empty elements.
+- `Stage([...])` — Split transforms into explicit passes (advanced).
 - `SetAttrs(selector, **attrs)` — Set/overwrite attributes on matching elements.
 - `Drop(selector)` — Remove matching elements and their contents.
 - `Unwrap(selector)` — Remove the element but keep its children.
@@ -368,22 +433,9 @@ doc = JustHTML(
 print(doc.to_html(pretty=False))
 ```
 
-## Reapplying transforms
-
-Transforms passed to `JustHTML(..., transforms=[...])` run only once, during construction.
-
-Transform compilation and application utilities are available for advanced usage:
-
-```python
-from justhtml.transforms import apply_compiled_transforms, compile_transforms
-
 ## Acknowledgements
 
 JustHTML's Linkify behavior is validated against the upstream `linkify-it` fixture suite (MIT licensed).
 
 - Fixtures: `tests/linkify-it/fixtures/`
 - License: `tests/linkify-it/LICENSE.txt`
-
-compiled = compile_transforms([...])
-apply_compiled_transforms(doc.root, compiled)
-```

@@ -48,7 +48,9 @@ Hello **world** [bad] [ok](https://example.com/?a=1&b=2)
 
 ## Sanitizing the in-memory DOM
 
-If you will be working with the DOM and want a clean slate to work from, put `Sanitize(...)` at the end of your transform pipeline.
+If you will be working with the DOM and want a clean slate to work from, add `Sanitize(...)` to your transform pipeline.
+
+If you want explicit pass boundaries (advanced use), you can group transforms using [`Stage([...])`](transforms.md#advanced-stages).
 
 ```python
 from justhtml import JustHTML, Sanitize

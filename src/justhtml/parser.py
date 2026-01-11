@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from .node import SimpleDomNode
     from .sanitize import SanitizationPolicy
     from .tokens import ParseError
-    from .transforms import Transform
+    from .transforms import TransformSpec
 
 
 class StrictModeError(SyntaxError):
@@ -67,7 +67,7 @@ class JustHTML:
         strict: bool = False,
         tokenizer_opts: TokenizerOpts | None = None,
         tree_builder: TreeBuilder | None = None,
-        transforms: list[Transform] | None = None,
+        transforms: list[TransformSpec] | None = None,
     ) -> None:
         if fragment_context is not None:
             fragment = True

@@ -13,6 +13,7 @@ from justhtml.transforms import (
     PruneEmpty,
     Sanitize,
     SetAttrs,
+    Stage,
     Unwrap,
     apply_compiled_transforms,
     compile_transforms,
@@ -227,3 +228,59 @@ class TestTransforms(unittest.TestCase):
             transforms=[PruneEmpty("p, template")],
         )
         assert doc.to_html(pretty=False, safe=False) == "<template>ok</template>"
+
+    def test_transform_order_is_respected_for_linkify_and_drop(self) -> None:
+        # Drop runs before Linkify: it should not remove links created later.
+        doc_keep = JustHTML(
+            "<p>example.com</p>",
+            fragment=True,
+            transforms=[Drop("a"), Linkify()],
+        )
+        assert doc_keep.to_html(pretty=False, safe=False) == '<p><a href="http://example.com">example.com</a></p>'
+
+        # Drop runs after Linkify: it should remove the linkified <a>.
+        doc_drop = JustHTML(
+            "<p>example.com</p>",
+            fragment=True,
+            transforms=[Linkify(), Drop("a")],
+        )
+        assert doc_drop.to_html(pretty=False, safe=False) == "<p></p>"
+
+    def test_stage_auto_grouping_does_not_change_ordering(self) -> None:
+        # Stage boundaries split passes, but ordering semantics are preserved.
+        doc_stage = JustHTML(
+            "<p>example.com</p>",
+            fragment=True,
+            transforms=[Drop("a"), Stage([Linkify()])],
+        )
+        assert doc_stage.to_html(pretty=False, safe=False) == '<p><a href="http://example.com">example.com</a></p>'
+
+    def test_stage_can_be_nested_and_is_flattened(self) -> None:
+        doc = JustHTML(
+            "<p>example.com</p>",
+            fragment=True,
+            transforms=[Stage([Stage([Linkify()])])],
+        )
+        assert doc.to_html(pretty=False, safe=False) == '<p><a href="http://example.com">example.com</a></p>'
+
+    def test_stage_auto_grouping_includes_trailing_transforms(self) -> None:
+        # When a Stage exists at the top level, transforms outside stages are
+        # implicitly grouped into stages too (including a trailing segment).
+        doc = JustHTML(
+            "<p>Hello</p>",
+            fragment=True,
+            transforms=[Stage([SetAttrs("p", id="x")]), SetAttrs("p", **{"class": "y"})],
+        )
+        html = doc.to_html(pretty=False, safe=False)
+        assert "<p" in html
+        assert 'id="x"' in html
+        assert 'class="y"' in html
+
+    def test_linkify_noops_when_no_links_found(self) -> None:
+        # Covers the linkify path where we scan text but find no matches.
+        doc = JustHTML(
+            "<p>Hello world</p>",
+            fragment=True,
+            transforms=[Linkify()],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "<p>Hello world</p>"
