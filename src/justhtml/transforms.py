@@ -14,12 +14,13 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, cast
+from enum import Enum
+from typing import TYPE_CHECKING, ClassVar, Literal, cast
 
 from .constants import VOID_ELEMENTS, WHITESPACE_PRESERVING_ELEMENTS
 from .linkify import LinkifyConfig, find_links_with_config
 from .node import ElementNode, SimpleDomNode, TemplateNode, TextNode
-from .sanitize import SanitizationPolicy, _sanitize
+from .sanitize import DEFAULT_DOCUMENT_POLICY, DEFAULT_POLICY, SanitizationPolicy, _sanitize_attrs
 from .selector import SelectorMatcher, parse_selector
 from .tokens import ParseError
 
@@ -71,6 +72,20 @@ def emit_error(
     )
 
 
+class _StrEnum(str, Enum):
+    """Backport of enum.StrEnum (Python 3.11+).
+
+    We support Python 3.10+, so we use this small mixin instead.
+    """
+
+
+class DecideAction(_StrEnum):
+    KEEP = "keep"
+    DROP = "drop"
+    UNWRAP = "unwrap"
+    EMPTY = "empty"
+
+
 @dataclass(frozen=True, slots=True)
 class SetAttrs:
     selector: str
@@ -111,6 +126,72 @@ class Edit:
     callback: Callable[[SimpleDomNode], None]
 
     def __init__(self, selector: str, callback: Callable[[SimpleDomNode], None]) -> None:
+        object.__setattr__(self, "selector", str(selector))
+        object.__setattr__(self, "callback", callback)
+
+
+@dataclass(frozen=True, slots=True)
+class EditDocument:
+    """Edit the document root in-place.
+
+    The callback is invoked exactly once with the provided root node.
+
+    This is intended for operations that need access to the root container
+    (e.g. #document / #document-fragment) which selector-based transforms do
+    not visit.
+    """
+
+    callback: Callable[[SimpleDomNode], None]
+
+    def __init__(self, callback: Callable[[SimpleDomNode], None]) -> None:
+        object.__setattr__(self, "callback", callback)
+
+
+@dataclass(frozen=True, slots=True)
+class Decide:
+    """Perform structural actions based on a callback.
+
+    This is a generic building block for policy-driven transforms.
+
+    - For selectors other than "*", the selector is matched against element
+        nodes using the normal selector engine.
+    - For selector "*", the callback is invoked for every node type, including
+        text/comment/doctype and document container nodes.
+
+    The callback must return one of: Decide.KEEP, Decide.DROP, Decide.UNWRAP, Decide.EMPTY.
+    """
+
+    selector: str
+    callback: Callable[[object], DecideAction]
+
+    KEEP: ClassVar[DecideAction] = DecideAction.KEEP
+    DROP: ClassVar[DecideAction] = DecideAction.DROP
+    UNWRAP: ClassVar[DecideAction] = DecideAction.UNWRAP
+    EMPTY: ClassVar[DecideAction] = DecideAction.EMPTY
+
+    def __init__(self, selector: str, callback: Callable[[object], DecideAction]) -> None:
+        object.__setattr__(self, "selector", str(selector))
+        object.__setattr__(self, "callback", callback)
+
+
+@dataclass(frozen=True, slots=True)
+class RewriteAttrs:
+    """Rewrite element attributes using a callback.
+
+    The callback is invoked for matching element/template nodes.
+
+    - Return None to leave attributes unchanged.
+    - Return a dict to replace the node's attributes with that dict.
+    """
+
+    selector: str
+    callback: Callable[[SimpleDomNode], dict[str, str | None] | None]
+
+    def __init__(
+        self,
+        selector: str,
+        callback: Callable[[SimpleDomNode], dict[str, str | None] | None],
+    ) -> None:
         object.__setattr__(self, "selector", str(selector))
         object.__setattr__(self, "callback", callback)
 
@@ -258,7 +339,20 @@ class Stage:
 # -----------------
 
 
-Transform = SetAttrs | Drop | Unwrap | Empty | Edit | Linkify | CollapseWhitespace | PruneEmpty | Sanitize
+Transform = (
+    SetAttrs
+    | Drop
+    | Unwrap
+    | Empty
+    | Edit
+    | EditDocument
+    | Decide
+    | RewriteAttrs
+    | Linkify
+    | CollapseWhitespace
+    | PruneEmpty
+    | Sanitize
+)
 
 TransformSpec = Transform | Stage
 
@@ -285,9 +379,9 @@ class _CompiledLinkifyTransform:
 
 
 @dataclass(frozen=True, slots=True)
-class _CompiledSanitizeTransform:
-    kind: Literal["sanitize"]
-    policy: SanitizationPolicy | None
+class _CompiledEditDocumentTransform:
+    kind: Literal["edit_document"]
+    callback: Callable[[SimpleDomNode], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -303,12 +397,31 @@ class _CompiledStageBoundary:
     kind: Literal["stage_boundary"]
 
 
+@dataclass(frozen=True, slots=True)
+class _CompiledDecideTransform:
+    kind: Literal["decide"]
+    selector_str: str
+    selector: ParsedSelector | None
+    all_nodes: bool
+    callback: Callable[[object], DecideAction]
+
+
+@dataclass(frozen=True, slots=True)
+class _CompiledRewriteAttrsTransform:
+    kind: Literal["rewrite_attrs"]
+    selector_str: str
+    selector: ParsedSelector
+    callback: Callable[[SimpleDomNode], dict[str, str | None] | None]
+
+
 CompiledTransform = (
     _CompiledSelectorTransform
+    | _CompiledDecideTransform
+    | _CompiledRewriteAttrsTransform
     | _CompiledLinkifyTransform
     | _CompiledCollapseWhitespaceTransform
     | _CompiledPruneEmptyTransform
-    | _CompiledSanitizeTransform
+    | _CompiledEditDocumentTransform
     | _CompiledStageBoundary
 )
 
@@ -426,6 +539,35 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
             )
             continue
 
+        if isinstance(t, EditDocument):
+            compiled.append(_CompiledEditDocumentTransform(kind="edit_document", callback=t.callback))
+            continue
+
+        if isinstance(t, Decide):
+            selector_str = t.selector
+            all_nodes = selector_str.strip() == "*"
+            compiled.append(
+                _CompiledDecideTransform(
+                    kind="decide",
+                    selector_str=selector_str,
+                    selector=None if all_nodes else parse_selector(selector_str),
+                    all_nodes=all_nodes,
+                    callback=t.callback,
+                )
+            )
+            continue
+
+        if isinstance(t, RewriteAttrs):
+            compiled.append(
+                _CompiledRewriteAttrsTransform(
+                    kind="rewrite_attrs",
+                    selector_str=t.selector,
+                    selector=parse_selector(t.selector),
+                    callback=t.callback,
+                )
+            )
+            continue
+
         if isinstance(t, Linkify):
             compiled.append(
                 _CompiledLinkifyTransform(
@@ -457,7 +599,167 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
             continue
 
         if isinstance(t, Sanitize):
-            compiled.append(_CompiledSanitizeTransform(kind="sanitize", policy=t.policy))
+            # Compile Sanitize as an explicit composition of generic transforms.
+            #
+            # Root nodes are handled by EditDocument since walk transforms only
+            # visit children of the provided root.
+            policy_override = t.policy
+            box: list[SanitizationPolicy | None] = [None]
+
+            def _effective_policy(
+                root_node: object,
+                *,
+                _policy_override: SanitizationPolicy | None = policy_override,
+            ) -> SanitizationPolicy:
+                if _policy_override is not None:
+                    return _policy_override
+                name = root_node.name  # type: ignore[attr-defined]
+                return DEFAULT_DOCUMENT_POLICY if name == "#document" else DEFAULT_POLICY
+
+            def sanitize_root(
+                root_node: SimpleDomNode,
+                *,
+                _box: list[SanitizationPolicy | None] = box,
+            ) -> None:  # type: ignore[override]
+                policy = _effective_policy(root_node)
+                _box[0] = policy
+
+                # Text roots are always safe as-is.
+                if type(root_node) is TextNode:  # type: ignore[comparison-overlap]
+                    return
+
+                name = root_node.name
+
+                # Comment/doctype roots become empty fragments when dropped.
+                if name == "#comment" and policy.drop_comments:
+                    root_node.name = "#document-fragment"
+                    root_node.data = None
+                    return
+                if name == "!doctype" and policy.drop_doctype:
+                    root_node.name = "#document-fragment"
+                    root_node.data = None
+                    return
+
+                # Container roots are handled by walk transforms.
+                if name.startswith("#"):
+                    return
+
+                attrs = cast("dict[str, str | None]", root_node.attrs)
+
+                # Element root.
+                tag = str(name).lower()
+                if policy.drop_foreign_namespaces:
+                    ns = root_node.namespace
+                    if ns not in (None, "html"):
+                        policy.handle_unsafe(f"Unsafe tag '{tag}' (foreign namespace)", node=root_node)
+                        if root_node.children:
+                            for child in root_node.children:
+                                child.parent = None
+                            root_node.children = []
+                        attrs.clear()
+                        root_node.name = "#document-fragment"
+                        root_node.data = None
+                        return
+
+                if tag in policy.drop_content_tags:
+                    policy.handle_unsafe(f"Unsafe tag '{tag}' (dropped content)", node=root_node)
+                    if root_node.children:
+                        for child in root_node.children:
+                            child.parent = None
+                        root_node.children = []
+                    attrs.clear()
+                    root_node.name = "#document-fragment"
+                    root_node.data = None
+                    return
+
+                if tag not in policy.allowed_tags:
+                    policy.handle_unsafe(f"Unsafe tag '{tag}' (not allowed)", node=root_node)
+                    if not policy.strip_disallowed_tags:
+                        if root_node.children:
+                            for child in root_node.children:
+                                child.parent = None
+                            root_node.children = []
+                        attrs.clear()
+                        root_node.name = "#document-fragment"
+                        root_node.data = None
+                        return
+
+                    moved: list[SimpleDomNode] = []
+                    if root_node.children:
+                        moved.extend(list(root_node.children))
+                        root_node.children = []
+
+                    if type(root_node) is TemplateNode and root_node.template_content is not None:
+                        tc = root_node.template_content
+                        if tc.children:
+                            moved.extend(list(tc.children))
+                            tc.children = []
+
+                    attrs.clear()
+                    root_node.name = "#document-fragment"
+                    root_node.data = None
+
+                    if moved:
+                        for child in moved:
+                            root_node.append_child(child)
+                    return
+
+                # Allowed root: sanitize attributes.
+                root_node.attrs = _sanitize_attrs(policy=policy, tag=tag, attrs=attrs, node=root_node)
+
+            def decide(node: object, *, _box: list[SanitizationPolicy | None] = box) -> DecideAction:
+                policy = _box[0] or DEFAULT_POLICY
+
+                name = node.name  # type: ignore[attr-defined]
+                if name == "#text":
+                    return Decide.KEEP
+                if name == "#comment":
+                    return Decide.DROP if policy.drop_comments else Decide.KEEP
+                if name == "!doctype":
+                    return Decide.DROP if policy.drop_doctype else Decide.KEEP
+                if str(name).startswith("#"):
+                    return Decide.KEEP
+
+                tag = str(name).lower()
+                if policy.drop_foreign_namespaces:
+                    ns = node.namespace  # type: ignore[attr-defined]
+                    if ns not in (None, "html"):
+                        policy.handle_unsafe(f"Unsafe tag '{tag}' (foreign namespace)", node=node)
+                        return Decide.DROP
+
+                if tag in policy.drop_content_tags:
+                    policy.handle_unsafe(f"Unsafe tag '{tag}' (dropped content)", node=node)
+                    return Decide.DROP
+
+                if tag not in policy.allowed_tags:
+                    policy.handle_unsafe(f"Unsafe tag '{tag}' (not allowed)", node=node)
+                    return Decide.UNWRAP if policy.strip_disallowed_tags else Decide.DROP
+
+                return Decide.KEEP
+
+            def rewrite_attrs(
+                node: SimpleDomNode,
+                *,
+                _box: list[SanitizationPolicy | None] = box,
+            ) -> dict[str, str | None] | None:
+                policy = _box[0] or DEFAULT_POLICY
+                tag = str(node.name).lower()
+                return _sanitize_attrs(
+                    policy=policy,
+                    tag=tag,
+                    attrs=cast("dict[str, str | None]", node.attrs),
+                    node=node,
+                )
+
+            compiled.extend(
+                compile_transforms(
+                    (
+                        EditDocument(sanitize_root),
+                        Decide("*", decide),
+                        RewriteAttrs("*", rewrite_attrs),
+                    )
+                )
+            )
             continue
 
         raise TypeError(f"Unsupported transform: {type(t).__name__}")
@@ -482,53 +784,6 @@ def apply_compiled_transforms(
     token = _ERROR_SINK.set(errors)
     try:
         matcher = SelectorMatcher()
-
-        def apply_sanitize_transform(root_node: SimpleDomNode, t: _CompiledSanitizeTransform) -> None:
-            sanitized = _sanitize(root_node, policy=t.policy)
-
-            def _detach_children(n: SimpleDomNode) -> None:
-                if n.children:
-                    for child in n.children:
-                        child.parent = None
-
-            def _reparent_children(n: SimpleDomNode) -> None:
-                if n.children:
-                    for child in n.children:
-                        child.parent = n
-
-            # Overwrite the root node in-place so callers keep their reference.
-            # This supports the common case (document/document-fragment root) as well
-            # as advanced usage where callers pass an element root.
-            if type(root_node) is TextNode:
-                root_node.data = sanitized.data
-                return
-
-            _detach_children(root_node)
-
-            if type(root_node) is TemplateNode:
-                root_node.name = sanitized.name
-                root_node.namespace = sanitized.namespace
-                root_node.attrs = sanitized.attrs
-                root_node.children = sanitized.children
-                root_node.template_content = sanitized.template_content
-                _reparent_children(root_node)
-                return
-
-            if type(root_node) is ElementNode:
-                root_node.name = sanitized.name
-                root_node.namespace = sanitized.namespace
-                root_node.attrs = sanitized.attrs
-                root_node.children = sanitized.children
-                root_node.template_content = sanitized.template_content
-                _reparent_children(root_node)
-                return
-
-            root_node.name = sanitized.name
-            root_node.namespace = sanitized.namespace
-            root_node.data = sanitized.data
-            root_node.attrs = sanitized.attrs
-            root_node.children = sanitized.children
-            _reparent_children(root_node)
 
         def apply_walk_transforms(root_node: SimpleDomNode, walk_transforms: list[CompiledTransform]) -> None:
             if not walk_transforms:
@@ -611,6 +866,66 @@ def apply_compiled_transforms(
                                         break
                             continue
 
+                        # Decide
+                        if isinstance(t, _CompiledDecideTransform):
+                            if t.all_nodes:
+                                action = t.callback(node)
+                            else:
+                                if name.startswith("#"):
+                                    continue
+                                if not matcher.matches(node, cast("ParsedSelector", t.selector)):
+                                    continue
+                                action = t.callback(node)
+
+                            if action is DecideAction.KEEP:
+                                continue
+
+                            if action is DecideAction.EMPTY:
+                                if name != "#text" and node.children:
+                                    for child in node.children:
+                                        child.parent = None
+                                    node.children = []
+                                if type(node) is TemplateNode and node.template_content is not None:
+                                    tc = node.template_content
+                                    for child in tc.children or []:
+                                        child.parent = None
+                                    tc.children = []
+                                continue
+
+                            if action is DecideAction.UNWRAP:
+                                moved: list[SimpleDomNode] = []
+                                if name != "#text" and node.children:
+                                    moved.extend(list(node.children))
+                                    node.children = []
+                                if type(node) is TemplateNode and node.template_content is not None:
+                                    tc = node.template_content
+                                    if tc.children:
+                                        moved.extend(list(tc.children))
+                                        tc.children = []
+                                if moved:
+                                    for child in moved:
+                                        _mark_start(child, idx + 1)
+                                        parent.insert_before(child, node)
+                                parent.remove_child(node)
+                                changed = True
+                                break
+
+                            # action == DROP (and any invalid value)
+                            parent.remove_child(node)
+                            changed = True
+                            break
+
+                        # RewriteAttrs
+                        if isinstance(t, _CompiledRewriteAttrsTransform):
+                            if name.startswith("#"):
+                                continue
+                            if not matcher.matches(node, t.selector):
+                                continue
+                            new_attrs = t.callback(node)
+                            if new_attrs is not None:
+                                node.attrs = new_attrs
+                            continue
+
                         # Selector transforms
                         t = cast("_CompiledSelectorTransform", t)
                         if name.startswith("#"):
@@ -662,7 +977,12 @@ def apply_compiled_transforms(
                     if changed:
                         continue
 
-                    if not name.startswith("#"):
+                    if name.startswith("#"):
+                        # Document containers (e.g. nested #document-fragment) should
+                        # still be traversed to reach their element descendants.
+                        if node.children:
+                            apply_to_children(node, skip_linkify=skip_linkify, skip_whitespace=skip_whitespace)
+                    else:
                         tag = node.name.lower()
                         child_skip = skip_linkify or (tag in linkify_skip_tags)
                         child_skip_ws = skip_whitespace or (tag in whitespace_skip_tags)
@@ -679,6 +999,11 @@ def apply_compiled_transforms(
 
             if type(root_node) is not TextNode:
                 apply_to_children(root_node, skip_linkify=False, skip_whitespace=False)
+
+                # Root template nodes need special handling since the main walk
+                # only visits children of the provided root.
+                if type(root_node) is TemplateNode and root_node.template_content is not None:
+                    apply_to_children(root_node.template_content, skip_linkify=False, skip_whitespace=False)
 
         def apply_prune_transforms(
             root_node: SimpleDomNode, prune_transforms: list[_CompiledPruneEmptyTransform]
@@ -748,6 +1073,8 @@ def apply_compiled_transforms(
                 t,
                 (
                     _CompiledSelectorTransform,
+                    _CompiledDecideTransform,
+                    _CompiledRewriteAttrsTransform,
                     _CompiledLinkifyTransform,
                     _CompiledCollapseWhitespaceTransform,
                 ),
@@ -763,8 +1090,8 @@ def apply_compiled_transforms(
                 i += 1
                 continue
 
-            if isinstance(t, _CompiledSanitizeTransform):
-                apply_sanitize_transform(root, t)
+            if isinstance(t, _CompiledEditDocumentTransform):
+                t.callback(root)
                 i += 1
                 continue
 

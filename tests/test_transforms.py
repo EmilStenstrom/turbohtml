@@ -3,14 +3,18 @@ from __future__ import annotations
 import unittest
 
 from justhtml import JustHTML, SelectorError
-from justhtml.node import SimpleDomNode, TextNode
+from justhtml.node import ElementNode, SimpleDomNode, TemplateNode, TextNode
 from justhtml.transforms import (
     CollapseWhitespace,
+    Decide,
+    DecideAction,
     Drop,
     Edit,
+    EditDocument,
     Empty,
     Linkify,
     PruneEmpty,
+    RewriteAttrs,
     Sanitize,
     SetAttrs,
     Stage,
@@ -60,6 +64,25 @@ class TestTransforms(unittest.TestCase):
 
         doc = JustHTML('<a href="https://e.com">x</a>', transforms=[Edit("a", cb)])
         assert 'data-x="1"' in doc.to_html(pretty=False, safe=False)
+
+    def test_editdocument_runs_once_on_root(self) -> None:
+        seen: list[str] = []
+
+        def cb(root: SimpleDomNode) -> None:
+            seen.append(str(root.name))
+            root.append_child(SimpleDomNode("p"))
+
+        doc = JustHTML("<p>x</p>", fragment=True, transforms=[EditDocument(cb)])
+        assert seen == ["#document-fragment"]
+        assert doc.to_html(pretty=False, safe=False) == "<p>x</p><p></p>"
+
+    def test_walk_transforms_traverse_root_template_content(self) -> None:
+        root = TemplateNode("template", attrs={}, namespace="html")
+        assert root.template_content is not None
+        root.template_content.append_child(ElementNode("p", {}, "html"))
+
+        apply_compiled_transforms(root, compile_transforms([SetAttrs("p", id="x")]))
+        assert root.to_html(pretty=False, safe=False) == '<template><p id="x"></p></template>'
 
     def test_transform_callbacks_can_emit_errors_without_parse_error_collection(self) -> None:
         def cb(node: SimpleDomNode) -> None:
@@ -113,6 +136,96 @@ class TestTransforms(unittest.TestCase):
     def test_selector_transforms_skip_comment_nodes(self) -> None:
         doc = JustHTML("<!--x--><p>y</p>", transforms=[SetAttrs("p", id="x")])
         assert '<p id="x">y</p>' in doc.to_html(pretty=False, safe=False)
+
+    def test_decide_star_can_drop_comment_nodes(self) -> None:
+        def decide(node: object) -> DecideAction:
+            name = getattr(node, "name", "")
+            if name == "#comment":
+                return Decide.DROP
+            return Decide.KEEP
+
+        doc = JustHTML("<!--x--><p>y</p>", fragment=True, transforms=[Decide("*", decide)])
+        assert doc.to_html(pretty=False, safe=False) == "<p>y</p>"
+
+    def test_decide_selector_only_runs_on_elements(self) -> None:
+        seen: list[str] = []
+
+        def decide(node: object) -> DecideAction:
+            name = getattr(node, "name", "")
+            # Decide("p", ...) should never be called for non-elements.
+            assert not str(name).startswith("#")
+            seen.append(str(name))
+            return Decide.DROP
+
+        doc = JustHTML("<!--x--><p>y</p>", fragment=True, transforms=[Decide("p", decide)])
+        assert doc.to_html(pretty=False, safe=False) == "<!--x-->"
+        assert seen == ["p"]
+
+    def test_decide_empty_clears_template_content(self) -> None:
+        def decide(node: object) -> DecideAction:
+            if getattr(node, "name", "") == "template":
+                return Decide.EMPTY
+            return Decide.KEEP
+
+        doc = JustHTML("<template><b>x</b></template>", fragment=True, transforms=[Decide("*", decide)])
+        assert doc.to_html(pretty=False, safe=False) == "<template></template>"
+
+    def test_decide_empty_clears_element_children(self) -> None:
+        doc = JustHTML(
+            "<div><span>x</span>y</div>",
+            fragment=True,
+            transforms=[Decide("div", lambda n: Decide.EMPTY)],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "<div></div>"
+
+    def test_decide_unwrap_hoists_template_content(self) -> None:
+        doc = JustHTML(
+            "<div><template><b>x</b></template>y</div>",
+            fragment=True,
+            transforms=[Decide("template", lambda n: Decide.UNWRAP)],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "<div><b>x</b>y</div>"
+
+    def test_decide_unwrap_hoists_element_children(self) -> None:
+        doc = JustHTML(
+            "<div><span><b>x</b></span>y</div>",
+            fragment=True,
+            transforms=[Decide("span", lambda n: Decide.UNWRAP)],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "<div><b>x</b>y</div>"
+
+    def test_decide_unwrap_with_no_children_still_removes_node(self) -> None:
+        doc = JustHTML(
+            "<div><span></span>ok</div><div><template></template>y</div>",
+            fragment=True,
+            transforms=[Decide("span, template", lambda n: Decide.UNWRAP)],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "<div>ok</div><div>y</div>"
+
+    def test_rewriteattrs_can_replace_attribute_dict(self) -> None:
+        def rewrite(node: SimpleDomNode) -> dict[str, str | None] | None:
+            assert node.name == "a"
+            return {"href": node.attrs.get("href"), "data-ok": "1"}
+
+        doc = JustHTML('<a href="x" onclick="y">t</a>', fragment=True, transforms=[RewriteAttrs("a", rewrite)])
+        assert doc.to_html(pretty=False, safe=False) == '<a href="x" data-ok="1">t</a>'
+
+    def test_rewriteattrs_returning_none_noops(self) -> None:
+        doc = JustHTML('<a href="x">t</a>', fragment=True, transforms=[RewriteAttrs("a", lambda n: None)])
+        assert doc.to_html(pretty=False, safe=False) == '<a href="x">t</a>'
+
+    def test_rewriteattrs_skips_non_matching_elements(self) -> None:
+        doc = JustHTML("<p>t</p>", fragment=True, transforms=[RewriteAttrs("a", lambda n: {"x": "1"})])
+        assert doc.to_html(pretty=False, safe=False) == "<p>t</p>"
+
+    def test_walk_transforms_traverse_nested_document_containers(self) -> None:
+        root = SimpleDomNode("#document-fragment")
+        nested = SimpleDomNode("#document-fragment")
+        nested.append_child(SimpleDomNode("p"))
+        root.append_child(nested)
+
+        apply_compiled_transforms(root, compile_transforms([SetAttrs("p", id="x")]))
+        assert root.to_html(pretty=False, safe=False) == '<p id="x"></p>'
 
     def test_apply_compiled_transforms_handles_empty_root(self) -> None:
         root = SimpleDomNode("div")

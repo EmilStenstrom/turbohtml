@@ -4,6 +4,7 @@ import unittest
 
 from justhtml import JustHTML
 from justhtml.node import ElementNode, SimpleDomNode, TemplateNode, TextNode
+from justhtml.sanitize import SanitizationPolicy
 from justhtml.transforms import (
     CollapseWhitespace,
     Drop,
@@ -135,3 +136,197 @@ class TestSanitizeTransform(unittest.TestCase):
         compiled = compile_transforms((Sanitize(),))
         apply_compiled_transforms(root, compiled)
         assert root.attrs == {}
+
+    def test_sanitize_transform_policy_override_is_used(self) -> None:
+        # Covers the Sanitize(policy=...) override path.
+        policy = SanitizationPolicy(allowed_tags={"p"}, allowed_attributes={"*": set()})
+        root = SimpleDomNode("#document-fragment")
+        compiled = compile_transforms((Sanitize(policy),))
+        apply_compiled_transforms(root, compiled)
+
+        assert root.name == "#document-fragment"
+
+    def test_sanitize_transform_converts_comment_root_to_fragment_when_dropped(self) -> None:
+        root = SimpleDomNode("#comment", data="x")
+        compiled = compile_transforms((Sanitize(),))
+        apply_compiled_transforms(root, compiled)
+
+        assert root.name == "#document-fragment"
+        assert root.data is None
+
+    def test_sanitize_transform_converts_doctype_root_to_fragment_when_dropped(self) -> None:
+        root = SimpleDomNode("!doctype")
+        compiled = compile_transforms((Sanitize(),))
+        apply_compiled_transforms(root, compiled)
+
+        assert root.name == "#document-fragment"
+        assert root.data is None
+
+    def test_sanitize_transform_drops_foreign_namespace_element_root(self) -> None:
+        root = SimpleDomNode("p", namespace="svg")
+        root.append_child(SimpleDomNode("span"))
+
+        compiled = compile_transforms((Sanitize(),))
+        apply_compiled_transforms(root, compiled)
+
+        assert root.name == "#document-fragment"
+        assert root.children == []
+
+    def test_sanitize_transform_drops_foreign_namespace_element_root_without_children(self) -> None:
+        root = SimpleDomNode("p", namespace="svg")
+
+        compiled = compile_transforms((Sanitize(),))
+        apply_compiled_transforms(root, compiled)
+
+        assert root.name == "#document-fragment"
+        assert root.children == []
+
+    def test_sanitize_transform_drops_content_for_drop_content_tag_root(self) -> None:
+        root = SimpleDomNode("script")
+        root.append_child(TextNode("alert(1)"))
+
+        compiled = compile_transforms((Sanitize(),))
+        apply_compiled_transforms(root, compiled)
+
+        assert root.name == "#document-fragment"
+        assert root.children == []
+
+    def test_sanitize_transform_drops_content_for_drop_content_tag_root_without_children(self) -> None:
+        root = SimpleDomNode("script")
+
+        compiled = compile_transforms((Sanitize(),))
+        apply_compiled_transforms(root, compiled)
+
+        assert root.name == "#document-fragment"
+        assert root.children == []
+
+    def test_sanitize_transform_disallowed_root_without_strip_becomes_empty_fragment(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=set(),
+            allowed_attributes={"*": set()},
+            drop_foreign_namespaces=False,
+            strip_disallowed_tags=False,
+            drop_content_tags=set(),
+        )
+        root = SimpleDomNode("p")
+        root.append_child(TextNode("x"))
+
+        compiled = compile_transforms((Sanitize(policy),))
+        apply_compiled_transforms(root, compiled)
+        assert root.name == "#document-fragment"
+        assert root.to_html(pretty=False, safe=False) == ""
+
+    def test_sanitize_transform_disallowed_root_without_strip_and_no_children_is_empty(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=set(),
+            allowed_attributes={"*": set()},
+            drop_foreign_namespaces=False,
+            strip_disallowed_tags=False,
+            drop_content_tags=set(),
+        )
+        root = SimpleDomNode("p")
+
+        compiled = compile_transforms((Sanitize(policy),))
+        apply_compiled_transforms(root, compiled)
+        assert root.name == "#document-fragment"
+        assert root.to_html(pretty=False, safe=False) == ""
+
+    def test_sanitize_transform_disallowed_root_with_strip_hoists_children(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=set(),
+            allowed_attributes={"*": set()},
+            drop_foreign_namespaces=False,
+            strip_disallowed_tags=True,
+            drop_content_tags=set(),
+        )
+        root = SimpleDomNode("p")
+        root.append_child(TextNode("x"))
+
+        compiled = compile_transforms((Sanitize(policy),))
+        apply_compiled_transforms(root, compiled)
+        assert root.name == "#document-fragment"
+        assert root.to_html(pretty=False, safe=False) == "x"
+
+    def test_sanitize_transform_disallowed_root_with_strip_and_no_children_is_empty(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=set(),
+            allowed_attributes={"*": set()},
+            drop_foreign_namespaces=False,
+            strip_disallowed_tags=True,
+            drop_content_tags=set(),
+        )
+        root = SimpleDomNode("p")
+
+        compiled = compile_transforms((Sanitize(policy),))
+        apply_compiled_transforms(root, compiled)
+        assert root.name == "#document-fragment"
+        assert root.to_html(pretty=False, safe=False) == ""
+
+    def test_sanitize_transform_disallowed_template_root_with_strip_hoists_template_content(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags={"b"},
+            allowed_attributes={"*": set()},
+            drop_foreign_namespaces=False,
+            strip_disallowed_tags=True,
+            drop_content_tags=set(),
+        )
+        root = TemplateNode("template", attrs={}, namespace="html")
+        assert root.template_content is not None
+        root.template_content.append_child(SimpleDomNode("b"))
+
+        compiled = compile_transforms((Sanitize(policy),))
+        apply_compiled_transforms(root, compiled)
+
+        assert root.name == "#document-fragment"
+        assert root.children is not None
+        assert [c.name for c in root.children] == ["b"]
+
+    def test_sanitize_transform_disallowed_template_root_with_empty_template_content_hoists_children(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags={"b"},
+            allowed_attributes={"*": set()},
+            drop_foreign_namespaces=False,
+            strip_disallowed_tags=True,
+            drop_content_tags=set(),
+        )
+        root = TemplateNode("template", attrs={}, namespace="html")
+        root.append_child(SimpleDomNode("b"))
+
+        compiled = compile_transforms((Sanitize(policy),))
+        apply_compiled_transforms(root, compiled)
+
+        assert root.name == "#document-fragment"
+        assert [c.name for c in root.children] == ["b"]
+
+    def test_sanitize_transform_decide_handles_comments_doctype_and_containers(self) -> None:
+        root = SimpleDomNode("#document-fragment")
+        root.append_child(SimpleDomNode("#comment", data="x"))
+        root.append_child(SimpleDomNode("!doctype"))
+        nested = SimpleDomNode("#document-fragment")
+        nested.append_child(SimpleDomNode("p"))
+        root.append_child(nested)
+
+        compiled = compile_transforms((Sanitize(),))
+        apply_compiled_transforms(root, compiled)
+
+        assert root.to_html(pretty=False, safe=False) == "<p></p>"
+
+    def test_sanitize_transform_decide_drops_foreign_namespace_elements(self) -> None:
+        root = SimpleDomNode("#document-fragment")
+        root.append_child(SimpleDomNode("p", namespace="svg"))
+
+        compiled = compile_transforms((Sanitize(),))
+        apply_compiled_transforms(root, compiled)
+
+        assert root.to_html(pretty=False, safe=False) == ""
+
+    def test_sanitize_transform_decide_unwraps_disallowed_elements(self) -> None:
+        root = SimpleDomNode("#document-fragment")
+        blink = SimpleDomNode("blink")
+        blink.append_child(TextNode("x"))
+        root.append_child(blink)
+
+        compiled = compile_transforms((Sanitize(),))
+        apply_compiled_transforms(root, compiled)
+
+        assert root.to_html(pretty=False, safe=False) == "x"
