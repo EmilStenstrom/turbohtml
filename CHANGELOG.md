@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - mixed inline text + block children (e.g. `ul`) no longer loses indentation
   - “inline runs” are split into separate lines when the input contains formatting whitespace between siblings
 
+## [0.35.0] - 2026-01-11
+### Added
+- Add `Stage([...])` to make transform pass boundaries explicit. Stages can be nested and are flattened; if any Stage exists at the top level, surrounding top-level transforms are automatically grouped into implicit stages.
+
+### Changed
+- Transform pipelines now preserve strict left-to-right ordering semantics within a stage (no transform-type “magic ordering”).
+
+### Docs
+- Refine transform documentation around stages and multi-pass semantics (see [Transforms](docs/transforms.md)).
+
 ## [0.33.0] - 2026-01-10
 ### Added
 - Add `CollapseWhitespace(...)` transform (html5lib-style whitespace collapsing) (see [Transforms](docs/transforms.md)).
