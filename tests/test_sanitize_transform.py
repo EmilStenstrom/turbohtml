@@ -200,43 +200,11 @@ class TestSanitizeTransform(unittest.TestCase):
         assert root.name == "#document-fragment"
         assert root.children == []
 
-    def test_sanitize_transform_disallowed_root_without_strip_becomes_empty_fragment(self) -> None:
+    def test_sanitize_transform_disallowed_root_hoists_children(self) -> None:
         policy = SanitizationPolicy(
             allowed_tags=set(),
             allowed_attributes={"*": set()},
             drop_foreign_namespaces=False,
-            strip_disallowed_tags=False,
-            drop_content_tags=set(),
-        )
-        root = SimpleDomNode("p")
-        root.append_child(TextNode("x"))
-
-        compiled = compile_transforms((Sanitize(policy),))
-        apply_compiled_transforms(root, compiled)
-        assert root.name == "#document-fragment"
-        assert root.to_html(pretty=False, safe=False) == ""
-
-    def test_sanitize_transform_disallowed_root_without_strip_and_no_children_is_empty(self) -> None:
-        policy = SanitizationPolicy(
-            allowed_tags=set(),
-            allowed_attributes={"*": set()},
-            drop_foreign_namespaces=False,
-            strip_disallowed_tags=False,
-            drop_content_tags=set(),
-        )
-        root = SimpleDomNode("p")
-
-        compiled = compile_transforms((Sanitize(policy),))
-        apply_compiled_transforms(root, compiled)
-        assert root.name == "#document-fragment"
-        assert root.to_html(pretty=False, safe=False) == ""
-
-    def test_sanitize_transform_disallowed_root_with_strip_hoists_children(self) -> None:
-        policy = SanitizationPolicy(
-            allowed_tags=set(),
-            allowed_attributes={"*": set()},
-            drop_foreign_namespaces=False,
-            strip_disallowed_tags=True,
             drop_content_tags=set(),
         )
         root = SimpleDomNode("p")
@@ -247,12 +215,11 @@ class TestSanitizeTransform(unittest.TestCase):
         assert root.name == "#document-fragment"
         assert root.to_html(pretty=False, safe=False) == "x"
 
-    def test_sanitize_transform_disallowed_root_with_strip_and_no_children_is_empty(self) -> None:
+    def test_sanitize_transform_disallowed_root_without_children_is_empty(self) -> None:
         policy = SanitizationPolicy(
             allowed_tags=set(),
             allowed_attributes={"*": set()},
             drop_foreign_namespaces=False,
-            strip_disallowed_tags=True,
             drop_content_tags=set(),
         )
         root = SimpleDomNode("p")
@@ -262,12 +229,11 @@ class TestSanitizeTransform(unittest.TestCase):
         assert root.name == "#document-fragment"
         assert root.to_html(pretty=False, safe=False) == ""
 
-    def test_sanitize_transform_disallowed_template_root_with_strip_hoists_template_content(self) -> None:
+    def test_sanitize_transform_disallowed_template_root_hoists_template_content(self) -> None:
         policy = SanitizationPolicy(
             allowed_tags={"b"},
             allowed_attributes={"*": set()},
             drop_foreign_namespaces=False,
-            strip_disallowed_tags=True,
             drop_content_tags=set(),
         )
         root = TemplateNode("template", attrs={}, namespace="html")
@@ -286,7 +252,6 @@ class TestSanitizeTransform(unittest.TestCase):
             allowed_tags={"b"},
             allowed_attributes={"*": set()},
             drop_foreign_namespaces=False,
-            strip_disallowed_tags=True,
             drop_content_tags=set(),
         )
         root = TemplateNode("template", attrs={}, namespace="html")

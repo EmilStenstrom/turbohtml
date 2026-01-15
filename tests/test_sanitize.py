@@ -620,11 +620,10 @@ class TestSanitizePlumbing(unittest.TestCase):
             allowed_tags=["div"],
             allowed_attributes={"*": [], "div": []},
             url_policy=UrlPolicy(allow_rules={}),
-            strip_disallowed_tags=False,
         )
         span = SimpleDomNode("span")
         span.append_child(TextNode("x"))
-        assert to_html(sanitize(span, policy=disallowed_subtree_drop), pretty=False, safe=False) == ""
+        assert to_html(sanitize(span, policy=disallowed_subtree_drop), pretty=False, safe=False) == "x"
 
         drop_content = SanitizationPolicy(
             allowed_tags=["div"],
@@ -988,7 +987,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unsafe tag.*foreign namespace"):
             sanitize(div, policy=policy)
 
-    def test_sanitize_unsafe_root_disallowed_no_strip_raises(self) -> None:
+    def test_sanitize_unsafe_root_disallowed_raises(self) -> None:
         html = "<x-foo></x-foo>"
         node = JustHTML(html, fragment=True).root
         xfoo = node.children[0]
@@ -997,7 +996,6 @@ class TestSanitizeUnsafe(unittest.TestCase):
             allowed_tags={"p"},
             allowed_attributes={},
             url_policy=UrlPolicy(allow_rules={}),
-            strip_disallowed_tags=False,  # Don't strip, just drop
             unsafe_handling="raise",
         )
         with self.assertRaisesRegex(ValueError, "Unsafe tag.*not allowed"):

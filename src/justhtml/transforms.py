@@ -674,16 +674,6 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
 
                 if tag not in policy.allowed_tags:
                     policy.handle_unsafe(f"Unsafe tag '{tag}' (not allowed)", node=root_node)
-                    if not policy.strip_disallowed_tags:
-                        if root_node.children:
-                            for child in root_node.children:
-                                child.parent = None
-                            root_node.children = []
-                        attrs.clear()
-                        root_node.name = "#document-fragment"
-                        root_node.data = None
-                        return
-
                     moved: list[SimpleDomNode] = []
                     if root_node.children:
                         moved.extend(list(root_node.children))
@@ -733,7 +723,7 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
 
                 if tag not in policy.allowed_tags:
                     policy.handle_unsafe(f"Unsafe tag '{tag}' (not allowed)", node=node)
-                    return Decide.UNWRAP if policy.strip_disallowed_tags else Decide.DROP
+                    return Decide.UNWRAP
 
                 return Decide.KEEP
 

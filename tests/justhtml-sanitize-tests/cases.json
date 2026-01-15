@@ -13,38 +13,23 @@
       "allowed_attributes": {"*": [], "p": []},
       "url_rules": [],
       "drop_comments": false,
-      "drop_doctype": false,
-      "strip_disallowed_tags": true
+      "drop_doctype": false
     },
     "parse": "document",
     "input_html": "<!DOCTYPE html><!--x--><p>ok</p>",
     "expected_html": "<!DOCTYPE html><!--x--><p>ok</p>"
   },
   {
-    "name": "strip_disallowed_tag_keeps_children",
+    "name": "disallowed_tag_keeps_children",
     "policy": {
       "allowed_tags": ["div"],
       "allowed_attributes": {"*": [], "div": []},
-      "url_rules": [],
-      "strip_disallowed_tags": true
+      "url_rules": []
     },
     "parse": "fragment",
     "fragment_context": "div",
     "input_html": "<span>x</span>",
     "expected_html": "x"
-  },
-  {
-    "name": "drop_disallowed_subtree_when_strip_false",
-    "policy": {
-      "allowed_tags": ["div"],
-      "allowed_attributes": {"*": [], "div": []},
-      "url_rules": [],
-      "strip_disallowed_tags": false
-    },
-    "parse": "fragment",
-    "fragment_context": "div",
-    "input_html": "<span>x</span>",
-    "expected_html": ""
   },
   {
     "name": "attribute_filtering_drops_on_srcdoc_and_colon",
@@ -503,12 +488,11 @@
     "expected_html": "<template><p>ok</p></template>"
   },
   {
-    "name": "template_disallowed_but_strip_true_keeps_template_content",
+    "name": "template_disallowed_keeps_template_content",
     "policy": {
       "allowed_tags": ["p"],
       "allowed_attributes": {"*": [], "p": []},
-      "url_rules": [],
-      "strip_disallowed_tags": true
+      "url_rules": []
     },
     "parse": "fragment",
     "fragment_context": "div",

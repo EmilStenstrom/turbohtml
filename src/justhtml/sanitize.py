@@ -266,10 +266,6 @@ class SanitizationPolicy:
     drop_doctype: bool = True
     drop_foreign_namespaces: bool = True
 
-    # If True, disallowed elements are removed but their children may be kept
-    # (except for tags in `drop_content_tags`).
-    strip_disallowed_tags: bool = True
-
     # Dangerous containers whose text payload should not be preserved.
     drop_content_tags: Collection[str] = field(default_factory=lambda: {"script", "style"})
 
@@ -484,7 +480,6 @@ DEFAULT_DOCUMENT_POLICY: SanitizationPolicy = SanitizationPolicy(
     drop_comments=DEFAULT_POLICY.drop_comments,
     drop_doctype=DEFAULT_POLICY.drop_doctype,
     drop_foreign_namespaces=DEFAULT_POLICY.drop_foreign_namespaces,
-    strip_disallowed_tags=DEFAULT_POLICY.strip_disallowed_tags,
     drop_content_tags=DEFAULT_POLICY.drop_content_tags,
     allowed_css_properties=DEFAULT_POLICY.allowed_css_properties,
     force_link_rel=DEFAULT_POLICY.force_link_rel,
@@ -1077,13 +1072,12 @@ def _append_sanitized_subtree(*, policy: SanitizationPolicy, original: Any, pare
 
         if tag not in policy.allowed_tags:
             policy.handle_unsafe(f"Unsafe tag '{tag}' (not allowed)", node=current)
-            if policy.strip_disallowed_tags:
-                children = current.children or []
-                stack.extend((child, out_parent) for child in reversed(children))
+            children = current.children or []
+            stack.extend((child, out_parent) for child in reversed(children))
 
-                if tag == "template" and current.namespace in (None, "html") and current.template_content:
-                    tc_children = current.template_content.children or []
-                    stack.extend((child, out_parent) for child in reversed(tc_children))
+            if tag == "template" and current.namespace in (None, "html") and current.template_content:
+                tc_children = current.template_content.children or []
+                stack.extend((child, out_parent) for child in reversed(tc_children))
             continue
 
         # Filter attributes first to avoid copying them in clone_node.
@@ -1152,18 +1146,15 @@ def _sanitize(node: Any, *, policy: SanitizationPolicy | None = None) -> Any:
         out_root.attrs.clear()
         return out_root
 
-    if tag in policy.drop_content_tags or (tag not in policy.allowed_tags and not policy.strip_disallowed_tags):
-        if tag in policy.drop_content_tags:
-            policy.handle_unsafe(f"Unsafe tag '{tag}' (dropped content)", node=node)
-        else:
-            policy.handle_unsafe(f"Unsafe tag '{tag}' (not allowed)", node=node)
+    if tag in policy.drop_content_tags:
+        policy.handle_unsafe(f"Unsafe tag '{tag}' (dropped content)", node=node)
         out_root = node.clone_node(deep=False)
         out_root.name = "#document-fragment"
         out_root.children.clear()
         out_root.attrs.clear()
         return out_root
 
-    if tag not in policy.allowed_tags and policy.strip_disallowed_tags:
+    if tag not in policy.allowed_tags:
         policy.handle_unsafe(f"Unsafe tag '{tag}' (not allowed)", node=node)
         out_root = node.clone_node(deep=False)
         out_root.name = "#document-fragment"
