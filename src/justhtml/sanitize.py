@@ -1045,5 +1045,27 @@ def _sanitize(node: Any, *, policy: SanitizationPolicy | None = None) -> Any:
 
     out = node.clone_node(deep=True)
     compiled = compile_transforms((_SanitizeTransform(policy),))
-    apply_compiled_transforms(out, compiled)
-    return out
+
+    # Transforms walk the *children* of the provided root. To ensure sanitization
+    # applies consistently even when callers pass a non-container node (e.g.
+    # an element subtree), always run on a container root.
+    if out.name in {"#document", "#document-fragment"}:
+        root = out
+        apply_compiled_transforms(root, compiled)
+        return root
+
+    from .node import SimpleDomNode  # noqa: PLC0415
+
+    wrapper = SimpleDomNode("#document-fragment")
+    wrapper.append_child(out)
+    apply_compiled_transforms(wrapper, compiled)
+
+    children = wrapper.children or []
+    if len(children) == 1:
+        only = children[0]
+        # Detach so callers get a standalone node like before.
+        only.parent = None
+        wrapper.children = []
+        return only
+
+    return wrapper

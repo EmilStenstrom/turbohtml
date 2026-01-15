@@ -4,6 +4,7 @@ import unittest
 
 from justhtml import JustHTML, SelectorError
 from justhtml.node import ElementNode, SimpleDomNode, TemplateNode, TextNode
+from justhtml.sanitize import SanitizationPolicy, UrlPolicy
 from justhtml.transforms import (
     CollapseWhitespace,
     Decide,
@@ -254,6 +255,25 @@ class TestTransforms(unittest.TestCase):
             transforms=[Sanitize(), SetAttrs("p", **{"class": "y"})],
         )
         assert doc.to_html(pretty=False, safe=False) == '<p class="y">x</p>'
+
+    def test_sanitize_root_comment_and_doctype_keep(self) -> None:
+        policy_keep = SanitizationPolicy(
+            allowed_tags=[],
+            allowed_attributes={"*": []},
+            url_policy=UrlPolicy(allow_rules={}),
+            drop_comments=False,
+            drop_doctype=False,
+        )
+
+        compiled = compile_transforms([Sanitize(policy_keep)])
+
+        c = SimpleDomNode("#comment", data="x")
+        apply_compiled_transforms(c, compiled)
+        assert c.to_html(pretty=False, safe=False) == "<!--x-->"
+
+        d = SimpleDomNode("!doctype", data="html")
+        apply_compiled_transforms(d, compiled)
+        assert d.to_html(pretty=False, safe=False) == "<!DOCTYPE html>"
 
     def test_collapsewhitespace_collapses_text_nodes(self) -> None:
         doc = JustHTML(

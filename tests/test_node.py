@@ -100,6 +100,10 @@ class TestNode(unittest.TestCase):
 
         # `.text` only sees direct children, while `to_text()` includes template content.
         assert template.text == ""
+        # safe=False ensures we traverse TemplateNode.template_content directly.
+        assert template.to_text(safe=False) == "Inside"
+        # safe=True may sanitize/unwrap the template node depending on policy,
+        # but should still preserve the template content in output.
         assert template.to_text() == "Inside"
 
     def test_to_text_simple_dom_text_node_branch(self):
