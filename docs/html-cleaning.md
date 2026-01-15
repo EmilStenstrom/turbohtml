@@ -159,7 +159,7 @@ policy = SanitizationPolicy(
     allowed_tags=["p", "b", "a"],
     allowed_attributes={"*": [], "a": ["href"]},
     url_policy=UrlPolicy(
-        default_handling="allow",
+        default_handling="strip",
         allow_rules={
             ("a", "href"): UrlRule(allowed_schemes=["https"]),
         }
