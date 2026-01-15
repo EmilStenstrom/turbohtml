@@ -635,9 +635,13 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                     root_node.name = "#document-fragment"
                     root_node.data = None
                     return
+                if name == "#comment":
+                    return
                 if name == "!doctype" and policy.drop_doctype:
                     root_node.name = "#document-fragment"
                     root_node.data = None
+                    return
+                if name == "!doctype":
                     return
 
                 # Container roots are handled by walk transforms.
@@ -894,7 +898,7 @@ def apply_compiled_transforms(
                                         tc.children = []
                                 if moved:
                                     for child in moved:
-                                        _mark_start(child, idx + 1)
+                                        _mark_start(child, idx)
                                         parent.insert_before(child, node)
                                 parent.remove_child(node)
                                 changed = True

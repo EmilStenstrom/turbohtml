@@ -1027,157 +1027,23 @@ def _sanitize_attrs(
     return out
 
 
-def _append_sanitized_subtree(*, policy: SanitizationPolicy, original: Any, parent_out: Any) -> None:
-    stack: list[tuple[Any, Any]] = [(original, parent_out)]
-    while stack:
-        current, out_parent = stack.pop()
-        name: str = current.name
-
-        if name == "#text":
-            out_parent.append_child(current.clone_node(deep=False))
-            continue
-
-        if name == "#comment":
-            if policy.drop_comments:
-                continue
-            out_parent.append_child(current.clone_node(deep=False))
-            continue
-
-        if name == "!doctype":
-            if policy.drop_doctype:
-                continue
-            out_parent.append_child(current.clone_node(deep=False))
-            continue
-
-        # Document containers.
-        if name.startswith("#"):
-            clone = current.clone_node(deep=False)
-            clone.children.clear()
-            out_parent.append_child(clone)
-            children = current.children or []
-            stack.extend((child, clone) for child in reversed(children))
-            continue
-
-        # Element.
-        tag = str(name).lower()
-        if policy.drop_foreign_namespaces:
-            ns = current.namespace
-            if ns not in (None, "html"):
-                policy.handle_unsafe(f"Unsafe tag '{tag}' (foreign namespace)", node=current)
-                continue
-
-        if tag in policy.drop_content_tags:
-            policy.handle_unsafe(f"Unsafe tag '{tag}' (dropped content)", node=current)
-            continue
-
-        if tag not in policy.allowed_tags:
-            policy.handle_unsafe(f"Unsafe tag '{tag}' (not allowed)", node=current)
-            children = current.children or []
-            stack.extend((child, out_parent) for child in reversed(children))
-
-            if tag == "template" and current.namespace in (None, "html") and current.template_content:
-                tc_children = current.template_content.children or []
-                stack.extend((child, out_parent) for child in reversed(tc_children))
-            continue
-
-        # Filter attributes first to avoid copying them in clone_node.
-        sanitized_attrs = _sanitize_attrs(policy=policy, tag=tag, attrs=current.attrs, node=current)
-        clone = current.clone_node(deep=False, override_attrs=sanitized_attrs)
-
-        out_parent.append_child(clone)
-
-        # Template content is a separate subtree.
-        if tag == "template" and current.namespace in (None, "html"):
-            if current.template_content and clone.template_content:
-                clone.template_content.children.clear()
-                tc_children = current.template_content.children or []
-                stack.extend((child, clone.template_content) for child in reversed(tc_children))
-
-        children = current.children or []
-        stack.extend((child, clone) for child in reversed(children))
-
-
 def _sanitize(node: Any, *, policy: SanitizationPolicy | None = None) -> Any:
     """Return a sanitized clone of `node`.
 
-    Private implementation detail.
-
-    If `policy` is not provided, JustHTML uses a conservative default policy.
-    For full documents (`#document` roots) it preserves `<html>`, `<head>`, and
-    `<body>` wrappers; for fragments it prefers snippet-shaped output.
+    This sanitizer is implemented in terms of the `Sanitize` transform.
+    We deep-clone first (so the original DOM is not mutated), then run the
+    transform in-place on the clone.
     """
 
     if policy is None:
         policy = DEFAULT_DOCUMENT_POLICY if node.name == "#document" else DEFAULT_POLICY
 
-    # Root handling.
-    root_name: str = node.name
+    # Lazy import to avoid circular imports:
+    # transforms -> node -> sanitize
+    from .transforms import Sanitize as _SanitizeTransform  # noqa: PLC0415
+    from .transforms import apply_compiled_transforms, compile_transforms  # noqa: PLC0415
 
-    if root_name == "#text":
-        return node.clone_node(deep=False)
-
-    if root_name == "#comment":
-        out_root = node.clone_node(deep=False)
-        if policy.drop_comments:
-            out_root.name = "#document-fragment"
-        return out_root
-
-    if root_name == "!doctype":
-        out_root = node.clone_node(deep=False)
-        if policy.drop_doctype:
-            out_root.name = "#document-fragment"
-        return out_root
-
-    # Containers.
-    if root_name.startswith("#"):
-        out_root = node.clone_node(deep=False)
-        out_root.children.clear()
-        for child in node.children or []:
-            _append_sanitized_subtree(policy=policy, original=child, parent_out=out_root)
-        return out_root
-
-    # Element root: keep element if allowed, otherwise unwrap into a fragment.
-    tag = str(root_name).lower()
-    if policy.drop_foreign_namespaces and node.namespace not in (None, "html"):
-        policy.handle_unsafe(f"Unsafe tag '{tag}' (foreign namespace)", node=node)
-        out_root = node.clone_node(deep=False)
-        out_root.name = "#document-fragment"
-        out_root.children.clear()
-        out_root.attrs.clear()
-        return out_root
-
-    if tag in policy.drop_content_tags:
-        policy.handle_unsafe(f"Unsafe tag '{tag}' (dropped content)", node=node)
-        out_root = node.clone_node(deep=False)
-        out_root.name = "#document-fragment"
-        out_root.children.clear()
-        out_root.attrs.clear()
-        return out_root
-
-    if tag not in policy.allowed_tags:
-        policy.handle_unsafe(f"Unsafe tag '{tag}' (not allowed)", node=node)
-        out_root = node.clone_node(deep=False)
-        out_root.name = "#document-fragment"
-        out_root.children.clear()
-        out_root.attrs.clear()
-        for child in node.children or []:
-            _append_sanitized_subtree(policy=policy, original=child, parent_out=out_root)
-
-        if tag == "template" and node.namespace in (None, "html") and node.template_content:
-            for child in node.template_content.children or []:
-                _append_sanitized_subtree(policy=policy, original=child, parent_out=out_root)
-        return out_root
-
-    out_root = node.clone_node(deep=False)
-    out_root.children.clear()
-    out_root.attrs = _sanitize_attrs(policy=policy, tag=tag, attrs=node.attrs, node=node)
-    for child in node.children or []:
-        _append_sanitized_subtree(policy=policy, original=child, parent_out=out_root)
-
-    if tag == "template" and node.namespace in (None, "html"):
-        if node.template_content and out_root.template_content:
-            out_root.template_content.children.clear()
-            for child in node.template_content.children or []:
-                _append_sanitized_subtree(policy=policy, original=child, parent_out=out_root.template_content)
-
-    return out_root
+    out = node.clone_node(deep=True)
+    compiled = compile_transforms((_SanitizeTransform(policy),))
+    apply_compiled_transforms(out, compiled)
+    return out
