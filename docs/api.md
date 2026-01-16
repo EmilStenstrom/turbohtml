@@ -155,9 +155,9 @@ from justhtml import DEFAULT_POLICY, SanitizationPolicy, UrlPolicy, UrlProxy, Ur
 ### Sanitizing output vs sanitizing the DOM
 
 - Output sanitization is the default: `doc.to_html()` / `doc.to_markdown()` sanitize by default (`safe=True`).
-- Output sanitization is the default: `doc.to_html()` / `doc.to_markdown()` sanitize by default (`safe=True`).
 - If you want the *in-memory* DOM to be sanitized (so later DOM edits/traversal operate on cleaned HTML), add `Sanitize(...)` to your transform pipeline.
     - If you care about explicit transform passes, group transforms using [`Stage([...])`](transforms.md#advanced-stages).
+    - For details on how `Sanitize(...)` works (and why it’s reviewable), see [Transforms](transforms.md#sanitizepolicynone-enabledtrue).
 
 ```python
 from justhtml import JustHTML, Sanitize

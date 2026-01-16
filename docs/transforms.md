@@ -172,24 +172,50 @@ They never match document containers, text nodes, comments, or doctypes.
 `Linkify` is different: it scans **text nodes** and wraps detected URLs/emails in `<a>` elements.
 It never touches attributes, existing tags, comments, or doctypes.
 
+## Enabling/disabling transforms
+
+All built-in transforms have an `enabled` flag.
+
+- If `enabled=False`, the transform is skipped at compile time (it does not run and does not affect ordering).
+- `Stage([...], enabled=False)` is treated as if it was not present.
+
+`SetAttrs(...)` is the only transform that uses a different keyword name: it takes `_enabled=...` so you can still set an element attribute named `enabled` via `SetAttrs("...", enabled="...")`.
+
 ## Built-in transforms
 
 - [`Linkify(...)`](linkify.md) — Scan text nodes and convert URLs/emails into `<a>` elements.
-- `CollapseWhitespace(skip_tags=(...))` — Collapse whitespace runs in text nodes (html5lib-like).
-- `Sanitize(policy=None)` — Sanitize the in-memory tree.
-- `PruneEmpty(selector, strip_whitespace=True)` — Recursively drop empty elements.
-- `Stage([...])` — Split transforms into explicit passes (advanced).
-- `SetAttrs(selector, **attrs)` — Set/overwrite attributes on matching elements.
-- `Drop(selector)` — Remove matching elements and their contents.
-- `Unwrap(selector)` — Remove the element but keep its children.
-- `Empty(selector)` — Remove all children of matching elements.
-- `Edit(selector, callback)` — Run custom logic for matching elements.
+- `CollapseWhitespace(skip_tags=(...), enabled=True)` — Collapse whitespace runs in text nodes (html5lib-like).
+- `Sanitize(policy=None, enabled=True)` — Sanitize the in-memory tree (reviewable pipeline).
+- `PruneEmpty(selector, strip_whitespace=True, enabled=True)` — Recursively drop empty elements.
+- `Stage([...], enabled=True)` — Split transforms into explicit passes (advanced).
+
+Core selector transforms:
+
+- `SetAttrs(selector, _enabled=True, **attrs)` — Set/overwrite attributes on matching elements.
+- `Drop(selector, enabled=True, on_drop=None)` — Remove matching nodes.
+- `Unwrap(selector, enabled=True, on_unwrap=None)` — Remove the element but keep its children.
+- `Empty(selector, enabled=True)` — Remove all children of matching elements.
+- `Edit(selector, callback, enabled=True)` — Run custom logic for matching elements.
+
+Advanced building blocks (useful for policy-driven pipelines):
+
+- `EditDocument(callback, enabled=True)` — Run once on the root container.
+- `Decide(selector, callback, enabled=True)` — Keep/drop/unwrap/empty based on a callback.
+- `EditAttrs(selector, callback, enabled=True)` — Rewrite attributes based on a callback (`RewriteAttrs` is an alias).
+- `DropComments(enabled=True)` — Drop `#comment` nodes.
+- `DropDoctype(enabled=True)` — Drop `!doctype` nodes.
+- `DropForeignNamespaces(enabled=True, on_report=None)` — Drop elements in foreign namespaces (SVG/MathML).
+- `DropAttrs(selector, patterns=(), enabled=True, on_report=None)` — Drop attributes matching glob-like patterns.
+- `AllowlistAttrs(selector, allowed_attributes=..., enabled=True, on_report=None)` — Keep only allowlisted attributes.
+- `DropUrlAttrs(selector, url_policy=..., enabled=True, on_report=None)` — Validate/rewrite/drop URL-valued attributes.
+- `AllowStyleAttrs(selector, allowed_css_properties=..., enabled=True, on_report=None)` — Sanitize inline `style` attributes.
+- `MergeAttrs(tag, attr=..., tokens=..., enabled=True)` — Merge tokens into a whitespace-delimited attribute.
 
 ### `Linkify(...)`
 
 See [`Linkify(...)`](linkify.md) for full documentation and examples.
 
-### `CollapseWhitespace(skip_tags=(...))`
+### `CollapseWhitespace(skip_tags=(...), enabled=True)`
 
 Collapses runs of HTML whitespace characters in text nodes to a single space.
 
@@ -215,18 +241,38 @@ Output:
 <p>Hello world</p><pre>a  b</pre>
 ```
 
-### `Sanitize(policy=None)`
+### `Sanitize(policy=None, enabled=True)`
 
 Sanitizes the in-memory DOM tree using the same sanitizer as `safe=True` output.
 
 - This is useful if you want to traverse/modify a clean DOM.
 - `Sanitize(...)` runs at its position in the pipeline. If you add transforms after it, be careful not to reintroduce unsafe content.
 
+#### Reviewability (security argument)
+
+`Sanitize(...)` is implemented as an explicit pipeline of smaller, focused transforms (like `DropComments`, `DropAttrs`, `DropUrlAttrs`, …).
+This makes it easier to audit: the sanitizer behavior is a readable list of operations rather than a monolithic “magic” pass.
+
+The `Sanitize(...)` pipeline compiles to this ordered list of transforms (some may be disabled by policy):
+
+- `Drop("tag1, tag2, ...", on_drop=...)` — Drops dangerous content containers like `script`/`style` (drops the *entire* subtree).
+- `DropComments(...)` — Drops comments.
+- `DropDoctype(...)` — Drops doctypes.
+- `DropForeignNamespaces(...)` — Drops elements in foreign namespaces (SVG/MathML) when enabled by policy.
+- `Unwrap(":not(allowed_tags)", on_unwrap=...)` — Unwraps disallowed elements (keeps their children) for non-container tags.
+- `DropAttrs("*", patterns=("on*", "srcdoc", "*:*"), ...)` — Drops dangerous attributes (`on*`, `srcdoc`, and namespaced attributes like `xlink:href`).
+- `AllowlistAttrs("*", allowed_attributes=..., ...)` — Applies tag/attribute allowlists.
+- `DropUrlAttrs("*", url_policy=..., ...)` — Validates and rewrites URL-valued attributes (`href`, `src`, `srcset`, …) according to `UrlPolicy`.
+- `AllowStyleAttrs("[style]", allowed_css_properties=..., ...)` — Optionally sanitizes inline styles using an allowlist of CSS properties.
+- `MergeAttrs("a", attr="rel", tokens=..., ...)` — Optionally enforces `rel` tokens on links.
+
+For policy details, see [Sanitization & Security](sanitization.md).
+
 `PruneEmpty(...)` after `Sanitize(...)` is useful if sanitization removes unsafe children (for example `<script>`) and leaves a now-empty wrapper element.
 
 `CollapseWhitespace(...)` after `Sanitize(...)` is useful if you want an already-sanitized in-memory tree, but still normalize whitespace (similar to `html5lib.filters.whitespace.Filter`).
 
-### `PruneEmpty(selector, strip_whitespace=True)`
+### `PruneEmpty(selector, strip_whitespace=True, enabled=True)`
 
 Recursively drops elements that are empty after transforms have run.
 
@@ -261,21 +307,25 @@ Output:
 <p><img src="/x"></p>
 ```
 
-### `SetAttrs(selector, **attrs)`
+### `SetAttrs(selector, _enabled=True, **attrs)`
 
 Sets/overwrites attributes on matching elements.
 
 Attribute values are converted to strings.
 Passing `None` creates a boolean attribute (serialized in minimized form by default).
 
+`_enabled` controls whether the transform runs. It is named `_enabled` (not `enabled`) so you can set an element attribute named `enabled` without ambiguity.
+
 ```python
 SetAttrs("a", rel="nofollow", target="_blank")
 SetAttrs("input", disabled=None)
 ```
 
-### `Drop(selector)`
+### `Drop(selector, enabled=True, on_drop=None)`
 
 Removes matching elements and their contents.
+
+Optional: pass `on_drop(node)` to run a callback right before the node is dropped.
 
 `Drop(...)` supports any selector that the JustHTML selector engine supports, including comma-separated selectors and attribute selectors.
 
@@ -339,16 +389,18 @@ Output:
 <p><img src="/x"></p>
 ```
 
-### `Unwrap(selector)`
+### `Unwrap(selector, enabled=True, on_unwrap=None)`
 
 Removes the element but keeps its children (hoists contents).
+
+Optional: pass `on_unwrap(node)` to run a callback right before the node is unwrapped.
 
 ```python
 Unwrap("span")
 Unwrap("div.wrapper")
 ```
 
-### `Empty(selector)`
+### `Empty(selector, enabled=True)`
 
 Keeps the element but removes its children.
 
@@ -359,9 +411,91 @@ Empty("pre")
 Empty("template")
 ```
 
-### `Edit(selector, callback)`
+### `Edit(selector, callback, enabled=True)`
 
 Escape hatch for custom logic. Runs `callback(node)` for each matching element.
+
+## Advanced transform building blocks
+
+These are lower-level transforms that are primarily useful for building policy-driven pipelines (including the built-in `Sanitize(...)` pipeline).
+
+### `EditDocument(callback, enabled=True)`
+
+Runs `callback(root)` exactly once with the document root (`#document` or `#document-fragment`).
+
+Use this for transforms that need access to the root container node (which selector-based transforms do not visit).
+
+### `Decide(selector, callback, enabled=True)`
+
+General-purpose structural transform.
+
+- For a normal selector (not `"*"`), the callback is invoked only for matching element/template nodes.
+- For selector `"*"`, the callback is invoked for every node type (including text/comment/doctype and document containers).
+
+The callback must return one of:
+
+- `Decide.KEEP` — keep node
+- `Decide.DROP` — drop node
+- `Decide.UNWRAP` — remove node but keep its children (and template contents)
+- `Decide.EMPTY` — keep node but remove its children (and template contents)
+
+### `EditAttrs(selector, callback, enabled=True)`
+
+Rewrite element attributes using a callback.
+
+- Return `None` to leave attributes unchanged.
+- Return a `dict[str, str | None]` to replace the node’s attributes.
+
+`RewriteAttrs` is a backwards-compatible alias for `EditAttrs`.
+
+### `DropComments(enabled=True)`
+
+Drops comment nodes (`#comment`).
+
+### `DropDoctype(enabled=True)`
+
+Drops doctype nodes (`!doctype`).
+
+### `DropForeignNamespaces(enabled=True, on_report=None)`
+
+Drops elements in non-HTML namespaces (for example SVG/MathML) when enabled.
+
+If provided, `on_report(msg, node=...)` is called when a foreign element is dropped.
+
+### `DropAttrs(selector, patterns=(), enabled=True, on_report=None)`
+
+Drops attributes whose names match patterns like `"on*"` or `"*:*"`.
+
+Patterns support `*` and `?` wildcards.
+If provided, `on_report(msg, node=...)` is called for each dropped attribute.
+
+### `AllowlistAttrs(selector, allowed_attributes=..., enabled=True, on_report=None)`
+
+Keeps only allowlisted attributes.
+
+`allowed_attributes` is a mapping like:
+
+- `{"*": {"id", "class"}, "a": {"href", "rel"}}`
+
+If provided, `on_report(msg, node=...)` is called when an attribute is dropped for not being allowlisted.
+
+### `DropUrlAttrs(selector, url_policy=..., enabled=True, on_report=None)`
+
+Validates and rewrites/drops URL-valued attributes (`href`, `src`, `srcset`, …) according to a `UrlPolicy`.
+
+If provided, `on_report(msg, node=...)` is called when a URL is dropped.
+
+### `AllowStyleAttrs(selector, allowed_css_properties=..., enabled=True, on_report=None)`
+
+Sanitizes inline `style` attributes using an allowlist of CSS properties.
+
+If provided, `on_report(msg, node=...)` is called when a `style` attribute is dropped.
+
+### `MergeAttrs(tag, attr=..., tokens=..., enabled=True)`
+
+Merges tokens into a whitespace-delimited attribute without removing existing tokens.
+
+This is used by the sanitizer to enforce `rel` tokens on links (e.g. `noopener`).
 
 `Edit` is useful for transformations that don’t fit the built-ins, such as removing attributes, rewriting URLs, or conditionally dropping nodes.
 

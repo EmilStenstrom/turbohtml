@@ -67,6 +67,7 @@ Options:
 - `skip_tags`: iterable of tag names to skip (matched case-insensitively).
 - `fuzzy_ip`: enable linkifying bare IPv4 addresses like `192.168.0.1`.
 - `extra_tlds`: additional TLDs to accept for fuzzy domain/email detection.
+- `enabled` (default: `True`): if set to `False`, Linkify is skipped.
 
 ## Fuzzy domains and TLD allowlist
 

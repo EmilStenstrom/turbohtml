@@ -38,6 +38,33 @@ Output:
 
 For a deeper dive, continue in [HTML Cleaning](html-cleaning.md) and [URL Cleaning](url-cleaning.md).
 
+## Sanitizing the in-memory DOM with `Sanitize(...)`
+
+Safe-by-default output (`doc.to_html()`, `doc.to_markdown()`, `doc.to_text()`) sanitizes a cloned view of the tree right before serialization.
+
+If you want the *in-memory* DOM itself to be sanitized (so that later transforms, DOM traversal, and repeated serialization operate on already-cleaned HTML), add `Sanitize(...)` to your transform pipeline:
+
+```python
+from justhtml import JustHTML, Sanitize
+
+doc = JustHTML(user_html, fragment=True, transforms=[Sanitize()])
+clean_root = doc.root
+```
+
+See also: [Transforms](transforms.md) (especially [`Sanitize(...)`](transforms.md#sanitizepolicynone-enabledtrue) and [`Stage([...])`](transforms.md#advanced-stages)).
+
+## Why `Sanitize(...)` is reviewable
+
+`Sanitize(...)` is not a hidden “black box” pass. Internally, it compiles the sanitization policy into a concrete, readable pipeline of smaller transforms (drop content tags, unwrap disallowed tags, drop dangerous attributes, validate URLs, sanitize styles, enforce link `rel`, …).
+
+This is a strong security property:
+
+- The sanitizer becomes a list of explicitly named operations.
+- Each step is narrow and testable in isolation.
+- Policy changes map directly to a small set of predictable pipeline steps.
+
+If you’re evaluating or auditing sanitization behavior, the [`Sanitize(...)` transform documentation](transforms.md#sanitizepolicynone-enabledtrue) summarizes the pipeline at a high level.
+
 ## Threat model
 
 The goal of sanitization is to take **untrusted HTML** and clean it into output that is safe enough to be **embedded as markup into a normal (safe) HTML page**.
