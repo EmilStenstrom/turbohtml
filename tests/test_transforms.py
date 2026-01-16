@@ -4,22 +4,29 @@ import unittest
 
 from justhtml import JustHTML, SelectorError
 from justhtml.node import ElementNode, SimpleDomNode, TemplateNode, TextNode
-from justhtml.sanitize import SanitizationPolicy, UrlPolicy
+from justhtml.sanitize import SanitizationPolicy, UrlPolicy, UrlRule
 from justhtml.transforms import (
+    AllowlistAttrs,
+    AllowStyleAttrs,
     CollapseWhitespace,
     Decide,
     DecideAction,
     Drop,
+    DropAttrs,
+    DropForeignNamespaces,
+    DropUrlAttrs,
     Edit,
+    EditAttrs,
     EditDocument,
     Empty,
     Linkify,
+    MergeAttrs,
     PruneEmpty,
-    RewriteAttrs,
     Sanitize,
     SetAttrs,
     Stage,
     Unwrap,
+    _glob_match,
     apply_compiled_transforms,
     compile_transforms,
     emit_error,
@@ -27,9 +34,52 @@ from justhtml.transforms import (
 
 
 class TestTransforms(unittest.TestCase):
+    def test_glob_match_star_matches_everything(self) -> None:
+        assert _glob_match("*", "anything") is True
+        # Ensure the trailing-'*' consumption loop is exercised too.
+        assert _glob_match("**", "") is True
+
+    def test_glob_match_returns_false_on_wildcard_mismatch(self) -> None:
+        # Exercise the internal mismatch path for wildcard patterns.
+        assert _glob_match("a?c", "axd") is False
+
     def test_compile_transforms_rejects_unknown_transform_type(self) -> None:
         with self.assertRaises(TypeError):
             compile_transforms([object()])
+
+    def test_rewriteattrs_selector_star_uses_all_nodes_fast_path(self) -> None:
+        root = SimpleDomNode("#document-fragment")
+        root.append_child(ElementNode("div", {"a": "1"}, "html"))
+
+        def cb(node: SimpleDomNode) -> dict[str, str | None] | None:
+            out = dict(node.attrs)
+            out["b"] = "2"
+            return out
+
+        compiled = compile_transforms([EditAttrs("*", cb)])
+        apply_compiled_transforms(root, compiled)
+        assert root.children[0].attrs.get("b") == "2"
+
+    def test_compile_transforms_fuses_adjacent_rewriteattrs_with_same_selector(self) -> None:
+        root = SimpleDomNode("#document-fragment")
+        root.append_child(ElementNode("div", {"a": "1"}, "html"))
+
+        def cb1(node: SimpleDomNode) -> dict[str, str | None] | None:
+            out = dict(node.attrs)
+            out["b"] = "2"
+            return out
+
+        def cb2(node: SimpleDomNode) -> dict[str, str | None] | None:
+            out = dict(node.attrs)
+            out["c"] = "3"
+            return out
+
+        compiled = compile_transforms([EditAttrs("*", cb1), EditAttrs("*", cb2)])
+        # Fused into a single rewrite-attrs transform.
+        assert sum(1 for t in compiled if getattr(t, "kind", None) == "rewrite_attrs") == 1
+
+        apply_compiled_transforms(root, compiled)
+        assert root.children[0].attrs == {"a": "1", "b": "2", "c": "3"}
 
     def test_constructor_accepts_transforms_and_applies_setattrs(self) -> None:
         doc = JustHTML("<p>Hello</p>", transforms=[SetAttrs("p", id="x")])
@@ -134,6 +184,410 @@ class TestTransforms(unittest.TestCase):
         )
         assert doc.to_html(pretty=False, safe=False) == "<html><head></head><body></body></html>"
 
+    def test_disabled_transforms_are_omitted_at_compile_time(self) -> None:
+        doc = JustHTML(
+            "<p>ok</p><script>alert(1)</script><div><b>x</b></div>",
+            transforms=[
+                Drop("script", enabled=False),
+                Unwrap("b", enabled=False),
+                Empty("div", enabled=False),
+            ],
+        )
+        assert (
+            doc.to_html(pretty=False, safe=False)
+            == "<html><head></head><body><p>ok</p><script>alert(1)</script><div><b>x</b></div></body></html>"
+        )
+
+    def test_drop_with_callback_uses_general_selector_path_when_not_simple_tag_list(self) -> None:
+        dropped: list[str] = []
+
+        def on_drop(node: SimpleDomNode) -> None:
+            dropped.append(str(node.name))
+
+        doc = JustHTML(
+            '<div class="x"></div><div class="y"></div>',
+            fragment=True,
+            transforms=[Drop("div.x", on_drop=on_drop)],
+        )
+        assert doc.to_html(pretty=False, safe=False) == '<div class="y"></div>'
+        assert dropped == ["div"]
+
+    def test_drop_with_callback_tag_list_fast_path_rejection_still_validates_selector(self) -> None:
+        dropped: list[str] = []
+
+        def on_drop(node: SimpleDomNode) -> None:
+            dropped.append(str(node.name))
+
+        doc = JustHTML(
+            "<script>x</script><p>ok</p>",
+            fragment=True,
+            transforms=[Drop("script, ", on_drop=on_drop)],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "<p>ok</p>"
+        assert dropped == ["script"]
+
+    def test_drop_foreign_namespaces_can_report_to_policy(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["p"],
+            allowed_attributes={"*": []},
+            unsafe_handling="collect",
+        )
+        policy.reset_collected_security_errors()
+
+        root = SimpleDomNode("#document-fragment")
+        root.append_child(ElementNode("svg", {}, "svg"))
+
+        apply_compiled_transforms(root, compile_transforms([DropForeignNamespaces(on_report=policy.handle_unsafe)]))
+        assert root.children == []
+        assert policy.collected_security_errors()
+
+    def test_drop_foreign_namespaces_drops_even_without_policy(self) -> None:
+        root = SimpleDomNode("#document-fragment")
+        root.append_child(ElementNode("svg", {}, "svg"))
+
+        apply_compiled_transforms(root, compile_transforms([DropForeignNamespaces(on_report=None)]))
+        assert root.children == []
+
+    def test_dropattrs_patterns_cover_event_namespaced_and_exact(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["div"],
+            allowed_attributes={"*": []},
+            unsafe_handling="collect",
+        )
+        policy.reset_collected_security_errors()
+
+        root = SimpleDomNode("#document-fragment")
+        node = ElementNode(
+            "div",
+            {
+                "onClick": "1",
+                "xml:lang": "sv",
+                "srcdoc": "<p>x</p>",
+                "href": "https://example.com/",
+                " ": "ignored",
+            },
+            "html",
+        )
+        root.append_child(node)
+
+        apply_compiled_transforms(
+            root,
+            compile_transforms(
+                [
+                    DropAttrs(
+                        "*",
+                        patterns=("on*", "*:*", "srcdoc", "href"),
+                        on_report=policy.handle_unsafe,
+                    )
+                ]
+            ),
+        )
+        assert node.attrs == {}
+        assert len(policy.collected_security_errors()) == 4
+
+    def test_dropattrs_can_be_disabled(self) -> None:
+        root = SimpleDomNode("#document-fragment")
+        node = ElementNode("div", {"onclick": "1"}, "html")
+        root.append_child(node)
+
+        apply_compiled_transforms(root, compile_transforms([DropAttrs("*", patterns=("on*",), enabled=False)]))
+        assert node.attrs == {"onclick": "1"}
+
+    def test_dropattrs_with_no_policy_still_drops(self) -> None:
+        root = SimpleDomNode("#document-fragment")
+        node = ElementNode("div", {"onClick": "1", "xml:lang": "sv", "srcdoc": "x"}, "html")
+        root.append_child(node)
+
+        apply_compiled_transforms(
+            root,
+            compile_transforms([DropAttrs("*", patterns=("on*", "*:*", "srcdoc"), on_report=None)]),
+        )
+        assert node.attrs == {}
+
+    def test_allowlistattrs_lowercases_keys_skips_blank_and_reports_disallowed(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["a"],
+            allowed_attributes={"*": [], "a": ["href"]},
+            force_link_rel={"noopener"},
+            unsafe_handling="collect",
+        )
+        policy.reset_collected_security_errors()
+
+        root = SimpleDomNode("#document-fragment")
+        a = ElementNode(
+            "a",
+            {
+                "HREF": "https://example.com",
+                "Rel": "noreferrer",
+                "BAD": "x",
+                " ": "ignored",
+            },
+            "html",
+        )
+        root.append_child(a)
+
+        apply_compiled_transforms(
+            root,
+            compile_transforms(
+                [
+                    AllowlistAttrs(
+                        "*",
+                        allowed_attributes={"*": [], "a": ["href", "rel"]},
+                        on_report=policy.handle_unsafe,
+                    )
+                ]
+            ),
+        )
+        assert a.attrs.get("href") == "https://example.com"
+        assert a.attrs.get("rel") == "noreferrer"
+        assert "bad" not in a.attrs
+        assert policy.collected_security_errors()
+
+    def test_allowlistattrs_can_be_disabled(self) -> None:
+        root = SimpleDomNode("#document-fragment")
+        a = ElementNode("a", {"href": "https://example.com", "bad": "x"}, "html")
+        root.append_child(a)
+
+        apply_compiled_transforms(
+            root,
+            compile_transforms([AllowlistAttrs("*", allowed_attributes={"*": [], "a": ["href"]}, enabled=False)]),
+        )
+        assert a.attrs == {"href": "https://example.com", "bad": "x"}
+
+    def test_allowlistattrs_without_policy_drops_without_reporting(self) -> None:
+        root = SimpleDomNode("#document-fragment")
+        a = ElementNode("a", {"href": "https://example.com", "bad": "x"}, "html")
+        root.append_child(a)
+
+        apply_compiled_transforms(
+            root,
+            compile_transforms(
+                [
+                    AllowlistAttrs(
+                        "*",
+                        allowed_attributes={"*": [], "a": ["href"]},
+                        on_report=None,
+                    )
+                ],
+            ),
+        )
+        assert a.attrs == {"href": "https://example.com"}
+
+    def test_dropurlattrs_branches_raw_none_no_rule_and_invalid_url(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["a", "img"],
+            allowed_attributes={"*": [], "a": ["href"], "img": ["src"]},
+            url_policy=UrlPolicy(
+                default_handling="allow",
+                allow_rules={
+                    ("a", "href"): UrlRule(allowed_schemes={"http", "https"}),
+                },
+            ),
+            unsafe_handling="collect",
+        )
+        policy.reset_collected_security_errors()
+
+        root = SimpleDomNode("#document-fragment")
+        a_none = ElementNode("a", {"href": None}, "html")
+        img_no_rule = ElementNode("img", {"src": "https://example.com/x.png"}, "html")
+        a_bad = ElementNode("a", {"href": "javascript:alert(1)"}, "html")
+        root.append_child(a_none)
+        root.append_child(img_no_rule)
+        root.append_child(a_bad)
+
+        apply_compiled_transforms(
+            root,
+            compile_transforms([DropUrlAttrs("*", url_policy=policy.url_policy, on_report=policy.handle_unsafe)]),
+        )
+        assert "href" not in a_none.attrs
+        assert "src" not in img_no_rule.attrs
+        assert "href" not in a_bad.attrs
+        assert len(policy.collected_security_errors()) == 3
+
+    def test_dropurlattrs_works_without_on_unsafe_callback(self) -> None:
+        url_policy = UrlPolicy(
+            default_handling="allow",
+            allow_rules={
+                ("a", "href"): UrlRule(allowed_schemes={"http", "https"}),
+            },
+        )
+
+        root = SimpleDomNode("#document-fragment")
+        a_none = ElementNode("a", {"href": None}, "html")
+        img_no_rule = ElementNode("img", {"src": "https://example.com/x.png"}, "html")
+        a_bad = ElementNode("a", {"href": "javascript:alert(1)"}, "html")
+        root.append_child(a_none)
+        root.append_child(img_no_rule)
+        root.append_child(a_bad)
+
+        apply_compiled_transforms(root, compile_transforms([DropUrlAttrs("*", url_policy=url_policy)]))
+        assert "href" not in a_none.attrs
+        assert "src" not in img_no_rule.attrs
+        assert "href" not in a_bad.attrs
+
+    def test_dropurlattrs_allows_valid_srcset(self) -> None:
+        url_policy = UrlPolicy(
+            default_handling="allow",
+            allow_rules={
+                ("img", "srcset"): UrlRule(allowed_schemes={"https"}),
+            },
+        )
+
+        root = SimpleDomNode("#document-fragment")
+        img = ElementNode("img", {"srcset": "https://example.com/a 1x"}, "html")
+        root.append_child(img)
+
+        apply_compiled_transforms(root, compile_transforms([DropUrlAttrs("*", url_policy=url_policy)]))
+        assert img.attrs.get("srcset") == "https://example.com/a 1x"
+
+    def test_dropurlattrs_can_be_disabled(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["a"],
+            allowed_attributes={"*": [], "a": ["href"]},
+            url_policy=UrlPolicy(allow_rules={("a", "href"): UrlRule(allowed_schemes={"http", "https"})}),
+            unsafe_handling="collect",
+        )
+        policy.reset_collected_security_errors()
+
+        doc = JustHTML(
+            '<a href="javascript:alert(1)">x</a>',
+            fragment=True,
+            transforms=[
+                DropUrlAttrs("*", url_policy=policy.url_policy, enabled=False, on_report=policy.handle_unsafe)
+            ],
+        )
+        assert doc.to_html(pretty=False, safe=False) == '<a href="javascript:alert(1)">x</a>'
+        assert policy.collected_security_errors() == []
+
+    def test_allowstyleattrs_branches_raw_none_and_sanitized_none(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["span"],
+            allowed_attributes={"*": ["style"]},
+            allowed_css_properties={"color"},
+            unsafe_handling="collect",
+        )
+        policy.reset_collected_security_errors()
+
+        root = SimpleDomNode("#document-fragment")
+        s_none = ElementNode("span", {"style": None}, "html")
+        s_bad = ElementNode("span", {"style": "position: fixed"}, "html")
+        s_ok = ElementNode("span", {"style": "color: red; position: fixed"}, "html")
+        s_no_style = ElementNode("span", {}, "html")
+        root.append_child(s_none)
+        root.append_child(s_bad)
+        root.append_child(s_ok)
+        root.append_child(s_no_style)
+
+        apply_compiled_transforms(
+            root,
+            compile_transforms(
+                [
+                    AllowStyleAttrs(
+                        "span",
+                        allowed_css_properties=policy.allowed_css_properties,
+                        on_report=policy.handle_unsafe,
+                    )
+                ]
+            ),
+        )
+        assert "style" not in s_none.attrs
+        assert "style" not in s_bad.attrs
+        assert s_ok.attrs.get("style") == "color: red"
+        assert s_no_style.attrs == {}
+        assert len(policy.collected_security_errors()) == 2
+
+    def test_allowstyleattrs_works_without_on_unsafe_callback(self) -> None:
+        root = SimpleDomNode("#document-fragment")
+        s_none = ElementNode("span", {"style": None}, "html")
+        s_bad = ElementNode("span", {"style": "position: fixed"}, "html")
+        s_ok = ElementNode("span", {"style": "color: red"}, "html")
+        root.append_child(s_none)
+        root.append_child(s_bad)
+        root.append_child(s_ok)
+
+        apply_compiled_transforms(
+            root,
+            compile_transforms([AllowStyleAttrs("span", allowed_css_properties={"color"})]),
+        )
+        assert "style" not in s_none.attrs
+        assert "style" not in s_bad.attrs
+        assert s_ok.attrs.get("style") == "color: red"
+
+    def test_allowstyleattrs_can_be_disabled(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["span"],
+            allowed_attributes={"*": ["style"]},
+            allowed_css_properties={"color"},
+            unsafe_handling="collect",
+        )
+        policy.reset_collected_security_errors()
+
+        doc = JustHTML(
+            '<span style="position: fixed">x</span>',
+            fragment=True,
+            transforms=[
+                AllowStyleAttrs(
+                    "[style]",
+                    allowed_css_properties=policy.allowed_css_properties,
+                    enabled=False,
+                    on_report=policy.handle_unsafe,
+                )
+            ],
+        )
+        assert doc.to_html(pretty=False, safe=False) == '<span style="position: fixed">x</span>'
+        assert policy.collected_security_errors() == []
+
+    def test_mergeattrs_rewrites_on_add_missing_and_normalization(self) -> None:
+        doc = JustHTML(
+            '<a></a><a rel="NoOpEnEr noopener"></a><a rel="noreferrer"></a><a rel="noopener"></a>',
+            fragment=True,
+            transforms=[MergeAttrs("a", attr="rel", tokens={"noopener"})],
+        )
+        assert (
+            doc.to_html(pretty=False, safe=False)
+            == '<a rel="noopener"></a><a rel="noopener"></a><a rel="noreferrer noopener"></a><a rel="noopener"></a>'
+        )
+
+    def test_mergeattrs_skips_non_matching_elements(self) -> None:
+        doc = JustHTML(
+            "<div></div><a></a>",
+            fragment=True,
+            transforms=[MergeAttrs("a", attr="rel", tokens={"noopener"})],
+        )
+        assert doc.to_html(pretty=False, safe=False) == '<div></div><a rel="noopener"></a>'
+
+    def test_mergeattrs_is_skipped_if_no_tokens(self) -> None:
+        compiled = compile_transforms([MergeAttrs("a", attr="rel", tokens=set())])
+        assert compiled == []
+
+    def test_dropattrs_noops_when_patterns_empty(self) -> None:
+        root = SimpleDomNode("#document-fragment")
+        node = ElementNode("div", {"id": "x"}, "html")
+        root.append_child(node)
+
+        apply_compiled_transforms(root, compile_transforms([DropAttrs("*", patterns=())]))
+        assert node.attrs == {"id": "x"}
+
+    def test_disabled_top_level_stage_is_skipped(self) -> None:
+        # Ensure disabled stages are skipped both when flattening and when
+        # splitting into top-level stages.
+        doc = JustHTML(
+            "<p>Hello</p>",
+            fragment=True,
+            transforms=[
+                Stage([SetAttrs("p", id="x")], enabled=False),
+                Stage([SetAttrs("p", **{"class": "y"})]),
+            ],
+        )
+        html = doc.to_html(pretty=False, safe=False)
+        assert 'id="x"' not in html
+        assert 'class="y"' in html
+
+    def test_apply_compiled_transforms_empty_list_noops(self) -> None:
+        root = SimpleDomNode("#document-fragment")
+        root.append_child(ElementNode("p", {}, "html"))
+        apply_compiled_transforms(root, [])
+
     def test_selector_transforms_skip_comment_nodes(self) -> None:
         doc = JustHTML("<!--x--><p>y</p>", transforms=[SetAttrs("p", id="x")])
         assert '<p id="x">y</p>' in doc.to_html(pretty=False, safe=False)
@@ -208,15 +662,15 @@ class TestTransforms(unittest.TestCase):
             assert node.name == "a"
             return {"href": node.attrs.get("href"), "data-ok": "1"}
 
-        doc = JustHTML('<a href="x" onclick="y">t</a>', fragment=True, transforms=[RewriteAttrs("a", rewrite)])
+        doc = JustHTML('<a href="x" onclick="y">t</a>', fragment=True, transforms=[EditAttrs("a", rewrite)])
         assert doc.to_html(pretty=False, safe=False) == '<a href="x" data-ok="1">t</a>'
 
     def test_rewriteattrs_returning_none_noops(self) -> None:
-        doc = JustHTML('<a href="x">t</a>', fragment=True, transforms=[RewriteAttrs("a", lambda n: None)])
+        doc = JustHTML('<a href="x">t</a>', fragment=True, transforms=[EditAttrs("a", lambda n: None)])
         assert doc.to_html(pretty=False, safe=False) == '<a href="x">t</a>'
 
     def test_rewriteattrs_skips_non_matching_elements(self) -> None:
-        doc = JustHTML("<p>t</p>", fragment=True, transforms=[RewriteAttrs("a", lambda n: {"x": "1"})])
+        doc = JustHTML("<p>t</p>", fragment=True, transforms=[EditAttrs("a", lambda n: {"x": "1"})])
         assert doc.to_html(pretty=False, safe=False) == "<p>t</p>"
 
     def test_walk_transforms_traverse_nested_document_containers(self) -> None:

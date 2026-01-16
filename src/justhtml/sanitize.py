@@ -18,6 +18,9 @@ from .tokens import ParseError
 UrlFilter = Callable[[str, str, str], str | None]
 
 
+_DROP_ATTRS_PATTERNS: tuple[str, ...] = ("on*", "srcdoc", "*:*")
+
+
 class UnsafeHtmlError(ValueError):
     """Raised when unsafe HTML is encountered and unsafe_handling='raise'."""
 
@@ -341,7 +344,7 @@ class SanitizationPolicy:
         handler.reset()
         object.__setattr__(self, "_unsafe_handler", handler)
 
-        # Normalize rel tokens once so _sanitize_attrs() can stay allocation-light.
+        # Normalize rel tokens once so downstream sanitization can stay allocation-light.
         # (Downstream code expects lowercase tokens and ignores empty/whitespace.)
         if self.force_link_rel:
             normalized_force_link_rel = {t.strip().lower() for t in self.force_link_rel if str(t).strip()}
@@ -627,8 +630,8 @@ def _css_value_may_load_external_resource(value: str) -> bool:
     return False
 
 
-def _sanitize_inline_style(*, policy: SanitizationPolicy, value: str) -> str | None:
-    allowed = policy.allowed_css_properties
+def _sanitize_inline_style(*, allowed_css_properties: Collection[str], value: str) -> str | None:
+    allowed = allowed_css_properties
     if not allowed:
         return None
 
@@ -716,13 +719,15 @@ def _has_invalid_scheme_like_prefix(value: str) -> bool:
 
 def _sanitize_url_value(
     *,
-    policy: SanitizationPolicy,
+    url_policy: UrlPolicy,
     rule: UrlRule,
     tag: str,
     attr: str,
     value: str,
 ) -> str | None:
-    return _sanitize_url_value_inner(policy=policy, rule=rule, tag=tag, attr=attr, value=value, apply_filter=True)
+    return _sanitize_url_value_inner(
+        url_policy=url_policy, rule=rule, tag=tag, attr=attr, value=value, apply_filter=True
+    )
 
 
 def _effective_proxy(*, url_policy: UrlPolicy, rule: UrlRule) -> UrlProxy | None:
@@ -741,7 +746,7 @@ def _effective_allow_relative(*, url_policy: UrlPolicy, rule: UrlRule) -> bool:
 
 def _sanitize_url_value_inner(
     *,
-    policy: SanitizationPolicy,
+    url_policy: UrlPolicy,
     rule: UrlRule,
     tag: str,
     attr: str,
@@ -749,7 +754,6 @@ def _sanitize_url_value_inner(
     apply_filter: bool,
 ) -> str | None:
     v = value
-    url_policy = policy.url_policy
     mode = _effective_url_handling(url_policy=url_policy, rule=rule)
     allow_relative = _effective_allow_relative(url_policy=url_policy, rule=rule)
 
@@ -835,14 +839,13 @@ def _sanitize_url_value_inner(
 
 def _sanitize_srcset_value(
     *,
-    policy: SanitizationPolicy,
+    url_policy: UrlPolicy,
     rule: UrlRule,
     tag: str,
     attr: str,
     value: str,
 ) -> str | None:
     # Apply the URL filter once to the whole attribute value.
-    url_policy = policy.url_policy
     v = value
     if url_policy.url_filter is not None:
         rewritten = url_policy.url_filter(tag, attr, v)
@@ -865,7 +868,7 @@ def _sanitize_srcset_value(
         desc = parts[1].strip() if len(parts) == 2 else ""
 
         sanitized_url = _sanitize_url_value_inner(
-            policy=policy,
+            url_policy=url_policy,
             rule=rule,
             tag=tag,
             attr=attr,
@@ -938,127 +941,226 @@ def _srcset_contains_external_url(value: str) -> bool:
     return False
 
 
-def _sanitize_attrs(
+def _sanitize_clone_into(
+    src: Any,
+    dst_parent: Any,
     *,
     policy: SanitizationPolicy,
-    tag: str,
-    attrs: dict[str, str | None] | None,
-    node: Any | None = None,
-) -> dict[str, str | None]:
-    if not attrs:
-        attrs = {}
+    include_self: bool = False,
+) -> None:
+    # Lazy imports to avoid circular imports:
+    # transforms -> node -> sanitize
+    from .node import SimpleDomNode, TemplateNode, TextNode  # noqa: PLC0415
+    from .transforms import _glob_match  # noqa: PLC0415
 
-    allowed = policy._allowed_attrs_by_tag.get(tag) or policy._allowed_attrs_global
+    allowed_tags = policy.allowed_tags
+    drop_content_tags = policy.drop_content_tags
+    drop_foreign = policy.drop_foreign_namespaces
+    drop_comments = policy.drop_comments
+    drop_doctype = policy.drop_doctype
 
-    out: dict[str, str | None] = {}
-    for raw_name, raw_value in attrs.items():
-        if not raw_name:
-            continue
+    allowed_global = policy._allowed_attrs_global
+    allowed_by_tag = policy._allowed_attrs_by_tag
 
-        name = raw_name
-        # Optimization: assume name is already a string and stripped (from tokenizer)
-        if not name.islower():
-            name = name.lower()
+    url_policy = policy.url_policy
+    allowed_css_properties = policy.allowed_css_properties
+    force_link_rel = policy.force_link_rel
+    force_link_rel_tokens = tuple(sorted(force_link_rel)) if force_link_rel else ()
 
-        # Disallow namespace-ish attributes by default.
-        if ":" in name:
-            policy.handle_unsafe(f"Unsafe attribute '{name}' (namespaced)", node=node)
-            continue
-
-        # Always drop event handlers.
-        if name.startswith("on"):
-            policy.handle_unsafe(f"Unsafe attribute '{name}' (event handler)", node=node)
-            continue
-
-        # Dangerous attribute contexts.
-        if name == "srcdoc":
-            policy.handle_unsafe(f"Unsafe attribute '{name}'", node=node)
-            continue
-
-        if name not in allowed and not (tag == "a" and name == "rel" and policy.force_link_rel):
-            policy.handle_unsafe(f"Unsafe attribute '{name}' (not allowed)", node=node)
-            continue
-
-        if raw_value is None:
-            out[name] = None
-            continue
-
-        value = raw_value
-
-        if name in _URL_LIKE_ATTRS:
-            rule = policy.url_policy.allow_rules.get((tag, name))
-            if rule is None:
-                policy.handle_unsafe(f"Unsafe URL in attribute '{name}' (no rule)", node=node)
-                continue
-
-            if name == "srcset":
-                sanitized = _sanitize_srcset_value(policy=policy, rule=rule, tag=tag, attr=name, value=value)
-            else:
-                sanitized = _sanitize_url_value(policy=policy, rule=rule, tag=tag, attr=name, value=value)
-
-            if sanitized is None:
-                policy.handle_unsafe(f"Unsafe URL in attribute '{name}'", node=node)
-                continue
-
-            out[name] = sanitized
-        elif name == "style":
-            sanitized_style = _sanitize_inline_style(policy=policy, value=value)
-            if sanitized_style is None:
-                policy.handle_unsafe(f"Unsafe inline style in attribute '{name}'", node=node)
-                continue
-            out[name] = sanitized_style
+    def _sanitize_attrs(node: SimpleDomNode, *, tag: str) -> dict[str, str | None]:
+        attrs = node.attrs
+        if not attrs:
+            out: dict[str, str | None] = {}
         else:
-            out[name] = value
+            allowed = allowed_by_tag.get(tag, allowed_global)
+            allow_rel = bool(force_link_rel_tokens) and tag == "a"
 
-    # Link hardening (merge tokens; do not remove existing ones).
-    if tag == "a" and policy.force_link_rel:
-        existing_raw = out.get("rel")
-        existing: list[str] = []
-        if isinstance(existing_raw, str) and existing_raw:
-            for tok in existing_raw.split():
-                t = tok.strip().lower()
-                if t and t not in existing:
-                    existing.append(t)
-        for tok in sorted(policy.force_link_rel):
-            if tok not in existing:
-                existing.append(tok)
-        out["rel"] = " ".join(existing)
+            out = {}
+            for raw_key, raw_value in attrs.items():
+                if not raw_key or not str(raw_key).strip():
+                    continue
 
-    return out
+                key = raw_key
+                if not key.islower():
+                    key = key.lower()
+
+                matched_pat: str | None = None
+                for pat in _DROP_ATTRS_PATTERNS:
+                    if _glob_match(pat, key):
+                        matched_pat = pat
+                        break
+                if matched_pat is not None:
+                    policy.handle_unsafe(
+                        f"Unsafe attribute '{key}' (matched pattern '{matched_pat}')",
+                        node=node,
+                    )
+                    continue
+
+                if key not in allowed and not (allow_rel and key == "rel"):
+                    policy.handle_unsafe(f"Unsafe attribute '{key}' (not allowed)", node=node)
+                    continue
+
+                value = raw_value
+
+                if key in _URL_LIKE_ATTRS:
+                    if value is None:
+                        policy.handle_unsafe(f"Unsafe URL in attribute '{key}'", node=node)
+                        continue
+
+                    rule = url_policy.allow_rules.get((tag, key))
+                    if rule is None:
+                        policy.handle_unsafe(f"Unsafe URL in attribute '{key}' (no rule)", node=node)
+                        continue
+
+                    if key == "srcset":
+                        sanitized = _sanitize_srcset_value(
+                            url_policy=url_policy,
+                            rule=rule,
+                            tag=tag,
+                            attr=key,
+                            value=str(value),
+                        )
+                    else:
+                        sanitized = _sanitize_url_value(
+                            url_policy=url_policy,
+                            rule=rule,
+                            tag=tag,
+                            attr=key,
+                            value=str(value),
+                        )
+
+                    if sanitized is None:
+                        policy.handle_unsafe(f"Unsafe URL in attribute '{key}'", node=node)
+                        continue
+
+                    value = sanitized
+
+                if key == "style":
+                    if value is None:
+                        policy.handle_unsafe("Unsafe inline style in attribute 'style'", node=node)
+                        continue
+
+                    sanitized_style = _sanitize_inline_style(
+                        allowed_css_properties=allowed_css_properties,
+                        value=str(value),
+                    )
+                    if sanitized_style is None:
+                        policy.handle_unsafe("Unsafe inline style in attribute 'style'", node=node)
+                        continue
+
+                    value = sanitized_style
+
+                out[key] = value
+
+        if force_link_rel_tokens and tag == "a":
+            existing_raw = out.get("rel")
+            existing: list[str] = []
+            if isinstance(existing_raw, str) and existing_raw:
+                for tok in existing_raw.split():
+                    tt = tok.strip().lower()
+                    if tt and tt not in existing:
+                        existing.append(tt)
+
+            changed_rel = False
+            for tok in force_link_rel_tokens:
+                if tok not in existing:
+                    existing.append(tok)
+                    changed_rel = True
+
+            normalized = " ".join(existing)
+            if (
+                changed_rel
+                or (existing_raw is None and existing)
+                or (isinstance(existing_raw, str) and existing_raw != normalized)
+            ):
+                out["rel"] = normalized
+
+        return out
+
+    def _walk_children(src_parent: Any, dst: Any) -> None:
+        children = src_parent.children
+        if not children:
+            return
+        for ch in children:
+            _handle_node(ch, dst)
+
+    def _handle_node(node: Any, dst: Any) -> None:
+        name = node.name
+
+        if name == "#text":
+            dst.append_child(TextNode(node.data))
+            return
+
+        if name == "#comment":
+            if drop_comments:
+                return
+            dst.append_child(node.clone_node(deep=False))
+            return
+
+        if name == "!doctype":
+            if drop_doctype:
+                return
+            dst.append_child(node.clone_node(deep=False))
+            return
+
+        if name.startswith("#"):
+            cloned = node.clone_node(deep=False)
+            dst.append_child(cloned)
+            _walk_children(node, cloned)
+            return
+
+        ns = node.namespace
+        if drop_foreign and ns not in (None, "html"):
+            tag = str(name).lower()
+            policy.handle_unsafe(f"Unsafe tag '{tag}' (foreign namespace)", node=node)
+            return
+
+        tag = str(name).lower()
+        if tag in drop_content_tags:
+            policy.handle_unsafe(f"Unsafe tag '{tag}' (dropped content)", node=node)
+            return
+
+        if tag not in allowed_tags:
+            policy.handle_unsafe(f"Unsafe tag '{tag}' (not allowed)", node=node)
+            _walk_children(node, dst)
+            if type(node) is TemplateNode and node.template_content is not None:
+                _walk_children(node.template_content, dst)
+            return
+
+        sanitized_attrs = _sanitize_attrs(node, tag=tag)
+        cloned_el = node.clone_node(deep=False, override_attrs=sanitized_attrs)
+        dst.append_child(cloned_el)
+
+        _walk_children(node, cloned_el)
+        if type(node) is TemplateNode and node.template_content is not None:
+            _walk_children(node.template_content, cast("SimpleDomNode", cloned_el.template_content))
+
+    if include_self:
+        _handle_node(src, dst_parent)
+    else:
+        _walk_children(src, dst_parent)
 
 
 def _sanitize(node: Any, *, policy: SanitizationPolicy | None = None) -> Any:
     """Return a sanitized clone of `node`.
 
-    This sanitizer is implemented in terms of the `Sanitize` transform.
-    We deep-clone first (so the original DOM is not mutated), then run the
-    transform in-place on the clone.
+    This returns a sanitized clone without mutating the original tree.
+    For performance, it builds the sanitized clone in a single pass.
     """
 
     if policy is None:
         policy = DEFAULT_DOCUMENT_POLICY if node.name == "#document" else DEFAULT_POLICY
 
-    # Lazy import to avoid circular imports:
-    # transforms -> node -> sanitize
-    from .transforms import Sanitize as _SanitizeTransform  # noqa: PLC0415
-    from .transforms import apply_compiled_transforms, compile_transforms  # noqa: PLC0415
-
-    out = node.clone_node(deep=True)
-    compiled = compile_transforms((_SanitizeTransform(policy),))
-
-    # Transforms walk the *children* of the provided root. To ensure sanitization
-    # applies consistently even when callers pass a non-container node (e.g.
-    # an element subtree), always run on a container root.
-    if out.name in {"#document", "#document-fragment"}:
-        root = out
-        apply_compiled_transforms(root, compiled)
-        return root
+    # Container-root rule: sanitization always runs on a container.
+    if node.name in {"#document", "#document-fragment"}:
+        out = node.clone_node(deep=False)
+        _sanitize_clone_into(node, out, policy=policy)
+        return out
 
     from .node import SimpleDomNode  # noqa: PLC0415
 
     wrapper = SimpleDomNode("#document-fragment")
-    wrapper.append_child(out)
-    apply_compiled_transforms(wrapper, compiled)
+    _sanitize_clone_into(node, wrapper, policy=policy, include_self=True)
 
     children = wrapper.children or []
     if len(children) == 1:

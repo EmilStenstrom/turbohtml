@@ -104,12 +104,14 @@ class TestSanitizePlumbing(unittest.TestCase):
             allowed_css_properties={"color"},
         )
 
-        assert _sanitize_inline_style(policy=policy, value="") is None
+        assert _sanitize_inline_style(allowed_css_properties=policy.allowed_css_properties, value="") is None
 
-        assert _sanitize_inline_style(policy=policy, value="margin: 0") is None
+        assert _sanitize_inline_style(allowed_css_properties=policy.allowed_css_properties, value="margin: 0") is None
 
         value = "color; co_lor: red; margin: 0; color: ; COLOR: red"
-        assert _sanitize_inline_style(policy=policy, value=value) == "color: red"
+        assert (
+            _sanitize_inline_style(allowed_css_properties=policy.allowed_css_properties, value=value) == "color: red"
+        )
 
     def test_sanitize_inline_style_returns_none_when_allowlist_empty(self) -> None:
         policy = SanitizationPolicy(
@@ -119,7 +121,7 @@ class TestSanitizePlumbing(unittest.TestCase):
             allowed_css_properties=set(),
         )
 
-        assert _sanitize_inline_style(policy=policy, value="color: red") is None
+        assert _sanitize_inline_style(allowed_css_properties=policy.allowed_css_properties, value="color: red") is None
 
     def test_css_preset_text_is_conservative(self) -> None:
         policy = SanitizationPolicy(
@@ -167,8 +169,13 @@ class TestSanitizePlumbing(unittest.TestCase):
     def test_sanitize_url_value_keeps_non_empty_relative_url(self) -> None:
         policy = DEFAULT_POLICY
         rule = UrlRule(allowed_schemes=[])
-        assert _sanitize_url_value(policy=policy, rule=rule, tag="img", attr="src", value="/x.png") == "/x.png"
-        assert _sanitize_url_value(policy=policy, rule=rule, tag="img", attr="src", value="\x00") is None
+        assert (
+            _sanitize_url_value(url_policy=policy.url_policy, rule=rule, tag="img", attr="src", value="/x.png")
+            == "/x.png"
+        )
+        assert (
+            _sanitize_url_value(url_policy=policy.url_policy, rule=rule, tag="img", attr="src", value="\x00") is None
+        )
 
     def test_url_like_attributes_require_explicit_rules(self) -> None:
         policy = SanitizationPolicy(
@@ -568,6 +575,96 @@ class TestSanitizePlumbing(unittest.TestCase):
         html = to_html(out, pretty=False, safe=False)
         assert html in {"<div disabled id></div>", "<div id disabled></div>"}
 
+    def test_sanitize_drops_disallowed_attribute_and_reports(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["p"],
+            allowed_attributes={"*": [], "p": []},
+            url_policy=UrlPolicy(allow_rules={}),
+            unsafe_handling="collect",
+        )
+        policy.reset_collected_security_errors()
+
+        n = SimpleDomNode("p", attrs={"foo": "1"})
+        out = sanitize(n, policy=policy)
+        assert to_html(out, pretty=False, safe=False) == "<p></p>"
+        assert len(policy.collected_security_errors()) == 1
+
+    def test_sanitize_drops_style_attribute_with_no_value(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["span"],
+            allowed_attributes={"*": ["style"], "span": ["style"]},
+            url_policy=UrlPolicy(allow_rules={}),
+            allowed_css_properties={"color"},
+            unsafe_handling="collect",
+        )
+        policy.reset_collected_security_errors()
+
+        n = SimpleDomNode("span", attrs={"style": None})
+        out = sanitize(n, policy=policy)
+        assert to_html(out, pretty=False, safe=False) == "<span></span>"
+        assert len(policy.collected_security_errors()) == 1
+
+    def test_sanitize_force_link_rel_inserts_rel_when_missing(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["a"],
+            allowed_attributes={"*": [], "a": ["href"]},
+            url_policy=UrlPolicy(
+                default_handling="allow",
+                allow_rules={
+                    ("a", "href"): UrlRule(allowed_schemes={"https"}),
+                },
+            ),
+            force_link_rel={"noopener"},
+            unsafe_handling="collect",
+        )
+        policy.reset_collected_security_errors()
+
+        n = SimpleDomNode("a", attrs={"href": "https://example.com"})
+        out = sanitize(n, policy=policy)
+        html = to_html(out, pretty=False, safe=False)
+        assert 'rel="noopener"' in html
+        assert len(policy.collected_security_errors()) == 0
+
+    def test_sanitize_reports_url_attr_with_none_value(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["a"],
+            allowed_attributes={"*": [], "a": ["href"]},
+            url_policy=UrlPolicy(
+                default_handling="allow",
+                allow_rules={
+                    ("a", "href"): UrlRule(allowed_schemes={"https"}),
+                },
+            ),
+            unsafe_handling="collect",
+        )
+        policy.reset_collected_security_errors()
+
+        n = SimpleDomNode("a", attrs={"href": None})
+        out = sanitize(n, policy=policy)
+        assert to_html(out, pretty=False, safe=False) == "<a></a>"
+        assert len(policy.collected_security_errors()) == 1
+
+    def test_sanitize_force_link_rel_does_not_rewrite_when_already_normalized(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags=["a"],
+            allowed_attributes={"*": [], "a": ["href", "rel"]},
+            url_policy=UrlPolicy(
+                default_handling="allow",
+                allow_rules={
+                    ("a", "href"): UrlRule(allowed_schemes={"https"}),
+                },
+            ),
+            force_link_rel={"noopener"},
+            unsafe_handling="collect",
+        )
+        policy.reset_collected_security_errors()
+
+        n = SimpleDomNode("a", attrs={"href": "https://example.com", "rel": "noopener"})
+        out = sanitize(n, policy=policy)
+        html = to_html(out, pretty=False, safe=False)
+        assert 'rel="noopener"' in html
+        assert len(policy.collected_security_errors()) == 0
+
     def test_sanitize_lowercases_attribute_names(self) -> None:
         # The parser already lowercases attribute names; build a manual node to
         # ensure sanitize() is robust to unexpected input.
@@ -829,7 +926,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
             unsafe_handling="raise",
         )
 
-        with self.assertRaisesRegex(ValueError, "Unsafe attribute"):
+        with self.assertRaisesRegex(ValueError, "Unsafe attribute.*matched pattern.*on\\*"):
             sanitize(node, policy=policy)
 
     def test_sanitize_unsafe_url_raises(self) -> None:
@@ -855,7 +952,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
             url_policy=UrlPolicy(allow_rules={}),
             unsafe_handling="raise",
         )
-        with self.assertRaisesRegex(ValueError, "Unsafe attribute.*namespaced"):
+        with self.assertRaisesRegex(ValueError, "Unsafe attribute.*xlink:href.*matched pattern.*\\*:\\*"):
             sanitize(node, policy=policy)
 
     def test_sanitize_unsafe_srcdoc_attribute_raises(self) -> None:
@@ -867,7 +964,7 @@ class TestSanitizeUnsafe(unittest.TestCase):
             url_policy=UrlPolicy(allow_rules={}),
             unsafe_handling="raise",
         )
-        with self.assertRaisesRegex(ValueError, "Unsafe attribute.*srcdoc"):
+        with self.assertRaisesRegex(ValueError, "Unsafe attribute.*srcdoc.*matched pattern.*srcdoc"):
             sanitize(node, policy=policy)
 
     def test_sanitize_unsafe_disallowed_attribute_raises(self) -> None:
