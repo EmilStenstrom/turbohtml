@@ -181,6 +181,7 @@ Defines allowlists for tags and attributes, URL validation rules, and optional i
 Notable options:
 
 - `unsafe_handling`: "strip" (default), "raise", or "collect"
+- `disallowed_tag_handling`: "unwrap" (default), "escape", or "drop"
 - `url_policy`: controls URL validation and URL handling ("allow", "strip", or "proxy")
 
 ### `UrlPolicy`

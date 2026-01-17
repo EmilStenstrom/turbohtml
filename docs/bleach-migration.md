@@ -103,9 +103,16 @@ Bleach’s `protocols=[...]` concept maps to JustHTML’s URL policy rules.
 
 Bleach’s `strip` option controls whether disallowed tags are removed entirely or escaped.
 
-JustHTML’s sanitizer is allowlist-based and focuses on producing safe markup. Disallowed tags are stripped, and dangerous containers (like `script`/`style`) drop their contents.
+JustHTML’s sanitizer is allowlist-based and focuses on producing safe markup. Disallowed tags are handled by `SanitizationPolicy(disallowed_tag_handling=...)`, and dangerous containers (like `script`/`style`) drop their contents.
 
-Bleach’s `strip=False` behavior (escaping disallowed tags into text, e.g. turning `<script>` into `&lt;script&gt;`) is **not supported** by the JustHTML sanitizer.
+Mapping:
+
+- Bleach `strip=True` → `disallowed_tag_handling="unwrap"` (default)
+    - The disallowed tag is removed, but its children are kept (and sanitized).
+- Bleach `strip=False` → `disallowed_tag_handling="escape"`
+    - The disallowed tag’s start/end tags are emitted as text (escaped), and its children are kept (and sanitized).
+
+JustHTML also supports `disallowed_tag_handling="drop"` to drop the entire disallowed subtree.
 
 If you need to display untrusted HTML *as text*, render it as text instead of HTML (for example via `to_text()` / `to_markdown()`), or escape it before embedding it into an HTML page.
 

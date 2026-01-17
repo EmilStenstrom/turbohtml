@@ -95,6 +95,14 @@ High-level behavior:
 - Event handlers (`on*`), `srcdoc`, and namespace-style attributes (anything with `:`) are removed.
 - Inline styles are disabled by default.
 
+### Disallowed tags
+
+Disallowed tag handling is controlled by `SanitizationPolicy(disallowed_tag_handling=...)`:
+
+- `"unwrap"` (default): remove the disallowed tag, keep/sanitize its children
+- `"escape"`: emit the disallowed tag’s start/end tags as escaped text, keep/sanitize its children
+- `"drop"`: drop the entire disallowed subtree
+
 Default allowlists:
 
 - Allowed tags: `a`, `img`, common text/structure tags, headings, lists, and tables (`table`, `thead`, `tbody`, `tfoot`, `tr`, `th`, `td`).
