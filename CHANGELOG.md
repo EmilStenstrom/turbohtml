@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.36.0] - 2026-01-17
+### Added
+- Sanitization is now fully constructed from a set of transforms instead of imperative code. This makes the code reviewable in a way not seen in other libraries. See [Sanitization](docs/sanitization.md) for details.
+- Add `Decide(...)`, `EditDocument(...)`, and `RewriteAttrs(...)` transforms for policy-driven editing.
+- Add `SanitizationPolicy.disallowed_tag_handling` with modes: `"unwrap"` (default), `"escape"`, and `"drop"`. Escape mode mirrors bleach's strip=False behaviour which was the last missing incompatibility.
+- Add `justhtml.transforms.emit_error(...)` to emit `ParseError`s from inside transform callbacks.
+
+### Changed
+- BREAKING: Unify transform hook parameters: all transforms now support both `callback=` (node hook) and `report=` (message hook). Transforms that take a primary callable now use `func` for that callable (e.g. `Edit`, `EditAttrs`, `EditDocument`, `Decide`).
+- BREAKING: Removed `SanitizationPolicy.strip_disallowed_tags`, which was undocumented. Use `disallowed_tag_handling="unwrap"` to drop tags but keep/sanitize children, or `disallowed_tag_handling="escape"` to escape disallowed tags.
+
+### Docs
+- Clarify sanitization and disallowed-tag handling, including Bleach `strip=` migration guidance.
+
 ## [0.35.0] - 2026-01-11
 ### Added
 - Add `Stage([...])` to make transform pass boundaries explicit. Stages can be nested and are flattened; if any Stage exists at the top level, surrounding top-level transforms are automatically grouped into implicit stages.
