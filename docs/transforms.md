@@ -203,13 +203,13 @@ Core selector transforms:
 - `Drop(selector)` — Remove matching nodes.
 - `Unwrap(selector)` — Remove the element but keep its children.
 - `Empty(selector)` — Remove all children of matching elements.
-- `Edit(selector, callback)` — Run custom logic for matching elements.
+- `Edit(selector, func)` — Run custom logic for matching elements.
 
 Advanced building blocks (useful for policy-driven pipelines):
 
-- `EditDocument(callback)` — Run once on the root container.
-- `Decide(selector, callback)` — Keep/drop/unwrap/empty based on a callback.
-- `EditAttrs(selector, callback)` — Rewrite attributes based on a callback (`RewriteAttrs` is an alias).
+- `EditDocument(func)` — Run once on the root container.
+- `Decide(selector, func)` — Keep/drop/unwrap/empty based on a callback.
+- `EditAttrs(selector, func)` — Rewrite attributes based on a callback (`RewriteAttrs` is an alias).
 - `DropComments()` — Drop `#comment` nodes.
 - `DropDoctype()` — Drop `!doctype` nodes.
 - `DropForeignNamespaces()` — Drop elements in foreign namespaces (SVG/MathML).

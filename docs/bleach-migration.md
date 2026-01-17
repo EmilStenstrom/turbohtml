@@ -72,7 +72,7 @@ In JustHTML, you compose transforms (applied once, right after parsing):
 - "Drop tag and contents" → `Drop(selector)`
 - "Remove children" → `Empty(selector)`
 - "Set attributes" → `SetAttrs(selector, **attrs)`
-- "Custom rewrite" → `Edit(selector, callback)`
+- "Custom rewrite" → `Edit(selector, func)`
 
 Example: linkify text, then add safe link attributes:
 
