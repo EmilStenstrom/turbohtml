@@ -351,6 +351,53 @@ class TestTransforms(unittest.TestCase):
         assert "template" in called
         assert any("Unwrapped" in c for c in called)
 
+    def test_decide_escape_covers_reconstruction_branches(self) -> None:
+        def decide(n: SimpleDomNode) -> DecideAction:
+            if n.name in {"#comment", "x", "y"}:
+                return Decide.ESCAPE
+            return Decide.KEEP
+
+        root = SimpleDomNode("#document-fragment")
+        root.append_child(SimpleDomNode("#comment", data="x"))
+
+        x = ElementNode("x", {}, "html")
+        x._start_tag_start = 0
+        x._start_tag_end = 3
+        x._end_tag_start = 5
+        x._end_tag_end = 9
+        x._end_tag_present = True
+        x.append_child(TextNode("hi"))
+        root.append_child(x)
+
+        y = ElementNode("y", {}, "html")
+        y._start_tag_start = 0
+        y._start_tag_end = 3
+        y._self_closing = True
+        root.append_child(y)
+
+        # Force tag reconstruction rather than slicing from source HTML.
+        root._source_html = None
+        x._source_html = None
+        y._source_html = None
+
+        apply_compiled_transforms(root, compile_transforms([Decide("*", decide)]))
+
+        assert root.to_html(pretty=False, safe=False) == "&lt;x&gt;hi&lt;/x&gt;&lt;y/&gt;"
+
+    def test_unwrap_moves_template_text_children(self) -> None:
+        root = SimpleDomNode("#document-fragment")
+        tpl = TemplateNode("template", attrs={}, namespace="html")
+        assert tpl.template_content is not None
+        tpl.template_content.append_child(TextNode("x"))
+        root.append_child(tpl)
+
+        apply_compiled_transforms(root, compile_transforms([Unwrap("template")]))
+        assert root.to_html(pretty=False, safe=False) == "x"
+
+    def test_unwrap_moves_template_element_children_from_parsed_html(self) -> None:
+        doc = JustHTML("<template><b>x</b></template>", fragment=True, transforms=[Unwrap("template")])
+        assert doc.to_html(pretty=False, safe=False) == "<b>x</b>"
+
     def test_edit_editdocument_decide_editattrs_hooks_and_reports(self) -> None:
         calls: list[str] = []
 
@@ -550,6 +597,16 @@ class TestTransforms(unittest.TestCase):
 
         apply_compiled_transforms(root, compile_transforms([Decide("template", lambda n: Decide.UNWRAP)]))
         assert root.to_html(pretty=False, safe=False) == "<b></b>"
+
+    def test_decide_escape_hoists_template_content(self) -> None:
+        root = SimpleDomNode("#document-fragment")
+        tpl = TemplateNode("template", attrs={}, namespace="html")
+        assert tpl.template_content is not None
+        tpl.template_content.append_child(ElementNode("b", {}, "html"))
+        root.append_child(tpl)
+
+        apply_compiled_transforms(root, compile_transforms([Decide("template", lambda n: Decide.ESCAPE)]))
+        assert root.to_html(pretty=False, safe=False) == "&lt;template&gt;<b></b>"
 
     def test_empty_and_drop_selector_hooks(self) -> None:
         calls: list[str] = []

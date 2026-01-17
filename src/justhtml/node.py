@@ -192,6 +192,7 @@ class SimpleDomNode:
         "_origin_col",
         "_origin_line",
         "_origin_pos",
+        "_source_html",
         "attrs",
         "children",
         "data",
@@ -209,6 +210,7 @@ class SimpleDomNode:
     _origin_pos: int | None
     _origin_line: int | None
     _origin_col: int | None
+    _source_html: str | None
 
     def __init__(
         self,
@@ -220,6 +222,7 @@ class SimpleDomNode:
         self.name = name
         self.parent = None
         self.data = data
+        self._source_html = None
         self._origin_pos = None
         self._origin_line = None
         self._origin_col = None
@@ -423,6 +426,7 @@ class SimpleDomNode:
             self.data,
             self.namespace,
         )
+        clone._source_html = self._source_html
         clone._origin_pos = self._origin_pos
         clone._origin_line = self._origin_line
         clone._origin_col = self._origin_col
@@ -433,11 +437,25 @@ class SimpleDomNode:
 
 
 class ElementNode(SimpleDomNode):
-    __slots__ = ("template_content",)
+    __slots__ = (
+        "_end_tag_end",
+        "_end_tag_present",
+        "_end_tag_start",
+        "_self_closing",
+        "_start_tag_end",
+        "_start_tag_start",
+        "template_content",
+    )
 
     template_content: SimpleDomNode | None
     children: list[Any]
     attrs: dict[str, str | None]
+    _start_tag_start: int | None
+    _start_tag_end: int | None
+    _end_tag_start: int | None
+    _end_tag_end: int | None
+    _end_tag_present: bool
+    _self_closing: bool
 
     def __init__(self, name: str, attrs: dict[str, str | None] | None, namespace: str | None) -> None:
         self.name = name
@@ -447,16 +465,30 @@ class ElementNode(SimpleDomNode):
         self.children = []
         self.attrs = attrs if attrs is not None else {}
         self.template_content = None
+        self._source_html = None
         self._origin_pos = None
         self._origin_line = None
         self._origin_col = None
+        self._start_tag_start = None
+        self._start_tag_end = None
+        self._end_tag_start = None
+        self._end_tag_end = None
+        self._end_tag_present = False
+        self._self_closing = False
 
     def clone_node(self, deep: bool = False, override_attrs: dict[str, str | None] | None = None) -> ElementNode:
         attrs = override_attrs if override_attrs is not None else (self.attrs.copy() if self.attrs else {})
         clone = ElementNode(self.name, attrs, self.namespace)
+        clone._source_html = self._source_html
         clone._origin_pos = self._origin_pos
         clone._origin_line = self._origin_line
         clone._origin_col = self._origin_col
+        clone._start_tag_start = self._start_tag_start
+        clone._start_tag_end = self._start_tag_end
+        clone._end_tag_start = self._end_tag_start
+        clone._end_tag_end = self._end_tag_end
+        clone._end_tag_present = self._end_tag_present
+        clone._self_closing = self._self_closing
         if deep:
             for child in self.children:
                 clone.append_child(child.clone_node(deep=True))
@@ -487,9 +519,16 @@ class TemplateNode(ElementNode):
             None,
             self.namespace,
         )
+        clone._source_html = self._source_html
         clone._origin_pos = self._origin_pos
         clone._origin_line = self._origin_line
         clone._origin_col = self._origin_col
+        clone._start_tag_start = self._start_tag_start
+        clone._start_tag_end = self._start_tag_end
+        clone._end_tag_start = self._end_tag_start
+        clone._end_tag_end = self._end_tag_end
+        clone._end_tag_present = self._end_tag_present
+        clone._self_closing = self._self_closing
         if deep:
             if self.template_content:
                 clone.template_content = self.template_content.clone_node(deep=True)

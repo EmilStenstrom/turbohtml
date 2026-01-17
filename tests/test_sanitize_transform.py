@@ -168,6 +168,114 @@ class TestSanitizeTransform(unittest.TestCase):
 
         assert root.name == "#document-fragment"
 
+    def test_sanitize_transform_escape_disallowed_tags(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags={"b"},
+            allowed_attributes={"*": set(), "b": set()},
+            disallowed_tag_handling="escape",
+        )
+        doc = JustHTML(
+            "<b>Hello <sarcasm>world</sarcasm></b>",
+            fragment=True,
+            transforms=[Sanitize(policy)],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "<b>Hello &lt;sarcasm&gt;world&lt;/sarcasm&gt;</b>"
+
+    def test_sanitize_transform_escape_disallowed_self_closing_tag(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags={"p"},
+            allowed_attributes={"*": set(), "p": set()},
+            disallowed_tag_handling="escape",
+        )
+        doc = JustHTML(
+            "<p>yeah right<sarcasm/></p>",
+            fragment=True,
+            transforms=[Sanitize(policy)],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "<p>yeah right&lt;sarcasm/&gt;</p>"
+
+    def test_sanitize_transform_escape_disallowed_missing_end_tag(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags={"b"},
+            allowed_attributes={"*": set(), "b": set()},
+            disallowed_tag_handling="escape",
+        )
+        doc = JustHTML(
+            "<b>Hello <sarcasm>world</b>",
+            fragment=True,
+            transforms=[Sanitize(policy)],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "<b>Hello &lt;sarcasm&gt;world</b>"
+
+    def test_sanitize_transform_escape_disallowed_with_allowed_children(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags={"b"},
+            allowed_attributes={"*": set(), "b": set()},
+            disallowed_tag_handling="escape",
+        )
+        doc = JustHTML(
+            "<sarcasm class='x'><b>world</b></sarcasm>",
+            fragment=True,
+            transforms=[Sanitize(policy)],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "&lt;sarcasm class='x'&gt;<b>world</b>&lt;/sarcasm&gt;"
+
+    def test_sanitize_transform_drop_disallowed_subtree(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags={"b"},
+            allowed_attributes={"*": set(), "b": set()},
+            disallowed_tag_handling="drop",
+        )
+        doc = JustHTML(
+            "<b>Hello <sarcasm>world</sarcasm></b>",
+            fragment=True,
+            transforms=[Sanitize(policy)],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "<b>Hello </b>"
+
+    def test_sanitize_transform_escape_without_source_html(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags={"p"},
+            allowed_attributes={"*": set(), "p": set()},
+            disallowed_tag_handling="escape",
+        )
+        root = SimpleDomNode("#document-fragment")
+        node = ElementNode("x", {}, "html")
+        node._start_tag_start = 0
+        node._start_tag_end = 2
+        node.append_child(TextNode("ok"))
+        root.append_child(node)
+
+        compiled = compile_transforms((Sanitize(policy),))
+        apply_compiled_transforms(root, compiled)
+        assert root.to_html(pretty=False, safe=False) == "&lt;x&gt;ok"
+
+    def test_sanitize_transform_escape_uses_raw_tokens(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags={"p"},
+            allowed_attributes={"*": set(), "p": set()},
+            disallowed_tag_handling="escape",
+        )
+        doc = JustHTML(
+            "<p>Hello <x>world</x></p>",
+            fragment=True,
+            transforms=[Sanitize(policy)],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "<p>Hello &lt;x&gt;world&lt;/x&gt;</p>"
+
+    def test_sanitize_transform_escape_template_content(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags={"b"},
+            allowed_attributes={"*": set(), "b": set()},
+            disallowed_tag_handling="escape",
+        )
+        doc = JustHTML(
+            "<template><b>x</b></template>",
+            fragment=True,
+            transforms=[Sanitize(policy)],
+        )
+        assert doc.to_html(pretty=False, safe=False) == "&lt;template&gt;<b>x</b>&lt;/template&gt;"
+
     def test_sanitize_transform_converts_comment_root_to_fragment_when_dropped(self) -> None:
         root = SimpleDomNode("#comment", data="x")
         wrapper = SimpleDomNode("#document-fragment")

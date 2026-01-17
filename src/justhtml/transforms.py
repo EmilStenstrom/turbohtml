@@ -30,6 +30,7 @@ from .sanitize import (
     _sanitize_url_value,
 )
 from .selector import SelectorMatcher, parse_selector
+from .serialize import serialize_end_tag, serialize_start_tag
 from .tokens import ParseError
 
 if TYPE_CHECKING:
@@ -102,6 +103,7 @@ class DecideAction(_StrEnum):
     DROP = "drop"
     UNWRAP = "unwrap"
     EMPTY = "empty"
+    ESCAPE = "escape"
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,7 +264,7 @@ class Decide:
     - For selector "*", the callback is invoked for every node type, including
         text/comment/doctype and document container nodes.
 
-    The callback must return one of: Decide.KEEP, Decide.DROP, Decide.UNWRAP, Decide.EMPTY.
+    The callback must return one of: Decide.KEEP, Decide.DROP, Decide.UNWRAP, Decide.EMPTY, Decide.ESCAPE.
     """
 
     selector: str
@@ -275,6 +277,7 @@ class Decide:
     DROP: ClassVar[DecideAction] = DecideAction.DROP
     UNWRAP: ClassVar[DecideAction] = DecideAction.UNWRAP
     EMPTY: ClassVar[DecideAction] = DecideAction.EMPTY
+    ESCAPE: ClassVar[DecideAction] = DecideAction.ESCAPE
 
     def __init__(
         self,
@@ -1685,7 +1688,7 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                 if user_hook is not None:
                     user_hook(node)
 
-            def _on_unwrap_disallowed(
+            def _on_disallowed_tag(
                 node: SimpleDomNode,
                 policy: SanitizationPolicy = policy,
                 user_report: ReportCallback | None = user_report,
@@ -1697,6 +1700,19 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                     user_report(f"Unsafe tag '{tag}' (not allowed)", node=node)
                 if user_hook is not None:
                     user_hook(node)
+
+            def _decide_disallowed(
+                node: object,
+                policy: SanitizationPolicy = policy,
+                on_disallowed: Callable[[SimpleDomNode], None] = _on_disallowed_tag,
+            ) -> DecideAction:
+                on_disallowed(cast("SimpleDomNode", node))
+                handling = policy.disallowed_tag_handling
+                if handling == "drop":
+                    return DecideAction.DROP
+                if handling == "escape":
+                    return DecideAction.ESCAPE
+                return DecideAction.UNWRAP
 
             pipeline: list[TransformSpec] = []
             pipeline.append(
@@ -1716,10 +1732,11 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                         callback=user_hook,
                         report=_unsafe_report,
                     ),
-                    Unwrap(
+                    Decide(
                         f":not({allowed_tags})" if allowed_tags else ":not()",
+                        _decide_disallowed,
                         enabled=True,
-                        callback=_on_unwrap_disallowed,
+                        callback=None,
                         report=None,
                     ),
                     DropAttrs(
@@ -1791,6 +1808,42 @@ def apply_compiled_transforms(
         def apply_walk_transforms(root_node: SimpleDomNode, walk_transforms: list[CompiledTransform]) -> None:
             if not walk_transforms:
                 return
+
+            def _raw_tag_text(node: SimpleDomNode, start_attr: str, end_attr: str) -> str | None:
+                start = getattr(node, start_attr, None)
+                end = getattr(node, end_attr, None)
+                if start is None or end is None:
+                    return None
+                src = node._source_html
+                if src is None:
+                    cur: SimpleDomNode | None = node
+                    while cur is not None and src is None:
+                        cur = cur.parent
+                        if cur is None:
+                            break
+                        src = cur._source_html
+                    if src is not None:
+                        node._source_html = src
+                if src is None:
+                    return None
+                return src[start:end]
+
+            def _reconstruct_start_tag(node: SimpleDomNode) -> str | None:
+                if node.name.startswith("#") or node.name == "!doctype":
+                    return None
+                name = str(node.name)
+                attrs = getattr(node, "attrs", None)
+                tag = serialize_start_tag(name, attrs)
+                if getattr(node, "_self_closing", False):
+                    tag = f"{tag[:-1]}/>"
+                return tag
+
+            def _reconstruct_end_tag(node: SimpleDomNode) -> str | None:
+                if getattr(node, "_self_closing", False):
+                    return None
+                if not getattr(node, "_end_tag_present", False):
+                    return None
+                return serialize_end_tag(str(node.name))
 
             linkify_skip_tags: frozenset[str] = frozenset().union(
                 *(t.skip_tags for t in walk_transforms if isinstance(t, _CompiledLinkifyTransform))
@@ -1964,19 +2017,55 @@ def apply_compiled_transforms(
                                 continue
 
                             if action is DecideAction.UNWRAP:
+                                moved_nodes: list[SimpleDomNode] = []
+                                if name != "#text" and node.children:
+                                    moved_nodes.extend(list(node.children))
+                                    node.children = []
+                                if type(node) is TemplateNode and node.template_content is not None:
+                                    tc = node.template_content
+                                    if tc.children:
+                                        moved_nodes.extend(list(tc.children))
+                                        tc.children = []
+                                if moved_nodes:
+                                    for child in moved_nodes:
+                                        _mark_start(child, idx)
+                                        parent.insert_before(child, node)
+                                parent.remove_child(node)
+                                changed = True
+                                break
+
+                            if action is DecideAction.ESCAPE:
+                                raw_start = _raw_tag_text(node, "_start_tag_start", "_start_tag_end")
+                                if raw_start is None:
+                                    raw_start = _reconstruct_start_tag(node)
+                                raw_end = _raw_tag_text(node, "_end_tag_start", "_end_tag_end")
+                                if raw_end is None:
+                                    raw_end = _reconstruct_end_tag(node)
+                                if raw_start:
+                                    start_node = TextNode(raw_start)
+                                    _mark_start(start_node, idx)
+                                    parent.insert_before(start_node, node)
+
                                 moved: list[SimpleDomNode] = []
                                 if name != "#text" and node.children:
                                     moved.extend(list(node.children))
                                     node.children = []
                                 if type(node) is TemplateNode and node.template_content is not None:
                                     tc = node.template_content
-                                    if tc.children:
-                                        moved.extend(list(tc.children))
-                                        tc.children = []
+                                    tc_children = tc.children or []
+                                    moved.extend(tc_children)
+                                    tc.children = []
+
                                 if moved:
                                     for child in moved:
                                         _mark_start(child, idx)
                                         parent.insert_before(child, node)
+
+                                if raw_end:
+                                    end_node = TextNode(raw_end)
+                                    _mark_start(end_node, idx)
+                                    parent.insert_before(end_node, node)
+
                                 parent.remove_child(node)
                                 changed = True
                                 break
@@ -2068,19 +2157,19 @@ def apply_compiled_transforms(
                             tag = str(node.name).lower()
                             t.report(f"Unwrapped <{tag}> (matched selector '{t.selector_str}')", node=node)
 
-                        moved_nodes: list[SimpleDomNode] = []
+                        moved_nodes_unwrap: list[SimpleDomNode] = []
                         if node.children:
-                            moved_nodes.extend(list(node.children))
+                            moved_nodes_unwrap.extend(list(node.children))
                             node.children = []
 
                         if type(node) is TemplateNode and node.template_content is not None:
                             tc = node.template_content
-                            if tc.children:
-                                moved_nodes.extend(list(tc.children))
-                                tc.children = []
+                            tc_children = tc.children or []
+                            moved_nodes_unwrap.extend(tc_children)
+                            tc.children = []
 
-                        if moved_nodes:
-                            for child in moved_nodes:
+                        if moved_nodes_unwrap:
+                            for child in moved_nodes_unwrap:
                                 _mark_start(child, idx + 1)
                                 parent.insert_before(child, node)
                         parent.remove_child(node)

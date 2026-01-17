@@ -4,7 +4,7 @@ from typing import Literal
 
 
 class Tag:
-    __slots__ = ("attrs", "kind", "name", "self_closing", "start_pos")
+    __slots__ = ("attrs", "end_pos", "kind", "name", "self_closing", "start_pos")
 
     START: Literal[0] = 0
     END: Literal[1] = 1
@@ -12,6 +12,7 @@ class Tag:
     kind: int
     name: str
     attrs: dict[str, str | None]
+    end_pos: int | None
     self_closing: bool
     start_pos: int | None
 
@@ -22,12 +23,14 @@ class Tag:
         attrs: dict[str, str | None] | None,
         self_closing: bool = False,
         start_pos: int | None = None,
+        end_pos: int | None = None,
     ) -> None:
         self.kind = kind
         self.name = name
         self.attrs = attrs if attrs is not None else {}
         self.self_closing = bool(self_closing)
         self.start_pos = start_pos
+        self.end_pos = end_pos
 
 
 class CharacterTokens:

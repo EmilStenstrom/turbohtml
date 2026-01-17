@@ -75,6 +75,18 @@ class JustHTML:
         if fragment and fragment_context is None:
             fragment_context = FragmentContext("div")
 
+        track_tag_spans = False
+        if transforms:
+            from .sanitize import DEFAULT_POLICY  # noqa: PLC0415
+            from .transforms import Sanitize  # noqa: PLC0415
+
+            for t in transforms:
+                if isinstance(t, Sanitize):
+                    policy = t.policy or DEFAULT_POLICY
+                    if policy.disallowed_tag_handling == "escape":
+                        track_tag_spans = True
+                        break
+
         # Compile transforms early so invalid selectors fail fast.
         compiled_transforms = None
         if transforms:
@@ -101,6 +113,7 @@ class JustHTML:
             fragment_context=fragment_context,
             iframe_srcdoc=iframe_srcdoc,
             collect_errors=should_collect,
+            track_tag_spans=track_tag_spans,
         )
         opts = tokenizer_opts or TokenizerOpts()
 
@@ -119,6 +132,7 @@ class JustHTML:
             opts,
             collect_errors=should_collect,
             track_node_locations=bool(track_node_locations),
+            track_tag_positions=bool(track_node_locations) or track_tag_spans,
         )
         # Link tokenizer to tree_builder for position info
         self.tree_builder.tokenizer = self.tokenizer

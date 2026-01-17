@@ -4,7 +4,7 @@ import unittest
 
 import justhtml
 from justhtml import JustHTML
-from justhtml.node import SimpleDomNode, TemplateNode, TextNode
+from justhtml.node import ElementNode, SimpleDomNode, TemplateNode, TextNode
 from justhtml.sanitize import (
     CSS_PRESET_TEXT,
     DEFAULT_POLICY,
@@ -69,6 +69,16 @@ class TestSanitizePlumbing(unittest.TestCase):
                 url_policy=UrlPolicy(allow_rules={}),
                 allowed_css_properties=["color"],
                 unsafe_handling="nope",  # type: ignore[arg-type]
+            )
+
+    def test_policy_rejects_invalid_disallowed_tag_handling(self) -> None:
+        with self.assertRaises(ValueError):
+            SanitizationPolicy(
+                allowed_tags=["div"],
+                allowed_attributes={"*": [], "div": []},
+                url_policy=UrlPolicy(allow_rules={}),
+                allowed_css_properties=["color"],
+                disallowed_tag_handling="nope",  # type: ignore[arg-type]
             )
 
     def test_url_policy_rejects_invalid_url_handling(self) -> None:
@@ -1097,6 +1107,92 @@ class TestSanitizeUnsafe(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "Unsafe tag.*not allowed"):
             sanitize(xfoo, policy=policy)
+
+    def test_sanitize_escape_disallowed_template_preserves_children(self) -> None:
+        html = "<template><b>x</b></template>"
+        policy = SanitizationPolicy(
+            allowed_tags={"b"},
+            allowed_attributes={"*": set(), "b": set()},
+            url_policy=UrlPolicy(allow_rules={}),
+            disallowed_tag_handling="escape",
+        )
+        out = JustHTML(html, fragment=True).to_html(pretty=False, safe=True, policy=policy)
+        assert out == "&lt;template&gt;<b>x</b>&lt;/template&gt;"
+
+    def test_sanitize_escape_disallowed_without_source_html(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags={"p"},
+            allowed_attributes={"*": set(), "p": set()},
+            url_policy=UrlPolicy(allow_rules={}),
+            disallowed_tag_handling="escape",
+        )
+        node = ElementNode("x", {}, "html")
+        node._start_tag_start = 0
+        node._start_tag_end = 2
+        node.append_child(TextNode("ok"))
+        sanitized = sanitize(node, policy=policy)
+        assert to_html(sanitized, pretty=False, safe=False) == "&lt;x&gt;ok"
+
+    def test_sanitize_escape_disallowed_reconstructs_end_tag_without_source_html(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags={"p"},
+            allowed_attributes={"*": set(), "p": set()},
+            url_policy=UrlPolicy(allow_rules={}),
+            disallowed_tag_handling="escape",
+        )
+        node = ElementNode("x", {}, "html")
+        node._start_tag_start = 0
+        node._start_tag_end = 3
+        node._end_tag_start = 5
+        node._end_tag_end = 9
+        node._end_tag_present = True
+        node.append_child(TextNode("ok"))
+        sanitized = sanitize(node, policy=policy)
+        assert to_html(sanitized, pretty=False, safe=False) == "&lt;x&gt;ok&lt;/x&gt;"
+
+    def test_sanitize_escape_disallowed_reconstructs_self_closing_without_source_html(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags={"p"},
+            allowed_attributes={"*": set(), "p": set()},
+            url_policy=UrlPolicy(allow_rules={}),
+            disallowed_tag_handling="escape",
+        )
+        node = ElementNode("x", {"a": "b"}, "html")
+        node._start_tag_start = 0
+        node._start_tag_end = 3
+        node._self_closing = True
+        sanitized = sanitize(node, policy=policy)
+        out = to_html(sanitized, pretty=False, safe=False)
+        assert out.startswith("&lt;x")
+        assert 'a="b"' in out
+        assert out.endswith("/&gt;")
+
+    def test_sanitize_escape_disallowed_can_inherit_source_html_from_parent(self) -> None:
+        policy = SanitizationPolicy(
+            allowed_tags={"p"},
+            allowed_attributes={"*": set(), "p": set()},
+            url_policy=UrlPolicy(allow_rules={}),
+            disallowed_tag_handling="escape",
+        )
+
+        root = SimpleDomNode("#document-fragment")
+        root._source_html = "<x>hi</x>"
+
+        node = ElementNode("x", {}, "html")
+        node._start_tag_start = 0
+        node._start_tag_end = 3
+        node._end_tag_start = 5
+        node._end_tag_end = 9
+        node._end_tag_present = True
+        node.append_child(TextNode("hi"))
+
+        # Ensure tag extraction has to walk up to the parent.
+        node._source_html = None
+        root.append_child(node)
+
+        sanitized = sanitize(root, policy=policy)
+        assert to_html(sanitized, pretty=False, safe=False) == "&lt;x&gt;hi&lt;/x&gt;"
+        assert node._source_html == root._source_html
 
 
 if __name__ == "__main__":

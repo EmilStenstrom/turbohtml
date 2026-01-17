@@ -43,6 +43,9 @@ class TreeBuilder(TreeBuilderModesMixin):
         "_body_start_handlers",
         "_body_token_handlers",
         "_mode_handlers",
+        "_pending_end_tag_end",
+        "_pending_end_tag_name",
+        "_pending_end_tag_start",
         "active_formatting",
         "collect_errors",
         "document",
@@ -65,12 +68,17 @@ class TreeBuilder(TreeBuilderModesMixin):
         "template_modes",
         "tokenizer",
         "tokenizer_state_override",
+        "track_tag_spans",
     )
 
     _body_end_handlers: dict[str, Callable[[TreeBuilder, Any], Any]]
     _body_start_handlers: dict[str, Callable[[TreeBuilder, Any], Any]]
     _body_token_handlers: dict[str, Callable[[TreeBuilder, Any], Any]]
     _mode_handlers: dict[InsertionMode, Callable[[TreeBuilder, Any], Any]]
+    _pending_end_tag_name: str | None
+    _pending_end_tag_start: int | None
+    _pending_end_tag_end: int | None
+    track_tag_spans: bool
     active_formatting: list[Any]
     collect_errors: bool
     document: SimpleDomNode
@@ -99,10 +107,12 @@ class TreeBuilder(TreeBuilderModesMixin):
         fragment_context: Any | None = None,
         iframe_srcdoc: bool = False,
         collect_errors: bool = False,
+        track_tag_spans: bool = False,
     ) -> None:
         self.fragment_context = fragment_context
         self.iframe_srcdoc = iframe_srcdoc
         self.collect_errors = collect_errors
+        self.track_tag_spans = bool(track_tag_spans)
         self.errors = []
         self.tokenizer = None  # Set by parser after tokenizer is created
         self.fragment_context_element = None
@@ -114,6 +124,9 @@ class TreeBuilder(TreeBuilderModesMixin):
         self.original_mode = None
         self.table_text_original_mode = None
         self.open_elements = []
+        self._pending_end_tag_name = None
+        self._pending_end_tag_start = None
+        self._pending_end_tag_end = None
         self.head_element = None
         self.form_element = None
         self.frameset_ok = True
@@ -240,14 +253,14 @@ class TreeBuilder(TreeBuilderModesMixin):
     def _pop_until_inclusive(self, name: str) -> None:
         # Callers ensure element exists on stack
         while self.open_elements:  # pragma: no branch
-            node = self.open_elements.pop()
+            node = self._pop_current()
             if node.name == name:
                 break
 
     def _pop_until_any_inclusive(self, names: set[str]) -> None:
         # Pop elements until we find one in names (callers ensure element exists)
         while self.open_elements:
-            node = self.open_elements.pop()
+            node = self._pop_current()
             if node.name in names:
                 return
 
@@ -274,202 +287,218 @@ class TreeBuilder(TreeBuilderModesMixin):
 
         current_token = token
         force_html_mode = False
+        if token_type is Tag and token.kind == Tag.END:
+            self._pending_end_tag_name = token.name
+            if self.track_tag_spans:
+                self._pending_end_tag_start = token.start_pos
+                self._pending_end_tag_end = token.end_pos
+            else:
+                self._pending_end_tag_start = None
+                self._pending_end_tag_end = None
 
         # Cache mode handlers list for speed
         mode_handlers = self._MODE_HANDLERS
 
-        while True:
-            # Update token type for current token (it might have changed if reprocessed)
-            token_type = type(current_token)
+        try:
+            while True:
+                # Update token type for current token (it might have changed if reprocessed)
+                token_type = type(current_token)
 
-            # Optimization: Check for HTML namespace first (common case)
-            current_node = self.open_elements[-1] if self.open_elements else None
-            is_html_namespace = current_node is None or current_node.namespace in {None, "html"}
+                # Optimization: Check for HTML namespace first (common case)
+                current_node = self.open_elements[-1] if self.open_elements else None
+                is_html_namespace = current_node is None or current_node.namespace in {None, "html"}
 
-            if force_html_mode or is_html_namespace:
-                force_html_mode = False
-                if self.mode == InsertionMode.IN_BODY:
-                    # Inline _mode_in_body for performance
-                    if token_type is Tag:
-                        # Inline _handle_tag_in_body
-                        if current_token.kind == 0:  # Tag.START
-                            name = current_token.name
-                            if name == "div" or name == "ul" or name == "ol":
-                                # Inline _handle_body_start_block_with_p
-                                # Check if p is in button scope (html always terminates)
-                                has_p = False
-                                idx = len(self.open_elements) - 1
-                                while idx >= 0:  # pragma: no branch
-                                    node = self.open_elements[idx]
-                                    if node.name == "p":
-                                        has_p = True
-                                        break
-                                    if node.namespace in {None, "html"} and node.name in BUTTON_SCOPE_TERMINATORS:
-                                        break
-                                    idx -= 1
+                if force_html_mode or is_html_namespace:
+                    force_html_mode = False
+                    if self.mode == InsertionMode.IN_BODY:
+                        # Inline _mode_in_body for performance
+                        if token_type is Tag:
+                            # Inline _handle_tag_in_body
+                            if current_token.kind == 0:  # Tag.START
+                                name = current_token.name
+                                if name == "div" or name == "ul" or name == "ol":
+                                    # Inline _handle_body_start_block_with_p
+                                    # Check if p is in button scope (html always terminates)
+                                    has_p = False
+                                    idx = len(self.open_elements) - 1
+                                    while idx >= 0:  # pragma: no branch
+                                        node = self.open_elements[idx]
+                                        if node.name == "p":
+                                            has_p = True
+                                            break
+                                        if node.namespace in {None, "html"} and node.name in BUTTON_SCOPE_TERMINATORS:
+                                            break
+                                        idx -= 1
 
-                                if has_p:
-                                    self._close_p_element()
+                                    if has_p:
+                                        self._close_p_element()
 
-                                self._insert_element(current_token, push=True)
-                                result = None
-                            elif name == "p":
-                                result = self._handle_body_start_paragraph(current_token)  # type: ignore[func-returns-value]
-                            elif name == "span":
-                                if self.active_formatting:
-                                    self._reconstruct_active_formatting_elements()
-                                self._insert_element(current_token, push=True)
-                                self.frameset_ok = False
-                                result = None
-                            elif name == "a":
-                                result = self._handle_body_start_a(current_token)  # type: ignore[func-returns-value]
-                            elif name == "br" or name == "img":
-                                if self.active_formatting:
-                                    self._reconstruct_active_formatting_elements()
-                                self._insert_element(current_token, push=False)
-                                self.frameset_ok = False
-                                result = None
-                            elif name == "hr":
-                                has_p = False
-                                idx = len(self.open_elements) - 1
-                                while idx >= 0:  # pragma: no branch
-                                    node = self.open_elements[idx]
-                                    if node.name == "p":
-                                        has_p = True
-                                        break
-                                    if node.namespace in {None, "html"} and node.name in BUTTON_SCOPE_TERMINATORS:
-                                        break
-                                    idx -= 1
-
-                                if has_p:
-                                    self._close_p_element()
-
-                                self._insert_element(current_token, push=False)
-                                self.frameset_ok = False
-                                result = None
-                            else:
-                                handler = self._BODY_START_HANDLERS.get(name)
-                                if handler:
-                                    result = handler(self, current_token)
-                                else:
-                                    # Inline _handle_body_start_default
-                                    # Elements here have no special handler - never in FRAMESET_NEUTRAL/FORMATTING_ELEMENTS
+                                    self._insert_element(current_token, push=True)
+                                    result = None
+                                elif name == "p":
+                                    result = self._handle_body_start_paragraph(current_token)  # type: ignore[func-returns-value]
+                                elif name == "span":
                                     if self.active_formatting:
                                         self._reconstruct_active_formatting_elements()
                                     self._insert_element(current_token, push=True)
-                                    if current_token.self_closing:
-                                        self._parse_error(
-                                            "non-void-html-element-start-tag-with-trailing-solidus",
-                                            tag_name=current_token.name,
-                                        )
                                     self.frameset_ok = False
                                     result = None
-                        else:
-                            name = current_token.name
-                            if name == "br":
-                                self._parse_error("unexpected-end-tag", tag_name=name)
-                                br_tag = Tag(0, "br", {}, False)
-                                result = self._handle_body_start_br(br_tag)  # type: ignore[func-returns-value]
-                            elif name in FORMATTING_ELEMENTS:
-                                self._adoption_agency(name)
-                                result = None
-                            else:
-                                handler = self._BODY_END_HANDLERS.get(name)
-                                if handler:
-                                    result = handler(self, current_token)
-                                else:
-                                    self._any_other_end_tag(name)
+                                elif name == "a":
+                                    result = self._handle_body_start_a(current_token)  # type: ignore[func-returns-value]
+                                elif name == "br" or name == "img":
+                                    if self.active_formatting:
+                                        self._reconstruct_active_formatting_elements()
+                                    self._insert_element(current_token, push=False)
+                                    self.frameset_ok = False
                                     result = None
-                    elif token_type is CharacterTokens:
-                        # Inline _handle_characters_in_body
-                        # Only non-whitespace data reaches here (whitespace handled in process_characters)
-                        self.frameset_ok = False
-                        self._reconstruct_active_formatting_elements()
-                        self._append_text(current_token.data)
-                        result = None
-                    elif token_type is CommentToken:
-                        result = self._handle_comment_in_body(current_token)  # type: ignore[func-returns-value]
-                    else:  # EOFToken
-                        result = self._handle_eof_in_body(current_token)
-                else:
-                    result = mode_handlers[self.mode](self, current_token)
-            elif self._should_use_foreign_content(current_token):
-                result = self._process_foreign_content(current_token)
-            else:
-                # Foreign content stack logic
-                current = current_node
-                # Only pop foreign elements if we're NOT at an HTML/MathML integration point
-                # and NOT about to insert a new foreign element (svg/math)
-                if not isinstance(current_token, EOFToken):
-                    # Don't pop at integration points - they stay on stack to receive content
-                    if self._is_html_integration_point(current) or self._is_mathml_text_integration_point(current):
-                        pass
-                    # Don't pop when inserting new svg/math elements
-                    if isinstance(current_token, Tag) and current_token.kind == Tag.START:
-                        # Optimization: Tokenizer already lowercases tag names
-                        name_lower = current_token.name
-                        if name_lower in {"svg", "math"}:
-                            pass
+                                elif name == "hr":
+                                    has_p = False
+                                    idx = len(self.open_elements) - 1
+                                    while idx >= 0:  # pragma: no branch
+                                        node = self.open_elements[idx]
+                                        if node.name == "p":
+                                            has_p = True
+                                            break
+                                        if node.namespace in {None, "html"} and node.name in BUTTON_SCOPE_TERMINATORS:
+                                            break
+                                        idx -= 1
 
-                # Special handling: text at integration points inserts directly, bypassing mode dispatch
-                if isinstance(current_token, CharacterTokens):
-                    if self._is_mathml_text_integration_point(current):
-                        # Tokenizer guarantees non-empty data
-                        data = current_token.data
-                        if "\x00" in data:
-                            data = data.replace("\x00", "")
-                        if data:
-                            if not is_all_whitespace(data):
-                                self._reconstruct_active_formatting_elements()
-                                self.frameset_ok = False
-                            self._append_text(data)
-                        result = None
+                                    if has_p:
+                                        self._close_p_element()
+
+                                    self._insert_element(current_token, push=False)
+                                    self.frameset_ok = False
+                                    result = None
+                                else:
+                                    handler = self._BODY_START_HANDLERS.get(name)
+                                    if handler:
+                                        result = handler(self, current_token)
+                                    else:
+                                        # Inline _handle_body_start_default
+                                        # Elements here have no special handler - never in FRAMESET_NEUTRAL/FORMATTING_ELEMENTS
+                                        if self.active_formatting:
+                                            self._reconstruct_active_formatting_elements()
+                                        self._insert_element(current_token, push=True)
+                                        if current_token.self_closing:
+                                            self._parse_error(
+                                                "non-void-html-element-start-tag-with-trailing-solidus",
+                                                tag_name=current_token.name,
+                                            )
+                                        self.frameset_ok = False
+                                        result = None
+                            else:
+                                name = current_token.name
+                                if name == "br":
+                                    self._parse_error("unexpected-end-tag", tag_name=name)
+                                    br_tag = Tag(0, "br", {}, False)
+                                    result = self._handle_body_start_br(br_tag)  # type: ignore[func-returns-value]
+                                elif name in FORMATTING_ELEMENTS:
+                                    self._adoption_agency(name)
+                                    result = None
+                                else:
+                                    handler = self._BODY_END_HANDLERS.get(name)
+                                    if handler:
+                                        result = handler(self, current_token)
+                                    else:
+                                        self._any_other_end_tag(name)
+                                        result = None
+                        elif token_type is CharacterTokens:
+                            # Inline _handle_characters_in_body
+                            # Only non-whitespace data reaches here (whitespace handled in process_characters)
+                            self.frameset_ok = False
+                            self._reconstruct_active_formatting_elements()
+                            self._append_text(current_token.data)
+                            result = None
+                        elif token_type is CommentToken:
+                            result = self._handle_comment_in_body(current_token)  # type: ignore[func-returns-value]
+                        else:  # EOFToken
+                            result = self._handle_eof_in_body(current_token)
                     else:
                         result = mode_handlers[self.mode](self, current_token)
+                elif self._should_use_foreign_content(current_token):
+                    result = self._process_foreign_content(current_token)
                 else:
-                    # At integration points inside foreign content, check if table tags make sense.
-                    if (
-                        (self._is_mathml_text_integration_point(current) or self._is_html_integration_point(current))
-                        and isinstance(current_token, Tag)
-                        and current_token.kind == Tag.START
-                        and self.mode not in {InsertionMode.IN_BODY}
-                    ):
-                        # Check if we're in a table mode but without an actual table in scope
-                        # If so, table tags should be ignored (use IN_BODY mode)
-                        is_table_mode = self.mode in {
-                            InsertionMode.IN_TABLE,
-                            InsertionMode.IN_TABLE_BODY,
-                            InsertionMode.IN_ROW,
-                            InsertionMode.IN_CELL,
-                            InsertionMode.IN_CAPTION,
-                            InsertionMode.IN_COLUMN_GROUP,
-                        }
-                        has_table_in_scope = self._has_in_table_scope("table")
-                        if is_table_mode and not has_table_in_scope:
-                            # Temporarily use IN_BODY mode for this tag
-                            saved_mode = self.mode
-                            self.mode = InsertionMode.IN_BODY
-                            result = mode_handlers[self.mode](self, current_token)
-                            # Restore mode if no mode change was requested
-                            if self.mode == InsertionMode.IN_BODY:  # pragma: no branch
-                                self.mode = saved_mode
+                    # Foreign content stack logic
+                    current = current_node
+                    # Only pop foreign elements if we're NOT at an HTML/MathML integration point
+                    # and NOT about to insert a new foreign element (svg/math)
+                    if not isinstance(current_token, EOFToken):
+                        # Don't pop at integration points - they stay on stack to receive content
+                        if self._is_html_integration_point(current) or self._is_mathml_text_integration_point(current):
+                            pass
+                        # Don't pop when inserting new svg/math elements
+                        if isinstance(current_token, Tag) and current_token.kind == Tag.START:
+                            # Optimization: Tokenizer already lowercases tag names
+                            name_lower = current_token.name
+                            if name_lower in {"svg", "math"}:
+                                pass
+
+                    # Special handling: text at integration points inserts directly, bypassing mode dispatch
+                    if isinstance(current_token, CharacterTokens):
+                        if self._is_mathml_text_integration_point(current):
+                            # Tokenizer guarantees non-empty data
+                            data = current_token.data
+                            if "\x00" in data:
+                                data = data.replace("\x00", "")
+                            if data:
+                                if not is_all_whitespace(data):
+                                    self._reconstruct_active_formatting_elements()
+                                    self.frameset_ok = False
+                                self._append_text(data)
+                            result = None
                         else:
                             result = mode_handlers[self.mode](self, current_token)
                     else:
-                        result = mode_handlers[self.mode](self, current_token)
+                        # At integration points inside foreign content, check if table tags make sense.
+                        if (
+                            (
+                                self._is_mathml_text_integration_point(current)
+                                or self._is_html_integration_point(current)
+                            )
+                            and isinstance(current_token, Tag)
+                            and current_token.kind == Tag.START
+                            and self.mode not in {InsertionMode.IN_BODY}
+                        ):
+                            # Check if we're in a table mode but without an actual table in scope
+                            # If so, table tags should be ignored (use IN_BODY mode)
+                            is_table_mode = self.mode in {
+                                InsertionMode.IN_TABLE,
+                                InsertionMode.IN_TABLE_BODY,
+                                InsertionMode.IN_ROW,
+                                InsertionMode.IN_CELL,
+                                InsertionMode.IN_CAPTION,
+                                InsertionMode.IN_COLUMN_GROUP,
+                            }
+                            has_table_in_scope = self._has_in_table_scope("table")
+                            if is_table_mode and not has_table_in_scope:
+                                # Temporarily use IN_BODY mode for this tag
+                                saved_mode = self.mode
+                                self.mode = InsertionMode.IN_BODY
+                                result = mode_handlers[self.mode](self, current_token)
+                                # Restore mode if no mode change was requested
+                                if self.mode == InsertionMode.IN_BODY:  # pragma: no branch
+                                    self.mode = saved_mode
+                            else:
+                                result = mode_handlers[self.mode](self, current_token)
+                        else:
+                            result = mode_handlers[self.mode](self, current_token)
 
-            if result is None:
-                result_to_return = self.tokenizer_state_override or TokenSinkResult.Continue
-                self.tokenizer_state_override = None
-                return result_to_return
-            # Result is (instruction, mode, token) or (instruction, mode, token, force_html)
-            _instruction, mode, token_override = result[0], result[1], result[2]
-            if len(result) == 4:
-                force_html_mode = result[3]
-            # All mode handlers that return a tuple use "reprocess" instruction
-            self.mode = mode
-            current_token = token_override
-            # Continue loop to reprocess
+                if result is None:
+                    result_to_return = self.tokenizer_state_override or TokenSinkResult.Continue
+                    self.tokenizer_state_override = None
+                    return result_to_return
+                # Result is (instruction, mode, token) or (instruction, mode, token, force_html)
+                _instruction, mode, token_override = result[0], result[1], result[2]
+                if len(result) == 4:
+                    force_html_mode = result[3]
+                # All mode handlers that return a tuple use "reprocess" instruction
+                self.mode = mode
+                current_token = token_override
+                # Continue loop to reprocess
+        finally:
+            self._pending_end_tag_name = None
+            self._pending_end_tag_start = None
+            self._pending_end_tag_end = None
 
     def finish(self) -> SimpleDomNode:
         if self.fragment_context is not None:
@@ -490,6 +519,9 @@ class TreeBuilder(TreeBuilderModesMixin):
 
         # Populate selectedcontent elements per HTML5 spec
         self._populate_selectedcontent(self.document)
+
+        if self.tokenizer is not None and self.track_tag_spans:  # pragma: no branch
+            self.document._source_html = self.tokenizer.buffer
 
         return self.document
 
@@ -600,6 +632,10 @@ class TreeBuilder(TreeBuilderModesMixin):
             node = TemplateNode(tag.name, attrs=tag.attrs, namespace=namespace)
         else:
             node = ElementNode(tag.name, attrs=tag.attrs, namespace=namespace)
+        if self.track_tag_spans:
+            node._start_tag_start = tag.start_pos
+            node._start_tag_end = tag.end_pos
+        node._self_closing = bool(getattr(tag, "self_closing", False))
 
         if self.tokenizer is not None and self.tokenizer.track_node_locations:
             node._origin_pos = tag.start_pos
@@ -648,8 +684,23 @@ class TreeBuilder(TreeBuilderModesMixin):
         ns = namespace or "html"
         return ElementNode(name, attrs, ns)
 
+    def _maybe_mark_end_tag(self, node: Any) -> None:
+        if self._pending_end_tag_name is None:
+            return
+        if getattr(node, "name", None) != self._pending_end_tag_name:
+            return
+        node._end_tag_present = True
+        if self.track_tag_spans:
+            node._end_tag_start = self._pending_end_tag_start
+            node._end_tag_end = self._pending_end_tag_end
+        self._pending_end_tag_name = None
+        self._pending_end_tag_start = None
+        self._pending_end_tag_end = None
+
     def _pop_current(self) -> Any:
-        return self.open_elements.pop()
+        node = self.open_elements.pop()
+        self._maybe_mark_end_tag(node)
+        return node
 
     def _in_scope(self, name: str) -> bool:
         return self._has_element_in_scope(name, DEFAULT_SCOPE_TERMINATORS)
@@ -661,6 +712,7 @@ class TreeBuilder(TreeBuilderModesMixin):
         index = len(self.open_elements) - 1
         while index >= 0:  # pragma: no branch
             if self.open_elements[index].name == name:
+                self._maybe_mark_end_tag(self.open_elements[index])
                 del self.open_elements[index:]
                 return
             index -= 1
@@ -678,6 +730,7 @@ class TreeBuilder(TreeBuilderModesMixin):
                 # If current node is not this node, parse error
                 if index != len(self.open_elements) - 1:
                     self._parse_error("end-tag-too-early")
+                self._maybe_mark_end_tag(node)
                 # Pop all elements from this node onwards
                 del self.open_elements[index:]
                 return
@@ -701,6 +754,7 @@ class TreeBuilder(TreeBuilderModesMixin):
     def _remove_from_open_elements(self, node: Any) -> bool:
         for index, current in enumerate(self.open_elements):
             if current is node:
+                self._maybe_mark_end_tag(current)
                 del self.open_elements[index]
                 return True
         return False
@@ -773,6 +827,7 @@ class TreeBuilder(TreeBuilderModesMixin):
     def _remove_last_open_element_by_name(self, name: str) -> None:
         for index in range(len(self.open_elements) - 1, -1, -1):
             if self.open_elements[index].name == name:
+                self._maybe_mark_end_tag(self.open_elements[index])
                 del self.open_elements[index]
                 return
 
@@ -848,14 +903,14 @@ class TreeBuilder(TreeBuilderModesMixin):
             node = self.open_elements[-1]
             if node.name in names and node.namespace in {None, "html"}:
                 break
-            self.open_elements.pop()
+            self._pop_current()
 
     def _generate_implied_end_tags(self, exclude: str | None = None) -> None:
         # Always terminates: html is not in IMPLIED_END_TAGS
         while self.open_elements:  # pragma: no branch
             node = self.open_elements[-1]
             if node.name in IMPLIED_END_TAGS and node.name != exclude:
-                self.open_elements.pop()
+                self._pop_current()
                 continue
             break
 
@@ -874,7 +929,7 @@ class TreeBuilder(TreeBuilderModesMixin):
     def _end_table_cell(self, name: str) -> None:
         self._generate_implied_end_tags(name)
         while self.open_elements:
-            node = self.open_elements.pop()
+            node = self._pop_current()
             if node.name == name and node.namespace in {None, "html"}:
                 break
         self._clear_active_formatting_up_to_marker()
@@ -911,7 +966,7 @@ class TreeBuilder(TreeBuilderModesMixin):
         self._generate_implied_end_tags()
         # Table verified in scope above
         while self.open_elements:  # pragma: no branch
-            node = self.open_elements.pop()
+            node = self._pop_current()
             if node.name == "table":
                 break
         self._reset_insertion_mode()
@@ -1071,7 +1126,7 @@ class TreeBuilder(TreeBuilderModesMixin):
                 return
             if self.fragment_context_element is not None and node is self.fragment_context_element:
                 return
-            self.open_elements.pop()
+            self._pop_current()
 
     def _process_foreign_content(self, token: AnyToken) -> Any | None:
         current = self._adjusted_current_node()
@@ -1148,6 +1203,7 @@ class TreeBuilder(TreeBuilderModesMixin):
                 if is_html:
                     return ("reprocess", self.mode, token, True)
                 # Otherwise it's a foreign element - pop everything from this point up
+                self._maybe_mark_end_tag(node)
                 del self.open_elements[idx:]
                 return None
 

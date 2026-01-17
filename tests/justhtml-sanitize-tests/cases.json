@@ -32,6 +32,97 @@
     "expected_html": "x"
   },
   {
+    "name": "disallowed_tag_escape_preserves_tokens",
+    "policy": {
+      "allowed_tags": ["b"],
+      "allowed_attributes": {"*": [], "b": []},
+      "url_rules": [],
+      "disallowed_tag_handling": "escape"
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<b>Hello <sarcasm>world</sarcasm></b>",
+    "expected_html": "<b>Hello &lt;sarcasm&gt;world&lt;/sarcasm&gt;</b>"
+  },
+  {
+    "name": "disallowed_tag_escape_self_closing",
+    "policy": {
+      "allowed_tags": ["p"],
+      "allowed_attributes": {"*": [], "p": []},
+      "url_rules": [],
+      "disallowed_tag_handling": "escape"
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<p>yeah right<sarcasm/></p>",
+    "expected_html": "<p>yeah right&lt;sarcasm/&gt;</p>"
+  },
+  {
+    "name": "disallowed_tag_escape_missing_end_tag",
+    "policy": {
+      "allowed_tags": ["b"],
+      "allowed_attributes": {"*": [], "b": []},
+      "url_rules": [],
+      "disallowed_tag_handling": "escape"
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<b>Hello <sarcasm>world</b>",
+    "expected_html": "<b>Hello &lt;sarcasm&gt;world</b>"
+  },
+  {
+    "name": "disallowed_tag_escape_with_allowed_children",
+    "policy": {
+      "allowed_tags": ["b"],
+      "allowed_attributes": {"*": [], "b": []},
+      "url_rules": [],
+      "disallowed_tag_handling": "escape"
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<sarcasm class='x'><b>world</b></sarcasm>",
+    "expected_html": "&lt;sarcasm class=\"x\"&gt;<b>world</b>&lt;/sarcasm&gt;"
+  },
+  {
+    "name": "disallowed_tag_escape_less_than_text",
+    "policy": {
+      "allowed_tags": [],
+      "allowed_attributes": {"*": []},
+      "url_rules": [],
+      "disallowed_tag_handling": "escape"
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "only good when x<y.",
+    "expected_html": "only good when x&lt;y."
+  },
+  {
+    "name": "disallowed_tag_escape_less_than_and_greater_than_text",
+    "policy": {
+      "allowed_tags": [],
+      "allowed_attributes": {"*": []},
+      "url_rules": [],
+      "disallowed_tag_handling": "escape"
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "only good when x<y and y > z",
+    "expected_html": "only good when x&lt;y and y&gt; z"
+  },
+  {
+    "name": "disallowed_tag_drop_removes_subtree",
+    "policy": {
+      "allowed_tags": ["b"],
+      "allowed_attributes": {"*": [], "b": []},
+      "url_rules": [],
+      "disallowed_tag_handling": "drop"
+    },
+    "parse": "fragment",
+    "fragment_context": "div",
+    "input_html": "<b>Hello <sarcasm>world</sarcasm></b>",
+    "expected_html": "<b>Hello </b>"
+  },
+  {
     "name": "attribute_filtering_drops_on_srcdoc_and_colon",
     "policy": {
       "allowed_tags": ["div"],

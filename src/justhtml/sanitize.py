@@ -27,6 +27,7 @@ class UnsafeHtmlError(ValueError):
 
 UnsafeHandling = Literal["strip", "raise", "collect"]
 
+DisallowedTagHandling = Literal["unwrap", "escape", "drop"]
 
 UrlHandling = Literal["allow", "strip", "proxy"]
 
@@ -291,6 +292,13 @@ class SanitizationPolicy:
     # more behaviors over time without changing the API shape.
     unsafe_handling: UnsafeHandling = "strip"
 
+    # Determines how disallowed tags are handled.
+    #
+    # - "unwrap": Default. Drop the tag but keep/sanitize its children.
+    # - "escape": Emit original tag tokens as text, keep/sanitize children.
+    # - "drop": Drop the entire disallowed subtree.
+    disallowed_tag_handling: DisallowedTagHandling = "unwrap"
+
     _unsafe_handler: UnsafeHandler = field(
         default_factory=lambda: UnsafeHandler("strip"),
         init=False,
@@ -338,6 +346,11 @@ class SanitizationPolicy:
         if unsafe_handling not in {"strip", "raise", "collect"}:
             raise ValueError("Invalid unsafe_handling. Expected one of: 'strip', 'raise', 'collect'")
         object.__setattr__(self, "unsafe_handling", unsafe_handling)
+
+        disallowed_tag_handling = str(self.disallowed_tag_handling)
+        if disallowed_tag_handling not in {"unwrap", "escape", "drop"}:
+            raise ValueError("Invalid disallowed_tag_handling. Expected one of: 'unwrap', 'escape', 'drop'")
+        object.__setattr__(self, "disallowed_tag_handling", disallowed_tag_handling)
 
         # Centralize unsafe-handling logic so multiple passes can share it.
         handler = UnsafeHandler(cast("UnsafeHandling", unsafe_handling))
@@ -951,9 +964,11 @@ def _sanitize_clone_into(
     # Lazy imports to avoid circular imports:
     # transforms -> node -> sanitize
     from .node import SimpleDomNode, TemplateNode, TextNode  # noqa: PLC0415
+    from .serialize import serialize_end_tag, serialize_start_tag  # noqa: PLC0415
     from .transforms import _glob_match  # noqa: PLC0415
 
     allowed_tags = policy.allowed_tags
+    disallowed_tag_handling = policy.disallowed_tag_handling
     drop_content_tags = policy.drop_content_tags
     drop_foreign = policy.drop_foreign_namespaces
     drop_comments = policy.drop_comments
@@ -966,6 +981,40 @@ def _sanitize_clone_into(
     allowed_css_properties = policy.allowed_css_properties
     force_link_rel = policy.force_link_rel
     force_link_rel_tokens = tuple(sorted(force_link_rel)) if force_link_rel else ()
+
+    def _raw_tag_text(node: SimpleDomNode, start_attr: str, end_attr: str) -> str | None:
+        start = getattr(node, start_attr, None)
+        end = getattr(node, end_attr, None)
+        if start is None or end is None:
+            return None
+        src = node._source_html
+        if src is None:
+            cur: SimpleDomNode | None = node
+            while cur is not None and src is None:
+                cur = cur.parent
+                if cur is None:
+                    break
+                src = cur._source_html
+            if src is not None:
+                node._source_html = src
+        if src is None:
+            return None
+        return src[start:end]
+
+    def _reconstruct_start_tag(node: SimpleDomNode) -> str:
+        name = str(node.name)
+        attrs = getattr(node, "attrs", None)
+        tag = serialize_start_tag(name, attrs)
+        if getattr(node, "_self_closing", False):
+            tag = f"{tag[:-1]}/>"
+        return tag
+
+    def _reconstruct_end_tag(node: SimpleDomNode) -> str | None:
+        if getattr(node, "_self_closing", False):
+            return None
+        if not getattr(node, "_end_tag_present", False):
+            return None
+        return serialize_end_tag(str(node.name))
 
     def _sanitize_attrs(node: SimpleDomNode, *, tag: str) -> dict[str, str | None]:
         attrs = node.attrs
@@ -1122,6 +1171,18 @@ def _sanitize_clone_into(
 
         if tag not in allowed_tags:
             policy.handle_unsafe(f"Unsafe tag '{tag}' (not allowed)", node=node)
+            if disallowed_tag_handling == "drop":
+                return
+            if disallowed_tag_handling == "escape":
+                raw_start = _raw_tag_text(node, "_start_tag_start", "_start_tag_end") or _reconstruct_start_tag(node)
+                raw_end = _raw_tag_text(node, "_end_tag_start", "_end_tag_end") or _reconstruct_end_tag(node)
+                dst.append_child(TextNode(raw_start))
+                _walk_children(node, dst)
+                if type(node) is TemplateNode and node.template_content is not None:
+                    _walk_children(node.template_content, dst)
+                if raw_end:
+                    dst.append_child(TextNode(raw_end))
+                return
             _walk_children(node, dst)
             if type(node) is TemplateNode and node.template_content is not None:
                 _walk_children(node.template_content, dst)

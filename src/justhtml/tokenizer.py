@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 from .entities import decode_entities_in_text
 from .errors import generate_error_message
-from .tokens import AnyToken, CommentToken, Doctype, DoctypeToken, EOFToken, ParseError, Tag
+from .tokens import AnyToken, CharacterTokens, CommentToken, Doctype, DoctypeToken, EOFToken, ParseError, Tag
 
 _ATTR_VALUE_UNQUOTED_TERMINATORS = "\t\n\f >&\"'<=`\0"
 _ASCII_LOWER_TABLE = str.maketrans({chr(code): chr(code + 32) for code in range(65, 91)})
@@ -203,6 +203,7 @@ class Tokenizer:
         "text_buffer",
         "text_start_pos",
         "track_node_locations",
+        "track_tag_positions",
     )
 
     _comment_token: CommentToken
@@ -211,6 +212,7 @@ class Tokenizer:
     _tag_token: Tag
     buffer: str
     collect_errors: bool
+    track_tag_positions: bool
     track_node_locations: bool
     current_attr_name: list[str]
     current_attr_value: list[str]
@@ -252,11 +254,13 @@ class Tokenizer:
         *,
         collect_errors: bool = False,
         track_node_locations: bool = False,
+        track_tag_positions: bool = False,
     ) -> None:
         self.sink = sink
         self.opts = opts or TokenizerOpts()
         self.collect_errors = collect_errors
         self.track_node_locations = bool(track_node_locations)
+        self.track_tag_positions = bool(track_tag_positions)
         self.errors = []
 
         self.state = self.DATA
@@ -621,8 +625,9 @@ class Tokenizer:
             if c is None:
                 self.pos = pos
                 self._emit_error("eof-in-tag")
-                # Per HTML5 spec: EOF in tag name is a parse error, emit EOF token only
-                # The incomplete tag is discarded (not emitted as text)
+                raw = buffer[self.current_token_start_pos : self.pos]
+                if raw:  # pragma: no branch
+                    self._emit_token(CharacterTokens(raw))
                 self._emit_token(EOFToken())
                 return True
             if c in ("\t", "\n", "\f", " "):
@@ -1891,7 +1896,12 @@ class Tokenizer:
         tag.name = name
         tag.attrs = attrs
         tag.self_closing = self.current_tag_self_closing
-        tag.start_pos = self.current_token_start_pos
+        if self.track_tag_positions:
+            tag.start_pos = self.current_token_start_pos
+            tag.end_pos = self.pos
+        else:
+            tag.start_pos = None
+            tag.end_pos = None
         self.last_token_start_pos = tag.start_pos
 
         switched_to_rawtext = False

@@ -81,6 +81,7 @@ def _build_policy(spec: Any) -> SanitizationPolicy:
         drop_content_tags=spec.get("drop_content_tags", ["script", "style"]),
         force_link_rel=spec.get("force_link_rel", []),
         allowed_css_properties=spec.get("allowed_css_properties", []),
+        disallowed_tag_handling=spec.get("disallowed_tag_handling", "unwrap"),
     )
 
 
