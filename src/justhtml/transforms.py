@@ -38,6 +38,12 @@ if TYPE_CHECKING:
 
     from .selector import ParsedSelector
 
+    class NodeCallback(Protocol):
+        def __call__(self, node: SimpleDomNode) -> None: ...
+
+    class EditAttrsCallback(Protocol):
+        def __call__(self, node: SimpleDomNode) -> dict[str, str | None] | None: ...
+
     class ReportCallback(Protocol):
         def __call__(self, msg: str, *, node: Any | None = None) -> None: ...
 
@@ -103,11 +109,26 @@ class SetAttrs:
     selector: str
     attrs: dict[str, str | None]
     enabled: bool
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
-    def __init__(self, selector: str, *, _enabled: bool = True, **attrs: str | None) -> None:
+    def __init__(
+        self,
+        selector: str,
+        *,
+        enabled: bool = True,
+        callback: NodeCallback | None = None,
+        report: ReportCallback | None = None,
+        attributes: dict[str, str | None] | None = None,
+        **attrs: str | None,
+    ) -> None:
         object.__setattr__(self, "selector", str(selector))
-        object.__setattr__(self, "attrs", dict(attrs))
-        object.__setattr__(self, "enabled", bool(_enabled))
+        merged = dict(attributes) if attributes else {}
+        merged.update(attrs)
+        object.__setattr__(self, "attrs", merged)
+        object.__setattr__(self, "enabled", bool(enabled))
+        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "report", report)
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,18 +136,21 @@ class Drop:
     selector: str
 
     enabled: bool
-    on_drop: Callable[[SimpleDomNode], None] | None
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
     def __init__(
         self,
         selector: str,
         *,
         enabled: bool = True,
-        on_drop: Callable[[SimpleDomNode], None] | None = None,
+        callback: NodeCallback | None = None,
+        report: ReportCallback | None = None,
     ) -> None:
         object.__setattr__(self, "selector", str(selector))
         object.__setattr__(self, "enabled", bool(enabled))
-        object.__setattr__(self, "on_drop", on_drop)
+        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "report", report)
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,18 +158,21 @@ class Unwrap:
     selector: str
 
     enabled: bool
-    on_unwrap: Callable[[SimpleDomNode], None] | None
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
     def __init__(
         self,
         selector: str,
         *,
         enabled: bool = True,
-        on_unwrap: Callable[[SimpleDomNode], None] | None = None,
+        callback: NodeCallback | None = None,
+        report: ReportCallback | None = None,
     ) -> None:
         object.__setattr__(self, "selector", str(selector))
         object.__setattr__(self, "enabled", bool(enabled))
-        object.__setattr__(self, "on_unwrap", on_unwrap)
+        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "report", report)
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,22 +180,45 @@ class Empty:
     selector: str
 
     enabled: bool
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
-    def __init__(self, selector: str, *, enabled: bool = True) -> None:
+    def __init__(
+        self,
+        selector: str,
+        *,
+        enabled: bool = True,
+        callback: NodeCallback | None = None,
+        report: ReportCallback | None = None,
+    ) -> None:
         object.__setattr__(self, "selector", str(selector))
         object.__setattr__(self, "enabled", bool(enabled))
+        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "report", report)
 
 
 @dataclass(frozen=True, slots=True)
 class Edit:
     selector: str
-    callback: Callable[[SimpleDomNode], None]
+    func: NodeCallback
     enabled: bool
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
-    def __init__(self, selector: str, callback: Callable[[SimpleDomNode], None], *, enabled: bool = True) -> None:
+    def __init__(
+        self,
+        selector: str,
+        func: NodeCallback,
+        *,
+        enabled: bool = True,
+        callback: NodeCallback | None = None,
+        report: ReportCallback | None = None,
+    ) -> None:
         object.__setattr__(self, "selector", str(selector))
-        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "func", func)
         object.__setattr__(self, "enabled", bool(enabled))
+        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "report", report)
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,12 +232,23 @@ class EditDocument:
     not visit.
     """
 
-    callback: Callable[[SimpleDomNode], None]
+    func: NodeCallback
     enabled: bool
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
-    def __init__(self, callback: Callable[[SimpleDomNode], None], *, enabled: bool = True) -> None:
-        object.__setattr__(self, "callback", callback)
+    def __init__(
+        self,
+        func: NodeCallback,
+        *,
+        enabled: bool = True,
+        callback: NodeCallback | None = None,
+        report: ReportCallback | None = None,
+    ) -> None:
+        object.__setattr__(self, "func", func)
         object.__setattr__(self, "enabled", bool(enabled))
+        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "report", report)
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,8 +266,10 @@ class Decide:
     """
 
     selector: str
-    callback: Callable[[SimpleDomNode], DecideAction]
+    func: Callable[[SimpleDomNode], DecideAction]
     enabled: bool
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
     KEEP: ClassVar[DecideAction] = DecideAction.KEEP
     DROP: ClassVar[DecideAction] = DecideAction.DROP
@@ -214,11 +277,19 @@ class Decide:
     EMPTY: ClassVar[DecideAction] = DecideAction.EMPTY
 
     def __init__(
-        self, selector: str, callback: Callable[[SimpleDomNode], DecideAction], *, enabled: bool = True
+        self,
+        selector: str,
+        func: Callable[[SimpleDomNode], DecideAction],
+        *,
+        enabled: bool = True,
+        callback: NodeCallback | None = None,
+        report: ReportCallback | None = None,
     ) -> None:
         object.__setattr__(self, "selector", str(selector))
-        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "func", func)
         object.__setattr__(self, "enabled", bool(enabled))
+        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "report", report)
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,19 +303,25 @@ class EditAttrs:
     """
 
     selector: str
-    callback: Callable[[SimpleDomNode], dict[str, str | None] | None]
+    func: EditAttrsCallback
     enabled: bool
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
     def __init__(
         self,
         selector: str,
-        callback: Callable[[SimpleDomNode], dict[str, str | None] | None],
+        func: EditAttrsCallback,
         *,
         enabled: bool = True,
+        callback: NodeCallback | None = None,
+        report: ReportCallback | None = None,
     ) -> None:
         object.__setattr__(self, "selector", str(selector))
-        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "func", func)
         object.__setattr__(self, "enabled", bool(enabled))
+        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "report", report)
 
 
 # Backwards-compatible alias.
@@ -263,6 +340,8 @@ class Linkify:
     fuzzy_ip: bool
     extra_tlds: frozenset[str]
     enabled: bool
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
     def __init__(
         self,
@@ -274,11 +353,15 @@ class Linkify:
         enabled: bool = True,
         fuzzy_ip: bool = False,
         extra_tlds: list[str] | tuple[str, ...] | set[str] | frozenset[str] = (),
+        callback: NodeCallback | None = None,
+        report: ReportCallback | None = None,
     ) -> None:
         object.__setattr__(self, "skip_tags", frozenset(str(t).lower() for t in skip_tags))
         object.__setattr__(self, "fuzzy_ip", bool(fuzzy_ip))
         object.__setattr__(self, "extra_tlds", frozenset(str(t).lower() for t in extra_tlds))
         object.__setattr__(self, "enabled", bool(enabled))
+        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "report", report)
 
 
 def _collapse_html_space_characters(text: str) -> str:
@@ -319,6 +402,8 @@ class CollapseWhitespace:
 
     skip_tags: frozenset[str]
     enabled: bool
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
     def __init__(
         self,
@@ -328,9 +413,13 @@ class CollapseWhitespace:
             "title",
         ),
         enabled: bool = True,
+        callback: NodeCallback | None = None,
+        report: ReportCallback | None = None,
     ) -> None:
         object.__setattr__(self, "skip_tags", frozenset(str(t).lower() for t in skip_tags))
         object.__setattr__(self, "enabled", bool(enabled))
+        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "report", report)
 
 
 @dataclass(frozen=True, slots=True)
@@ -348,10 +437,21 @@ class Sanitize:
 
     policy: SanitizationPolicy | None
     enabled: bool
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
-    def __init__(self, policy: SanitizationPolicy | None = None, *, enabled: bool = True) -> None:
+    def __init__(
+        self,
+        policy: SanitizationPolicy | None = None,
+        *,
+        enabled: bool = True,
+        callback: NodeCallback | None = None,
+        report: ReportCallback | None = None,
+    ) -> None:
         object.__setattr__(self, "policy", policy)
         object.__setattr__(self, "enabled", bool(enabled))
+        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "report", report)
 
 
 @dataclass(frozen=True, slots=True)
@@ -359,9 +459,19 @@ class DropComments:
     """Drop comment nodes (#comment)."""
 
     enabled: bool
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
-    def __init__(self, *, enabled: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        enabled: bool = True,
+        callback: NodeCallback | None = None,
+        report: ReportCallback | None = None,
+    ) -> None:
         object.__setattr__(self, "enabled", bool(enabled))
+        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "report", report)
 
 
 @dataclass(frozen=True, slots=True)
@@ -369,9 +479,19 @@ class DropDoctype:
     """Drop doctype nodes (!doctype)."""
 
     enabled: bool
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
-    def __init__(self, *, enabled: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        enabled: bool = True,
+        callback: NodeCallback | None = None,
+        report: ReportCallback | None = None,
+    ) -> None:
         object.__setattr__(self, "enabled", bool(enabled))
+        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "report", report)
 
 
 @dataclass(frozen=True, slots=True)
@@ -379,11 +499,19 @@ class DropForeignNamespaces:
     """Drop elements in non-HTML namespaces."""
 
     enabled: bool
-    on_report: ReportCallback | None
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
-    def __init__(self, *, enabled: bool = True, on_report: ReportCallback | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        enabled: bool = True,
+        callback: NodeCallback | None = None,
+        report: ReportCallback | None = None,
+    ) -> None:
         object.__setattr__(self, "enabled", bool(enabled))
-        object.__setattr__(self, "on_report", on_report)
+        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "report", report)
 
 
 @dataclass(frozen=True, slots=True)
@@ -393,7 +521,8 @@ class DropAttrs:
     selector: str
     patterns: tuple[str, ...]
     enabled: bool
-    on_report: ReportCallback | None
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
     def __init__(
         self,
@@ -401,7 +530,8 @@ class DropAttrs:
         *,
         patterns: tuple[str, ...] = (),
         enabled: bool = True,
-        on_report: ReportCallback | None = None,
+        callback: NodeCallback | None = None,
+        report: ReportCallback | None = None,
     ) -> None:
         object.__setattr__(self, "selector", str(selector))
         object.__setattr__(
@@ -410,7 +540,8 @@ class DropAttrs:
             tuple(sorted({str(p).strip().lower() for p in patterns if str(p).strip()})),
         )
         object.__setattr__(self, "enabled", bool(enabled))
-        object.__setattr__(self, "on_report", on_report)
+        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "report", report)
 
 
 @dataclass(frozen=True, slots=True)
@@ -420,7 +551,8 @@ class AllowlistAttrs:
     selector: str
     allowed_attributes: dict[str, set[str]]
     enabled: bool
-    on_report: ReportCallback | None
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
     def __init__(
         self,
@@ -428,7 +560,8 @@ class AllowlistAttrs:
         *,
         allowed_attributes: dict[str, Collection[str]],
         enabled: bool = True,
-        on_report: ReportCallback | None = None,
+        callback: NodeCallback | None = None,
+        report: ReportCallback | None = None,
     ) -> None:
         normalized: dict[str, set[str]] = {}
         for tag, attrs in allowed_attributes.items():
@@ -436,7 +569,8 @@ class AllowlistAttrs:
         object.__setattr__(self, "selector", str(selector))
         object.__setattr__(self, "allowed_attributes", normalized)
         object.__setattr__(self, "enabled", bool(enabled))
-        object.__setattr__(self, "on_report", on_report)
+        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "report", report)
 
 
 @dataclass(frozen=True, slots=True)
@@ -446,7 +580,8 @@ class DropUrlAttrs:
     selector: str
     url_policy: UrlPolicy
     enabled: bool
-    on_report: ReportCallback | None
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
     def __init__(
         self,
@@ -454,12 +589,14 @@ class DropUrlAttrs:
         *,
         url_policy: UrlPolicy,
         enabled: bool = True,
-        on_report: ReportCallback | None = None,
+        callback: NodeCallback | None = None,
+        report: ReportCallback | None = None,
     ) -> None:
         object.__setattr__(self, "selector", str(selector))
         object.__setattr__(self, "url_policy", url_policy)
         object.__setattr__(self, "enabled", bool(enabled))
-        object.__setattr__(self, "on_report", on_report)
+        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "report", report)
 
 
 @dataclass(frozen=True, slots=True)
@@ -469,7 +606,8 @@ class AllowStyleAttrs:
     selector: str
     allowed_css_properties: tuple[str, ...]
     enabled: bool
-    on_report: ReportCallback | None
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
     def __init__(
         self,
@@ -477,7 +615,8 @@ class AllowStyleAttrs:
         *,
         allowed_css_properties: Collection[str],
         enabled: bool = True,
-        on_report: ReportCallback | None = None,
+        callback: NodeCallback | None = None,
+        report: ReportCallback | None = None,
     ) -> None:
         object.__setattr__(self, "selector", str(selector))
         object.__setattr__(
@@ -486,7 +625,8 @@ class AllowStyleAttrs:
             tuple(sorted({str(p).strip().lower() for p in allowed_css_properties if str(p).strip()})),
         )
         object.__setattr__(self, "enabled", bool(enabled))
-        object.__setattr__(self, "on_report", on_report)
+        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "report", report)
 
 
 @dataclass(frozen=True, slots=True)
@@ -497,6 +637,8 @@ class MergeAttrs:
     attr: str
     tokens: tuple[str, ...]
     enabled: bool
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
     def __init__(
         self,
@@ -505,11 +647,15 @@ class MergeAttrs:
         attr: str,
         tokens: Collection[str],
         enabled: bool = True,
+        callback: NodeCallback | None = None,
+        report: ReportCallback | None = None,
     ) -> None:
         object.__setattr__(self, "tag", str(tag).lower())
         object.__setattr__(self, "attr", str(attr).lower())
         object.__setattr__(self, "tokens", tuple(sorted({str(t).strip().lower() for t in tokens if str(t).strip()})))
         object.__setattr__(self, "enabled", bool(enabled))
+        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "report", report)
 
 
 @dataclass(frozen=True, slots=True)
@@ -532,11 +678,23 @@ class PruneEmpty:
     selector: str
     strip_whitespace: bool
     enabled: bool
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
-    def __init__(self, selector: str, *, strip_whitespace: bool = True, enabled: bool = True) -> None:
+    def __init__(
+        self,
+        selector: str,
+        *,
+        strip_whitespace: bool = True,
+        enabled: bool = True,
+        callback: NodeCallback | None = None,
+        report: ReportCallback | None = None,
+    ) -> None:
         object.__setattr__(self, "selector", str(selector))
         object.__setattr__(self, "strip_whitespace", bool(strip_whitespace))
         object.__setattr__(self, "enabled", bool(enabled))
+        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "report", report)
 
 
 @dataclass(frozen=True, slots=True)
@@ -553,10 +711,21 @@ class Stage:
 
     transforms: tuple[TransformSpec, ...]
     enabled: bool
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
-    def __init__(self, transforms: list[TransformSpec] | tuple[TransformSpec, ...], *, enabled: bool = True) -> None:
+    def __init__(
+        self,
+        transforms: list[TransformSpec] | tuple[TransformSpec, ...],
+        *,
+        enabled: bool = True,
+        callback: NodeCallback | None = None,
+        report: ReportCallback | None = None,
+    ) -> None:
         object.__setattr__(self, "transforms", tuple(transforms))
         object.__setattr__(self, "enabled", bool(enabled))
+        object.__setattr__(self, "callback", callback)
+        object.__setattr__(self, "report", report)
 
 
 # -----------------
@@ -618,6 +787,8 @@ TransformSpec = Transform | Stage
 class _CompiledCollapseWhitespaceTransform:
     kind: Literal["collapse_whitespace"]
     skip_tags: frozenset[str]
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -625,7 +796,9 @@ class _CompiledSelectorTransform:
     kind: Literal["setattrs", "drop", "unwrap", "empty", "edit"]
     selector_str: str
     selector: ParsedSelector
-    payload: dict[str, str | None] | Callable[[SimpleDomNode], None] | None
+    payload: dict[str, str | None] | NodeCallback | None
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -633,12 +806,14 @@ class _CompiledLinkifyTransform:
     kind: Literal["linkify"]
     skip_tags: frozenset[str]
     config: LinkifyConfig
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
 
 @dataclass(frozen=True, slots=True)
 class _CompiledEditDocumentTransform:
     kind: Literal["edit_document"]
-    callback: Callable[[SimpleDomNode], None]
+    callback: NodeCallback
 
 
 @dataclass(frozen=True, slots=True)
@@ -647,6 +822,8 @@ class _CompiledPruneEmptyTransform:
     selector_str: str
     selector: ParsedSelector
     strip_whitespace: bool
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -661,7 +838,6 @@ class _CompiledDecideTransform:
     selector: ParsedSelector | None
     all_nodes: bool
     callback: Callable[[SimpleDomNode], DecideAction]
-    mark_children_on_unwrap: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -670,17 +846,21 @@ class _CompiledRewriteAttrsTransform:
     selector_str: str
     selector: ParsedSelector | None
     all_nodes: bool
-    callback: Callable[[SimpleDomNode], dict[str, str | None] | None]
+    func: EditAttrsCallback
 
 
 @dataclass(frozen=True, slots=True)
 class _CompiledDropCommentsTransform:
     kind: Literal["drop_comments"]
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
 
 @dataclass(frozen=True, slots=True)
 class _CompiledDropDoctypeTransform:
     kind: Literal["drop_doctype"]
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -689,6 +869,16 @@ class _CompiledMergeAttrTokensTransform:
     tag: str
     attr: str
     tokens: tuple[str, ...]
+    callback: NodeCallback | None
+    report: ReportCallback | None
+
+
+@dataclass(frozen=True, slots=True)
+class _CompiledStageHookTransform:
+    kind: Literal["stage_hook"]
+    index: int
+    callback: NodeCallback | None
+    report: ReportCallback | None
 
 
 CompiledTransform = (
@@ -702,6 +892,7 @@ CompiledTransform = (
     | _CompiledDropCommentsTransform
     | _CompiledDropDoctypeTransform
     | _CompiledMergeAttrTokensTransform
+    | _CompiledStageHookTransform
     | _CompiledStageBoundary
 )
 
@@ -806,6 +997,14 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
         for stage_i, stage in enumerate(top_level_stages):
             if stage_i:
                 compiled_stage.append(_CompiledStageBoundary(kind="stage_boundary"))
+            compiled_stage.append(
+                _CompiledStageHookTransform(
+                    kind="stage_hook",
+                    index=stage_i,
+                    callback=stage.callback,
+                    report=stage.report,
+                )
+            )
             for inner in _iter_flattened_transforms(stage.transforms):
                 compiled_stage.extend(compile_transforms((inner,)))
         return compiled_stage
@@ -823,8 +1022,8 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
         ):
             prev = compiled[-1]
             if prev.selector_str == item.selector_str and prev.all_nodes == item.all_nodes:
-                prev_cb = prev.callback
-                next_cb = item.callback
+                prev_cb = prev.func
+                next_cb = item.func
 
                 def _chained(
                     node: SimpleDomNode,
@@ -847,7 +1046,7 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                     selector_str=prev.selector_str,
                     selector=prev.selector,
                     all_nodes=prev.all_nodes,
-                    callback=_chained,
+                    func=_chained,
                 )
                 return
 
@@ -865,27 +1064,16 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                     selector_str=t.selector,
                     selector=parse_selector(t.selector),
                     payload=t.attrs,
+                    callback=t.callback,
+                    report=t.report,
                 )
             )
             continue
         if isinstance(t, Drop):
-            if t.on_drop is None:
-                compiled.append(
-                    _CompiledSelectorTransform(
-                        kind="drop",
-                        selector_str=t.selector,
-                        selector=parse_selector(t.selector),
-                        payload=None,
-                    )
-                )
-                continue
-
             selector_str = t.selector
-            on_drop = t.on_drop
 
             # Fast-path: if selector is a simple comma-separated list of tag
             # names (e.g. "script, style"), avoid selector matching entirely.
-            # This keeps Sanitize's drop-content tags reliable and fast.
             raw_parts = selector_str.split(",")
             tag_list: list[str] = []
             for part in raw_parts:
@@ -901,19 +1089,27 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
 
             if tag_list:
                 tags = frozenset(tag_list)
+                on_drop = t.callback
+                on_report = t.report
 
                 def _drop_if_tag(
                     node: SimpleDomNode,
                     tags: frozenset[str] = tags,
-                    on_drop: Callable[[SimpleDomNode], None] = on_drop,
+                    selector_str: str = selector_str,
+                    on_drop: NodeCallback | None = on_drop,
+                    on_report: ReportCallback | None = on_report,
                 ) -> DecideAction:
                     name = node.name
                     if name.startswith("#") or name == "!doctype":
                         return Decide.KEEP
-                    if str(name).lower() in tags:
+                    tag = str(name).lower()
+                    if tag not in tags:
+                        return Decide.KEEP
+                    if on_drop is not None:
                         on_drop(node)
-                        return Decide.DROP
-                    return Decide.KEEP
+                    if on_report is not None:
+                        on_report(f"Dropped tag '{tag}' (matched selector '{selector_str}')", node=node)
+                    return Decide.DROP
 
                 compiled.append(
                     _CompiledDecideTransform(
@@ -926,51 +1122,26 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                 )
                 continue
 
-            # General path: selector-based drop.
-            all_nodes = selector_str.strip() == "*"
-
-            def _drop(node: SimpleDomNode, on_drop: Callable[[SimpleDomNode], None] = on_drop) -> DecideAction:
-                on_drop(node)
-                return Decide.DROP
-
             compiled.append(
-                _CompiledDecideTransform(
-                    kind="decide",
+                _CompiledSelectorTransform(
+                    kind="drop",
                     selector_str=selector_str,
-                    selector=None if all_nodes else parse_selector(selector_str),
-                    all_nodes=all_nodes,
-                    callback=_drop,
+                    selector=parse_selector(selector_str),
+                    payload=None,
+                    callback=t.callback,
+                    report=t.report,
                 )
             )
             continue
         if isinstance(t, Unwrap):
-            if t.on_unwrap is None:
-                compiled.append(
-                    _CompiledSelectorTransform(
-                        kind="unwrap",
-                        selector_str=t.selector,
-                        selector=parse_selector(t.selector),
-                        payload=None,
-                    )
-                )
-                continue
-
-            selector_str = t.selector
-            all_nodes = selector_str.strip() == "*"
-            on_unwrap = t.on_unwrap
-
-            def _unwrap(node: SimpleDomNode, on_unwrap: Callable[[SimpleDomNode], None] = on_unwrap) -> DecideAction:
-                on_unwrap(node)
-                return Decide.UNWRAP
-
             compiled.append(
-                _CompiledDecideTransform(
-                    kind="decide",
-                    selector_str=selector_str,
-                    selector=None if all_nodes else parse_selector(selector_str),
-                    all_nodes=all_nodes,
-                    callback=_unwrap,
-                    mark_children_on_unwrap=False,
+                _CompiledSelectorTransform(
+                    kind="unwrap",
+                    selector_str=t.selector,
+                    selector=parse_selector(t.selector),
+                    payload=None,
+                    callback=t.callback,
+                    report=t.report,
                 )
             )
             continue
@@ -981,34 +1152,95 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                     selector_str=t.selector,
                     selector=parse_selector(t.selector),
                     payload=None,
+                    callback=t.callback,
+                    report=t.report,
                 )
             )
             continue
         if isinstance(t, Edit):
+            selector_str = t.selector
+            edit_func = t.func
+            on_hook = t.callback
+            on_report = t.report
+
+            def _wrapped(
+                node: SimpleDomNode,
+                edit_func: NodeCallback = edit_func,
+                selector_str: str = selector_str,
+                on_hook: NodeCallback | None = on_hook,
+                on_report: ReportCallback | None = on_report,
+            ) -> None:
+                if on_hook is not None:
+                    on_hook(node)
+                if on_report is not None:
+                    tag = str(node.name).lower()
+                    on_report(f"Edited <{tag}> (matched selector '{selector_str}')", node=node)
+                edit_func(node)
+
             compiled.append(
                 _CompiledSelectorTransform(
                     kind="edit",
                     selector_str=t.selector,
                     selector=parse_selector(t.selector),
-                    payload=t.callback,
+                    payload=_wrapped,
+                    callback=None,
+                    report=None,
                 )
             )
             continue
 
         if isinstance(t, EditDocument):
-            compiled.append(_CompiledEditDocumentTransform(kind="edit_document", callback=t.callback))
+            edit_document_func = t.func
+            on_hook = t.callback
+            on_report = t.report
+
+            def _wrapped_root(
+                node: SimpleDomNode,
+                edit_document_func: NodeCallback = edit_document_func,
+                on_hook: NodeCallback | None = on_hook,
+                on_report: ReportCallback | None = on_report,
+            ) -> None:
+                if on_hook is not None:
+                    on_hook(node)
+                if on_report is not None:
+                    on_report("Edited document root", node=node)
+                edit_document_func(node)
+
+            compiled.append(_CompiledEditDocumentTransform(kind="edit_document", callback=_wrapped_root))
             continue
 
         if isinstance(t, Decide):
             selector_str = t.selector
             all_nodes = selector_str.strip() == "*"
+            decide_func = t.func
+            on_hook = t.callback
+            on_report = t.report
+
+            def _wrapped_decide(
+                node: SimpleDomNode,
+                decide_func: Callable[[SimpleDomNode], DecideAction] = decide_func,
+                selector_str: str = selector_str,
+                on_hook: NodeCallback | None = on_hook,
+                on_report: ReportCallback | None = on_report,
+            ) -> DecideAction:
+                action = decide_func(node)
+                if action is DecideAction.KEEP:
+                    return action
+                if on_hook is not None:
+                    on_hook(node)
+                if on_report is not None:
+                    nm = node.name
+                    label = str(nm).lower() if not nm.startswith("#") and nm != "!doctype" else str(nm)
+                    on_report(f"Decide -> {action.value} '{label}' (matched selector '{selector_str}')", node=node)
+                return action
+
             compiled.append(
                 _CompiledDecideTransform(
                     kind="decide",
                     selector_str=selector_str,
                     selector=None if all_nodes else parse_selector(selector_str),
                     all_nodes=all_nodes,
-                    callback=t.callback,
+                    callback=_wrapped_decide,
                 )
             )
             continue
@@ -1016,13 +1248,34 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
         if isinstance(t, EditAttrs):
             selector_str = t.selector
             all_nodes = selector_str.strip() == "*"
+            edit_attrs_func = t.func
+            on_hook = t.callback
+            on_report = t.report
+
+            def _wrapped_attrs(
+                node: SimpleDomNode,
+                edit_attrs_func: EditAttrsCallback = edit_attrs_func,
+                selector_str: str = selector_str,
+                on_hook: NodeCallback | None = on_hook,
+                on_report: ReportCallback | None = on_report,
+            ) -> dict[str, str | None] | None:
+                out = edit_attrs_func(node)
+                if out is None:
+                    return None
+                if on_hook is not None:
+                    on_hook(node)
+                if on_report is not None:
+                    tag = str(node.name).lower()
+                    on_report(f"Edited attributes on <{tag}> (matched selector '{selector_str}')", node=node)
+                return out
+
             _append_compiled(
                 _CompiledRewriteAttrsTransform(
                     kind="rewrite_attrs",
                     selector_str=selector_str,
                     selector=None if all_nodes else parse_selector(selector_str),
                     all_nodes=all_nodes,
-                    callback=t.callback,
+                    func=_wrapped_attrs,
                 )
             )
             continue
@@ -1033,6 +1286,8 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                     kind="linkify",
                     skip_tags=t.skip_tags,
                     config=LinkifyConfig(fuzzy_ip=t.fuzzy_ip, extra_tlds=t.extra_tlds),
+                    callback=t.callback,
+                    report=t.report,
                 )
             )
             continue
@@ -1042,6 +1297,8 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                 _CompiledCollapseWhitespaceTransform(
                     kind="collapse_whitespace",
                     skip_tags=t.skip_tags,
+                    callback=t.callback,
+                    report=t.report,
                 )
             )
             continue
@@ -1053,44 +1310,74 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                     selector_str=t.selector,
                     selector=parse_selector(t.selector),
                     strip_whitespace=t.strip_whitespace,
+                    callback=t.callback,
+                    report=t.report,
                 )
             )
             continue
 
         if isinstance(t, DropComments):
-            compiled.append(_CompiledDropCommentsTransform(kind="drop_comments"))
+            compiled.append(
+                _CompiledDropCommentsTransform(
+                    kind="drop_comments",
+                    callback=t.callback,
+                    report=t.report,
+                )
+            )
             continue
 
         if isinstance(t, DropDoctype):
-            compiled.append(_CompiledDropDoctypeTransform(kind="drop_doctype"))
+            compiled.append(
+                _CompiledDropDoctypeTransform(
+                    kind="drop_doctype",
+                    callback=t.callback,
+                    report=t.report,
+                )
+            )
             continue
 
         if isinstance(t, DropForeignNamespaces):
-            on_report = t.on_report
+            on_hook = t.callback
+            on_report = t.report
 
-            def _drop_foreign(node: SimpleDomNode, on_report: ReportCallback | None = on_report) -> DecideAction:
+            def _drop_foreign(
+                node: SimpleDomNode,
+                on_hook: NodeCallback | None = on_hook,
+                on_report: ReportCallback | None = on_report,
+            ) -> DecideAction:
                 name = node.name
                 if name.startswith("#") or name == "!doctype":
                     return Decide.KEEP
                 ns = node.namespace
                 if ns not in (None, "html"):
+                    if on_hook is not None:
+                        on_hook(node)
                     if on_report is not None:
                         tag = str(name).lower()
                         on_report(f"Unsafe tag '{tag}' (foreign namespace)", node=node)
                     return Decide.DROP
                 return Decide.KEEP
 
-            for it in compile_transforms((Decide("*", _drop_foreign),)):
-                _append_compiled(it)
+            compiled.append(
+                _CompiledDecideTransform(
+                    kind="decide",
+                    selector_str="*",
+                    selector=None,
+                    all_nodes=True,
+                    callback=_drop_foreign,
+                )
+            )
             continue
 
         if isinstance(t, DropAttrs):
             patterns = t.patterns
-            on_report = t.on_report
+            on_hook = t.callback
+            on_report = t.report
 
             def _drop_attrs(
                 node: SimpleDomNode,
                 patterns: tuple[str, ...] = patterns,
+                on_hook: NodeCallback | None = on_hook,
                 on_report: ReportCallback | None = on_report,
             ) -> dict[str, str | None] | None:
                 attrs = node.attrs
@@ -1101,6 +1388,7 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                     return None
 
                 out: dict[str, str | None] = {}
+                changed = False
                 for raw_key, value in attrs.items():
                     if not raw_key or not str(raw_key).strip():
                         continue
@@ -1123,19 +1411,34 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                         break
 
                     if drop:
+                        changed = True
                         continue
 
                     out[key] = value
 
+                if not changed:
+                    return None
+                if on_hook is not None:
+                    on_hook(node)
                 return out
 
-            for it in compile_transforms((EditAttrs(t.selector, _drop_attrs),)):
-                _append_compiled(it)
+            selector_str = t.selector
+            all_nodes = selector_str.strip() == "*"
+            _append_compiled(
+                _CompiledRewriteAttrsTransform(
+                    kind="rewrite_attrs",
+                    selector_str=selector_str,
+                    selector=None if all_nodes else parse_selector(selector_str),
+                    all_nodes=all_nodes,
+                    func=_drop_attrs,
+                )
+            )
             continue
 
         if isinstance(t, AllowlistAttrs):
             allowed_attributes = t.allowed_attributes
-            on_report = t.on_report
+            on_hook = t.callback
+            on_report = t.report
             allowed_global = allowed_attributes.get("*", set())
             allowed_by_tag: dict[str, set[str]] = {}
             for tag, attrs in allowed_attributes.items():
@@ -1147,6 +1450,7 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                 node: SimpleDomNode,
                 allowed_by_tag: dict[str, set[str]] = allowed_by_tag,
                 allowed_global: set[str] = allowed_global,
+                on_hook: NodeCallback | None = on_hook,
                 on_report: ReportCallback | None = on_report,
             ) -> dict[str, str | None] | None:
                 attrs = node.attrs
@@ -1155,6 +1459,7 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                 tag = str(node.name).lower()
                 allowed = allowed_by_tag.get(tag, allowed_global)
 
+                changed = False
                 out: dict[str, str | None] = {}
                 for raw_key, value in attrs.items():
                     if not raw_key or not str(raw_key).strip():
@@ -1164,21 +1469,38 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                         key = key.lower()
                     if key in allowed:
                         out[key] = value
-                    elif on_report is not None:
-                        on_report(f"Unsafe attribute '{key}' (not allowed)", node=node)
+                    else:
+                        changed = True
+                        if on_report is not None:
+                            on_report(f"Unsafe attribute '{key}' (not allowed)", node=node)
+                if not changed:
+                    return None
+                if on_hook is not None:
+                    on_hook(node)
                 return out
 
-            for it in compile_transforms((EditAttrs(t.selector, _allowlist_attrs),)):
-                _append_compiled(it)
+            selector_str = t.selector
+            all_nodes = selector_str.strip() == "*"
+            _append_compiled(
+                _CompiledRewriteAttrsTransform(
+                    kind="rewrite_attrs",
+                    selector_str=selector_str,
+                    selector=None if all_nodes else parse_selector(selector_str),
+                    all_nodes=all_nodes,
+                    func=_allowlist_attrs,
+                )
+            )
             continue
 
         if isinstance(t, DropUrlAttrs):
             url_policy = t.url_policy
-            on_report = t.on_report
+            on_hook = t.callback
+            on_report = t.report
 
             def _drop_url_attrs(
                 node: SimpleDomNode,
                 url_policy: UrlPolicy = url_policy,
+                on_hook: NodeCallback | None = on_hook,
                 on_report: ReportCallback | None = on_report,
             ) -> dict[str, str | None] | None:
                 attrs = node.attrs
@@ -1187,6 +1509,7 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
 
                 tag = str(node.name).lower()
                 out = dict(attrs)
+                changed = False
                 for key in list(out.keys()):
                     if key not in _URL_LIKE_ATTRS:
                         continue
@@ -1196,6 +1519,7 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                         if on_report is not None:
                             on_report(f"Unsafe URL in attribute '{key}'", node=node)
                         out.pop(key, None)
+                        changed = True
                         continue
 
                     rule = url_policy.allow_rules.get((tag, key))
@@ -1203,6 +1527,7 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                         if on_report is not None:
                             on_report(f"Unsafe URL in attribute '{key}' (no rule)", node=node)
                         out.pop(key, None)
+                        changed = True
                         continue
 
                     if key == "srcset":
@@ -1226,23 +1551,42 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                         if on_report is not None:
                             on_report(f"Unsafe URL in attribute '{key}'", node=node)
                         out.pop(key, None)
+                        changed = True
                         continue
 
                     out[key] = sanitized
 
+                    if raw_value != sanitized:
+                        changed = True
+
+                if not changed:
+                    return None
+                if on_hook is not None:
+                    on_hook(node)
                 return out
 
-            for it in compile_transforms((EditAttrs(t.selector, _drop_url_attrs),)):
-                _append_compiled(it)
+            selector_str = t.selector
+            all_nodes = selector_str.strip() == "*"
+            _append_compiled(
+                _CompiledRewriteAttrsTransform(
+                    kind="rewrite_attrs",
+                    selector_str=selector_str,
+                    selector=None if all_nodes else parse_selector(selector_str),
+                    all_nodes=all_nodes,
+                    func=_drop_url_attrs,
+                )
+            )
             continue
 
         if isinstance(t, AllowStyleAttrs):
             allowed_css_properties = t.allowed_css_properties
-            on_report = t.on_report
+            on_hook = t.callback
+            on_report = t.report
 
             def _allow_style_attrs(
                 node: SimpleDomNode,
                 allowed_css_properties: tuple[str, ...] = allowed_css_properties,
+                on_hook: NodeCallback | None = on_hook,
                 on_report: ReportCallback | None = on_report,
             ) -> dict[str, str | None] | None:
                 attrs = node.attrs
@@ -1255,6 +1599,8 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                         on_report("Unsafe inline style in attribute 'style'", node=node)
                     out = dict(attrs)
                     out.pop("style", None)
+                    if on_hook is not None:
+                        on_hook(node)
                     return out
 
                 sanitized_style = _sanitize_inline_style(
@@ -1265,14 +1611,27 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                         on_report("Unsafe inline style in attribute 'style'", node=node)
                     out = dict(attrs)
                     out.pop("style", None)
+                    if on_hook is not None:
+                        on_hook(node)
                     return out
 
                 out = dict(attrs)
                 out["style"] = sanitized_style
+                if raw_value != sanitized_style and on_hook is not None:
+                    on_hook(node)
                 return out
 
-            for it in compile_transforms((EditAttrs(t.selector, _allow_style_attrs),)):
-                _append_compiled(it)
+            selector_str = t.selector
+            all_nodes = selector_str.strip() == "*"
+            _append_compiled(
+                _CompiledRewriteAttrsTransform(
+                    kind="rewrite_attrs",
+                    selector_str=selector_str,
+                    selector=None if all_nodes else parse_selector(selector_str),
+                    all_nodes=all_nodes,
+                    func=_allow_style_attrs,
+                )
+            )
             continue
 
         if isinstance(t, MergeAttrs):
@@ -1284,6 +1643,8 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                     tag=t.tag,
                     attr=t.attr,
                     tokens=t.tokens,
+                    callback=t.callback,
+                    report=t.report,
                 )
             )
             continue
@@ -1297,33 +1658,76 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
             drop_content = ", ".join(sorted(policy.drop_content_tags))
             allowed_tags = ", ".join(sorted(policy.allowed_tags))
 
-            def _on_drop_content(node: SimpleDomNode, policy: SanitizationPolicy = policy) -> None:
+            user_hook = t.callback
+            user_report = t.report
+
+            def _unsafe_report(
+                msg: str,
+                *,
+                node: object | None = None,
+                policy: SanitizationPolicy = policy,
+                user_report: ReportCallback | None = user_report,
+            ) -> None:
+                policy.handle_unsafe(msg, node=node)
+                if user_report is not None:
+                    user_report(msg, node=node)
+
+            def _on_drop_content(
+                node: SimpleDomNode,
+                policy: SanitizationPolicy = policy,
+                user_report: ReportCallback | None = user_report,
+                user_hook: NodeCallback | None = user_hook,
+            ) -> None:
                 tag = str(node.name).lower()
                 policy.handle_unsafe(f"Unsafe tag '{tag}' (dropped content)", node=node)
+                if user_report is not None:
+                    user_report(f"Unsafe tag '{tag}' (dropped content)", node=node)
+                if user_hook is not None:
+                    user_hook(node)
 
-            def _on_unwrap_disallowed(node: SimpleDomNode, policy: SanitizationPolicy = policy) -> None:
+            def _on_unwrap_disallowed(
+                node: SimpleDomNode,
+                policy: SanitizationPolicy = policy,
+                user_report: ReportCallback | None = user_report,
+                user_hook: NodeCallback | None = user_hook,
+            ) -> None:
                 tag = str(node.name).lower()
                 policy.handle_unsafe(f"Unsafe tag '{tag}' (not allowed)", node=node)
+                if user_report is not None:
+                    user_report(f"Unsafe tag '{tag}' (not allowed)", node=node)
+                if user_hook is not None:
+                    user_hook(node)
 
             pipeline: list[TransformSpec] = []
             pipeline.append(
                 Drop(
                     drop_content,
                     enabled=bool(policy.drop_content_tags),
-                    on_drop=_on_drop_content,
+                    callback=_on_drop_content,
+                    report=None,
                 )
             )
             pipeline.extend(
                 [
-                    DropComments(enabled=policy.drop_comments),
-                    DropDoctype(enabled=policy.drop_doctype),
-                    DropForeignNamespaces(enabled=policy.drop_foreign_namespaces, on_report=policy.handle_unsafe),
+                    DropComments(enabled=policy.drop_comments, callback=user_hook, report=user_report),
+                    DropDoctype(enabled=policy.drop_doctype, callback=user_hook, report=user_report),
+                    DropForeignNamespaces(
+                        enabled=policy.drop_foreign_namespaces,
+                        callback=user_hook,
+                        report=_unsafe_report,
+                    ),
                     Unwrap(
                         f":not({allowed_tags})" if allowed_tags else ":not()",
                         enabled=True,
-                        on_unwrap=_on_unwrap_disallowed,
+                        callback=_on_unwrap_disallowed,
+                        report=None,
                     ),
-                    DropAttrs("*", patterns=("on*", "srcdoc", "*:*"), on_report=policy.handle_unsafe),
+                    DropAttrs(
+                        "*",
+                        patterns=("on*", "srcdoc", "*:*"),
+                        callback=user_hook,
+                        report=_unsafe_report,
+                    ),
                     AllowlistAttrs(
                         "*",
                         allowed_attributes={
@@ -1331,19 +1735,28 @@ def compile_transforms(transforms: list[TransformSpec] | tuple[TransformSpec, ..
                             "a": set(policy.allowed_attributes.get("a", ()))
                             | ({"rel"} if policy.force_link_rel else set()),
                         },
-                        on_report=policy.handle_unsafe,
+                        callback=user_hook,
+                        report=_unsafe_report,
                     ),
-                    DropUrlAttrs("*", url_policy=policy.url_policy, on_report=policy.handle_unsafe),
+                    DropUrlAttrs(
+                        "*",
+                        url_policy=policy.url_policy,
+                        callback=user_hook,
+                        report=_unsafe_report,
+                    ),
                     AllowStyleAttrs(
                         "[style]",
                         allowed_css_properties=policy.allowed_css_properties,
-                        on_report=policy.handle_unsafe,
+                        callback=user_hook,
+                        report=_unsafe_report,
                     ),
                     MergeAttrs(
                         "a",
                         attr="rel",
                         tokens=policy.force_link_rel,
                         enabled=bool(policy.force_link_rel),
+                        callback=user_hook,
+                        report=user_report,
                     ),
                 ]
             )
@@ -1418,6 +1831,10 @@ def apply_compiled_transforms(
                         # DropComments
                         if isinstance(t, _CompiledDropCommentsTransform):
                             if name == "#comment":
+                                if t.callback is not None:
+                                    t.callback(node)
+                                if t.report is not None:
+                                    t.report("Dropped comment", node=node)
                                 parent.remove_child(node)
                                 changed = True
                                 break
@@ -1426,6 +1843,10 @@ def apply_compiled_transforms(
                         # DropDoctype
                         if isinstance(t, _CompiledDropDoctypeTransform):
                             if name == "!doctype":
+                                if t.callback is not None:
+                                    t.callback(node)
+                                if t.report is not None:
+                                    t.report("Dropped doctype", node=node)
                                 parent.remove_child(node)
                                 changed = True
                                 break
@@ -1455,6 +1876,13 @@ def apply_compiled_transforms(
                                     or (isinstance(existing_raw, str) and existing_raw != normalized)
                                 ):
                                     attrs[t.attr] = normalized
+                                    if t.callback is not None:
+                                        t.callback(node)
+                                    if t.report is not None:
+                                        t.report(
+                                            f"Merged tokens into attribute '{t.attr}' on <{t.tag}>",
+                                            node=node,
+                                        )
                             continue
 
                         # CollapseWhitespace
@@ -1464,6 +1892,10 @@ def apply_compiled_transforms(
                                 if data:
                                     collapsed = _collapse_html_space_characters(data)
                                     if collapsed != data:
+                                        if t.callback is not None:
+                                            t.callback(node)
+                                        if t.report is not None:
+                                            t.report("Collapsed whitespace in text node", node=node)
                                         node.data = collapsed
                             continue
 
@@ -1474,6 +1906,13 @@ def apply_compiled_transforms(
                                 if data:
                                     matches = find_links_with_config(data, t.config)
                                     if matches:
+                                        if t.callback is not None:
+                                            t.callback(node)
+                                        if t.report is not None:
+                                            t.report(
+                                                f"Linkified {len(matches)} link(s) in text node",
+                                                node=node,
+                                            )
                                         cursor = 0
                                         for m in matches:
                                             if m.start > cursor:
@@ -1536,8 +1975,7 @@ def apply_compiled_transforms(
                                         tc.children = []
                                 if moved:
                                     for child in moved:
-                                        if t.mark_children_on_unwrap:
-                                            _mark_start(child, idx)
+                                        _mark_start(child, idx)
                                         parent.insert_before(child, node)
                                 parent.remove_child(node)
                                 changed = True
@@ -1555,7 +1993,7 @@ def apply_compiled_transforms(
                             if not t.all_nodes:
                                 if not matcher.matches(node, cast("ParsedSelector", t.selector)):
                                     continue
-                            new_attrs = t.callback(node)
+                            new_attrs = t.func(node)
                             if new_attrs is not None:
                                 node.attrs = new_attrs
                             continue
@@ -1571,37 +2009,78 @@ def apply_compiled_transforms(
                         if t.kind == "setattrs":
                             patch = cast("dict[str, str | None]", t.payload)
                             attrs = node.attrs
+                            changed_any = False
                             for k, v in patch.items():
-                                attrs[str(k)] = None if v is None else str(v)
+                                key = str(k)
+                                new_val = None if v is None else str(v)
+                                if attrs.get(key) != new_val:
+                                    attrs[key] = new_val
+                                    changed_any = True
+                            if changed_any:
+                                if t.callback is not None:
+                                    t.callback(node)
+                                if t.report is not None:
+                                    tag = str(node.name).lower()
+                                    t.report(
+                                        f"Set attributes on <{tag}> (matched selector '{t.selector_str}')", node=node
+                                    )
                             continue
 
                         if t.kind == "edit":
-                            cb = cast("Callable[[SimpleDomNode], None]", t.payload)
+                            cb = cast("NodeCallback", t.payload)
                             cb(node)
                             continue
 
                         if t.kind == "empty":
+                            had_children = bool(node.children)
                             if node.children:
                                 for child in node.children:
                                     child.parent = None
                                 node.children = []
                             if type(node) is TemplateNode and node.template_content is not None:
                                 tc = node.template_content
+                                had_children = had_children or bool(tc.children)
                                 for child in tc.children or []:
                                     child.parent = None
                                 tc.children = []
+                            if had_children:
+                                if t.callback is not None:
+                                    t.callback(node)
+                                if t.report is not None:
+                                    tag = str(node.name).lower()
+                                    t.report(f"Emptied <{tag}> (matched selector '{t.selector_str}')", node=node)
                             continue
 
                         if t.kind == "drop":
+                            if t.callback is not None:
+                                t.callback(node)
+                            if t.report is not None:
+                                tag = str(node.name).lower()
+                                t.report(f"Dropped <{tag}> (matched selector '{t.selector_str}')", node=node)
                             parent.remove_child(node)
                             changed = True
                             break
 
                         # t.kind == "unwrap".
+                        if t.callback is not None:
+                            t.callback(node)
+                        if t.report is not None:
+                            tag = str(node.name).lower()
+                            t.report(f"Unwrapped <{tag}> (matched selector '{t.selector_str}')", node=node)
+
+                        moved_nodes: list[SimpleDomNode] = []
                         if node.children:
-                            moved = list(node.children)
+                            moved_nodes.extend(list(node.children))
                             node.children = []
-                            for child in moved:
+
+                        if type(node) is TemplateNode and node.template_content is not None:
+                            tc = node.template_content
+                            if tc.children:
+                                moved_nodes.extend(list(tc.children))
+                                tc.children = []
+
+                        if moved_nodes:
+                            for child in moved_nodes:
                                 _mark_start(child, idx + 1)
                                 parent.insert_before(child, node)
                         parent.remove_child(node)
@@ -1695,6 +2174,14 @@ def apply_compiled_transforms(
                 for pt in prune_transforms:
                     if matcher.matches(node, pt.selector):
                         if _is_effectively_empty_element(node, strip_whitespace=pt.strip_whitespace):
+                            if pt.callback is not None:
+                                pt.callback(node)
+                            if pt.report is not None:
+                                tag = str(node.name).lower()
+                                pt.report(
+                                    f"Pruned empty <{tag}> (matched selector '{pt.selector_str}')",
+                                    node=node,
+                                )
                             node.parent.remove_child(node)
                             break
 
@@ -1724,6 +2211,14 @@ def apply_compiled_transforms(
             pending_walk = []
 
             if isinstance(t, _CompiledStageBoundary):
+                i += 1
+                continue
+
+            if isinstance(t, _CompiledStageHookTransform):
+                if t.callback is not None:
+                    t.callback(root)
+                if t.report is not None:
+                    t.report(f"Stage {t.index + 1}", node=root)
                 i += 1
                 continue
 

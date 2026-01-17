@@ -13,6 +13,8 @@ from justhtml.transforms import (
     DecideAction,
     Drop,
     DropAttrs,
+    DropComments,
+    DropDoctype,
     DropForeignNamespaces,
     DropUrlAttrs,
     Edit,
@@ -201,13 +203,13 @@ class TestTransforms(unittest.TestCase):
     def test_drop_with_callback_uses_general_selector_path_when_not_simple_tag_list(self) -> None:
         dropped: list[str] = []
 
-        def on_drop(node: SimpleDomNode) -> None:
+        def callback(node: SimpleDomNode) -> None:
             dropped.append(str(node.name))
 
         doc = JustHTML(
             '<div class="x"></div><div class="y"></div>',
             fragment=True,
-            transforms=[Drop("div.x", on_drop=on_drop)],
+            transforms=[Drop("div.x", callback=callback)],
         )
         assert doc.to_html(pretty=False, safe=False) == '<div class="y"></div>'
         assert dropped == ["div"]
@@ -215,16 +217,371 @@ class TestTransforms(unittest.TestCase):
     def test_drop_with_callback_tag_list_fast_path_rejection_still_validates_selector(self) -> None:
         dropped: list[str] = []
 
-        def on_drop(node: SimpleDomNode) -> None:
+        def callback(node: SimpleDomNode) -> None:
             dropped.append(str(node.name))
 
         doc = JustHTML(
             "<script>x</script><p>ok</p>",
             fragment=True,
-            transforms=[Drop("script, ", on_drop=on_drop)],
+            transforms=[Drop("script, ", callback=callback)],
         )
         assert doc.to_html(pretty=False, safe=False) == "<p>ok</p>"
         assert dropped == ["script"]
+
+    def test_hook_callback_property_exposes_configured_hook(self) -> None:
+        def cb_node(n: SimpleDomNode) -> None:
+            return None
+
+        def cb_report(msg: str, *, node: object | None = None) -> None:
+            return None
+
+        assert Drop("p", callback=cb_node).callback is cb_node
+        assert Unwrap("p", callback=cb_node).callback is cb_node
+        assert DropForeignNamespaces(report=cb_report).report is cb_report
+        assert DropAttrs("*", report=cb_report).report is cb_report
+        assert AllowlistAttrs("*", allowed_attributes={"*": []}, report=cb_report).report is cb_report
+
+        url_policy = UrlPolicy()
+        assert DropUrlAttrs("*", url_policy=url_policy, report=cb_report).report is cb_report
+        assert AllowStyleAttrs("[style]", allowed_css_properties=set(), report=cb_report).report is cb_report
+
+    def test_callbacks_and_reports_run_for_structural_transforms(self) -> None:
+        calls: list[tuple[str, str]] = []
+
+        def on_node(n: SimpleDomNode) -> None:
+            calls.append(("node", str(n.name)))
+
+        def on_report(msg: str, *, node: object | None = None) -> None:
+            calls.append(("report", msg))
+
+        root = SimpleDomNode("#document-fragment")
+        root.append_child(SimpleDomNode("#comment", data="x"))
+        root.append_child(SimpleDomNode("!doctype"))
+        root.append_child(ElementNode("a", {"rel": "nofollow"}, "html"))
+
+        compiled = compile_transforms(
+            [
+                DropComments(callback=on_node, report=on_report),
+                DropDoctype(callback=on_node, report=on_report),
+                MergeAttrs("a", attr="rel", tokens={"noopener"}, callback=on_node, report=on_report),
+            ]
+        )
+        apply_compiled_transforms(root, compiled)
+
+        assert root.to_html(pretty=False, safe=False) == '<a rel="nofollow noopener"></a>'
+        assert ("node", "#comment") in calls
+        assert ("node", "!doctype") in calls
+        assert ("node", "a") in calls
+        assert any(msg == "Dropped comment" for kind, msg in calls if kind == "report")
+        assert any(msg == "Dropped doctype" for kind, msg in calls if kind == "report")
+        assert any("Merged tokens" in msg for kind, msg in calls if kind == "report")
+
+    def test_callback_and_report_run_for_text_transforms(self) -> None:
+        calls: list[str] = []
+
+        def on_node(n: SimpleDomNode) -> None:
+            calls.append(str(n.name))
+
+        def on_report(msg: str, *, node: object | None = None) -> None:
+            calls.append(msg)
+
+        root = SimpleDomNode("#document-fragment")
+        p = ElementNode("p", {}, "html")
+        p.append_child(TextNode("visit https://example.com  now"))
+        root.append_child(p)
+
+        compiled = compile_transforms(
+            [
+                CollapseWhitespace(callback=on_node, report=on_report),
+                Linkify(callback=on_node, report=on_report),
+            ]
+        )
+        apply_compiled_transforms(root, compiled)
+
+        assert "Collapsed whitespace in text node" in calls
+        assert any(c.startswith("Linkified ") for c in calls)
+        assert (
+            root.to_html(pretty=False, safe=False)
+            == '<p>visit <a href="https://example.com">https://example.com</a> now</p>'
+        )
+
+    def test_setattrs_change_detection_controls_hooks(self) -> None:
+        calls: list[str] = []
+
+        def on_node(n: SimpleDomNode) -> None:
+            calls.append("node")
+
+        def on_report(msg: str, *, node: object | None = None) -> None:
+            calls.append(msg)
+
+        root = SimpleDomNode("#document-fragment")
+        p = ElementNode("p", {"id": "x"}, "html")
+        root.append_child(p)
+
+        # First: no change.
+        apply_compiled_transforms(
+            root, compile_transforms([SetAttrs("p", callback=on_node, report=on_report, id="x")])
+        )
+        assert calls == []
+
+        # Then: change.
+        apply_compiled_transforms(
+            root, compile_transforms([SetAttrs("p", callback=on_node, report=on_report, id="y")])
+        )
+        assert calls and calls[0] == "node"
+        assert any("Set attributes" in c for c in calls)
+
+    def test_unwrap_hoists_template_content_and_runs_hooks(self) -> None:
+        called: list[str] = []
+
+        def on_node(n: SimpleDomNode) -> None:
+            called.append(str(n.name))
+
+        def on_report(msg: str, *, node: object | None = None) -> None:
+            called.append(msg)
+
+        root = SimpleDomNode("#document-fragment")
+        tpl = TemplateNode("template", attrs={}, namespace="html")
+        assert tpl.template_content is not None
+        tpl.template_content.append_child(ElementNode("b", {}, "html"))
+        root.append_child(tpl)
+
+        apply_compiled_transforms(root, compile_transforms([Unwrap("template", callback=on_node, report=on_report)]))
+        assert root.to_html(pretty=False, safe=False) == "<b></b>"
+        assert "template" in called
+        assert any("Unwrapped" in c for c in called)
+
+    def test_edit_editdocument_decide_editattrs_hooks_and_reports(self) -> None:
+        calls: list[str] = []
+
+        def on_node(n: SimpleDomNode) -> None:
+            calls.append(f"node:{n.name}")
+
+        def on_report(msg: str, *, node: object | None = None) -> None:
+            calls.append(msg)
+
+        root = SimpleDomNode("#document-fragment")
+        p = ElementNode("p", {}, "html")
+        p.append_child(TextNode("x"))
+        root.append_child(p)
+
+        def edit_p(n: SimpleDomNode) -> None:
+            n.attrs["data-x"] = "1"
+
+        def decide_drop(n: SimpleDomNode) -> DecideAction:
+            return Decide.DROP
+
+        def edit_attrs(n: SimpleDomNode) -> dict[str, str | None] | None:
+            return {"id": "y"}
+
+        compiled = compile_transforms(
+            [
+                Edit("p", edit_p, callback=on_node, report=on_report),
+                EditAttrs("p", edit_attrs, callback=on_node, report=on_report),
+                Decide("p", decide_drop, callback=on_node, report=on_report),
+                EditDocument(lambda r: None, callback=on_node, report=on_report),
+            ]
+        )
+        apply_compiled_transforms(root, compiled)
+
+        # Decide drops <p>.
+        assert root.children == []
+        assert any(c.startswith("node:") for c in calls)
+        assert any("Edited <p>" in c for c in calls)
+        assert any("Edited attributes" in c for c in calls)
+        assert any("Decide -> drop" in c for c in calls)
+        assert "Edited document root" in calls
+
+    def test_pruneempty_and_stage_hooks_can_report(self) -> None:
+        calls: list[str] = []
+
+        def on_node(n: SimpleDomNode) -> None:
+            calls.append(f"node:{n.name}")
+
+        def on_report(msg: str, *, node: object | None = None) -> None:
+            calls.append(msg)
+
+        root = SimpleDomNode("#document-fragment")
+        root.append_child(ElementNode("div", {}, "html"))
+        root.append_child(SimpleDomNode("#comment", data="x"))
+
+        transforms = [
+            Stage([DropComments()], callback=on_node, report=on_report),
+            Stage([PruneEmpty("div", callback=on_node, report=on_report)]),
+        ]
+        apply_compiled_transforms(root, compile_transforms(transforms))
+
+        assert root.children == []
+        assert any(c.startswith("Stage ") for c in calls)
+        assert any("Pruned empty" in c for c in calls)
+
+    def test_drop_tag_list_fast_path_skips_comments_and_can_report(self) -> None:
+        calls: list[str] = []
+
+        def on_node(n: SimpleDomNode) -> None:
+            calls.append(f"node:{n.name}")
+
+        def on_report(msg: str, *, node: object | None = None) -> None:
+            calls.append(msg)
+
+        root = SimpleDomNode("#document-fragment")
+        root.append_child(SimpleDomNode("#comment", data="x"))
+        root.append_child(ElementNode("script", {}, "html"))
+
+        apply_compiled_transforms(
+            root, compile_transforms([Drop("script, style", callback=on_node, report=on_report)])
+        )
+        assert root.children is not None
+        assert [c.name for c in root.children] == ["#comment"]
+        assert "node:script" in calls
+        assert any("Dropped tag 'script'" in c for c in calls)
+
+    def test_drop_foreign_namespaces_skips_comment_and_doctype(self) -> None:
+        calls: list[str] = []
+
+        def on_node(n: SimpleDomNode) -> None:
+            calls.append(str(n.name))
+
+        def on_report(msg: str, *, node: object | None = None) -> None:
+            calls.append(msg)
+
+        root = SimpleDomNode("#document-fragment")
+        root.append_child(SimpleDomNode("#comment", data="x"))
+        root.append_child(SimpleDomNode("!doctype"))
+        root.append_child(ElementNode("svg", {}, "svg"))
+
+        apply_compiled_transforms(
+            root, compile_transforms([DropForeignNamespaces(callback=on_node, report=on_report)])
+        )
+        assert root.children is not None
+        assert [c.name for c in root.children] == ["#comment", "!doctype"]
+        assert "svg" in calls
+        assert any("foreign namespace" in c for c in calls)
+
+    def test_policy_transforms_can_run_node_hook_without_reporting(self) -> None:
+        seen: list[str] = []
+
+        def on_node(n: SimpleDomNode) -> None:
+            seen.append(str(n.name))
+
+        root = SimpleDomNode("#document-fragment")
+        div = ElementNode("div", {"onclick": "x()", "bad": "y"}, "html")
+        root.append_child(div)
+
+        apply_compiled_transforms(
+            root,
+            compile_transforms(
+                [
+                    DropAttrs("*", patterns=("on*",), callback=on_node, report=None),
+                    AllowlistAttrs("*", allowed_attributes={"*": set()}, callback=on_node, report=None),
+                ]
+            ),
+        )
+        assert div.attrs == {}
+        assert seen == ["div", "div"]
+
+    def test_dropurlattrs_and_allowstyleattrs_can_run_node_hook(self) -> None:
+        seen: list[str] = []
+
+        def on_node(n: SimpleDomNode) -> None:
+            seen.append(str(n.name))
+
+        url_policy = UrlPolicy(
+            default_handling="allow",
+            allow_rules={
+                ("a", "href"): UrlRule(allowed_schemes={"http", "https"}),
+            },
+        )
+
+        root = SimpleDomNode("#document-fragment")
+        a = ElementNode("a", {"href": "javascript:alert(1)"}, "html")
+        a_ws = ElementNode("a", {"href": " https://example.com "}, "html")
+        s_none = ElementNode("span", {"style": None}, "html")
+        s_bad = ElementNode("span", {"style": "position: fixed"}, "html")
+        s_partial = ElementNode("span", {"style": "color: red; position: fixed"}, "html")
+        root.append_child(a)
+        root.append_child(a_ws)
+        root.append_child(s_none)
+        root.append_child(s_bad)
+        root.append_child(s_partial)
+
+        apply_compiled_transforms(
+            root,
+            compile_transforms(
+                [
+                    DropUrlAttrs("*", url_policy=url_policy, callback=on_node, report=None),
+                    AllowStyleAttrs("span", allowed_css_properties={"color"}, callback=on_node, report=None),
+                ]
+            ),
+        )
+        assert "href" not in a.attrs
+        assert a_ws.attrs.get("href") == "https://example.com"
+        assert "style" not in s_none.attrs
+        assert "style" not in s_bad.attrs
+        assert s_partial.attrs.get("style") == "color: red"
+        assert seen == ["a", "a", "span", "span", "span"]
+
+    def test_sanitize_can_forward_user_callback_and_report(self) -> None:
+        events: list[str] = []
+
+        def on_node(n: SimpleDomNode) -> None:
+            events.append(f"node:{n.name}")
+
+        def on_report(msg: str, *, node: object | None = None) -> None:
+            events.append(msg)
+
+        root = SimpleDomNode("#document-fragment")
+        root.append_child(ElementNode("script", {"onclick": "x()"}, "html"))
+        root.append_child(ElementNode("blink", {}, "html"))
+        root.append_child(ElementNode("p", {"onclick": "x()"}, "html"))
+
+        apply_compiled_transforms(root, compile_transforms([Sanitize(callback=on_node, report=on_report)]))
+        assert root.to_html(pretty=False, safe=False) == "<p></p>"
+        assert any(e.startswith("node:") for e in events)
+        assert any("Unsafe tag" in e for e in events)
+        assert any("Unsafe attribute" in e for e in events)
+
+    def test_decide_unwrap_can_hoist_template_content(self) -> None:
+        root = SimpleDomNode("#document-fragment")
+        tpl = TemplateNode("template", attrs={}, namespace="html")
+        assert tpl.template_content is not None
+        tpl.template_content.append_child(ElementNode("b", {}, "html"))
+        root.append_child(tpl)
+
+        apply_compiled_transforms(root, compile_transforms([Decide("template", lambda n: Decide.UNWRAP)]))
+        assert root.to_html(pretty=False, safe=False) == "<b></b>"
+
+    def test_empty_and_drop_selector_hooks(self) -> None:
+        calls: list[str] = []
+
+        def on_node(n: SimpleDomNode) -> None:
+            calls.append(str(n.name))
+
+        def on_report(msg: str, *, node: object | None = None) -> None:
+            calls.append(msg)
+
+        root = SimpleDomNode("#document-fragment")
+        div = ElementNode("div", {}, "html")
+        div.append_child(TextNode("x"))
+        root.append_child(div)
+        root.append_child(ElementNode("div", {}, "html"))
+        root.append_child(ElementNode("p", {"class": "x"}, "html"))
+        root.append_child(ElementNode("p", {"class": "y"}, "html"))
+
+        apply_compiled_transforms(
+            root,
+            compile_transforms(
+                [
+                    Empty("div", callback=on_node, report=on_report),
+                    Drop("p.x", callback=on_node, report=on_report),
+                    Drop("p.y", report=on_report),
+                ]
+            ),
+        )
+        assert root.to_html(pretty=False, safe=False) == "<div></div><div></div>"
+        assert "div" in calls
+        assert any("Emptied" in c for c in calls)
+        assert any("Dropped" in c for c in calls)
 
     def test_drop_foreign_namespaces_can_report_to_policy(self) -> None:
         policy = SanitizationPolicy(
@@ -237,7 +594,7 @@ class TestTransforms(unittest.TestCase):
         root = SimpleDomNode("#document-fragment")
         root.append_child(ElementNode("svg", {}, "svg"))
 
-        apply_compiled_transforms(root, compile_transforms([DropForeignNamespaces(on_report=policy.handle_unsafe)]))
+        apply_compiled_transforms(root, compile_transforms([DropForeignNamespaces(report=policy.handle_unsafe)]))
         assert root.children == []
         assert policy.collected_security_errors()
 
@@ -245,7 +602,7 @@ class TestTransforms(unittest.TestCase):
         root = SimpleDomNode("#document-fragment")
         root.append_child(ElementNode("svg", {}, "svg"))
 
-        apply_compiled_transforms(root, compile_transforms([DropForeignNamespaces(on_report=None)]))
+        apply_compiled_transforms(root, compile_transforms([DropForeignNamespaces(report=None)]))
         assert root.children == []
 
     def test_dropattrs_patterns_cover_event_namespaced_and_exact(self) -> None:
@@ -277,7 +634,7 @@ class TestTransforms(unittest.TestCase):
                     DropAttrs(
                         "*",
                         patterns=("on*", "*:*", "srcdoc", "href"),
-                        on_report=policy.handle_unsafe,
+                        report=policy.handle_unsafe,
                     )
                 ]
             ),
@@ -300,7 +657,7 @@ class TestTransforms(unittest.TestCase):
 
         apply_compiled_transforms(
             root,
-            compile_transforms([DropAttrs("*", patterns=("on*", "*:*", "srcdoc"), on_report=None)]),
+            compile_transforms([DropAttrs("*", patterns=("on*", "*:*", "srcdoc"), report=None)]),
         )
         assert node.attrs == {}
 
@@ -333,7 +690,7 @@ class TestTransforms(unittest.TestCase):
                     AllowlistAttrs(
                         "*",
                         allowed_attributes={"*": [], "a": ["href", "rel"]},
-                        on_report=policy.handle_unsafe,
+                        report=policy.handle_unsafe,
                     )
                 ]
             ),
@@ -366,7 +723,7 @@ class TestTransforms(unittest.TestCase):
                     AllowlistAttrs(
                         "*",
                         allowed_attributes={"*": [], "a": ["href"]},
-                        on_report=None,
+                        report=None,
                     )
                 ],
             ),
@@ -397,7 +754,7 @@ class TestTransforms(unittest.TestCase):
 
         apply_compiled_transforms(
             root,
-            compile_transforms([DropUrlAttrs("*", url_policy=policy.url_policy, on_report=policy.handle_unsafe)]),
+            compile_transforms([DropUrlAttrs("*", url_policy=policy.url_policy, report=policy.handle_unsafe)]),
         )
         assert "href" not in a_none.attrs
         assert "src" not in img_no_rule.attrs
@@ -452,9 +809,7 @@ class TestTransforms(unittest.TestCase):
         doc = JustHTML(
             '<a href="javascript:alert(1)">x</a>',
             fragment=True,
-            transforms=[
-                DropUrlAttrs("*", url_policy=policy.url_policy, enabled=False, on_report=policy.handle_unsafe)
-            ],
+            transforms=[DropUrlAttrs("*", url_policy=policy.url_policy, enabled=False, report=policy.handle_unsafe)],
         )
         assert doc.to_html(pretty=False, safe=False) == '<a href="javascript:alert(1)">x</a>'
         assert policy.collected_security_errors() == []
@@ -485,7 +840,7 @@ class TestTransforms(unittest.TestCase):
                     AllowStyleAttrs(
                         "span",
                         allowed_css_properties=policy.allowed_css_properties,
-                        on_report=policy.handle_unsafe,
+                        report=policy.handle_unsafe,
                     )
                 ]
             ),
@@ -530,7 +885,7 @@ class TestTransforms(unittest.TestCase):
                     "[style]",
                     allowed_css_properties=policy.allowed_css_properties,
                     enabled=False,
-                    on_report=policy.handle_unsafe,
+                    report=policy.handle_unsafe,
                 )
             ],
         )
